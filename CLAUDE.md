@@ -9,7 +9,7 @@
 Beta managed within a 7–12% return corridor (S&P 500 historical earnings range).
 Alpha extracted through top-down macro → GICS sector selection → bottom-up stock picking.
 Money velocity (V = GDP/M2) + cyclical vs secular decomposition drive regime classification.
-Platform hunts for 100% alpha with no decay via continuous ML walk-forward optimisation.
+Platform targets 95%+ alpha via aggressive multi-sleeve allocation with continuous ML walk-forward optimisation.
 Paper broker mode (Yahoo Finance) — not connected to a live broker.
 
 ## Signal Pipeline
@@ -17,100 +17,114 @@ Paper broker mode (Yahoo Finance) — not connected to a live broker.
 ```
 UniverseEngine → MacroEngine → MetadronCube → AlphaOptimizer → ExecutionEngine
      (L1)           (L2)          (L2)            (L3)             (L5)
+                                    ↓
+                          ContagionEngine (L2)
+                          StatArbEngine (L2)
+                          OptionsEngine (L5)
 ```
 
 ## Architecture
 
 ```
 Metadron-Capital/                        ← Master monorepo (Layer 0: Hub)
-├── engine/                              ← INVESTMENT ENGINE (new)
+├── engine/                              ← INVESTMENT ENGINE
 │   ├── data/                            ← L1: Unified Yahoo data + universe
-│   │   ├── universe_engine.py           ← S&P 500/400/600 + GICS taxonomy + 70+ ETFs + 26 RV pairs
+│   │   ├── universe_engine.py           ← 150+ securities, GICS 4-tier, 26 RV pairs
 │   │   └── yahoo_data.py               ← Single data source: yfinance
 │   ├── signals/                         ← L2: Signal processing
-│   │   ├── macro_engine.py             ← GMTF money velocity + regime classification (Dataset 3)
-│   │   └── metadron_cube.py            ← C(t) = f(L_t, R_t, F_t) + Gate-Z 5-sleeve allocator
+│   │   ├── macro_engine.py             ← GMTF: SDR tension, rotation, velocity, FRB
+│   │   ├── metadron_cube.py            ← C(t) = f(L,R,F) + 4-Gate + KillSwitch + FCLP
+│   │   ├── contagion_engine.py         ← L3 graph topology, 21 nodes, 7 shock scenarios
+│   │   └── stat_arb_engine.py          ← Medallion mean reversion + cointegration pairs
 │   ├── ml/                              ← L3: ML/AI models
-│   │   └── alpha_optimizer.py           ← Walk-forward ML alpha + mean-variance (Dataset 2)
+│   │   ├── alpha_optimizer.py           ← Walk-forward ML alpha + mean-variance
+│   │   ├── backtester.py               ← Walk-forward, Monte Carlo, scenario engine
+│   │   └── pattern_recognition.py       ← Candlestick, chart patterns, anomalies
 │   ├── portfolio/                       ← L4: Portfolio construction
-│   │   └── beta_corridor.py            ← Beta corridor 7–12% + vol-normalisation (Dataset 1)
+│   │   └── beta_corridor.py            ← Beta corridor 7–12% + vol-normalisation
 │   ├── execution/                       ← L5: Execution
-│   │   ├── paper_broker.py             ← Simulated broker (Yahoo prices, no live connection)
-│   │   └── execution_engine.py         ← Full pipeline orchestrator + ML vote ensemble
+│   │   ├── paper_broker.py             ← Simulated broker (Yahoo prices)
+│   │   ├── execution_engine.py         ← Full pipeline orchestrator + ML vote ensemble
+│   │   ├── options_engine.py           ← Black-Scholes, Greeks, vol surface, θ+Γ optimizer
+│   │   └── conviction_override.py       ← 3-tier conviction override system
 │   ├── agents/                          ← L6: Agent orchestration
-│   │   └── sector_bots.py             ← 11 GICS sector micro-bots + scorecard
+│   │   ├── sector_bots.py             ← 11 GICS sector micro-bots + scorecard
+│   │   ├── research_bots.py           ← 11 GICS research bots + DNA hierarchy
+│   │   └── agent_scorecard.py          ← Agent ranking + promotion/demotion
 │   └── monitoring/                      ← Monitoring layer
-│       └── daily_report.py             ← Open/close reports + sector heatmap
+│       ├── daily_report.py             ← Open/close reports + sector heatmap
+│       ├── platinum_report.py           ← 30-section Platinum Report (9 parts)
+│       ├── portfolio_report.py          ← Portfolio Analytics Report (3 parts)
+│       ├── sector_tracker.py           ← Sector performance + missed opportunities
+│       ├── market_wrap.py              ← Market wrap narrative
+│       ├── anomaly_detector.py          ← Statistical anomaly scanner
+│       └── memory_monitor.py           ← Session tracking + EOD summary
 ├── core/                                ← Platform orchestrator (original)
 │   ├── platform.py                      ← Central orchestrator (20 modules)
-│   ├── signals.py                       ← Cyclical vs secular decomposition, money velocity
+│   ├── signals.py                       ← Cyclical vs secular decomposition
 │   └── portfolio.py                     ← Portfolio analytics engine
-├── config/
-│   └── repos.yaml                       ← 6-layer module registry
 ├── tests/
 │   ├── test_platform.py                 ← 11 core tests
 │   └── test_engine.py                  ← 37 engine tests (48 total)
 ├── run_open.py                          ← 09:30 ET — full pipeline execution
 ├── run_close.py                         ← 16:00 ET — EOD reconciliation
-├── bootstrap.py                         ← Session health check
-└── repos/                               ← All 23 component repositories
-    ├── layer1_data/
-    │   ├── Financial-Data/              ← yfinance market data pipeline
-    │   ├── open-bb/                     ← OpenBB investment research terminal
-    │   ├── hedgefund-tracker/           ← SEC 13F institutional flow tracker
-    │   ├── FRB/                         ← Federal Reserve Bank data (FRED)
-    │   ├── EquityLinkedGICPooling/      ← GIC pooling methodology
-    │   └── Quant-Developers-Resources/  ← Quantitative finance reference library
-    ├── layer2_signals/
-    │   ├── Mav-Analysis/                ← MaverickMCP technical analysis (39+ tools)
-    │   ├── quant-trading/               ← Quant strategies (Bollinger, MACD, SAR)
-    │   ├── stock-chain/                 ← Time-series chain analysis
-    │   ├── CTA-code/                    ← CTA/trend-following (PRML, statistical ML)
-    │   └── wondertrader/                ← HFT quant trading platform (C++, CTA/HFT)
-    ├── layer3_ml/
-    │   ├── QLIB/                        ← Microsoft Qlib quantitative ML framework
-    │   ├── Stock-prediction/            ← 30+ DL models, 23 trading agents
-    │   ├── ML-Macro-Market/             ← Macro → regime classification
-    │   └── AI-Newton/                   ← Physics-inspired financial modeling (Rust+Python)
-    ├── layer4_portfolio/
-    │   ├── ai-hedgefund/                ← Multi-agent AI hedge fund (LangGraph, 18 agents)
-    │   ├── financial-distressed-repo/   ← Company default prediction
-    │   └── sophisticated-distress-analysis/ ← Credit scoring (LightGBM)
-    ├── layer5_infra/
-    │   ├── Kserve/                      ← Kubernetes ML model serving
-    │   ├── nividia-repo/                ← NVIDIA GPU-optimized DL
-    │   ├── Air-LLM/                     ← Memory-efficient LLM inference
-    │   └── exchange-core/               ← Ultra-low latency HFT exchange engine (Java)
-    └── layer6_agents/
-        └── Ruflo-agents/                ← claude-flow multi-agent orchestration
+└── repos/                               ← All 23 component repositories (6 layers)
 ```
 
 ## MetadronCube — C(t) = f(L_t, R_t, F_t)
 
-| Axis | Range | Meaning |
-|------|-------|---------|
-| L(t) Liquidity | [-1,+1] | Monetary expansion/contraction |
-| R(t) Risk | [0,1] | VIX + realized vol + credit spread |
-| F(t) Flow | scalar | Sector rotation momentum |
+### 10-Layer Intelligence
 
-### Regime Parameters
+| Layer | Name | Function |
+|-------|------|----------|
+| 0 | FedPlumbingLayer | SOFR, reserves, TGA, ON-RRP |
+| 1 | LiquidityTensor | L(t) in [-1,+1] |
+| 2 | ReserveFlowKernel | ΔReserves → ΔEquity/Credit |
+| Risk | RiskStateModel | R(t) in [0,1] |
+| Flow | CapitalFlowModel | F(t) sector rotation |
+| 4 | RegimeEngine (HMM) | TRENDING/RANGE/STRESS/CRASH |
+| Gate | GateZAllocator | 5-sleeve allocation |
+| Entry | GateLogic | 4-gate entry scoring |
+| Kill | KillSwitch | Auto-derisking triggers |
+| Cal | FCLPLoop | Daily recalibration |
 
-| Regime | Leverage | Beta Cap | Equity % | Hedge % |
-|--------|----------|----------|----------|---------|
-| TRENDING | 2.5x | 0.65 | 50% | 5% |
-| RANGE | 2.0x | 0.30 | 35% | 15% |
-| STRESS | 1.5x | 0.10 | 15% | 30% |
-| CRASH | 0.8x | -0.20 | 5% | 45% |
+### Regime Parameters (95% Alpha Target)
+
+| Regime | Leverage | Beta Cap | Beta Burst | Crash Floor |
+|--------|----------|----------|------------|-------------|
+| TRENDING | 3.0x | 0.65 | 0.70 | ≥+25% |
+| RANGE | 2.5x | 0.45 | 0.55 | ≥+25% |
+| STRESS | 1.5x | 0.15 | 0.20 | ≥+25% |
+| CRASH | 0.8x | -0.20 | -0.10 | ≥+25% |
 
 ### Gate-Z 5-Sleeve Allocator
 
 | Sleeve | TRENDING | RANGE | STRESS | CRASH |
 |--------|----------|-------|--------|-------|
-| P1 Directional Equities | 50% | 30% | 15% | 5% |
-| P2 Factor Rotation | 20% | 25% | 15% | 5% |
-| P3 Commodities/Macro | 10% | 15% | 20% | 20% |
-| P4 Options Convexity | 10% | 15% | 20% | 25% |
-| P5 Hedges/Volatility | 10% | 15% | 30% | 45% |
+| P1 Carry | 25% | 20% | 15% | 5% |
+| P2 Rotation | 25% | 20% | 10% | 5% |
+| P3 Trend/LHC | 30% | 20% | 10% | 5% |
+| P4 Neutral-Alpha | 10% | 25% | 25% | 20% |
+| P5 Down-Offense | 10% | 15% | 40% | 65% |
+
+### 4-Gate Entry Logic
+
+| Gate | Weight | Function |
+|------|--------|----------|
+| G1 Flow/Headlines | 20% | ETF creations + Tensor signal |
+| G2 Macro/Beta | 25% | Kernel projections + rates/FX betas |
+| G3 Fundamentals | 30% | Quality/ROIC/FCF + supply-chain |
+| G4 Momentum/Tech | 25% | Breadth/leadership/gamma/vanna |
+
+### Kill-Switch Matrix
+
+HY OAS +35bp & VIX term flat/inverted & breadth <50% → auto β ≤ 0.35
+
+### New Engines
+
+- **ContagionEngine**: L3 graph topology, 21 nodes, 7 shock scenarios, multi-step propagation
+- **StatArbEngine**: Medallion mean reversion + cointegration pairs + factor residuals (Σβ≈0)
+- **OptionsEngine**: Black-Scholes Greeks, θ+Γ optimizer, vol surface, P4 sleeve allocation
 
 ## Beta Corridor (Dataset 1)
 
@@ -120,6 +134,7 @@ R_LOW, R_HIGH = 7%, 12% (Gamma Corridor)
 BETA_MAX = 2.0, BETA_INV = -0.136
 EXECUTION_MULTIPLIER = 4.7
 Vol-normalisation: 15% thesis standard
+VaR ≤ $0.30M (95%/1-day) on $20M NAV
 ```
 
 ## Key Commands
@@ -144,7 +159,7 @@ python3 core/platform.py
 2. **Paper broker only** — no live execution until broker API connected
 3. **6-layer architecture is immutable** — extend within layers
 4. **Beta managed within 7–12% corridor** — vol-normalised
-5. **Alpha hunted with zero decay** — ML walk-forward, continuous retraining
+5. **Alpha targeted at 95%+** — aggressive multi-sleeve allocation
 6. **All agents use Anthropic API** (claude-opus-4-6) when LLM needed
 7. **Pure-numpy fallbacks** — no bridge crashes if ML framework missing
 8. **try/except on ALL external imports** — system runs degraded, never broken
@@ -157,13 +172,22 @@ MICRO_PRICE_BUY/SELL, RV_LONG/SHORT, FALLEN_ANGEL_BUY,
 ML_AGENT_BUY/SELL, DRL_AGENT_BUY/SELL, TFT_BUY/SELL,
 MC_BUY/SELL, QUALITY_BUY/SELL, HOLD
 
-## Agent Scorecard
+## Agent Hierarchy (DNA Framework)
 
-| Tier | Requirements | Promotion |
+| Rank | Requirements | Promotion |
 |------|-------------|-----------|
-| TIER_1 General | Sharpe >2.0, accuracy >80% | 4 consecutive top weeks |
-| TIER_2 Captain | Sharpe >1.5, accuracy >55% | - |
-| TIER_3 Lieutenant | Sharpe >1.0, accuracy >50% | - |
-| TIER_4 Recruit | Below thresholds | Demoted after 2 bottom weeks |
+| DIRECTOR | Sharpe >2.5, accuracy >85% | Top performer 8+ weeks |
+| GENERAL | Sharpe >2.0, accuracy >80% | 4 consecutive top weeks |
+| CAPTAIN | Sharpe >1.5, accuracy >55% | - |
+| LIEUTENANT | Sharpe >1.0, accuracy >50% | - |
+| RECRUIT | Below thresholds | Demoted after 2 bottom weeks |
 
 Weekly score: 40% accuracy + 30% Sharpe + 30% hit rate
+
+## Conviction Override System
+
+| Tier | Confidence | Multiplier | Agents Required |
+|------|-----------|------------|-----------------|
+| CONTROLLED | 90-95% | 1.5x | 1 |
+| AGGRESSIVE | 95-98% | 2.0x | 2 |
+| MAXIMUM | >98% | 2.0x+ | 3 |
