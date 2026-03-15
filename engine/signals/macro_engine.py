@@ -26,7 +26,7 @@ import numpy as np
 import pandas as pd
 from enum import Enum
 from dataclasses import dataclass, field
-from typing import Optional
+from typing import Optional, List
 
 from ..data.yahoo_data import get_adj_close, get_macro_data, get_returns
 
@@ -1438,6 +1438,535 @@ class MacroFeatureBuilder:
 
 
 # ═══════════════════════════════════════════════════════════════════════════
+# GMTF MODULE 1: MonetaryTensionIndex
+# ═══════════════════════════════════════════════════════════════════════════
+class MonetaryTensionIndex:
+    """SDR-weighted monetary tension index across G5 currencies.
+
+    Tracks monetary conditions across USD, EUR, JPY, GBP, CNY using
+    IMF SDR basket weights. Produces a composite tension score from
+    rate differentials and FX moves.
+    """
+
+    # IMF SDR basket weights (2022 review)
+    SDR_BASKET = {
+        "USD": 0.4338,
+        "EUR": 0.2931,
+        "JPY": 0.0759,
+        "GBP": 0.0744,
+        "CNY": 0.1228,
+    }
+
+    # Tension thresholds
+    EASING_THRESHOLD = -0.15
+    TIGHTENING_THRESHOLD = 0.15
+
+    def __init__(self):
+        self._tension_score: float = 0.0
+        self._currency_tensions: dict[str, float] = {}
+        self._stance: str = "NEUTRAL"
+        self._history: list[dict] = []
+
+    def compute_tension(
+        self,
+        rate_differentials: dict[str, float],
+        fx_moves: dict[str, float],
+    ) -> float:
+        """Compute SDR-weighted monetary tension score.
+
+        Args:
+            rate_differentials: {currency: rate_change} — positive means
+                tightening (rate hikes or hawkish shift) for each currency.
+            fx_moves: {currency: pct_change} — positive means appreciation
+                vs trade-weighted basket.
+
+        Returns:
+            Weighted tension score in [-1, +1] range.
+            Positive = global tightening, Negative = global easing.
+        """
+        tension = 0.0
+        weight_sum = 0.0
+
+        for ccy, weight in self.SDR_BASKET.items():
+            rate_d = rate_differentials.get(ccy, 0.0)
+            fx_d = fx_moves.get(ccy, 0.0)
+
+            # Rate differential drives 70% of tension, FX moves 30%
+            # Positive rate_d = tightening; appreciation (+ fx_d) = tightening
+            ccy_tension = rate_d * 0.70 + fx_d * 0.30
+
+            self._currency_tensions[ccy] = round(ccy_tension, 6)
+            tension += ccy_tension * weight
+            weight_sum += weight
+
+        if weight_sum > 0:
+            tension /= weight_sum
+
+        # Clip to [-1, 1]
+        self._tension_score = float(np.clip(tension, -1.0, 1.0))
+
+        # Determine stance
+        if self._tension_score <= self.EASING_THRESHOLD:
+            self._stance = "EASING"
+        elif self._tension_score >= self.TIGHTENING_THRESHOLD:
+            self._stance = "TIGHTENING"
+        else:
+            self._stance = "NEUTRAL"
+
+        self._history.append({
+            "tension_score": self._tension_score,
+            "stance": self._stance,
+            "currency_tensions": dict(self._currency_tensions),
+        })
+
+        return self._tension_score
+
+    def get_global_easing_tightening(self) -> str:
+        """Return global monetary stance: EASING / NEUTRAL / TIGHTENING."""
+        return self._stance
+
+    def get_currency_tensions(self) -> dict[str, float]:
+        """Return per-currency tension breakdown."""
+        return dict(self._currency_tensions)
+
+    def get_state(self) -> dict:
+        """Return full tension index state."""
+        return {
+            "tension_score": round(self._tension_score, 6),
+            "stance": self._stance,
+            "currency_tensions": {k: round(v, 6) for k, v in self._currency_tensions.items()},
+        }
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# GMTF MODULE 2: SectorRotationEngine
+# ═══════════════════════════════════════════════════════════════════════════
+class SectorRotationEngine:
+    """GICS sector rotation engine based on macro regime cycle.
+
+    Models sector favourability across four macro cycle phases:
+        EARLY_CYCLE  — recovery from recession
+        MID_CYCLE    — expansion / steady growth
+        LATE_CYCLE   — overheating / peak
+        RECESSION    — contraction
+
+    Pre-built rotation matrix covers all 11 GICS sectors.
+    """
+
+    # The 11 GICS sectors
+    GICS_SECTORS = [
+        "Energy",
+        "Materials",
+        "Industrials",
+        "Consumer Discretionary",
+        "Consumer Staples",
+        "Health Care",
+        "Financials",
+        "Information Technology",
+        "Communication Services",
+        "Utilities",
+        "Real Estate",
+    ]
+
+    # Macro cycle phases
+    CYCLE_PHASES = ["EARLY_CYCLE", "MID_CYCLE", "LATE_CYCLE", "RECESSION"]
+
+    # Rotation matrix: {sector: {phase: favourability_score}}
+    # Scores in [-1.0, +1.0] where +1.0 = strong overweight, -1.0 = strong underweight
+    ROTATION_MATRIX = {
+        "Energy": {
+            "EARLY_CYCLE": 0.3, "MID_CYCLE": 0.5, "LATE_CYCLE": 0.8, "RECESSION": -0.4,
+        },
+        "Materials": {
+            "EARLY_CYCLE": 0.6, "MID_CYCLE": 0.4, "LATE_CYCLE": 0.5, "RECESSION": -0.5,
+        },
+        "Industrials": {
+            "EARLY_CYCLE": 0.8, "MID_CYCLE": 0.6, "LATE_CYCLE": 0.2, "RECESSION": -0.3,
+        },
+        "Consumer Discretionary": {
+            "EARLY_CYCLE": 0.9, "MID_CYCLE": 0.5, "LATE_CYCLE": -0.2, "RECESSION": -0.6,
+        },
+        "Consumer Staples": {
+            "EARLY_CYCLE": -0.2, "MID_CYCLE": 0.0, "LATE_CYCLE": 0.3, "RECESSION": 0.8,
+        },
+        "Health Care": {
+            "EARLY_CYCLE": 0.1, "MID_CYCLE": 0.3, "LATE_CYCLE": 0.5, "RECESSION": 0.7,
+        },
+        "Financials": {
+            "EARLY_CYCLE": 0.7, "MID_CYCLE": 0.6, "LATE_CYCLE": 0.1, "RECESSION": -0.5,
+        },
+        "Information Technology": {
+            "EARLY_CYCLE": 0.7, "MID_CYCLE": 0.8, "LATE_CYCLE": 0.0, "RECESSION": -0.3,
+        },
+        "Communication Services": {
+            "EARLY_CYCLE": 0.5, "MID_CYCLE": 0.6, "LATE_CYCLE": 0.1, "RECESSION": -0.1,
+        },
+        "Utilities": {
+            "EARLY_CYCLE": -0.4, "MID_CYCLE": -0.2, "LATE_CYCLE": 0.2, "RECESSION": 0.9,
+        },
+        "Real Estate": {
+            "EARLY_CYCLE": 0.6, "MID_CYCLE": 0.3, "LATE_CYCLE": -0.3, "RECESSION": 0.2,
+        },
+    }
+
+    # Overweight threshold
+    OVERWEIGHT_THRESHOLD = 0.3
+    UNDERWEIGHT_THRESHOLD = -0.2
+
+    def __init__(self):
+        self._current_phase: str = "MID_CYCLE"
+
+    def _resolve_phase(self, regime: str) -> str:
+        """Map a MarketRegime or free-form string to a cycle phase.
+
+        Accepts MarketRegime values or direct cycle phase names.
+        """
+        regime_upper = regime.upper() if isinstance(regime, str) else str(regime).upper()
+
+        # Direct phase names
+        if regime_upper in self.CYCLE_PHASES:
+            return regime_upper
+
+        # Map MarketRegime values to cycle phases
+        mapping = {
+            "BULL": "MID_CYCLE",
+            "BEAR": "LATE_CYCLE",
+            "TRANSITION": "EARLY_CYCLE",
+            "STRESS": "RECESSION",
+            "CRASH": "RECESSION",
+            "TRENDING": "MID_CYCLE",
+            "RANGE": "LATE_CYCLE",
+        }
+        return mapping.get(regime_upper, "MID_CYCLE")
+
+    def get_rotation_signal(self, regime: str, sector: str) -> float:
+        """Get favourability score for a sector in a given regime/phase.
+
+        Args:
+            regime: Cycle phase name or MarketRegime value.
+            sector: GICS sector name.
+
+        Returns:
+            Favourability score in [-1.0, +1.0].
+        """
+        phase = self._resolve_phase(regime)
+        self._current_phase = phase
+
+        sector_scores = self.ROTATION_MATRIX.get(sector)
+        if sector_scores is None:
+            return 0.0
+        return sector_scores.get(phase, 0.0)
+
+    def get_recommended_overweights(self, regime: str) -> List[str]:
+        """Return list of sectors to overweight for the given regime/phase.
+
+        Sectors with favourability >= OVERWEIGHT_THRESHOLD.
+        """
+        phase = self._resolve_phase(regime)
+        self._current_phase = phase
+
+        overweights = []
+        for sector in self.GICS_SECTORS:
+            score = self.ROTATION_MATRIX[sector].get(phase, 0.0)
+            if score >= self.OVERWEIGHT_THRESHOLD:
+                overweights.append(sector)
+        return overweights
+
+    def get_recommended_underweights(self, regime: str) -> List[str]:
+        """Return list of sectors to underweight for the given regime/phase.
+
+        Sectors with favourability <= UNDERWEIGHT_THRESHOLD.
+        """
+        phase = self._resolve_phase(regime)
+        self._current_phase = phase
+
+        underweights = []
+        for sector in self.GICS_SECTORS:
+            score = self.ROTATION_MATRIX[sector].get(phase, 0.0)
+            if score <= self.UNDERWEIGHT_THRESHOLD:
+                underweights.append(sector)
+        return underweights
+
+    def get_full_rotation(self, regime: str) -> dict[str, float]:
+        """Return full rotation scores for all sectors in a regime/phase.
+
+        Returns dict sorted by favourability descending.
+        """
+        phase = self._resolve_phase(regime)
+        self._current_phase = phase
+
+        scores = {}
+        for sector in self.GICS_SECTORS:
+            scores[sector] = self.ROTATION_MATRIX[sector].get(phase, 0.0)
+        return dict(sorted(scores.items(), key=lambda x: x[1], reverse=True))
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# GMTF MODULE 3: MoneyVelocityEngine
+# ═══════════════════════════════════════════════════════════════════════════
+class MoneyVelocityEngine:
+    """Money velocity engine: V = GDP / M2 proxy computation.
+
+    Computes velocity proxy, classifies velocity regime, and estimates
+    velocity-to-inflation transmission signal.
+    """
+
+    # Velocity regime thresholds (rate of change)
+    ACCEL_THRESHOLD = 0.02    # >2% velocity growth = accelerating
+    DECEL_THRESHOLD = -0.02   # <-2% velocity growth = decelerating
+
+    # Inflation transmission parameters
+    _INFLATION_SENSITIVITY = 0.6   # elasticity of inflation to velocity
+    _INFLATION_LAG_QUARTERS = 2    # velocity leads inflation by ~2 quarters
+
+    def __init__(
+        self,
+        gdp_proxy: Optional[float] = None,
+        m2_proxy: Optional[float] = None,
+    ):
+        self._gdp: float = gdp_proxy if gdp_proxy is not None else 25_000.0
+        self._m2: float = m2_proxy if m2_proxy is not None else 21_000.0
+        self._velocity: float = self._gdp / max(self._m2, 1e-8)
+        self._prev_velocity: float = self._velocity
+        self._velocity_change: float = 0.0
+        self._regime: str = "STABLE"
+        self._inflation_signal: float = 0.0
+        self._history: list[dict] = []
+
+    def compute_velocity_proxy(
+        self,
+        gdp_proxy: Optional[float] = None,
+        m2_proxy: Optional[float] = None,
+    ) -> float:
+        """Compute V = GDP / M2 proxy.
+
+        Args:
+            gdp_proxy: Nominal GDP proxy value. If None, uses stored value.
+            m2_proxy: M2 money supply proxy value. If None, uses stored value.
+
+        Returns:
+            Current velocity proxy.
+        """
+        if gdp_proxy is not None:
+            self._gdp = gdp_proxy
+        if m2_proxy is not None:
+            self._m2 = m2_proxy
+
+        if self._m2 <= 0:
+            return self._velocity
+
+        self._prev_velocity = self._velocity
+        self._velocity = self._gdp / self._m2
+
+        # Compute rate of change
+        if self._prev_velocity > 0:
+            self._velocity_change = (
+                (self._velocity - self._prev_velocity) / self._prev_velocity
+            )
+        else:
+            self._velocity_change = 0.0
+
+        # Update regime
+        self._regime = self._classify_regime()
+
+        # Update inflation signal
+        self._inflation_signal = self._compute_inflation_signal()
+
+        self._history.append({
+            "velocity": self._velocity,
+            "velocity_change": self._velocity_change,
+            "regime": self._regime,
+            "inflation_signal": self._inflation_signal,
+        })
+
+        return self._velocity
+
+    def get_velocity_regime(self) -> str:
+        """Return velocity regime: ACCELERATING / STABLE / DECELERATING."""
+        return self._regime
+
+    def get_inflation_signal(self) -> float:
+        """Return velocity-to-inflation transmission signal.
+
+        Positive = inflationary pressure from rising velocity.
+        Negative = disinflationary pressure from falling velocity.
+        Range approximately [-1, +1].
+        """
+        return self._inflation_signal
+
+    def _classify_regime(self) -> str:
+        """Classify velocity regime based on rate of change."""
+        if self._velocity_change >= self.ACCEL_THRESHOLD:
+            return "ACCELERATING"
+        elif self._velocity_change <= self.DECEL_THRESHOLD:
+            return "DECELERATING"
+        else:
+            return "STABLE"
+
+    def _compute_inflation_signal(self) -> float:
+        """Compute inflation transmission from velocity change.
+
+        Uses sigmoid-shaped transmission function to model the
+        non-linear relationship between velocity and inflation.
+        """
+        # Sigmoid transformation of velocity change
+        raw_signal = self._velocity_change * self._INFLATION_SENSITIVITY * 10.0
+        # Apply sigmoid to bound in [-1, +1]
+        signal = 2.0 / (1.0 + np.exp(-raw_signal)) - 1.0
+        return float(np.clip(signal, -1.0, 1.0))
+
+    def get_state(self) -> dict:
+        """Return full velocity engine state."""
+        return {
+            "velocity": round(self._velocity, 6),
+            "velocity_change": round(self._velocity_change, 6),
+            "regime": self._regime,
+            "inflation_signal": round(self._inflation_signal, 6),
+            "gdp_proxy": round(self._gdp, 2),
+            "m2_proxy": round(self._m2, 2),
+        }
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# GMTF MODULE 4: FedReserveIntegration
+# ═══════════════════════════════════════════════════════════════════════════
+class FedReserveIntegration:
+    """Federal Reserve balance sheet integration.
+
+    Tracks Fed balance sheet proxies:
+        - Total assets (WALCL proxy)
+        - Reverse repo (RRP / ON RRP)
+        - Treasury General Account (TGA)
+
+    Computes net liquidity = Fed Assets - TGA - RRP
+    and liquidity impulse (delta net liquidity).
+    """
+
+    # Default baseline values ($ billions, approximate as of 2024)
+    _DEFAULT_ASSETS = 7_700.0
+    _DEFAULT_RRP = 500.0
+    _DEFAULT_TGA = 750.0
+
+    def __init__(
+        self,
+        fed_assets: Optional[float] = None,
+        rrp: Optional[float] = None,
+        tga: Optional[float] = None,
+    ):
+        self._fed_assets: float = fed_assets if fed_assets is not None else self._DEFAULT_ASSETS
+        self._rrp: float = rrp if rrp is not None else self._DEFAULT_RRP
+        self._tga: float = tga if tga is not None else self._DEFAULT_TGA
+        self._prev_net_liquidity: float = self._compute_raw_net_liquidity()
+        self._net_liquidity: float = self._prev_net_liquidity
+        self._liquidity_impulse: float = 0.0
+        self._history: list[dict] = []
+
+    def _compute_raw_net_liquidity(self) -> float:
+        """Internal: compute net liquidity from current state."""
+        return self._fed_assets - self._tga - self._rrp
+
+    def update(
+        self,
+        fed_assets: Optional[float] = None,
+        rrp: Optional[float] = None,
+        tga: Optional[float] = None,
+    ) -> None:
+        """Update Fed balance sheet components.
+
+        Args:
+            fed_assets: Total Fed assets ($ billions).
+            rrp: Reverse repo facility balance ($ billions).
+            tga: Treasury General Account balance ($ billions).
+        """
+        if fed_assets is not None:
+            self._fed_assets = fed_assets
+        if rrp is not None:
+            self._rrp = rrp
+        if tga is not None:
+            self._tga = tga
+
+        self._prev_net_liquidity = self._net_liquidity
+        self._net_liquidity = self._compute_raw_net_liquidity()
+        self._liquidity_impulse = self._net_liquidity - self._prev_net_liquidity
+
+        self._history.append({
+            "fed_assets": self._fed_assets,
+            "rrp": self._rrp,
+            "tga": self._tga,
+            "net_liquidity": self._net_liquidity,
+            "liquidity_impulse": self._liquidity_impulse,
+        })
+
+    def compute_net_liquidity(self) -> float:
+        """Compute net liquidity = Fed Assets - TGA - RRP.
+
+        Returns:
+            Net liquidity in $ billions.
+        """
+        self._net_liquidity = self._compute_raw_net_liquidity()
+        return self._net_liquidity
+
+    def get_liquidity_impulse(self) -> float:
+        """Get delta of net liquidity (current - previous).
+
+        Positive impulse = liquidity injection (bullish for risk assets).
+        Negative impulse = liquidity drain (bearish for risk assets).
+
+        Returns:
+            Liquidity impulse in $ billions.
+        """
+        return self._liquidity_impulse
+
+    def format_fed_dashboard(self) -> str:
+        """Generate ASCII dashboard of Fed balance sheet state.
+
+        Returns:
+            Multi-line ASCII string with Fed balance sheet summary.
+        """
+        net_liq = self.compute_net_liquidity()
+        impulse = self._liquidity_impulse
+        impulse_dir = "+" if impulse >= 0 else ""
+
+        # Determine liquidity regime
+        if impulse > 50:
+            regime = "INJECTING"
+        elif impulse > 0:
+            regime = "MILDLY INJECTING"
+        elif impulse > -50:
+            regime = "MILDLY DRAINING"
+        else:
+            regime = "DRAINING"
+
+        lines = [
+            "=" * 60,
+            "         FEDERAL RESERVE LIQUIDITY DASHBOARD",
+            "=" * 60,
+            "",
+            f"  Fed Total Assets:       ${self._fed_assets:>10,.1f}B",
+            f"  Reverse Repo (RRP):     ${self._rrp:>10,.1f}B",
+            f"  Treasury Gen Acct (TGA):${self._tga:>10,.1f}B",
+            "-" * 60,
+            f"  NET LIQUIDITY:          ${net_liq:>10,.1f}B",
+            f"  Liquidity Impulse:      {impulse_dir}{impulse:>9,.1f}B",
+            f"  Liquidity Regime:        {regime}",
+            "",
+            "  Formula: Net Liq = Fed Assets - TGA - RRP",
+            "=" * 60,
+        ]
+        return "\n".join(lines)
+
+    def get_state(self) -> dict:
+        """Return full Fed integration state."""
+        return {
+            "fed_assets": round(self._fed_assets, 2),
+            "rrp": round(self._rrp, 2),
+            "tga": round(self._tga, 2),
+            "net_liquidity": round(self._net_liquidity, 2),
+            "liquidity_impulse": round(self._liquidity_impulse, 2),
+        }
+
+
+# ═══════════════════════════════════════════════════════════════════════════
 # MacroEngine class (enhanced)
 # ═══════════════════════════════════════════════════════════════════════════
 class MacroEngine:
@@ -1740,3 +2269,235 @@ class MacroEngine:
     def get_regime_distribution(self) -> dict[str, float]:
         """Return regime frequency distribution from recent history."""
         return self._regime_detector.get_regime_distribution()
+
+    # --- GMTF Enhancement methods -------------------------------------------
+
+    def get_monetary_tension(self) -> dict:
+        """Compute and return SDR-weighted monetary tension index.
+
+        Uses the MonetaryTensionIndex to produce a composite tension
+        score from rate differentials and FX moves. When live data is
+        unavailable, returns proxy values from the current snapshot.
+
+        Returns:
+            Dict with tension_score, stance, and currency_tensions.
+        """
+        mti = MonetaryTensionIndex()
+        snap = self._snapshot or MacroSnapshot()
+
+        # Build rate differentials from available data
+        # Use yield spread as a proxy for USD tightening
+        rate_diffs = {
+            "USD": snap.yield_spread * 0.1,   # normalise spread
+            "EUR": -snap.yield_spread * 0.05,  # inverse proxy
+            "JPY": -0.02,                      # BOJ perpetual easing proxy
+            "GBP": snap.yield_spread * 0.03,   # correlated to USD
+            "CNY": -0.01,                      # managed regime proxy
+        }
+
+        # FX moves proxy from gold momentum (dollar weakness indicator)
+        gold_signal = snap.gold_momentum
+        fx_moves = {
+            "USD": -gold_signal * 0.5,    # gold up → dollar down
+            "EUR": gold_signal * 0.3,
+            "JPY": gold_signal * 0.1,
+            "GBP": gold_signal * 0.2,
+            "CNY": gold_signal * 0.05,
+        }
+
+        mti.compute_tension(rate_diffs, fx_moves)
+        return mti.get_state()
+
+    def get_rotation_signals(self) -> dict:
+        """Get GICS sector rotation signals for current regime.
+
+        Uses the SectorRotationEngine to produce favourability scores
+        and over/underweight recommendations based on the current
+        macro regime.
+
+        Returns:
+            Dict with full_rotation, overweights, and underweights.
+        """
+        sre = SectorRotationEngine()
+        snap = self._snapshot or MacroSnapshot()
+        regime_str = snap.regime.value
+
+        full_rotation = sre.get_full_rotation(regime_str)
+        overweights = sre.get_recommended_overweights(regime_str)
+        underweights = sre.get_recommended_underweights(regime_str)
+
+        return {
+            "regime": regime_str,
+            "cycle_phase": sre._current_phase,
+            "full_rotation": full_rotation,
+            "overweights": overweights,
+            "underweights": underweights,
+        }
+
+    def get_velocity_regime(self) -> dict:
+        """Get money velocity engine state.
+
+        Uses the MoneyVelocityEngine to compute V = GDP/M2 proxy,
+        velocity regime, and inflation signal.
+
+        Returns:
+            Dict with velocity, regime, and inflation_signal.
+        """
+        mve = MoneyVelocityEngine()
+        snap = self._snapshot or MacroSnapshot()
+
+        # Use SPY level and gold as GDP/M2 proxies
+        # If macro_data is available, use last values
+        if self._macro_data is not None:
+            if "S&P 500" in self._macro_data.columns:
+                spy_vals = self._macro_data["S&P 500"].dropna()
+                if len(spy_vals) > 0:
+                    mve._gdp = float(spy_vals.iloc[-1])
+                    if len(spy_vals) > 21:
+                        # Also set previous velocity from 21 days ago
+                        prev_gdp = float(spy_vals.iloc[-22])
+                        if "Gold" in self._macro_data.columns:
+                            gold_vals = self._macro_data["Gold"].dropna()
+                            if len(gold_vals) > 21:
+                                prev_m2 = float(gold_vals.iloc[-22])
+                                if prev_m2 > 0:
+                                    mve._prev_velocity = prev_gdp / prev_m2
+
+            if "Gold" in self._macro_data.columns:
+                gold_vals = self._macro_data["Gold"].dropna()
+                if len(gold_vals) > 0:
+                    mve._m2 = float(gold_vals.iloc[-1])
+
+        mve.compute_velocity_proxy()
+        return mve.get_state()
+
+    def get_fed_liquidity(self) -> dict:
+        """Get Federal Reserve liquidity state.
+
+        Uses the FedReserveIntegration to compute net liquidity
+        and liquidity impulse from Fed balance sheet proxies.
+
+        Returns:
+            Dict with fed_assets, rrp, tga, net_liquidity, liquidity_impulse.
+        """
+        fri = FedReserveIntegration()
+        return fri.get_state()
+
+    def generate_macro_intelligence(self) -> str:
+        """Generate comprehensive ASCII macro intelligence report.
+
+        Combines all GMTF modules into a single formatted report:
+            - Regime classification
+            - Monetary tension index
+            - Sector rotation signals
+            - Money velocity
+            - Fed liquidity dashboard
+            - Yield curve analysis
+            - Credit pulse
+
+        Returns:
+            Multi-line ASCII string with full macro intelligence.
+        """
+        snap = self._snapshot or MacroSnapshot()
+
+        # Gather all components
+        tension = self.get_monetary_tension()
+        rotation = self.get_rotation_signals()
+        velocity = self.get_velocity_regime()
+        fed_liq = self.get_fed_liquidity()
+        yc = self.get_yield_curve_analysis()
+        credit = self.get_credit_pulse()
+        mv_state = self.get_money_velocity_state()
+
+        # Fed dashboard
+        fri = FedReserveIntegration()
+        fed_dashboard = fri.format_fed_dashboard()
+
+        # Build overweight / underweight strings
+        ow_str = ", ".join(rotation.get("overweights", [])) or "None"
+        uw_str = ", ".join(rotation.get("underweights", [])) or "None"
+
+        # Rotation table
+        rotation_lines = []
+        full_rot = rotation.get("full_rotation", {})
+        for sector, score in full_rot.items():
+            bar_len = int(abs(score) * 20)
+            bar_char = "+" if score >= 0 else "-"
+            bar = bar_char * bar_len
+            rotation_lines.append(f"    {sector:<28s} {score:>+5.2f}  {bar}")
+
+        rotation_table = "\n".join(rotation_lines)
+
+        # Currency tension table
+        ccy_tensions = tension.get("currency_tensions", {})
+        ccy_lines = []
+        for ccy, val in ccy_tensions.items():
+            weight = MonetaryTensionIndex.SDR_BASKET.get(ccy, 0.0)
+            ccy_lines.append(f"    {ccy}  (SDR {weight*100:5.2f}%)  tension: {val:>+8.6f}")
+        ccy_table = "\n".join(ccy_lines)
+
+        report = f"""
+{'=' * 70}
+          METADRON CAPITAL — MACRO INTELLIGENCE REPORT
+{'=' * 70}
+
+  REGIME CLASSIFICATION
+  ---------------------
+    Market Regime:    {snap.regime.value}
+    Cube Regime:      {snap.cube_regime.value}
+    VIX:              {snap.vix:.1f}
+    SPY 3M Return:    {snap.spy_return_3m:+.2%}
+    Yield Spread:     {snap.yield_spread:+.4f}
+    Credit Spread:    {snap.credit_spread:.4f}
+
+  MONETARY TENSION INDEX (SDR-Weighted)
+  -------------------------------------
+    Tension Score:    {tension.get('tension_score', 0.0):+.6f}
+    Global Stance:    {tension.get('stance', 'N/A')}
+
+    Per-Currency Breakdown:
+{ccy_table}
+
+  SECTOR ROTATION (GICS)
+  ----------------------
+    Cycle Phase:      {rotation.get('cycle_phase', 'N/A')}
+    Overweights:      {ow_str}
+    Underweights:     {uw_str}
+
+    Favourability Scores:
+{rotation_table}
+
+  MONEY VELOCITY (V = GDP/M2)
+  ---------------------------
+    Velocity:         {velocity.get('velocity', 0.0):.6f}
+    Velocity Change:  {velocity.get('velocity_change', 0.0):+.6f}
+    Velocity Regime:  {velocity.get('regime', 'N/A')}
+    Inflation Signal: {velocity.get('inflation_signal', 0.0):+.6f}
+
+  LIQUIDITY SCORE
+  ---------------
+    Composite Score:  {mv_state.get('liquidity_score', 0.0):.2f} / 100
+    Credit Impulse:   {mv_state.get('credit_impulse', 0.0):+.4f}
+    TED Spread:       {mv_state.get('ted_spread', 0.0):.4f}
+
+  YIELD CURVE ANALYSIS
+  --------------------
+    2s10s Spread:     {yc.get('spread_2s10s', 0.0):+.4f}
+    3m10y Spread:     {yc.get('spread_3m10y', 0.0):+.4f}
+    Term Premium:     {yc.get('term_premium', 0.0):+.4f}
+    Real Rate (10Y):  {yc.get('real_rate_10y', 0.0):+.4f}
+    Curve Shape:      {yc.get('curve_shape', 'N/A')}
+    Inversion:        {'YES' if yc.get('inversion_signal') else 'NO'}
+
+  CREDIT PULSE
+  ------------
+    HY-IG Spread:     {credit.get('hy_ig_spread', 0.0):.4f}
+    Spread Z-Score:   {credit.get('spread_zscore', 0.0):+.4f}
+    Credit Impulse:   {credit.get('credit_impulse', 0.0):+.4f}
+    Stress Level:     {credit.get('stress_level', 'N/A')}
+
+{fed_dashboard}
+
+{'=' * 70}
+"""
+        return report
