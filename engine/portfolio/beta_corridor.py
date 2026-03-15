@@ -25,6 +25,8 @@ VOL_STANDARD = 0.15           # Thesis standard vol (15%)
 VOL_PERCENTILE_LOW = 25
 VOL_PERCENTILE_ELEVATED = 75
 VOL_PERCENTILE_CRISIS = 95
+
+
 @dataclass
 class BetaState:
     """Current beta corridor state."""
@@ -51,9 +53,7 @@ class BetaAction:
     reason: str = ""
 
 
-# ---------------------------------------------------------------------------
-# Vol Regime Classifier
-# ---------------------------------------------------------------------------
+# ---- Vol Regime Classifier ------------------------------------------------
 class VolRegime(Enum):
     LOW_VOL = "LOW_VOL"
     NORMAL = "NORMAL"
@@ -118,9 +118,7 @@ class VolRegimeClassifier:
         return list(self._regime_history)
 
 
-# ---------------------------------------------------------------------------
-# Beta Smoothing
-# ---------------------------------------------------------------------------
+# ---- Beta Smoothing -------------------------------------------------------
 class BetaSmoothing:
     """EMA smoothing, anti-whipsaw filter, rate limiter, and Kalman estimation."""
 
@@ -178,9 +176,7 @@ class BetaSmoothing:
         self._prev_target = None
 
 
-# ---------------------------------------------------------------------------
-# Corridor Analytics
-# ---------------------------------------------------------------------------
+# ---- Corridor Analytics ---------------------------------------------------
 class CorridorAnalytics:
     """Track corridor zone stats, breach frequency, mean-reversion, entry/exit."""
 
@@ -271,9 +267,7 @@ class CorridorAnalytics:
         }
 
 
-# ---------------------------------------------------------------------------
-# Beta Corridor Engine
-# ---------------------------------------------------------------------------
+# ---- Beta Corridor Engine -------------------------------------------------
 class BetaCorridor:
     """Manages portfolio beta within the 7-12% return corridor.
     Paper broker mode: uses SPY as the beta instrument proxy."""
@@ -436,9 +430,7 @@ class BetaCorridor:
         """Update NAV for dynamic sizing."""
         self.nav = new_nav
 
-    # ------------------------------------------------------------------
-    # Enhanced methods
-    # ------------------------------------------------------------------
+    # ---- Enhanced methods ----
 
     def get_corridor_analytics(self) -> dict:
         """Return full corridor analytics dict with vol regime info."""
@@ -494,13 +486,13 @@ class BetaCorridor:
         """Test beta under stress scenarios. Returns DataFrame indexed by scenario name."""
         if scenarios is None:
             scenarios = {
-                "crash_2008": {"Rm": -0.38, "sigma_m": 0.60},
-                "covid_2020": {"Rm": -0.15, "sigma_m": 0.55},
-                "high_vol_flat": {"Rm": 0.05, "sigma_m": 0.35},
-                "low_vol_rally": {"Rm": 0.18, "sigma_m": 0.09},
-                "stagflation": {"Rm": 0.02, "sigma_m": 0.22},
-                "goldilocks": {"Rm": 0.10, "sigma_m": 0.12},
-                "normal": {"Rm": 0.09, "sigma_m": 0.15},
+                "crash_2008":     {"Rm": -0.38, "sigma_m": 0.60},
+                "covid_2020":     {"Rm": -0.15, "sigma_m": 0.55},
+                "high_vol_flat":  {"Rm":  0.05, "sigma_m": 0.35},
+                "low_vol_rally":  {"Rm":  0.18, "sigma_m": 0.09},
+                "stagflation":    {"Rm":  0.02, "sigma_m": 0.22},
+                "goldilocks":     {"Rm":  0.10, "sigma_m": 0.12},
+                "normal":         {"Rm":  0.09, "sigma_m": 0.15},
                 "deep_recession": {"Rm": -0.05, "sigma_m": 0.40},
             }
         results = []
