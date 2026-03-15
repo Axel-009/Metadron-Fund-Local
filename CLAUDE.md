@@ -4,6 +4,11 @@
 
 > "Continue building the Metadron Capital investment platform. The master repo is at `/home/user/Metadron-Capital` with a 6-layer architecture. The investment engine is in `engine/`. All 20 component repos are under `repos/`. Core platform code is in `core/`. Run `python3 -m pytest tests/ -v` to verify. Run `python3 run_open.py` to execute the full signal pipeline."
 
+## Mission
+
+**$1,000 → $100,000 in 100 days** (~4.6% daily compound return).
+Target 95%+ alpha. Compete with and outperform the Medallion fund.
+
 ## Investment Thesis
 
 Beta managed within a 7–12% return corridor (S&P 500 historical earnings range).
@@ -15,12 +20,48 @@ Paper broker mode (Yahoo Finance) — not connected to a live broker.
 ## Signal Pipeline
 
 ```
-UniverseEngine → MacroEngine → MetadronCube → AlphaOptimizer → ExecutionEngine
-     (L1)           (L2)          (L2)            (L3)             (L5)
-                                    ↓
-                          ContagionEngine (L2)
-                          StatArbEngine (L2)
-                          OptionsEngine (L5)
+UniverseEngine → MacroEngine → MetadronCube → AlphaOptimizer → BetaManager → DecisionMatrix → ExecutionEngine
+     (L1)           (L2)          (L2)            (L3)           (L4)           (L5)             (L5)
+```
+
+### Pipeline Flow (L1 → L5 → L2 → L3 → L4 → L7)
+
+```
+L1 Data         Financial-Data, QLIB, FRB        → Market data + factor research
+L2 Signals      quant-trading, ML-Macro-Market    → Strategy library + regime classifier
+L3 Intelligence ai-hedgefund, Mav-Analysis,       → Multi-agent decision engine
+                Air-LLM, AI-Newton
+L4 Portfolio    hedgefund-tracker, Ruflo-agents,   → Institutional tracker + orchestration
+                open-bb
+L5 Execution    wondertrader, exchange-core        → HFT micro-price + order matching
+L6 Agents       Ruflo-agents                       → Multi-agent orchestration
+L7 Reference    Quant-Developers-Resources         → Quant research catalog
+```
+
+### MacroEngine Cadence
+
+```
+MacroEngine
+    ├── FRED/FRB    → M2V, WALCL, T10Y2Y, FEDFUNDS
+    ├── yfinance    → GSIB basket (JPM,BAC,GS,C,MS + 5 intl)
+    ├── GMTF        → 4 gammas (Liquidity, FX shock, Wage, Reserve)
+    ├── CtV signals → carry-to-vol, stop-loss gate
+    ├── RV signals  → Z-score on tension-adjusted yields
+    └── outputs     → regime | rm_adjustment | alpha_universe | sector_weights
+          │
+          ▼
+AlphaOptimizer (regime-universe)
+    ├── tickers = macro.alpha_universe
+    ├── EWMA cov + walk-forward ML + Sharpe SLSQP
+    ├── 7 features: original 4 + credit_spread_proxy + rv_zscore + capm_residual
+    └── outputs → final_weights | sleeve_beta | pure_alpha_annual
+          │
+          ▼
+AlphaBetaUnleashed (Dataset 1) — 1-min cadence
+    ├── Rm_adjusted = Rm_realized + macro.rm_adjustment
+    ├── target_beta = corridor_fn(Rm_adjusted) × 4.7 × vol_adj
+    ├── MES_hedge_beta = target_beta - sleeve_beta
+    └── execute via PaperBroker (→ IBBroker when live)
 ```
 
 ## Architecture
@@ -45,6 +86,7 @@ Metadron-Capital/                        ← Master monorepo (Layer 0: Hub)
 │   ├── execution/                       ← L5: Execution
 │   │   ├── paper_broker.py             ← Simulated broker (Yahoo prices)
 │   │   ├── execution_engine.py         ← Full pipeline orchestrator + ML vote ensemble
+│   │   ├── decision_matrix.py          ← 6-gate trade approval + Kelly sizing + ABU beta
 │   │   ├── options_engine.py           ← Black-Scholes, Greeks, vol surface, θ+Γ optimizer
 │   │   └── conviction_override.py       ← 3-tier conviction override system
 │   ├── agents/                          ← L6: Agent orchestration
