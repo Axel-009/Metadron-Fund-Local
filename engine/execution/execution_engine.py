@@ -921,11 +921,72 @@ class ExecutionEngine:
         }
         self.tracker.record_stage("alpha", (datetime.now() - t0).total_seconds() * 1000, result["stages"]["alpha"])
 
-        # Stage 6: Beta corridor
+        # Stage 5.5: Decision Matrix (evaluate all alpha signals through gates)
+        t0 = datetime.now()
+        try:
+            from .decision_matrix import DecisionMatrix, AlphaBetaUnleashed
+            decision_mx = DecisionMatrix()
+            proposals = []
+            for ticker, weight in alpha_out.optimal_weights.items():
+                if weight < 0.01:
+                    continue
+                sig = alpha_map.get(ticker)
+                proposals.append({
+                    "ticker": ticker,
+                    "weight": weight,
+                    "alpha": sig.alpha_pred if sig else 0.0,
+                    "quality_tier": sig.quality_tier if sig else "D",
+                    "regime": cube_out.regime.value,
+                    "conviction": weight * 2,
+                    "adv_ratio": 0.01,
+                })
+            dm_results = decision_mx.evaluate_batch(proposals)
+            approved = [r for r in dm_results if r.get("approved", False)]
+            result["stages"]["decision_matrix"] = {
+                "total_proposals": len(proposals),
+                "approved": len(approved),
+                "rejected": len(proposals) - len(approved),
+                "top_scores": [
+                    {"ticker": r["ticker"], "score": round(r.get("composite_score", 0), 4)}
+                    for r in dm_results[:5]
+                ],
+            }
+            # Override alpha weights with decision matrix approved set
+            dm_approved_tickers = {r["ticker"] for r in approved}
+            alpha_out.optimal_weights = {
+                k: v for k, v in alpha_out.optimal_weights.items()
+                if k in dm_approved_tickers
+            }
+        except Exception as e:
+            result["stages"]["decision_matrix"] = {"error": str(e)}
+        self.tracker.record_stage("decision_matrix", (datetime.now() - t0).total_seconds() * 1000,
+                                  result["stages"].get("decision_matrix", {}))
+
+        # Stage 6: Beta corridor + AlphaBetaUnleashed
         t0 = datetime.now()
         beta_state, beta_action = self.beta.run_cycle(
             regime_beta_cap=cube_out.beta_cap,
         )
+        # AlphaBetaUnleashed: 1-min cadence beta management
+        abu_data = {}
+        try:
+            from .decision_matrix import AlphaBetaUnleashed
+            abu = AlphaBetaUnleashed()
+            sleeve_beta = alpha_out.sharpe_ratio * 0.1 if alpha_out.sharpe_ratio else 0.0
+            rm_adj = macro_snap.spy_return_3m * 4 + getattr(macro_snap, 'rm_adjustment', 0)
+            abu_target = abu.compute_target_beta(
+                rm_realized=macro_snap.spy_return_3m * 4,
+                rm_adjustment=getattr(macro_snap, 'rm_adjustment', 0),
+                vol=macro_snap.vix / 100,
+            )
+            abu_hedge = abu.compute_hedge_requirement(abu_target, sleeve_beta)
+            abu_data = {
+                "abu_target_beta": abu_target,
+                "sleeve_beta": sleeve_beta,
+                "hedge_requirement": abu_hedge,
+            }
+        except Exception:
+            pass
         result["stages"]["beta"] = {
             "target_beta": beta_state.target_beta,
             "current_beta": beta_state.current_beta,
@@ -933,6 +994,7 @@ class ExecutionEngine:
             "sigma_m": beta_state.sigma_m,
             "corridor": beta_state.corridor_position,
             "action": beta_action.action,
+            **abu_data,
         }
         self.tracker.record_stage("beta", (datetime.now() - t0).total_seconds() * 1000, result["stages"]["beta"])
 
