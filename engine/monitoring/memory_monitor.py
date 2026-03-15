@@ -11,6 +11,8 @@ Provides:
     - Memory budget enforcement
     - Periodic garbage collection
     - Memory usage reporting
+    - Session time/hours remaining tracking (EOD dissemination)
+    - Chat continuity context for session handoff
 """
 
 import gc
@@ -408,6 +410,199 @@ class MemoryBudgetEnforcer:
 
 
 # ---------------------------------------------------------------------------
+# Session Time Tracker — EOD Dissemination
+# ---------------------------------------------------------------------------
+@dataclass
+class SessionStatus:
+    """Session status for EOD report and chat continuity."""
+    session_start: str = ""
+    current_time: str = ""
+    elapsed_hours: float = 0.0
+    estimated_hours_remaining: float = 0.0
+    estimated_context_remaining_pct: float = 100.0
+    memory_pressure: str = "LOW"  # LOW, MODERATE, HIGH, CRITICAL
+    pipeline_runs_completed: int = 0
+    total_trades_executed: int = 0
+    files_modified: int = 0
+    commits_pushed: int = 0
+    continuity_notes: list = field(default_factory=list)
+
+
+class SessionTracker:
+    """Track session duration, resource usage, and prepare EOD handoff context.
+
+    Designed for end-of-day dissemination: tells the user how much time/memory
+    remains and provides continuity notes for the next chat session.
+    """
+
+    # Approximate limits (conservative estimates)
+    MAX_SESSION_HOURS = 8.0
+    MAX_CONTEXT_TOKENS_APPROX = 200_000
+    TOKENS_PER_EXCHANGE_APPROX = 3_000
+
+    def __init__(self):
+        self._session_start = datetime.now()
+        self._exchange_count = 0
+        self._pipeline_runs = 0
+        self._trades_executed = 0
+        self._files_modified: set = set()
+        self._commits_pushed = 0
+        self._continuity_notes: list[str] = []
+        self._milestones: list[dict] = []
+
+    def record_exchange(self):
+        """Record a user↔assistant exchange (approximates context usage)."""
+        self._exchange_count += 1
+
+    def record_pipeline_run(self):
+        self._pipeline_runs += 1
+
+    def record_trades(self, count: int):
+        self._trades_executed += count
+
+    def record_file_modified(self, filepath: str):
+        self._files_modified.add(filepath)
+
+    def record_commit(self):
+        self._commits_pushed += 1
+
+    def add_continuity_note(self, note: str):
+        """Add a note for session handoff context."""
+        self._continuity_notes.append(note)
+
+    def record_milestone(self, description: str):
+        self._milestones.append({
+            "description": description,
+            "timestamp": datetime.now().isoformat(),
+            "elapsed_hours": self.elapsed_hours,
+        })
+
+    @property
+    def elapsed_hours(self) -> float:
+        return (datetime.now() - self._session_start).total_seconds() / 3600
+
+    @property
+    def estimated_hours_remaining(self) -> float:
+        return max(0, self.MAX_SESSION_HOURS - self.elapsed_hours)
+
+    @property
+    def estimated_context_remaining_pct(self) -> float:
+        used_tokens = self._exchange_count * self.TOKENS_PER_EXCHANGE_APPROX
+        remaining = max(0, self.MAX_CONTEXT_TOKENS_APPROX - used_tokens)
+        return (remaining / self.MAX_CONTEXT_TOKENS_APPROX) * 100
+
+    def get_status(self) -> SessionStatus:
+        """Get current session status for EOD report."""
+        elapsed = self.elapsed_hours
+        remaining = self.estimated_hours_remaining
+
+        # Memory pressure based on context usage
+        ctx_pct = self.estimated_context_remaining_pct
+        if ctx_pct < 10:
+            pressure = "CRITICAL"
+        elif ctx_pct < 30:
+            pressure = "HIGH"
+        elif ctx_pct < 60:
+            pressure = "MODERATE"
+        else:
+            pressure = "LOW"
+
+        return SessionStatus(
+            session_start=self._session_start.isoformat(),
+            current_time=datetime.now().isoformat(),
+            elapsed_hours=round(elapsed, 2),
+            estimated_hours_remaining=round(remaining, 2),
+            estimated_context_remaining_pct=round(ctx_pct, 1),
+            memory_pressure=pressure,
+            pipeline_runs_completed=self._pipeline_runs,
+            total_trades_executed=self._trades_executed,
+            files_modified=len(self._files_modified),
+            commits_pushed=self._commits_pushed,
+            continuity_notes=list(self._continuity_notes),
+        )
+
+    def format_eod_summary(self) -> str:
+        """Format end-of-day session summary for dissemination."""
+        status = self.get_status()
+        lines = [
+            "=" * 60,
+            "SESSION STATUS — END OF DAY SUMMARY",
+            "=" * 60,
+            f"  Session Start:  {status.session_start[:19]}",
+            f"  Current Time:   {status.current_time[:19]}",
+            f"  Elapsed:        {status.elapsed_hours:.1f} hours",
+            f"  Est. Remaining: {status.estimated_hours_remaining:.1f} hours",
+            f"  Context Used:   {100 - status.estimated_context_remaining_pct:.0f}%",
+            f"  Memory Press.:  {status.memory_pressure}",
+            "",
+            "  ACTIVITY:",
+            f"    Pipeline Runs:   {status.pipeline_runs_completed}",
+            f"    Trades Executed: {status.total_trades_executed}",
+            f"    Files Modified:  {status.files_modified}",
+            f"    Commits Pushed:  {status.commits_pushed}",
+        ]
+
+        if self._milestones:
+            lines.extend(["", "  MILESTONES:"])
+            for m in self._milestones[-10:]:
+                lines.append(f"    [{m['elapsed_hours']:.1f}h] {m['description']}")
+
+        if status.continuity_notes:
+            lines.extend(["", "  CONTINUITY NOTES (for next session):"])
+            for note in status.continuity_notes:
+                lines.append(f"    → {note}")
+
+        # Session health recommendation
+        lines.append("")
+        if status.memory_pressure == "CRITICAL":
+            lines.append("  ⚠ SESSION NEARING LIMIT — Save state and prepare handoff")
+        elif status.memory_pressure == "HIGH":
+            lines.append("  ⚠ Context usage high — prioritize remaining tasks")
+        elif status.estimated_hours_remaining < 1:
+            lines.append("  ⚠ Less than 1 hour remaining — wrap up current work")
+        else:
+            lines.append("  ✓ Session healthy — continue as normal")
+
+        lines.append("=" * 60)
+        return "\n".join(lines)
+
+    def get_handoff_context(self) -> dict:
+        """Generate context dict for session handoff / chat continuity.
+
+        This can be serialized and included in CLAUDE.md or passed
+        to the next session for seamless continuity.
+        """
+        return {
+            "session_summary": {
+                "start": self._session_start.isoformat(),
+                "end": datetime.now().isoformat(),
+                "duration_hours": round(self.elapsed_hours, 2),
+                "exchanges": self._exchange_count,
+            },
+            "activity": {
+                "pipeline_runs": self._pipeline_runs,
+                "trades": self._trades_executed,
+                "files_modified": sorted(self._files_modified),
+                "commits": self._commits_pushed,
+            },
+            "milestones": self._milestones,
+            "continuity_notes": self._continuity_notes,
+            "recommended_next_steps": self._generate_next_steps(),
+        }
+
+    def _generate_next_steps(self) -> list[str]:
+        """Auto-generate recommended next steps based on session activity."""
+        steps = []
+        if self._pipeline_runs == 0:
+            steps.append("Run the full signal pipeline (python3 run_open.py)")
+        if self._commits_pushed == 0:
+            steps.append("Commit and push any pending changes")
+        if self._trades_executed == 0:
+            steps.append("Execute paper trades based on current signals")
+        return steps
+
+
+# ---------------------------------------------------------------------------
 # Memory Monitor
 # ---------------------------------------------------------------------------
 class MemoryMonitor:
@@ -420,6 +615,7 @@ class MemoryMonitor:
         self._df_analyzer = DataFrameMemoryAnalyzer()
         self._enforcer = MemoryBudgetEnforcer(budget)
         self._component_memory: dict[str, ComponentMemory] = {}
+        self._session = SessionTracker()
 
     def take_snapshot(self) -> MemorySnapshot:
         return self._tracker.take_snapshot()
@@ -490,6 +686,29 @@ class MemoryMonitor:
     def get_cache(self) -> LRUCacheManager:
         return self._cache
 
+    @property
+    def session(self) -> SessionTracker:
+        """Access session tracker for EOD dissemination."""
+        return self._session
+
+    def get_eod_report(self) -> str:
+        """Generate combined memory + session EOD report."""
+        memory_report = self.print_report()
+        session_report = self._session.format_eod_summary()
+        return memory_report + "\n\n" + session_report
+
+    def get_session_handoff(self) -> dict:
+        """Get session handoff context for chat continuity."""
+        health = self.check_health()
+        handoff = self._session.get_handoff_context()
+        handoff["memory_state"] = {
+            "status": health["status"],
+            "rss_mb": health["snapshot"]["rss_mb"],
+            "dataframe_count": health["snapshot"]["dataframe_count"],
+            "growth_rate_mb_hr": health["growth_rate_mb_hr"],
+        }
+        return handoff
+
     def print_report(self) -> str:
         health = self.check_health()
         lines = [
@@ -521,6 +740,17 @@ class MemoryMonitor:
             lines.append("  Issues:")
             for issue in health["issues"]:
                 lines.append(f"    ! {issue}")
+
+        # Session status summary
+        session = self._session.get_status()
+        lines.extend([
+            "",
+            "  Session:",
+            f"    Elapsed: {session.elapsed_hours:.1f}h  |  "
+            f"Remaining: {session.estimated_hours_remaining:.1f}h  |  "
+            f"Context: {session.estimated_context_remaining_pct:.0f}%",
+            f"    Pressure: {session.memory_pressure}",
+        ])
 
         lines.append("=" * 60)
         return "\n".join(lines)

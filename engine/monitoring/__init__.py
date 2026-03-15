@@ -1,1 +1,1 @@
-"""Monitoring Layer — daily reports, heatmaps, anomaly detection, memory management."""
+"""Monitoring Layer — daily reports, heatmaps, anomaly detection, memory management, session tracking."""
