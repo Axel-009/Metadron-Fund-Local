@@ -14,6 +14,12 @@ Extended modules:
     YieldCurveAnalyzer    — Full yield curve analysis (2s10s, 3m10y, term premium)
     CreditPulseMonitor    — Credit spread monitoring, HY/IG differential
     MacroFeatureBuilder   — Build 50+ macro features for ML models
+
+GMTF Enhancement modules:
+    MonetaryTensionIndex  — SDR-weighted monetary tension across G5 currencies
+    SectorRotationEngine  — GICS sector rotation based on macro regime cycle
+    MoneyVelocityEngine   — V=GDP/M2 proxy, velocity regime, inflation signal
+    FedReserveIntegration — Fed balance sheet, net liquidity, liquidity impulse
 """
 
 import numpy as np
