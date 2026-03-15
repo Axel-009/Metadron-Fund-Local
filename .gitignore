@@ -16,10 +16,3 @@ node_modules/
 .DS_Store
 target/
 *.pkl
-
-# Large binary files (PDFs, data archives)
-*.pdf
-*.pptx
-*.zip
-# Large test data
-repos/layer3_ml/AI-Newton/data/test_cases/
