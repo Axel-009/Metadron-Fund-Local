@@ -82,6 +82,30 @@ def main():
     except Exception as e:
         print(f"  Sector tracker: {e}")
 
+    # Contagion Engine — EOD systemic risk
+    try:
+        from engine.signals.contagion_engine import ContagionEngine
+        contagion = ContagionEngine()
+        scenarios = contagion.run_all_scenarios()
+        print("=" * 70)
+        print("CONTAGION ENGINE — SYSTEMIC RISK")
+        print("=" * 70)
+        for name, result in list(scenarios.items())[:5]:
+            risk = result.get("systemic_risk", 0)
+            print(f"  {name:<25} Systemic Risk: {risk:.3f}")
+        print()
+    except Exception as e:
+        print(f"  Contagion engine: {e}")
+
+    # Stat Arb — EOD pair status
+    try:
+        from engine.signals.stat_arb_engine import StatArbEngine
+        stat_arb = StatArbEngine()
+        print(stat_arb.format_stat_arb_report())
+        print()
+    except Exception as e:
+        print(f"  Stat arb engine: {e}")
+
     # Anomaly Detection
     try:
         from engine.monitoring.anomaly_detector import AnomalyDetector

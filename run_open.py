@@ -130,6 +130,41 @@ def main():
     except Exception as e:
         print(f"  Research bots: {e}")
 
+    # Contagion Engine
+    try:
+        from engine.signals.contagion_engine import ContagionEngine
+        contagion = ContagionEngine()
+        print(contagion.format_contagion_report())
+        print()
+    except Exception as e:
+        print(f"  Contagion engine: {e}")
+
+    # Statistical Arbitrage Engine
+    try:
+        from engine.signals.stat_arb_engine import StatArbEngine
+        stat_arb = StatArbEngine()
+        signals = stat_arb.get_trading_signals()
+        print(stat_arb.format_stat_arb_report())
+        print()
+    except Exception as e:
+        print(f"  Stat arb engine: {e}")
+
+    # Options Theta-Gamma Optimizer
+    try:
+        from engine.execution.options_engine import OptionsStrategyBuilder
+        opt_builder = OptionsStrategyBuilder(spot=450.0, vol=0.18, rate=0.05)
+        tg_result = opt_builder.theta_gamma_optimize()
+        metrics = tg_result.get("metrics", {})
+        print("OPTIONS θ+Γ OPTIMIZER:")
+        print(f"  Formula: {tg_result.get('formula', 'max(Θ+Γ) - c·V')}")
+        print(f"  Best OTM: {metrics.get('otm_pct', 0):.0%}")
+        print(f"  Theta: {metrics.get('theta', 0):.4f}")
+        print(f"  Gamma: {metrics.get('gamma', 0):.6f}")
+        print(f"  Score: {metrics.get('score', 0):.4f}")
+        print()
+    except Exception as e:
+        print(f"  Options optimizer: {e}")
+
     # Sector Tracker
     try:
         from engine.monitoring.sector_tracker import SectorTrackingEngine
@@ -171,6 +206,16 @@ def main():
         print(mem.print_report())
     except Exception as e:
         print(f"  Memory monitor: {e}")
+
+    # Macro Intelligence (GMTF)
+    try:
+        from engine.signals.macro_engine import MacroEngine as ME2
+        me2 = ME2()
+        if hasattr(me2, 'generate_macro_intelligence'):
+            print(me2.generate_macro_intelligence())
+            print()
+    except Exception as e:
+        print(f"  Macro intelligence: {e}")
 
     # Generate and save open report
     from engine.signals.macro_engine import MacroEngine
