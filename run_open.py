@@ -1,7 +1,15 @@
 #!/usr/bin/env python3
 """Metadron Capital — Morning Open (09:30 ET).
 
-Runs: macro scan → universe ranking → morning signals → open report.
+Runs: macro scan → universe ranking → morning signals → full pipeline → reports.
+
+Generates:
+    - Full signal pipeline execution
+    - Platinum Report (30-section executive macro state)
+    - Portfolio Analytics Report (scenario engine + performance)
+    - Research Bot intelligence (11 GICS sector bots)
+    - Sector heatmap
+    - Memory/session status
 """
 
 import sys
@@ -97,9 +105,72 @@ def main():
     print(f"  Net Exp: {portfolio.get('net_exposure', 0):.1%}")
     print()
 
+    # Execution report (ASCII)
+    print(engine.format_execution_report())
+    print()
+
     # Heatmap
     print(generate_sector_heatmap())
     print()
+
+    # Research Bots
+    try:
+        from engine.agents.research_bots import ResearchBotManager
+        print("Running 11 GICS sector research bots...")
+        research_mgr = ResearchBotManager()
+        # Run research with universe data
+        universe_data = {}
+        for sector in engine.universe.get_sectors():
+            secs = engine.universe.get_by_sector(sector)
+            universe_data[sector] = [s.ticker for s in secs[:15]]
+        research_mgr.run_daily_research(universe_data)
+        print(research_mgr.print_dna_report())
+        print()
+        research_mgr.save_state()
+    except Exception as e:
+        print(f"  Research bots: {e}")
+
+    # Sector Tracker
+    try:
+        from engine.monitoring.sector_tracker import SectorTrackingEngine
+        tracker = SectorTrackingEngine()
+        print(tracker.format_sector_dashboard())
+        print()
+    except Exception as e:
+        print(f"  Sector tracker: {e}")
+
+    # Platinum Report
+    try:
+        from engine.monitoring.platinum_report import PlatinumReportGenerator
+        plat_gen = PlatinumReportGenerator()
+        plat_report = plat_gen.generate_open_report()
+        print(plat_report)
+        # Save to logs
+        log_dir = Path("logs/platinum")
+        log_dir.mkdir(parents=True, exist_ok=True)
+        (log_dir / f"open_{datetime.now().strftime('%Y%m%d')}.txt").write_text(plat_report)
+    except Exception as e:
+        print(f"  Platinum report: {e}")
+
+    # Portfolio Analytics Report
+    try:
+        from engine.monitoring.portfolio_report import PortfolioReportGenerator
+        port_gen = PortfolioReportGenerator()
+        port_report = port_gen.generate_open_report()
+        print(port_report)
+        log_dir = Path("logs/portfolio")
+        log_dir.mkdir(parents=True, exist_ok=True)
+        (log_dir / f"open_{datetime.now().strftime('%Y%m%d')}.txt").write_text(port_report)
+    except Exception as e:
+        print(f"  Portfolio report: {e}")
+
+    # Memory/Session status
+    try:
+        from engine.monitoring.memory_monitor import MemoryMonitor
+        mem = MemoryMonitor()
+        print(mem.print_report())
+    except Exception as e:
+        print(f"  Memory monitor: {e}")
 
     # Generate and save open report
     from engine.signals.macro_engine import MacroEngine
@@ -107,7 +178,7 @@ def main():
     macro_snap = macro_engine.analyze()
     report = generate_open_report(macro_snap)
     path = save_report(report)
-    print(f"Report saved to: {path}")
+    print(f"\nReport saved to: {path}")
     print()
     print("=" * 70)
     print("MORNING OPEN COMPLETE")
