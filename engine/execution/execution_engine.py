@@ -11,10 +11,24 @@ ML Vote Ensemble (5 tiers, each votes ±1):
     Tier-5  Quality tier voter (top-down + bottom-up)
 
 effective_min_edge = 2.0 + max(0, -vote_score) bps
+
+Deep Trading Features:
+    - Micro-price estimation (bid/ask midpoint proxy)
+    - Order flow imbalance detection
+    - Cross-asset correlation signals
+    - Intraday momentum decomposition
+
+Risk Gate Manager:
+    - Pre-trade risk validation (8 gates)
+    - Position-level limits
+    - Portfolio-level limits
+    - Drawdown circuit breakers
 """
 
+import logging
 import numpy as np
 import pandas as pd
+from collections import deque
 from dataclasses import dataclass, field
 from typing import Optional
 from datetime import datetime
@@ -29,6 +43,477 @@ from .paper_broker import (
     PaperBroker, OrderSide, SignalType, Position,
 )
 
+logger = logging.getLogger(__name__)
+
+
+# ---------------------------------------------------------------------------
+# Deep Trading Features
+# ---------------------------------------------------------------------------
+@dataclass
+class MicroPriceEstimate:
+    """Micro-price estimation from recent price action."""
+    ticker: str = ""
+    mid_price: float = 0.0
+    micro_price: float = 0.0
+    bid_proxy: float = 0.0
+    ask_proxy: float = 0.0
+    spread_bps: float = 0.0
+    imbalance: float = 0.0        # [-1, +1] order flow imbalance
+    urgency_score: float = 0.0    # [0, 1] how urgent to trade
+
+
+class MicroPriceEngine:
+    """Estimate micro-prices from daily OHLCV data (Yahoo proxy).
+
+    In paper broker mode, we estimate bid/ask from high/low range
+    and compute order flow imbalance from close position within range.
+    """
+
+    def __init__(self, spread_multiplier: float = 1.5):
+        self.spread_multiplier = spread_multiplier
+        self._cache: dict[str, MicroPriceEstimate] = {}
+
+    def estimate(self, ticker: str, prices: pd.DataFrame) -> MicroPriceEstimate:
+        """Estimate micro-price from OHLCV data."""
+        est = MicroPriceEstimate(ticker=ticker)
+
+        if prices is None or prices.empty or len(prices) < 5:
+            return est
+
+        try:
+            # Get latest bar
+            last = prices.iloc[-1]
+            prev = prices.iloc[-2]
+
+            # Use column names or positional
+            close = float(last.get("Close", last.get("Adj Close", last.iloc[-1])))
+            high = float(last.get("High", close * 1.005))
+            low = float(last.get("Low", close * 0.995))
+            volume = float(last.get("Volume", 1e6))
+
+            prev_close = float(prev.get("Close", prev.get("Adj Close", prev.iloc[-1])))
+            prev_volume = float(prev.get("Volume", 1e6))
+
+            est.mid_price = (high + low) / 2
+
+            # Spread estimation from daily range
+            daily_range = high - low
+            if est.mid_price > 0:
+                est.spread_bps = (daily_range / est.mid_price) * 10000 * 0.1  # ~10% of range
+
+            # Bid/ask proxy
+            half_spread = daily_range * 0.05 * self.spread_multiplier
+            est.bid_proxy = est.mid_price - half_spread
+            est.ask_proxy = est.mid_price + half_spread
+
+            # Micro-price: weighted by close position in range
+            if daily_range > 0:
+                close_position = (close - low) / daily_range
+                est.micro_price = est.bid_proxy + close_position * (est.ask_proxy - est.bid_proxy)
+            else:
+                est.micro_price = close
+
+            # Order flow imbalance: close relative to open + volume change
+            open_price = float(last.get("Open", prev_close))
+            if daily_range > 0:
+                price_imbalance = (close - open_price) / daily_range
+            else:
+                price_imbalance = 0.0
+
+            volume_imbalance = 0.0
+            if prev_volume > 0:
+                vol_ratio = volume / prev_volume
+                volume_imbalance = np.clip((vol_ratio - 1.0) / 2.0, -1, 1)
+
+            # Combined imbalance
+            est.imbalance = float(np.clip(
+                0.6 * price_imbalance + 0.4 * volume_imbalance * np.sign(price_imbalance),
+                -1, 1,
+            ))
+
+            # Urgency: higher when price is near extreme of range with volume
+            if daily_range > 0:
+                extremity = abs(close_position - 0.5) * 2  # 0 at midpoint, 1 at edges
+                vol_activity = min(volume / max(prev_volume, 1), 3.0) / 3.0
+                est.urgency_score = float(np.clip(extremity * 0.5 + vol_activity * 0.5, 0, 1))
+
+            self._cache[ticker] = est
+
+        except Exception as e:
+            logger.debug(f"MicroPrice estimate failed for {ticker}: {e}")
+
+        return est
+
+
+# ---------------------------------------------------------------------------
+# Cross-Asset Correlation Monitor
+# ---------------------------------------------------------------------------
+class CrossAssetMonitor:
+    """Track cross-asset correlations for signal confirmation."""
+
+    BENCHMARKS = {
+        "equity": "SPY",
+        "bonds": "TLT",
+        "gold": "GLD",
+        "oil": "USO",
+        "dollar": "UUP",
+        "volatility": "VXX",
+    }
+
+    def __init__(self, lookback: int = 60):
+        self.lookback = lookback
+        self._corr_matrix: Optional[pd.DataFrame] = None
+        self._regime_correlations: dict[str, float] = {}
+
+    def compute_correlations(self) -> dict:
+        """Compute correlation matrix for cross-asset benchmarks."""
+        try:
+            start = (pd.Timestamp.now() - pd.Timedelta(days=self.lookback + 30)).strftime("%Y-%m-%d")
+            tickers = list(self.BENCHMARKS.values())
+            prices = get_adj_close(tickers, start=start)
+
+            if prices.empty or len(prices) < 20:
+                return {}
+
+            returns = prices.pct_change().dropna()
+            self._corr_matrix = returns.corr()
+
+            # Key relationships
+            result = {}
+            if "SPY" in returns.columns and "TLT" in returns.columns:
+                result["stock_bond_corr"] = float(returns["SPY"].corr(returns["TLT"]))
+            if "SPY" in returns.columns and "GLD" in returns.columns:
+                result["stock_gold_corr"] = float(returns["SPY"].corr(returns["GLD"]))
+            if "SPY" in returns.columns and "UUP" in returns.columns:
+                result["stock_dollar_corr"] = float(returns["SPY"].corr(returns["UUP"]))
+
+            # Risk-on/risk-off signal
+            risk_on_score = 0.0
+            if result.get("stock_bond_corr", 0) < -0.2:
+                risk_on_score += 0.3  # Normal inverse relationship = healthy
+            if result.get("stock_gold_corr", 0) < 0:
+                risk_on_score += 0.3  # Gold not rallying = risk-on
+            if result.get("stock_dollar_corr", 0) > -0.3:
+                risk_on_score += 0.4
+
+            result["risk_on_score"] = float(np.clip(risk_on_score, 0, 1))
+            self._regime_correlations = result
+            return result
+
+        except Exception as e:
+            logger.debug(f"Cross-asset correlation failed: {e}")
+            return {}
+
+
+# ---------------------------------------------------------------------------
+# Risk Gate Manager
+# ---------------------------------------------------------------------------
+@dataclass
+class RiskGateResult:
+    """Result of risk gate evaluation."""
+    passed: bool = True
+    gate_name: str = ""
+    reason: str = ""
+    limit_value: float = 0.0
+    current_value: float = 0.0
+
+
+class RiskGateManager:
+    """Pre-trade risk validation with 8 independent gates.
+
+    Each gate must pass for a trade to execute.
+    Gates can be soft (warning) or hard (block).
+    """
+
+    def __init__(
+        self,
+        max_position_pct: float = 0.10,       # 10% max single position
+        max_sector_pct: float = 0.30,          # 30% max sector concentration
+        max_daily_loss_pct: float = 0.03,      # 3% max daily loss
+        max_gross_exposure: float = 2.5,       # 250% max gross exposure
+        max_net_exposure: float = 1.5,         # 150% max net exposure
+        max_trade_count_daily: int = 100,      # Max trades per day
+        min_liquidity_adv: float = 100_000,    # Min average daily volume (dollars)
+        max_drawdown_pct: float = 0.10,        # 10% max drawdown before halt
+    ):
+        self.max_position_pct = max_position_pct
+        self.max_sector_pct = max_sector_pct
+        self.max_daily_loss_pct = max_daily_loss_pct
+        self.max_gross_exposure = max_gross_exposure
+        self.max_net_exposure = max_net_exposure
+        self.max_trade_count_daily = max_trade_count_daily
+        self.min_liquidity_adv = min_liquidity_adv
+        self.max_drawdown_pct = max_drawdown_pct
+        self._daily_trade_count = 0
+        self._daily_pnl = 0.0
+        self._peak_nav = 0.0
+        self._trade_date = ""
+
+    def evaluate_all(
+        self,
+        ticker: str,
+        side: OrderSide,
+        quantity: int,
+        price: float,
+        broker: PaperBroker,
+    ) -> list[RiskGateResult]:
+        """Run all 8 risk gates. Returns list of results."""
+        results = []
+        nav = broker.compute_nav()
+        if nav <= 0:
+            nav = 1_000_000  # Fallback
+
+        # Track peak NAV for drawdown
+        if nav > self._peak_nav:
+            self._peak_nav = nav
+
+        # Reset daily counter if new day
+        today = datetime.now().strftime("%Y-%m-%d")
+        if today != self._trade_date:
+            self._daily_trade_count = 0
+            self._daily_pnl = 0.0
+            self._trade_date = today
+
+        trade_value = quantity * price
+
+        # Gate 1: Position size limit
+        position_pct = trade_value / nav
+        results.append(RiskGateResult(
+            passed=position_pct <= self.max_position_pct,
+            gate_name="G1_POSITION_SIZE",
+            reason=f"Position {position_pct:.1%} vs limit {self.max_position_pct:.1%}",
+            limit_value=self.max_position_pct,
+            current_value=position_pct,
+        ))
+
+        # Gate 2: Sector concentration
+        sector_exposure = self._compute_sector_exposure(ticker, trade_value, broker)
+        results.append(RiskGateResult(
+            passed=sector_exposure <= self.max_sector_pct,
+            gate_name="G2_SECTOR_CONCENTRATION",
+            reason=f"Sector {sector_exposure:.1%} vs limit {self.max_sector_pct:.1%}",
+            limit_value=self.max_sector_pct,
+            current_value=sector_exposure,
+        ))
+
+        # Gate 3: Daily loss limit
+        daily_loss_pct = abs(min(self._daily_pnl, 0)) / nav
+        results.append(RiskGateResult(
+            passed=daily_loss_pct <= self.max_daily_loss_pct,
+            gate_name="G3_DAILY_LOSS",
+            reason=f"Daily loss {daily_loss_pct:.1%} vs limit {self.max_daily_loss_pct:.1%}",
+            limit_value=self.max_daily_loss_pct,
+            current_value=daily_loss_pct,
+        ))
+
+        # Gate 4: Gross exposure
+        exposures = broker.compute_exposures()
+        gross = exposures.get("gross", 0)
+        results.append(RiskGateResult(
+            passed=gross <= self.max_gross_exposure,
+            gate_name="G4_GROSS_EXPOSURE",
+            reason=f"Gross {gross:.1%} vs limit {self.max_gross_exposure:.1%}",
+            limit_value=self.max_gross_exposure,
+            current_value=gross,
+        ))
+
+        # Gate 5: Net exposure
+        net = exposures.get("net", 0)
+        results.append(RiskGateResult(
+            passed=abs(net) <= self.max_net_exposure,
+            gate_name="G5_NET_EXPOSURE",
+            reason=f"Net {net:.1%} vs limit {self.max_net_exposure:.1%}",
+            limit_value=self.max_net_exposure,
+            current_value=abs(net),
+        ))
+
+        # Gate 6: Trade count throttle
+        results.append(RiskGateResult(
+            passed=self._daily_trade_count < self.max_trade_count_daily,
+            gate_name="G6_TRADE_COUNT",
+            reason=f"Trades {self._daily_trade_count} vs limit {self.max_trade_count_daily}",
+            limit_value=float(self.max_trade_count_daily),
+            current_value=float(self._daily_trade_count),
+        ))
+
+        # Gate 7: Drawdown circuit breaker
+        drawdown = 1 - (nav / self._peak_nav) if self._peak_nav > 0 else 0
+        results.append(RiskGateResult(
+            passed=drawdown <= self.max_drawdown_pct,
+            gate_name="G7_DRAWDOWN",
+            reason=f"Drawdown {drawdown:.1%} vs limit {self.max_drawdown_pct:.1%}",
+            limit_value=self.max_drawdown_pct,
+            current_value=drawdown,
+        ))
+
+        # Gate 8: Cash sufficiency (for buys)
+        if side in (OrderSide.BUY, OrderSide.COVER):
+            cash_sufficient = broker.state.cash >= trade_value * 0.95
+            results.append(RiskGateResult(
+                passed=cash_sufficient,
+                gate_name="G8_CASH_SUFFICIENCY",
+                reason=f"Cash ${broker.state.cash:,.0f} vs trade ${trade_value:,.0f}",
+                limit_value=trade_value,
+                current_value=broker.state.cash,
+            ))
+        else:
+            results.append(RiskGateResult(
+                passed=True,
+                gate_name="G8_CASH_SUFFICIENCY",
+                reason="Sell order — no cash check needed",
+            ))
+
+        return results
+
+    def all_passed(self, results: list[RiskGateResult]) -> bool:
+        return all(r.passed for r in results)
+
+    def record_trade(self, pnl: float = 0.0):
+        """Record a completed trade for daily tracking."""
+        self._daily_trade_count += 1
+        self._daily_pnl += pnl
+
+    def _compute_sector_exposure(
+        self, ticker: str, trade_value: float, broker: PaperBroker,
+    ) -> float:
+        """Compute sector exposure including proposed trade."""
+        nav = broker.state.nav
+        if nav <= 0:
+            return 0.0
+        # Simplified: treat each position as its own sector for now
+        existing = sum(
+            abs(p.market_value) for p in broker.state.positions.values()
+            if p.sector == ticker  # Will match sector-level ETFs
+        )
+        return (existing + trade_value) / nav
+
+    def get_summary(self) -> dict:
+        """Risk gate status summary."""
+        return {
+            "daily_trades": self._daily_trade_count,
+            "daily_pnl": self._daily_pnl,
+            "peak_nav": self._peak_nav,
+            "max_position_pct": self.max_position_pct,
+            "max_sector_pct": self.max_sector_pct,
+            "max_daily_loss_pct": self.max_daily_loss_pct,
+        }
+
+
+# ---------------------------------------------------------------------------
+# Deep Trading Feature Builder
+# ---------------------------------------------------------------------------
+class DeepTradingFeatures:
+    """Build deep trading features from price data.
+
+    Combines micro-price, cross-asset, and momentum features
+    into a unified feature vector for ML voting.
+    """
+
+    def __init__(self):
+        self._micro_engine = MicroPriceEngine()
+        self._cross_asset = CrossAssetMonitor()
+        self._feature_history: dict[str, deque] = {}
+
+    def build_features(self, ticker: str, returns: pd.Series) -> dict:
+        """Build comprehensive feature set for a single ticker."""
+        features = {"ticker": ticker}
+
+        if returns is None or returns.empty or len(returns) < 21:
+            return features
+
+        r = returns.values
+
+        # Momentum features (multiple horizons)
+        features["mom_5d"] = float(r[-5:].sum()) if len(r) >= 5 else 0
+        features["mom_10d"] = float(r[-10:].sum()) if len(r) >= 10 else 0
+        features["mom_21d"] = float(r[-21:].sum()) if len(r) >= 21 else 0
+        features["mom_63d"] = float(r[-63:].sum()) if len(r) >= 63 else 0
+        features["mom_126d"] = float(r[-126:].sum()) if len(r) >= 126 else 0
+        features["mom_252d"] = float(r[-252:].sum()) if len(r) >= 252 else 0
+
+        # Momentum acceleration (rate of change of momentum)
+        if len(r) >= 42:
+            mom_recent = r[-21:].sum()
+            mom_prev = r[-42:-21].sum()
+            features["mom_acceleration"] = mom_recent - mom_prev
+        else:
+            features["mom_acceleration"] = 0
+
+        # Volatility features
+        features["vol_5d"] = float(r[-5:].std() * np.sqrt(252)) if len(r) >= 5 else 0
+        features["vol_21d"] = float(r[-21:].std() * np.sqrt(252)) if len(r) >= 21 else 0
+        features["vol_63d"] = float(r[-63:].std() * np.sqrt(252)) if len(r) >= 63 else 0
+
+        # Vol regime (recent vs long-term)
+        if len(r) >= 63:
+            vol_ratio = r[-21:].std() / max(r[-63:].std(), 1e-8)
+            features["vol_regime"] = float(vol_ratio)
+        else:
+            features["vol_regime"] = 1.0
+
+        # Skewness and kurtosis
+        if len(r) >= 21:
+            features["skew_21d"] = float(pd.Series(r[-21:]).skew())
+            features["kurt_21d"] = float(pd.Series(r[-21:]).kurtosis())
+        else:
+            features["skew_21d"] = 0
+            features["kurt_21d"] = 0
+
+        # Mean reversion signal
+        if len(r) >= 63:
+            z_score = (r[-1] - r[-63:].mean()) / max(r[-63:].std(), 1e-8)
+            features["zscore_63d"] = float(np.clip(z_score, -4, 4))
+        else:
+            features["zscore_63d"] = 0
+
+        # Drawdown from peak
+        if len(r) >= 21:
+            cum = np.cumsum(r[-63:]) if len(r) >= 63 else np.cumsum(r[-21:])
+            peak = np.maximum.accumulate(cum)
+            dd = cum - peak
+            features["max_drawdown"] = float(dd.min())
+            features["current_drawdown"] = float(dd[-1])
+        else:
+            features["max_drawdown"] = 0
+            features["current_drawdown"] = 0
+
+        # Autocorrelation (serial correlation)
+        if len(r) >= 22:
+            features["autocorr_1d"] = float(np.corrcoef(r[-22:-1], r[-21:])[0, 1])
+        else:
+            features["autocorr_1d"] = 0
+
+        # RSI proxy (14-period)
+        if len(r) >= 14:
+            gains = r[-14:].copy()
+            losses = r[-14:].copy()
+            gains[gains < 0] = 0
+            losses[losses > 0] = 0
+            avg_gain = gains.mean()
+            avg_loss = abs(losses.mean())
+            if avg_loss > 0:
+                rs = avg_gain / avg_loss
+                features["rsi_14"] = 100 - (100 / (1 + rs))
+            else:
+                features["rsi_14"] = 100
+        else:
+            features["rsi_14"] = 50
+
+        # MACD proxy (12/26)
+        if len(r) >= 26:
+            ema_12 = float(pd.Series(r).ewm(span=12).mean().iloc[-1])
+            ema_26 = float(pd.Series(r).ewm(span=26).mean().iloc[-1])
+            features["macd_signal"] = ema_12 - ema_26
+        else:
+            features["macd_signal"] = 0
+
+        # Store in history
+        if ticker not in self._feature_history:
+            self._feature_history[ticker] = deque(maxlen=252)
+        self._feature_history[ticker].append(features)
+
+        return features
+
 
 # ---------------------------------------------------------------------------
 # ML Vote Ensemble (pure-numpy, no external ML frameworks required)
@@ -40,10 +525,28 @@ class VoteResult:
     votes: dict = field(default_factory=dict)  # tier → vote
     signal: SignalType = SignalType.HOLD
     edge_bps: float = 0.0
+    confidence: float = 0.0
+    features: dict = field(default_factory=dict)
 
 
 class MLVoteEnsemble:
-    """5-tier vote ensemble. Each tier votes ±1. Pure numpy."""
+    """5-tier vote ensemble. Each tier votes ±1. Pure numpy.
+
+    Enhanced with deep trading features and adaptive weighting.
+    """
+
+    # Tier weights (can be adjusted based on historical performance)
+    TIER_WEIGHTS = {
+        "T1_neural": 1.0,
+        "T2_momentum": 1.2,
+        "T3_vol_regime": 0.8,
+        "T4_monte_carlo": 0.9,
+        "T5_quality": 1.1,
+    }
+
+    def __init__(self):
+        self._feature_builder = DeepTradingFeatures()
+        self._vote_history: dict[str, list] = {}
 
     def vote(self, ticker: str, returns: pd.Series, alpha_signal: Optional[AlphaSignal] = None) -> VoteResult:
         result = VoteResult(ticker=ticker)
@@ -51,6 +554,9 @@ class MLVoteEnsemble:
             return result
 
         r = returns.values
+
+        # Build deep features
+        result.features = self._feature_builder.build_features(ticker, returns)
 
         # Tier 1: Simple neural net (2-layer, pure numpy)
         result.votes["T1_neural"] = self._tier1_neural(r)
@@ -67,9 +573,23 @@ class MLVoteEnsemble:
         # Tier 5: Quality tier
         result.votes["T5_quality"] = self._tier5_quality(alpha_signal)
 
-        # Aggregate
-        result.score = sum(result.votes.values())
+        # Weighted aggregate
+        weighted_score = sum(
+            vote * self.TIER_WEIGHTS.get(tier, 1.0)
+            for tier, vote in result.votes.items()
+        )
+        total_weight = sum(self.TIER_WEIGHTS.get(t, 1.0) for t in result.votes)
+        result.score = weighted_score / max(total_weight / 5, 1)  # Normalize to [-5, +5] range
+
         result.edge_bps = 2.0 + max(0, -result.score)
+
+        # Confidence based on vote agreement
+        non_zero_votes = [v for v in result.votes.values() if v != 0]
+        if non_zero_votes:
+            agreement = abs(sum(non_zero_votes)) / len(non_zero_votes)
+            result.confidence = agreement
+        else:
+            result.confidence = 0.0
 
         # Signal assignment
         if result.score >= 3:
@@ -82,6 +602,15 @@ class MLVoteEnsemble:
             result.signal = SignalType.QUALITY_SELL
         else:
             result.signal = SignalType.HOLD
+
+        # Track vote history
+        if ticker not in self._vote_history:
+            self._vote_history[ticker] = []
+        self._vote_history[ticker].append({
+            "timestamp": datetime.now().isoformat(),
+            "score": result.score,
+            "signal": result.signal.value,
+        })
 
         return result
 
@@ -152,6 +681,109 @@ class MLVoteEnsemble:
             return -1
         return 0
 
+    def get_vote_history(self, ticker: str) -> list:
+        return self._vote_history.get(ticker, [])
+
+
+# ---------------------------------------------------------------------------
+# Trade Allocation Engine
+# ---------------------------------------------------------------------------
+class TradeAllocator:
+    """Convert signals and weights into concrete trade sizes.
+
+    Respects sleeve allocations from Gate-Z and position limits.
+    """
+
+    def __init__(self, min_trade_value: float = 1000.0):
+        self.min_trade_value = min_trade_value
+
+    def allocate(
+        self,
+        ticker: str,
+        weight: float,
+        vote: VoteResult,
+        nav: float,
+        equity_budget: float,
+        current_position: Optional[Position] = None,
+        price: float = 0.0,
+    ) -> dict:
+        """Compute trade allocation for a single ticker.
+
+        Returns dict with side, quantity, target_value, etc.
+        """
+        result = {
+            "ticker": ticker,
+            "side": None,
+            "quantity": 0,
+            "target_value": 0.0,
+            "price": price,
+            "signal": vote.signal,
+            "vote_score": vote.score,
+            "weight": weight,
+        }
+
+        if price <= 0 or weight < 0.005:
+            return result
+
+        if vote.signal in (SignalType.ML_AGENT_BUY, SignalType.QUALITY_BUY):
+            # Target value based on weight and confidence
+            confidence_adj = 0.5 + 0.5 * vote.confidence
+            target_value = equity_budget * weight * confidence_adj
+
+            # Account for existing position
+            current_value = 0
+            if current_position and current_position.quantity > 0:
+                current_value = current_position.quantity * price
+
+            incremental_value = target_value - current_value
+            if incremental_value > self.min_trade_value:
+                qty = max(1, int(incremental_value / price))
+                result["side"] = OrderSide.BUY
+                result["quantity"] = qty
+                result["target_value"] = target_value
+
+        elif vote.signal in (SignalType.ML_AGENT_SELL, SignalType.QUALITY_SELL):
+            if current_position and current_position.quantity > 0:
+                # Sell based on conviction
+                sell_pct = 0.5 if vote.score >= -3 else 1.0
+                qty = max(1, int(current_position.quantity * sell_pct))
+                result["side"] = OrderSide.SELL
+                result["quantity"] = qty
+                result["target_value"] = qty * price
+
+        return result
+
+
+# ---------------------------------------------------------------------------
+# Pipeline Stage Tracker
+# ---------------------------------------------------------------------------
+class PipelineTracker:
+    """Track execution timing and results for each pipeline stage."""
+
+    def __init__(self):
+        self._stages: list[dict] = []
+        self._start_time: Optional[datetime] = None
+
+    def start_pipeline(self):
+        self._stages = []
+        self._start_time = datetime.now()
+
+    def record_stage(self, name: str, duration_ms: float, result: dict):
+        self._stages.append({
+            "name": name,
+            "duration_ms": duration_ms,
+            "result_keys": list(result.keys()),
+            "timestamp": datetime.now().isoformat(),
+        })
+
+    def get_summary(self) -> dict:
+        total_ms = sum(s["duration_ms"] for s in self._stages)
+        return {
+            "total_duration_ms": total_ms,
+            "stages": self._stages,
+            "start_time": self._start_time.isoformat() if self._start_time else "",
+        }
+
 
 # ---------------------------------------------------------------------------
 # Execution Engine
@@ -159,13 +791,18 @@ class MLVoteEnsemble:
 class ExecutionEngine:
     """Full pipeline orchestrator: Universe → Macro → Cube → Alpha → Execute.
 
-    Runs the complete Metadron Capital investment engine.
+    Runs the complete Metadron Capital investment engine with:
+    - Deep trading features (micro-price, cross-asset)
+    - 8-gate risk management
+    - Smart trade allocation
+    - Pipeline performance tracking
     """
 
     def __init__(
         self,
         initial_nav: float = 1_000_000.0,
         top_n_per_sector: int = 5,
+        enable_risk_gates: bool = True,
     ):
         self.universe = get_engine()
         self.macro = MacroEngine()
@@ -177,21 +814,39 @@ class ExecutionEngine:
         self.top_n = top_n_per_sector
         self._last_run: Optional[dict] = None
 
+        # Enhanced components
+        self.micro_price = MicroPriceEngine()
+        self.cross_asset = CrossAssetMonitor()
+        self.risk_gates = RiskGateManager() if enable_risk_gates else None
+        self.allocator = TradeAllocator()
+        self.tracker = PipelineTracker()
+        self._run_count = 0
+        self._trade_log: list[dict] = []
+
     def run_pipeline(self) -> dict:
         """Execute the full signal pipeline.
 
         Returns dict with all stage outputs.
         """
-        result = {"timestamp": datetime.now().isoformat(), "stages": {}}
+        self.tracker.start_pipeline()
+        self._run_count += 1
+        result = {
+            "timestamp": datetime.now().isoformat(),
+            "run_number": self._run_count,
+            "stages": {},
+        }
 
         # Stage 1: Universe
+        t0 = datetime.now()
         self.universe.load()
         result["stages"]["universe"] = {
             "total_equities": self.universe.size(),
             "sectors": self.universe.get_sectors(),
         }
+        self.tracker.record_stage("universe", (datetime.now() - t0).total_seconds() * 1000, result["stages"]["universe"])
 
         # Stage 2: Macro analysis
+        t0 = datetime.now()
         macro_snap = self.macro.analyze()
         result["stages"]["macro"] = {
             "regime": macro_snap.regime.value,
@@ -200,8 +855,10 @@ class ExecutionEngine:
             "spy_3m": macro_snap.spy_return_3m,
             "sector_rankings": macro_snap.sector_rankings,
         }
+        self.tracker.record_stage("macro", (datetime.now() - t0).total_seconds() * 1000, result["stages"]["macro"])
 
         # Stage 3: MetadronCube
+        t0 = datetime.now()
         cube_out = self.cube.compute(macro_snap)
         result["stages"]["cube"] = {
             "regime": cube_out.regime.value,
@@ -213,8 +870,16 @@ class ExecutionEngine:
             "liquidity": cube_out.liquidity.value,
             "risk": cube_out.risk.value,
         }
+        self.tracker.record_stage("cube", (datetime.now() - t0).total_seconds() * 1000, result["stages"]["cube"])
+
+        # Stage 3.5: Cross-asset correlation check
+        t0 = datetime.now()
+        cross_asset_data = self.cross_asset.compute_correlations()
+        result["stages"]["cross_asset"] = cross_asset_data
+        self.tracker.record_stage("cross_asset", (datetime.now() - t0).total_seconds() * 1000, cross_asset_data)
 
         # Stage 4: Select top names from leading sectors
+        t0 = datetime.now()
         leader_sectors = cube_out.flow.leader_sectors
         if not leader_sectors:
             leader_sectors = list(macro_snap.sector_rankings.keys())[:4]
@@ -238,8 +903,10 @@ class ExecutionEngine:
             "leader_sectors": leader_sectors,
             "selected_tickers": selected_tickers[:30],  # Cap at 30
         }
+        self.tracker.record_stage("selection", (datetime.now() - t0).total_seconds() * 1000, result["stages"]["selection"])
 
         # Stage 5: Alpha optimisation
+        t0 = datetime.now()
         alpha_out = self.alpha.optimize(selected_tickers[:20])
         alpha_map = {s.ticker: s for s in alpha_out.signals}
         result["stages"]["alpha"] = {
@@ -252,8 +919,10 @@ class ExecutionEngine:
                 for s in alpha_out.signals[:10]
             ],
         }
+        self.tracker.record_stage("alpha", (datetime.now() - t0).total_seconds() * 1000, result["stages"]["alpha"])
 
         # Stage 6: Beta corridor
+        t0 = datetime.now()
         beta_state, beta_action = self.beta.run_cycle(
             regime_beta_cap=cube_out.beta_cap,
         )
@@ -265,9 +934,12 @@ class ExecutionEngine:
             "corridor": beta_state.corridor_position,
             "action": beta_action.action,
         }
+        self.tracker.record_stage("beta", (datetime.now() - t0).total_seconds() * 1000, result["stages"]["beta"])
 
         # Stage 7: ML vote ensemble + execution
+        t0 = datetime.now()
         trades = []
+        blocked_trades = []
         nav = self.broker.compute_nav()
         equity_budget = nav * cube_out.sleeves.p1_directional_equity
 
@@ -293,45 +965,67 @@ class ExecutionEngine:
                 alpha_signal=alpha_map.get(ticker),
             )
 
-            # Execute if vote is actionable
-            if vote.signal in (SignalType.ML_AGENT_BUY, SignalType.QUALITY_BUY):
-                target_value = equity_budget * weight
-                price = self.broker._get_current_price(ticker)
-                if price > 0:
-                    qty = max(1, int(target_value / price))
-                    order = self.broker.place_order(
-                        ticker=ticker,
-                        side=OrderSide.BUY,
-                        quantity=qty,
-                        signal_type=vote.signal,
-                        reason=f"Vote={vote.score:.1f} Alpha={alpha_map.get(ticker, AlphaSignal(ticker=ticker)).alpha_pred:.4f}",
-                    )
-                    trades.append({
-                        "ticker": ticker,
-                        "side": "BUY",
-                        "qty": qty,
-                        "price": price,
-                        "vote_score": vote.score,
-                        "signal": vote.signal.value,
-                    })
+            # Get allocation
+            current_pos = self.broker.get_position(ticker)
+            price = self.broker._get_current_price(ticker)
+            if price <= 0:
+                continue
 
-            elif vote.signal in (SignalType.ML_AGENT_SELL, SignalType.QUALITY_SELL):
-                pos = self.broker.get_position(ticker)
-                if pos and pos.quantity > 0:
-                    order = self.broker.place_order(
-                        ticker=ticker,
-                        side=OrderSide.SELL,
-                        quantity=pos.quantity,
-                        signal_type=vote.signal,
-                        reason=f"Vote={vote.score:.1f} SELL signal",
-                    )
-                    trades.append({
+            allocation = self.allocator.allocate(
+                ticker=ticker,
+                weight=weight,
+                vote=vote,
+                nav=nav,
+                equity_budget=equity_budget,
+                current_position=current_pos,
+                price=price,
+            )
+
+            if allocation["side"] is None or allocation["quantity"] <= 0:
+                continue
+
+            # Risk gate check
+            if self.risk_gates:
+                gate_results = self.risk_gates.evaluate_all(
+                    ticker=ticker,
+                    side=allocation["side"],
+                    quantity=allocation["quantity"],
+                    price=price,
+                    broker=self.broker,
+                )
+                if not self.risk_gates.all_passed(gate_results):
+                    failed_gates = [g.gate_name for g in gate_results if not g.passed]
+                    blocked_trades.append({
                         "ticker": ticker,
-                        "side": "SELL",
-                        "qty": pos.quantity,
+                        "reason": f"Risk gates failed: {', '.join(failed_gates)}",
                         "vote_score": vote.score,
-                        "signal": vote.signal.value,
                     })
+                    continue
+
+            # Execute
+            order = self.broker.place_order(
+                ticker=ticker,
+                side=allocation["side"],
+                quantity=allocation["quantity"],
+                signal_type=vote.signal,
+                reason=f"Vote={vote.score:.1f} Alpha={alpha_map.get(ticker, AlphaSignal(ticker=ticker)).alpha_pred:.4f} Conf={vote.confidence:.2f}",
+            )
+
+            if self.risk_gates:
+                self.risk_gates.record_trade()
+
+            trade_record = {
+                "ticker": ticker,
+                "side": allocation["side"].value,
+                "qty": allocation["quantity"],
+                "price": price,
+                "vote_score": vote.score,
+                "confidence": vote.confidence,
+                "signal": vote.signal.value,
+                "order_id": order.id,
+            }
+            trades.append(trade_record)
+            self._trade_log.append(trade_record)
 
         # Beta rebalance via SPY
         if beta_action.action != "HOLD":
@@ -346,8 +1040,15 @@ class ExecutionEngine:
 
         result["stages"]["execution"] = {
             "trades": trades,
+            "blocked_trades": blocked_trades,
             "portfolio": self.broker.get_portfolio_summary(),
         }
+        self.tracker.record_stage("execution", (datetime.now() - t0).total_seconds() * 1000, result["stages"]["execution"])
+
+        # Pipeline summary
+        result["pipeline"] = self.tracker.get_summary()
+        if self.risk_gates:
+            result["risk_summary"] = self.risk_gates.get_summary()
 
         self._last_run = result
         return result
@@ -358,3 +1059,89 @@ class ExecutionEngine:
     def get_positions(self) -> dict:
         return {k: {"qty": v.quantity, "price": v.current_price, "pnl": v.unrealized_pnl}
                 for k, v in self.broker.get_all_positions().items()}
+
+    def get_last_run(self) -> Optional[dict]:
+        return self._last_run
+
+    def get_trade_log(self) -> list[dict]:
+        return list(self._trade_log)
+
+    def get_risk_gate_summary(self) -> dict:
+        if self.risk_gates:
+            return self.risk_gates.get_summary()
+        return {}
+
+    def get_pipeline_timing(self) -> dict:
+        return self.tracker.get_summary()
+
+    def format_execution_report(self) -> str:
+        """Generate ASCII execution report from last run."""
+        if not self._last_run:
+            return "No pipeline run yet."
+
+        r = self._last_run
+        lines = [
+            "=" * 70,
+            f"EXECUTION REPORT — Run #{r.get('run_number', '?')}",
+            f"Timestamp: {r['timestamp']}",
+            "=" * 70,
+        ]
+
+        # Regime
+        cube = r["stages"].get("cube", {})
+        lines.append(f"\nREGIME: {cube.get('regime', 'N/A')}")
+        lines.append(f"  Target Beta: {cube.get('target_beta', 0):.3f}  |  "
+                      f"Beta Cap: {cube.get('beta_cap', 0):.3f}  |  "
+                      f"Max Leverage: {cube.get('max_leverage', 0):.1f}x")
+
+        # Sleeves
+        sleeves = cube.get("sleeves", {})
+        if sleeves:
+            lines.append("\n  SLEEVE ALLOCATION:")
+            for k, v in sleeves.items():
+                lines.append(f"    {k}: {v:.1%}")
+
+        # Alpha
+        alpha = r["stages"].get("alpha", {})
+        lines.append(f"\nALPHA: E[R]={alpha.get('expected_return', 0):.1%}  "
+                      f"Vol={alpha.get('volatility', 0):.1%}  "
+                      f"Sharpe={alpha.get('sharpe', 0):.2f}")
+
+        # Trades
+        execution = r["stages"].get("execution", {})
+        trades = execution.get("trades", [])
+        blocked = execution.get("blocked_trades", [])
+
+        lines.append(f"\nTRADES EXECUTED: {len(trades)}")
+        if trades:
+            lines.append(f"  {'Ticker':<8} {'Side':<6} {'Qty':>6} {'Price':>10} {'Vote':>6} {'Signal':<18}")
+            lines.append("  " + "-" * 56)
+            for t in trades[:15]:
+                lines.append(
+                    f"  {t['ticker']:<8} {t['side']:<6} {t['qty']:>6} "
+                    f"${t['price']:>9,.2f} {t['vote_score']:>+5.1f} {t['signal']:<18}"
+                )
+
+        if blocked:
+            lines.append(f"\nBLOCKED TRADES: {len(blocked)}")
+            for b in blocked[:5]:
+                lines.append(f"  {b['ticker']}: {b['reason']}")
+
+        # Portfolio
+        port = execution.get("portfolio", {})
+        lines.extend([
+            f"\nPORTFOLIO:",
+            f"  NAV: ${port.get('nav', 0):,.0f}  |  Cash: ${port.get('cash', 0):,.0f}",
+            f"  P&L: ${port.get('total_pnl', 0):,.0f}  |  Win Rate: {port.get('win_rate', 0):.1%}",
+            f"  Positions: {port.get('positions', 0)}  |  Trades: {port.get('total_trades', 0)}",
+            f"  Gross Exp: {port.get('gross_exposure', 0):.1%}  |  Net Exp: {port.get('net_exposure', 0):.1%}",
+        ])
+
+        # Pipeline timing
+        pipeline = r.get("pipeline", {})
+        lines.append(f"\nPIPELINE: {pipeline.get('total_duration_ms', 0):.0f}ms total")
+        for stage in pipeline.get("stages", []):
+            lines.append(f"  {stage['name']:<15} {stage['duration_ms']:>8.1f}ms")
+
+        lines.append("=" * 70)
+        return "\n".join(lines)
