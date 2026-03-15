@@ -234,3 +234,25 @@ repos:
       - portfolio_analytics_generation
       - unified_api
     outputs: [investment_decisions, portfolio_analytics, risk_reports]
+
+  # ─── ADDED EXTERNAL REPOS ─────────────────────────────────────────────
+  frb:
+    path: ../FRB
+    role: "Federal Reserve Bank Data"
+    layer: 1
+    description: "FRED API wrapper — M1/M2, fed rates, GDP, employment, inflation"
+    capabilities:
+      - fred_api
+      - monetary_data
+      - macro_indicators
+    outputs: [fred_series, monetary_aggregates]
+
+  equity_linked_gic_pooling:
+    path: ../EquityLinkedGICPooling
+    role: "GIC Pooling Methodology"
+    layer: 1
+    description: "Equity-linked GIC pooling — fair value tolerance, notional minimums"
+    capabilities:
+      - gic_pooling
+      - fair_value_analysis
+    outputs: [pooled_securities, gic_structures]
