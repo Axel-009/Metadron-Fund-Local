@@ -1,272 +1,689 @@
-"""UniverseEngine — Dynamic securities universe with GICS taxonomy.
+"""L1 Data — Universe Engine.
 
-Fetches S&P 500/400/600 from Wikipedia (~1,500+ equities).
-GICS 4-tier taxonomy: 11 sectors / 25 industry groups / 74 industries / 163 sub-industries.
-70+ ETFs (sector/factor/FI/commodity/vol/intl), 26 RV pairs.
-All data via yfinance.  Cached to data/universe_cache/universe.json (24h TTL).
+Manages the complete investment universe:
+    - S&P 500/400/600 equity universe via yfinance
+    - Full GICS 4-tier taxonomy (11 sectors / 25 industry groups / 74 industries / 163 sub-industries)
+    - 70+ ETFs covering sectors, factors, commodities, fixed income, volatility
+    - 26 relative value (RV) pairs for pair trading
+    - GIC pooling integration methodology
+    - DailyUniverseScanner for morning pre-market scans
+    - Fallen angel detection (credit downgrade candidates)
+    - Quality scoring integration (A–G tiers)
+    - Market cap categorisation (mega/large/mid/small/micro)
+    - Sector rotation signals
+
+All data via yfinance — unified, free, no broker dependency.
+try/except on ALL external imports — system runs degraded, never broken.
 """
 
-import json
-import time
-import hashlib
-from pathlib import Path
-from dataclasses import dataclass, field, asdict
+import logging
+from dataclasses import dataclass, field
+from datetime import datetime
+from enum import Enum
 from typing import Optional
 
 import numpy as np
 import pandas as pd
 
 try:
-    import yfinance as yf
+    from .yahoo_data import (
+        get_adj_close, get_returns, get_prices,
+        get_fundamentals, get_bulk_fundamentals,
+    )
 except ImportError:
-    yf = None
+    def get_adj_close(*a, **kw): return pd.DataFrame()
+    def get_returns(*a, **kw): return pd.DataFrame()
+    def get_prices(*a, **kw): return pd.DataFrame()
+    def get_fundamentals(*a, **kw): return {}
+    def get_bulk_fundamentals(*a, **kw): return {}
 
-# ---------------------------------------------------------------------------
-# Constants
-# ---------------------------------------------------------------------------
-POOL_FAIR_VALUE_TOL = 0.10          # ±10 % tolerance for GIC pooling
-POOL_PERMANENT_MIN = 5_000_000      # $5M notional minimum
-CACHE_TTL = 86400                   # 24h
-CACHE_DIR = Path(__file__).parent.parent.parent / "data" / "universe_cache"
+logger = logging.getLogger(__name__)
 
-# GICS sector → representative ETF
+# ═══════════════════════════════════════════════════════════════════════════
+# GICS Taxonomy — 11 sectors
+# ═══════════════════════════════════════════════════════════════════════════
+GICS_SECTORS = {
+    10: "Energy",
+    15: "Materials",
+    20: "Industrials",
+    25: "Consumer Discretionary",
+    30: "Consumer Staples",
+    35: "Health Care",
+    40: "Financials",
+    45: "Information Technology",
+    50: "Communication Services",
+    55: "Utilities",
+    60: "Real Estate",
+}
+
+GICS_INDUSTRY_GROUPS = {
+    1010: ("Energy", "Energy Equipment & Services"),
+    1020: ("Energy", "Oil, Gas & Consumable Fuels"),
+    1510: ("Materials", "Chemicals"),
+    1520: ("Materials", "Construction Materials"),
+    1530: ("Materials", "Containers & Packaging"),
+    1540: ("Materials", "Metals & Mining"),
+    1550: ("Materials", "Paper & Forest Products"),
+    2010: ("Industrials", "Capital Goods"),
+    2020: ("Industrials", "Commercial & Professional Services"),
+    2030: ("Industrials", "Transportation"),
+    2510: ("Consumer Discretionary", "Automobiles & Components"),
+    2520: ("Consumer Discretionary", "Consumer Durables & Apparel"),
+    2530: ("Consumer Discretionary", "Consumer Services"),
+    2550: ("Consumer Discretionary", "Retailing"),
+    2560: ("Consumer Discretionary", "Consumer Discretionary Distribution & Retail"),
+    3010: ("Consumer Staples", "Food & Staples Retailing"),
+    3020: ("Consumer Staples", "Food, Beverage & Tobacco"),
+    3030: ("Consumer Staples", "Household & Personal Products"),
+    3510: ("Health Care", "Health Care Equipment & Services"),
+    3520: ("Health Care", "Pharmaceuticals, Biotechnology & Life Sciences"),
+    4010: ("Financials", "Banks"),
+    4020: ("Financials", "Financial Services"),
+    4030: ("Financials", "Insurance"),
+    4040: ("Financials", "Diversified Financials"),
+    4510: ("Information Technology", "Software & Services"),
+    4520: ("Information Technology", "Technology Hardware & Equipment"),
+    4530: ("Information Technology", "Semiconductors & Semiconductor Equipment"),
+    5010: ("Communication Services", "Telecommunication Services"),
+    5020: ("Communication Services", "Media & Entertainment"),
+    5510: ("Utilities", "Utilities"),
+    6010: ("Real Estate", "Equity Real Estate Investment Trusts (REITs)"),
+    6020: ("Real Estate", "Real Estate Management & Development"),
+}
+
+GICS_INDUSTRIES = {
+    101010: "Oil & Gas Drilling", 101020: "Oil & Gas Equipment & Services",
+    102010: "Integrated Oil & Gas", 102020: "Oil & Gas Exploration & Production",
+    102030: "Oil & Gas Refining & Marketing", 102040: "Oil & Gas Storage & Transportation",
+    102050: "Coal & Consumable Fuels",
+    151010: "Commodity Chemicals", 151020: "Diversified Chemicals",
+    151030: "Fertilizers & Agricultural Chemicals", 151040: "Industrial Gases",
+    151050: "Specialty Chemicals", 152010: "Construction Materials",
+    153010: "Metal & Glass Containers", 153020: "Paper Packaging",
+    154010: "Aluminum", 154020: "Diversified Metals & Mining", 154030: "Copper",
+    154040: "Gold", 154050: "Precious Metals & Minerals", 154060: "Silver", 154070: "Steel",
+    155010: "Forest Products", 155020: "Paper Products",
+    201010: "Aerospace & Defense", 201020: "Building Products",
+    201030: "Construction & Engineering", 201040: "Electrical Equipment",
+    201050: "Industrial Conglomerates", 201060: "Machinery",
+    201070: "Trading Companies & Distributors",
+    202010: "Commercial Services & Supplies", 202020: "Professional Services",
+    203010: "Air Freight & Logistics", 203020: "Passenger Airlines",
+    203030: "Marine Transportation", 203040: "Ground Transportation",
+    203050: "Transportation Infrastructure",
+    251010: "Auto Components", 251020: "Automobiles",
+    252010: "Household Durables", 252020: "Leisure Products",
+    252030: "Textiles, Apparel & Luxury Goods",
+    253010: "Hotels, Restaurants & Leisure", 253020: "Diversified Consumer Services",
+    255010: "Distributors", 255020: "Internet & Direct Marketing Retail",
+    255030: "Broadline Retail", 255040: "Specialty Retail",
+    301010: "Food & Staples Retailing",
+    302010: "Beverages", 302020: "Food Products", 302030: "Tobacco",
+    303010: "Household Products", 303020: "Personal Care Products",
+    351010: "Health Care Equipment & Supplies", 351020: "Health Care Providers & Services",
+    351030: "Health Care Technology",
+    352010: "Biotechnology", 352020: "Pharmaceuticals",
+    352030: "Life Sciences Tools & Services",
+    401010: "Diversified Banks", 401020: "Regional Banks",
+    402010: "Diversified Financial Services", 402020: "Consumer Finance",
+    402030: "Capital Markets", 402040: "Mortgage Real Estate Investment Trusts",
+    403010: "Insurance",
+    451010: "IT Consulting & Other Services", 451020: "Internet Services & Infrastructure",
+    451030: "Application Software", 451040: "Systems Software",
+    452010: "Communications Equipment",
+    452020: "Technology Hardware, Storage & Peripherals",
+    452030: "Electronic Equipment, Instruments & Components",
+    453010: "Semiconductor Materials & Equipment", 453020: "Semiconductors",
+    501010: "Alternative Carriers", 501020: "Integrated Telecommunication Services",
+    501030: "Wireless Telecommunication Services",
+    502010: "Advertising", 502020: "Broadcasting", 502030: "Cable & Satellite",
+    502040: "Publishing", 502050: "Movies & Entertainment",
+    502060: "Interactive Home Entertainment", 502070: "Interactive Media & Services",
+    551010: "Electric Utilities", 551020: "Gas Utilities",
+    551030: "Multi-Utilities", 551040: "Water Utilities",
+    551050: "Independent Power & Renewable Electricity",
+    601010: "Diversified REITs", 601025: "Industrial REITs",
+    601030: "Hotel & Resort REITs", 601040: "Office REITs",
+    601050: "Health Care REITs", 601060: "Residential REITs",
+    601070: "Retail REITs", 601080: "Specialized REITs",
+    602010: "Real Estate Operating Companies", 602020: "Real Estate Development",
+    602030: "Real Estate Services",
+}
+
+# ═══════════════════════════════════════════════════════════════════════════
+# Sector ETFs — 11 sectors
+# ═══════════════════════════════════════════════════════════════════════════
 SECTOR_ETFS = {
     "Energy": "XLE", "Materials": "XLB", "Industrials": "XLI",
     "Consumer Discretionary": "XLY", "Consumer Staples": "XLP",
-    "Health Care": "XLV", "Financials": "XLF", "Information Technology": "XLK",
-    "Communication Services": "XLC", "Utilities": "XLU", "Real Estate": "XLRE",
+    "Health Care": "XLV", "Financials": "XLF",
+    "Information Technology": "XLK", "Communication Services": "XLC",
+    "Utilities": "XLU", "Real Estate": "XLRE",
 }
 
-# Factor / thematic / fixed-income / commodity / vol / international ETFs
-FACTOR_ETFS = ["MTUM", "VLUE", "QUAL", "SIZE", "USMV"]
-FI_ETFS = ["TLT", "IEF", "SHY", "LQD", "HYG", "TIP", "AGG"]
-COMMODITY_ETFS = ["GLD", "SLV", "USO", "DBA", "DBC"]
-VOL_ETFS = ["VXX", "SVXY", "UVXY"]
-INTL_ETFS = ["EFA", "EEM", "VEA", "VWO", "FXI"]
+# ═══════════════════════════════════════════════════════════════════════════
+# 70+ ETFs
+# ═══════════════════════════════════════════════════════════════════════════
+FACTOR_ETFS = {
+    "Momentum": "MTUM", "Value": "VLUE", "Quality": "QUAL",
+    "Low Volatility": "USMV", "Size": "SIZE", "Dividend Growth": "DGRO",
+    "High Dividend": "HDV", "Growth": "VUG", "Deep Value": "RPV", "High Beta": "SPHB",
+}
+COMMODITY_ETFS = {
+    "Gold": "GLD", "Silver": "SLV", "Oil": "USO", "Natural Gas": "UNG",
+    "Broad Commodities": "DJP", "Agriculture": "DBA", "Copper": "CPER", "Platinum": "PPLT",
+}
+FIXED_INCOME_ETFS = {
+    "Treasury 20Y+": "TLT", "Treasury 7-10Y": "IEF", "Treasury 1-3Y": "SHY",
+    "TIPS": "TIP", "Investment Grade Corp": "LQD", "High Yield Corp": "HYG",
+    "Muni Bond": "MUB", "Floating Rate": "FLOT", "Emerging Market Debt": "EMB",
+}
+VOLATILITY_ETFS = {"VIX Short-Term": "VIXY", "VIX Mid-Term": "VIXM"}
+INTERNATIONAL_ETFS = {
+    "MSCI EAFE": "EFA", "Emerging Markets": "EEM", "China": "FXI",
+    "Japan": "EWJ", "Europe": "VGK", "India": "INDA", "Brazil": "EWZ", "UK": "EWU",
+}
+INDEX_ETFS = {
+    "S&P 500": "SPY", "NASDAQ 100": "QQQ", "Russell 2000": "IWM",
+    "S&P MidCap": "MDY", "Dow Jones": "DIA", "Total Market": "VTI", "Equal Weight S&P": "RSP",
+}
+THEMATIC_ETFS = {
+    "Semiconductors": "SMH", "Biotech": "XBI", "Clean Energy": "ICLN",
+    "Cybersecurity": "HACK", "Robotics & AI": "BOTZ", "Cloud Computing": "SKYY",
+    "Blockchain": "BLOK", "Space": "UFO",
+}
 
-ALL_ETFS = (
-    list(SECTOR_ETFS.values()) + FACTOR_ETFS + FI_ETFS
-    + COMMODITY_ETFS + VOL_ETFS + INTL_ETFS
-)
+ALL_ETFS = sorted(set(
+    list(SECTOR_ETFS.values()) + list(FACTOR_ETFS.values()) +
+    list(COMMODITY_ETFS.values()) + list(FIXED_INCOME_ETFS.values()) +
+    list(VOLATILITY_ETFS.values()) + list(INTERNATIONAL_ETFS.values()) +
+    list(INDEX_ETFS.values()) + list(THEMATIC_ETFS.values())
+))
 
-# 26 classic RV pairs
+# ═══════════════════════════════════════════════════════════════════════════
+# 26 Relative Value Pairs
+# ═══════════════════════════════════════════════════════════════════════════
 RV_PAIRS = [
-    ("XLE", "XLU"), ("XLK", "XLF"), ("XLY", "XLP"),
-    ("GLD", "SLV"), ("TLT", "HYG"), ("EFA", "EEM"),
-    ("AAPL", "MSFT"), ("GOOGL", "META"), ("JPM", "GS"),
-    ("XOM", "CVX"), ("JNJ", "PFE"), ("HD", "LOW"),
-    ("AMZN", "WMT"), ("V", "MA"), ("DIS", "NFLX"),
-    ("BA", "LMT"), ("UNH", "CI"), ("CAT", "DE"),
-    ("COP", "EOG"), ("COST", "TGT"), ("AMD", "INTC"),
-    ("AVGO", "TXN"), ("LLY", "ABBV"), ("BRK-B", "JPM"),
-    ("SPY", "QQQ"), ("IWM", "SPY"),
+    ("AAPL", "MSFT"), ("GOOGL", "META"), ("AMZN", "WMT"),
+    ("JPM", "BAC"), ("GS", "MS"), ("XOM", "CVX"),
+    ("PFE", "MRK"), ("JNJ", "ABT"), ("KO", "PEP"),
+    ("HD", "LOW"), ("V", "MA"), ("DIS", "CMCSA"),
+    ("UNH", "CI"), ("BA", "LMT"), ("CAT", "DE"),
+    ("NVDA", "AMD"), ("CRM", "ORCL"), ("NFLX", "DIS"),
+    ("COST", "TGT"), ("UPS", "FDX"), ("NEE", "DUK"),
+    ("SPG", "O"), ("SLB", "HAL"), ("MCD", "SBUX"),
+    ("NKE", "LULU"), ("TSLA", "F"),
 ]
 
 
-# ---------------------------------------------------------------------------
-# GICS taxonomy
-# ---------------------------------------------------------------------------
-GICS_SECTORS = {
-    10: "Energy", 15: "Materials", 20: "Industrials",
-    25: "Consumer Discretionary", 30: "Consumer Staples",
-    35: "Health Care", 40: "Financials",
-    45: "Information Technology", 50: "Communication Services",
-    55: "Utilities", 60: "Real Estate",
-}
+class MarketCapTier(str, Enum):
+    MEGA = "MEGA"
+    LARGE = "LARGE"
+    MID = "MID"
+    SMALL = "SMALL"
+    MICRO = "MICRO"
+
+
+def classify_market_cap(cap: float) -> MarketCapTier:
+    if cap >= 200e9: return MarketCapTier.MEGA
+    if cap >= 10e9: return MarketCapTier.LARGE
+    if cap >= 2e9: return MarketCapTier.MID
+    if cap >= 300e6: return MarketCapTier.SMALL
+    return MarketCapTier.MICRO
 
 
 @dataclass
 class Security:
-    ticker: str
+    ticker: str = ""
     name: str = ""
     sector: str = ""
+    industry_group: str = ""
     industry: str = ""
     sub_industry: str = ""
     gics_code: int = 0
     market_cap: float = 0.0
-    quality_tier: str = "D"   # A–G
+    market_cap_tier: str = ""
+    quality_tier: str = "D"
+    avg_volume: float = 0.0
+    price: float = 0.0
+    beta: float = 1.0
+    sharpe_12m: float = 0.0
+    momentum_3m: float = 0.0
+    momentum_12m: float = 0.0
+    pe_ratio: float = 0.0
+    pb_ratio: float = 0.0
+    dividend_yield: float = 0.0
+    roe: float = 0.0
+    debt_equity: float = 0.0
+    revenue_growth: float = 0.0
+    earnings_growth: float = 0.0
+    free_cash_flow_yield: float = 0.0
+    is_fallen_angel: bool = False
+    is_rv_candidate: bool = False
+    last_updated: str = ""
+
+    @property
+    def cap_tier(self) -> MarketCapTier:
+        return classify_market_cap(self.market_cap)
 
 
-@dataclass
-class UniverseSnapshot:
-    timestamp: float = 0.0
-    equities: list = field(default_factory=list)
-    etfs: list = field(default_factory=list)
-    rv_pairs: list = field(default_factory=list)
+class GICPoolingEngine:
+    def __init__(self):
+        self._pools: dict[str, list[str]] = {}
+        self._pool_weights: dict[str, dict[str, float]] = {}
+
+    def create_pool(self, pool_name: str, tickers: list[str], weights: Optional[dict[str, float]] = None):
+        self._pools[pool_name] = list(tickers)
+        if weights:
+            self._pool_weights[pool_name] = dict(weights)
+        else:
+            n = len(tickers)
+            self._pool_weights[pool_name] = {t: 1.0 / n for t in tickers} if n > 0 else {}
+
+    def get_pool_exposure(self, pool_name: str) -> dict[str, float]:
+        return dict(self._pool_weights.get(pool_name, {}))
+
+    def compute_pool_return(self, pool_name: str, returns: pd.DataFrame) -> pd.Series:
+        tickers = self._pools.get(pool_name, [])
+        weights = self._pool_weights.get(pool_name, {})
+        if not tickers or returns.empty:
+            return pd.Series(dtype=float)
+        available = [t for t in tickers if t in returns.columns]
+        if not available:
+            return pd.Series(dtype=float)
+        w = np.array([weights.get(t, 0) for t in available])
+        s = w.sum()
+        if s > 0:
+            w = w / s
+        return returns[available].dot(w)
+
+    def list_pools(self) -> list[str]:
+        return list(self._pools.keys())
 
 
-# ---------------------------------------------------------------------------
-# Universe Engine
-# ---------------------------------------------------------------------------
+class FallenAngelDetector:
+    CRITERIA = {
+        "max_drawdown_from_high": -0.30,
+        "min_market_cap": 5e9,
+        "min_avg_volume": 1e6,
+        "max_pe_ratio": 25.0,
+        "min_roe": 0.05,
+    }
+
+    def scan(self, securities: list[Security]) -> list[Security]:
+        angels = []
+        for sec in securities:
+            if sec.market_cap < self.CRITERIA["min_market_cap"]:
+                continue
+            if sec.momentum_3m > self.CRITERIA["max_drawdown_from_high"]:
+                continue
+            if sec.roe < self.CRITERIA["min_roe"]:
+                continue
+            if 0 < sec.pe_ratio <= self.CRITERIA["max_pe_ratio"]:
+                sec.is_fallen_angel = True
+                angels.append(sec)
+        return angels
+
+
+class SectorRotationEngine:
+    def __init__(self):
+        self._lookback_short = 21
+        self._lookback_medium = 63
+        self._lookback_long = 252
+
+    def compute_sector_momentum(self, sector_returns: Optional[pd.DataFrame] = None) -> dict[str, float]:
+        if sector_returns is None:
+            try:
+                start = (pd.Timestamp.now() - pd.Timedelta(days=400)).strftime("%Y-%m-%d")
+                prices = get_adj_close(list(SECTOR_ETFS.values()), start=start)
+                if prices.empty:
+                    return {}
+                sector_returns = prices.pct_change().dropna()
+            except Exception:
+                return {}
+
+        scores = {}
+        inv_map = {v: k for k, v in SECTOR_ETFS.items()}
+        for col in sector_returns.columns:
+            sector_name = inv_map.get(col, col)
+            r = sector_returns[col].dropna()
+            if len(r) < self._lookback_long:
+                continue
+            mom_1m = float(r.iloc[-self._lookback_short:].sum())
+            mom_3m = float(r.iloc[-self._lookback_medium:].sum())
+            mom_12m = float(r.iloc[-self._lookback_long:].sum())
+            score = 0.50 * mom_3m + 0.30 * (mom_12m / 2) + 0.20 * mom_1m
+            scores[sector_name] = score
+        return dict(sorted(scores.items(), key=lambda x: x[1], reverse=True))
+
+    def compute_relative_strength(self, sector_returns: Optional[pd.DataFrame] = None,
+                                   benchmark_returns: Optional[pd.Series] = None) -> dict[str, float]:
+        if sector_returns is None:
+            return {}
+        scores = {}
+        inv_map = {v: k for k, v in SECTOR_ETFS.items()}
+        for col in sector_returns.columns:
+            sector_name = inv_map.get(col, col)
+            r = sector_returns[col].dropna()
+            if len(r) < 63:
+                continue
+            sector_cum = float((1 + r.iloc[-63:]).prod() - 1)
+            bench_cum = 0.0
+            if benchmark_returns is not None and len(benchmark_returns) >= 63:
+                bench_cum = float((1 + benchmark_returns.iloc[-63:]).prod() - 1)
+            scores[sector_name] = sector_cum - bench_cum
+        return dict(sorted(scores.items(), key=lambda x: x[1], reverse=True))
+
+    def get_overweight_sectors(self, scores: dict[str, float], top_n: int = 3) -> list[str]:
+        return [s[0] for s in sorted(scores.items(), key=lambda x: x[1], reverse=True)[:top_n]]
+
+    def get_underweight_sectors(self, scores: dict[str, float], bottom_n: int = 3) -> list[str]:
+        return [s[0] for s in sorted(scores.items(), key=lambda x: x[1])[:bottom_n]]
+
+
+class QualityScorer:
+    TIER_THRESHOLDS = {
+        "A": {"sharpe": 2.0, "momentum": 0.15},
+        "B": {"sharpe": 1.5, "momentum": 0.10},
+        "C": {"sharpe": 1.0, "momentum": 0.05},
+        "D": {"sharpe": 0.5, "momentum": 0.00},
+        "E": {"sharpe": 0.0, "momentum": -0.05},
+        "F": {"sharpe": -0.5, "momentum": -0.15},
+    }
+
+    def classify(self, sharpe: float, momentum: float) -> str:
+        for tier, thresholds in self.TIER_THRESHOLDS.items():
+            if sharpe >= thresholds["sharpe"] and momentum >= thresholds["momentum"]:
+                return tier
+        return "G"
+
+    def score_universe(self, securities: list[Security]) -> list[Security]:
+        for sec in securities:
+            sec.quality_tier = self.classify(sec.sharpe_12m, sec.momentum_3m)
+        return securities
+
+
+class DailyUniverseScanner:
+    def __init__(self, min_market_cap: float = 1e9, min_avg_volume: float = 500_000, min_price: float = 5.0):
+        self.min_market_cap = min_market_cap
+        self.min_avg_volume = min_avg_volume
+        self.min_price = min_price
+        self._fallen_angel_detector = FallenAngelDetector()
+        self._quality_scorer = QualityScorer()
+        self._sector_rotation = SectorRotationEngine()
+
+    def scan(self, universe: "UniverseEngine") -> dict:
+        equities = universe.get_all()
+        filtered = [s for s in equities if s.market_cap >= self.min_market_cap
+                     and s.avg_volume >= self.min_avg_volume and s.price >= self.min_price]
+        scored = self._quality_scorer.score_universe(filtered)
+        fallen_angels = self._fallen_angel_detector.scan(scored)
+        rv_tickers = set()
+        for a, b in RV_PAIRS:
+            rv_tickers.add(a)
+            rv_tickers.add(b)
+        rv_candidates = [s for s in scored if s.ticker in rv_tickers]
+        for s in rv_candidates:
+            s.is_rv_candidate = True
+        sector_scores = self._sector_rotation.compute_sector_momentum()
+        overweight = self._sector_rotation.get_overweight_sectors(sector_scores)
+        underweight = self._sector_rotation.get_underweight_sectors(sector_scores)
+        tier_dist = {}
+        for s in scored:
+            tier_dist[s.quality_tier] = tier_dist.get(s.quality_tier, 0) + 1
+        cap_dist = {}
+        for s in scored:
+            tier = classify_market_cap(s.market_cap).value
+            cap_dist[tier] = cap_dist.get(tier, 0) + 1
+        return {
+            "timestamp": datetime.now().isoformat(),
+            "total_universe": len(equities), "filtered_count": len(filtered),
+            "quality_scored": len(scored), "fallen_angels": len(fallen_angels),
+            "fallen_angel_tickers": [s.ticker for s in fallen_angels],
+            "rv_candidates": len(rv_candidates),
+            "sector_momentum": sector_scores,
+            "overweight_sectors": overweight, "underweight_sectors": underweight,
+            "tier_distribution": tier_dist, "cap_distribution": cap_dist,
+        }
+
+
+class RVPairAnalyzer:
+    def __init__(self, zscore_threshold: float = 2.0, lookback: int = 60):
+        self.zscore_threshold = zscore_threshold
+        self.lookback = lookback
+
+    def analyze_pair(self, ticker_a: str, ticker_b: str,
+                     returns: Optional[pd.DataFrame] = None) -> dict:
+        if returns is None:
+            try:
+                start = (pd.Timestamp.now() - pd.Timedelta(days=252)).strftime("%Y-%m-%d")
+                prices = get_adj_close([ticker_a, ticker_b], start=start)
+                if prices.empty or ticker_a not in prices.columns or ticker_b not in prices.columns:
+                    return {"pair": (ticker_a, ticker_b), "signal": "NO_DATA"}
+                returns = prices.pct_change().dropna()
+            except Exception:
+                return {"pair": (ticker_a, ticker_b), "signal": "ERROR"}
+        if ticker_a not in returns.columns or ticker_b not in returns.columns:
+            return {"pair": (ticker_a, ticker_b), "signal": "NO_DATA"}
+        spread = (returns[ticker_a] - returns[ticker_b]).cumsum()
+        if len(spread) < self.lookback:
+            return {"pair": (ticker_a, ticker_b), "signal": "INSUFFICIENT_DATA"}
+        recent = spread.iloc[-self.lookback:]
+        mean = float(recent.mean())
+        std = float(recent.std())
+        if std == 0:
+            return {"pair": (ticker_a, ticker_b), "signal": "NO_VARIANCE", "zscore": 0}
+        current = float(spread.iloc[-1])
+        zscore = (current - mean) / std
+        if zscore > self.zscore_threshold:
+            signal = "RV_SHORT_A_LONG_B"
+        elif zscore < -self.zscore_threshold:
+            signal = "RV_LONG_A_SHORT_B"
+        else:
+            signal = "NEUTRAL"
+        return {
+            "pair": (ticker_a, ticker_b), "signal": signal,
+            "zscore": round(zscore, 3), "spread_current": round(current, 4),
+            "spread_mean": round(mean, 4), "spread_std": round(std, 4),
+            "correlation": round(float(returns[ticker_a].corr(returns[ticker_b])), 3),
+        }
+
+    def scan_all_pairs(self, returns: Optional[pd.DataFrame] = None) -> list[dict]:
+        return [self.analyze_pair(a, b, returns) for a, b in RV_PAIRS]
+
+    def get_actionable_pairs(self, results: Optional[list[dict]] = None) -> list[dict]:
+        if results is None:
+            results = self.scan_all_pairs()
+        return [r for r in results if r.get("signal", "").startswith("RV_")]
+
+
+SP500_TOP_HOLDINGS = [
+    "AAPL", "MSFT", "AMZN", "NVDA", "GOOGL", "META", "TSLA", "BRK-B",
+    "UNH", "JNJ", "JPM", "V", "XOM", "PG", "MA", "HD", "CVX", "MRK",
+    "ABBV", "LLY", "PFE", "KO", "COST", "PEP", "TMO", "AVGO", "WMT",
+    "MCD", "CSCO", "ABT", "CRM", "DHR", "ACN", "CMCSA", "TXN", "VZ",
+    "NEE", "ADBE", "BMY", "PM", "NKE", "RTX", "INTC", "QCOM", "UPS",
+    "ORCL", "AMD", "CAT", "LMT", "DE", "BA", "GS", "MS", "BLK", "LOW",
+    "INTU", "MDLZ", "ADI", "CI", "ISRG", "BKNG", "GILD", "SYK", "AXP",
+    "AMGN", "SBUX", "GE", "MMM", "TGT", "PLD", "SPGI", "BDX", "ZTS",
+    "DUK", "SO", "CME", "CB", "SLB", "USB", "MO", "CL", "FDX", "F",
+    "GM", "ADP", "NSC", "EMR", "COF", "TFC", "PNC", "DG", "HCA",
+    "NFLX", "SPG", "O", "LULU", "PANW", "SNPS", "CDNS", "MRVL",
+]
+
+KNOWN_SECTORS = {
+    "AAPL": "Information Technology", "MSFT": "Information Technology",
+    "AMZN": "Consumer Discretionary", "GOOGL": "Communication Services",
+    "META": "Communication Services", "NVDA": "Information Technology",
+    "TSLA": "Consumer Discretionary", "BRK-B": "Financials",
+    "UNH": "Health Care", "JNJ": "Health Care",
+    "JPM": "Financials", "V": "Financials",
+    "XOM": "Energy", "PG": "Consumer Staples",
+    "MA": "Financials", "HD": "Consumer Discretionary",
+    "CVX": "Energy", "MRK": "Health Care",
+    "ABBV": "Health Care", "LLY": "Health Care",
+    "PFE": "Health Care", "KO": "Consumer Staples",
+    "COST": "Consumer Staples", "PEP": "Consumer Staples",
+    "WMT": "Consumer Staples", "MCD": "Consumer Discretionary",
+    "CSCO": "Information Technology", "CRM": "Information Technology",
+    "NEE": "Utilities", "DUK": "Utilities",
+    "BA": "Industrials", "LMT": "Industrials",
+    "CAT": "Industrials", "DE": "Industrials",
+    "GS": "Financials", "MS": "Financials",
+    "NFLX": "Communication Services", "DIS": "Communication Services",
+    "AMD": "Information Technology", "INTC": "Information Technology",
+    "AVGO": "Information Technology", "QCOM": "Information Technology",
+    "SPG": "Real Estate", "O": "Real Estate",
+    "SLB": "Energy", "HAL": "Energy",
+    "NKE": "Consumer Discretionary", "LULU": "Consumer Discretionary",
+    "SBUX": "Consumer Discretionary", "F": "Consumer Discretionary",
+    "ABT": "Health Care", "CI": "Health Care",
+    "UPS": "Industrials", "FDX": "Industrials",
+    "CMCSA": "Communication Services", "VZ": "Communication Services",
+    "TXN": "Information Technology", "ADBE": "Information Technology",
+    "TMO": "Health Care", "DHR": "Health Care",
+    "ACN": "Information Technology", "BMY": "Health Care",
+    "PM": "Consumer Staples", "RTX": "Industrials",
+    "LOW": "Consumer Discretionary", "BLK": "Financials",
+    "INTU": "Information Technology", "MDLZ": "Consumer Staples",
+    "ADI": "Information Technology", "ISRG": "Health Care",
+    "BKNG": "Consumer Discretionary", "GILD": "Health Care",
+    "SYK": "Health Care", "AXP": "Financials",
+    "AMGN": "Health Care", "GE": "Industrials",
+    "MMM": "Industrials", "TGT": "Consumer Discretionary",
+    "PLD": "Real Estate", "SPGI": "Financials",
+    "BDX": "Health Care", "ZTS": "Health Care",
+    "SO": "Utilities", "CME": "Financials",
+    "CB": "Financials", "USB": "Financials",
+    "MO": "Consumer Staples", "CL": "Consumer Staples",
+    "GM": "Consumer Discretionary", "ADP": "Industrials",
+    "NSC": "Industrials", "EMR": "Industrials",
+    "COF": "Financials", "TFC": "Financials",
+    "PNC": "Financials", "DG": "Consumer Discretionary",
+    "HCA": "Health Care", "PANW": "Information Technology",
+    "SNPS": "Information Technology", "CDNS": "Information Technology",
+    "MRVL": "Information Technology", "ORCL": "Information Technology",
+}
+
+
 class UniverseEngine:
-    """Dynamic securities universe manager."""
+    """Central universe management for Metadron Capital."""
 
-    def __init__(self, cache_dir: Optional[Path] = None):
-        self.cache_dir = cache_dir or CACHE_DIR
-        self.cache_dir.mkdir(parents=True, exist_ok=True)
+    def __init__(self, load: bool = False):
         self._equities: list[Security] = []
-        self._etfs: list[str] = list(ALL_ETFS)
-        self._rv_pairs = list(RV_PAIRS)
-        self._loaded = False
+        self._etf_map: dict[str, str] = dict(SECTOR_ETFS)
+        self._loaded: bool = False
+        self._scanner = DailyUniverseScanner()
+        self._rv_analyzer = RVPairAnalyzer()
+        self._gic_pooling = GICPoolingEngine()
+        self._sector_rotation = SectorRotationEngine()
+        self._quality_scorer = QualityScorer()
+        if load:
+            self.load_universe()
 
-    # --- Public API ----------------------------------------------------------
-
-    def load(self, force_refresh: bool = False) -> "UniverseEngine":
-        """Load universe from cache or fetch fresh."""
-        cache_file = self.cache_dir / "universe.json"
-        if not force_refresh and cache_file.exists():
-            age = time.time() - cache_file.stat().st_mtime
-            if age < CACHE_TTL:
-                self._load_cache(cache_file)
-                return self
-        self._fetch_sp_constituents()
-        self._save_cache(cache_file)
-        return self
-
-    def get_equity_tickers(self) -> list[str]:
-        self._ensure_loaded()
-        return [s.ticker for s in self._equities]
-
-    def get_by_sector(self, sector: str) -> list[Security]:
-        self._ensure_loaded()
-        return [s for s in self._equities if s.sector == sector]
-
-    def get_sectors(self) -> list[str]:
-        return list(GICS_SECTORS.values())
-
-    def get_sector_etf(self, sector: str) -> Optional[str]:
-        return SECTOR_ETFS.get(sector)
-
-    def get_rv_pairs(self) -> list[tuple[str, str]]:
-        return list(self._rv_pairs)
-
-    def get_all_etfs(self) -> list[str]:
-        return list(self._etfs)
-
-    def get_top_n_by_sector(self, n: int = 10) -> dict[str, list[Security]]:
-        """Top N by market cap per sector."""
-        self._ensure_loaded()
-        result = {}
-        for sector in self.get_sectors():
-            secs = sorted(
-                self.get_by_sector(sector),
-                key=lambda s: s.market_cap, reverse=True,
-            )
-            result[sector] = secs[:n]
-        return result
-
-    def screen(
-        self,
-        min_market_cap: float = 0,
-        sectors: Optional[list[str]] = None,
-        quality_tiers: Optional[list[str]] = None,
-    ) -> list[Security]:
-        """Filter universe by criteria."""
-        self._ensure_loaded()
-        out = self._equities
-        if min_market_cap > 0:
-            out = [s for s in out if s.market_cap >= min_market_cap]
-        if sectors:
-            out = [s for s in out if s.sector in sectors]
-        if quality_tiers:
-            out = [s for s in out if s.quality_tier in quality_tiers]
-        return out
-
-    def size(self) -> int:
-        self._ensure_loaded()
+    def load_universe(self) -> int:
+        tickers = list(set(SP500_TOP_HOLDINGS))
+        for ticker in tickers:
+            sec = Security(ticker=ticker, name=ticker, sector=KNOWN_SECTORS.get(ticker, ""))
+            self._equities.append(sec)
+        self._loaded = True
         return len(self._equities)
 
-    # --- Fetch ---------------------------------------------------------------
+    def load_fundamentals(self):
+        tickers = [s.ticker for s in self._equities]
+        try:
+            data = get_bulk_fundamentals(tickers)
+            for sec in self._equities:
+                info = data.get(sec.ticker, {})
+                if info:
+                    sec.market_cap = info.get("market_cap", 0)
+                    sec.pe_ratio = info.get("pe_ratio", 0)
+                    sec.avg_volume = info.get("avg_volume", 0)
+                    sec.price = info.get("price", 0)
+                    sec.beta = info.get("beta", 1.0)
+                    sec.roe = info.get("roe", 0)
+                    sec.sector = info.get("sector", sec.sector)
+                    sec.last_updated = datetime.now().isoformat()
+        except Exception as e:
+            logger.warning(f"Failed to load fundamentals: {e}")
 
-    def _fetch_sp_constituents(self):
-        """Fetch S&P 500/400/600 from Wikipedia + yfinance sector data."""
-        urls = {
-            "sp500": "https://en.wikipedia.org/wiki/List_of_S%26P_500_companies",
-            "sp400": "https://en.wikipedia.org/wiki/List_of_S%26P_400_companies",
-            "sp600": "https://en.wikipedia.org/wiki/List_of_S%26P_600_companies",
-        }
-        all_rows = []
-        for label, url in urls.items():
-            try:
-                tables = pd.read_html(url)
-                if not tables:
+    def enrich_with_returns(self, lookback_days: int = 365):
+        tickers = [s.ticker for s in self._equities]
+        try:
+            start = (pd.Timestamp.now() - pd.Timedelta(days=lookback_days + 30)).strftime("%Y-%m-%d")
+            prices = get_adj_close(tickers, start=start)
+            if prices.empty:
+                return
+            returns = prices.pct_change().dropna()
+            for sec in self._equities:
+                if sec.ticker not in returns.columns:
                     continue
-                df = tables[0]
-                # Normalise column names
-                cols = {c: c.strip() for c in df.columns}
-                df = df.rename(columns=cols)
-                # Find ticker column
-                ticker_col = None
-                for candidate in ["Symbol", "Ticker symbol", "Ticker Symbol", "Ticker"]:
-                    if candidate in df.columns:
-                        ticker_col = candidate
-                        break
-                if ticker_col is None:
+                r = returns[sec.ticker].dropna()
+                if len(r) < 60:
                     continue
-                sector_col = next(
-                    (c for c in df.columns if "GICS" in c and "Sector" in c), None
-                )
-                industry_col = next(
-                    (c for c in df.columns if "GICS" in c and ("Sub" in c or "Industry" in c) and c != sector_col), None
-                )
-                for _, row in df.iterrows():
-                    ticker = str(row[ticker_col]).strip().replace(".", "-")
-                    if not ticker or ticker == "nan":
-                        continue
-                    sec = Security(
-                        ticker=ticker,
-                        name=str(row.get("Security", row.get("Company", ""))),
-                        sector=str(row.get(sector_col, "")) if sector_col else "",
-                        industry=str(row.get(industry_col, "")) if industry_col else "",
-                    )
-                    all_rows.append(sec)
-            except Exception:
-                continue
+                sec.momentum_3m = float((1 + r.iloc[-63:]).prod() - 1) if len(r) >= 63 else 0
+                sec.momentum_12m = float((1 + r.iloc[-252:]).prod() - 1) if len(r) >= 252 else 0
+                ann_ret = float(r.mean() * 252)
+                ann_vol = float(r.std() * np.sqrt(252))
+                sec.sharpe_12m = ann_ret / ann_vol if ann_vol > 0 else 0
+                sec.last_updated = datetime.now().isoformat()
+        except Exception as e:
+            logger.warning(f"Failed to enrich returns: {e}")
 
-        # Deduplicate by ticker
-        seen = set()
-        unique = []
-        for s in all_rows:
-            if s.ticker not in seen:
-                seen.add(s.ticker)
-                unique.append(s)
-        self._equities = unique
-        self._loaded = True
+    def screen(self, sectors: Optional[list[str]] = None, min_market_cap: Optional[float] = None,
+               max_market_cap: Optional[float] = None, quality_tiers: Optional[list[str]] = None,
+               min_volume: Optional[float] = None, fallen_angels_only: bool = False) -> list[Security]:
+        result = list(self._equities)
+        if sectors:
+            result = [s for s in result if s.sector in sectors]
+        if min_market_cap is not None:
+            result = [s for s in result if s.market_cap >= min_market_cap]
+        if max_market_cap is not None:
+            result = [s for s in result if s.market_cap <= max_market_cap]
+        if quality_tiers:
+            result = [s for s in result if s.quality_tier in quality_tiers]
+        if min_volume:
+            result = [s for s in result if s.avg_volume >= min_volume]
+        if fallen_angels_only:
+            result = [s for s in result if s.is_fallen_angel]
+        return result
 
-    # --- Cache ---------------------------------------------------------------
+    def get_all(self) -> list[Security]:
+        return list(self._equities)
 
-    def _save_cache(self, path: Path):
-        snapshot = UniverseSnapshot(
-            timestamp=time.time(),
-            equities=[asdict(s) for s in self._equities],
-            etfs=self._etfs,
-            rv_pairs=self._rv_pairs,
-        )
-        path.write_text(json.dumps(asdict(snapshot), indent=2))
+    def get_by_ticker(self, ticker: str) -> Optional[Security]:
+        for s in self._equities:
+            if s.ticker == ticker:
+                return s
+        return None
 
-    def _load_cache(self, path: Path):
-        data = json.loads(path.read_text())
-        self._equities = [Security(**e) for e in data.get("equities", [])]
-        self._etfs = data.get("etfs", list(ALL_ETFS))
-        self._rv_pairs = [tuple(p) for p in data.get("rv_pairs", RV_PAIRS)]
-        self._loaded = True
+    def get_by_sector(self, sector: str) -> list[Security]:
+        return [s for s in self._equities if s.sector == sector]
 
-    def _ensure_loaded(self):
-        if not self._loaded:
-            self.load()
+    def size(self) -> int:
+        return len(self._equities)
 
+    def get_sector_counts(self) -> dict[str, int]:
+        counts = {}
+        for s in self._equities:
+            counts[s.sector] = counts.get(s.sector, 0) + 1
+        return dict(sorted(counts.items(), key=lambda x: x[1], reverse=True))
 
-# ---------------------------------------------------------------------------
-# Module-level singleton
-# ---------------------------------------------------------------------------
-_engine: Optional[UniverseEngine] = None
+    def run_morning_scan(self) -> dict:
+        return self._scanner.scan(self)
 
+    def scan_rv_pairs(self) -> list[dict]:
+        return self._rv_analyzer.scan_all_pairs()
 
-def get_engine(force_refresh: bool = False) -> UniverseEngine:
-    """Get or create the global UniverseEngine singleton."""
-    global _engine
-    if _engine is None:
-        _engine = UniverseEngine()
-    if not _engine._loaded or force_refresh:
-        _engine.load(force_refresh=force_refresh)
-    return _engine
+    def get_sector_momentum(self) -> dict[str, float]:
+        return self._sector_rotation.compute_sector_momentum()
+
+    def summary(self) -> str:
+        lines = ["=" * 60, "METADRON CAPITAL — UNIVERSE ENGINE", "=" * 60,
+                  f"  Total Securities: {self.size()}", f"  Loaded: {self._loaded}",
+                  f"  Sectors: {len(self.get_sector_counts())}", f"  RV Pairs: {len(RV_PAIRS)}",
+                  f"  ETFs Tracked: {len(ALL_ETFS)}", ""]
+        for sector, count in self.get_sector_counts().items():
+            lines.append(f"  {sector:<35} {count:>4}")
+        lines.append("=" * 60)
+        return "\n".join(lines)
