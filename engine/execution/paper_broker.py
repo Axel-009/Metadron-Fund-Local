@@ -7,6 +7,8 @@ Not connected to any live broker. Provides:
     - NAV computation
     - Trade history / audit trail
     - Fill simulation with micro-price model
+    - Pre-trade risk checks (RiskLimiter)
+    - Performance tracking (Sharpe, drawdown, win rate)
 
 Designed to be swapped for a live broker API later.
 """
@@ -14,7 +16,9 @@ Designed to be swapped for a live broker API later.
 import uuid
 import json
 import time
-from datetime import datetime
+import csv
+import io
+from datetime import datetime, timezone
 from dataclasses import dataclass, field, asdict
 from typing import Optional
 from pathlib import Path
@@ -124,6 +128,467 @@ class PortfolioState:
 
 
 # ---------------------------------------------------------------------------
+# MicroPriceModel — Realistic fill simulation
+# ---------------------------------------------------------------------------
+class MicroPriceModel:
+    """Simulates realistic order fill prices using bid/ask spread modelling,
+    market impact estimation, and time-of-day slippage adjustments.
+
+    All parameters are calibrated to US equity markets and driven entirely
+    by yfinance data — no live order-book feed required.
+    """
+
+    # Approximate average daily volumes for liquidity tiers (shares)
+    _LIQUIDITY_TIERS = {
+        "mega":  50_000_000,   # AAPL, MSFT, TSLA
+        "large": 10_000_000,   # Mid-large S&P 500
+        "mid":    2_000_000,   # S&P 400
+        "small":    500_000,   # S&P 600
+    }
+
+    # Typical half-spread in bps by liquidity tier
+    _HALF_SPREAD_BPS = {
+        "mega":  0.5,
+        "large": 1.5,
+        "mid":   3.0,
+        "small": 6.0,
+    }
+
+    # Time-of-day slippage multiplier (hour of day ET → multiplier)
+    # Higher at open (9) and close (15-16), lower midday
+    _TOD_MULTIPLIER = {
+        9:  1.80,   # Opening auction volatility
+        10: 1.30,
+        11: 1.00,
+        12: 0.90,
+        13: 0.90,
+        14: 1.00,
+        15: 1.40,   # Approaching close
+        16: 1.60,   # Closing auction
+    }
+
+    def __init__(self, spread_multiplier: float = 1.0):
+        self.spread_multiplier = spread_multiplier
+        self._adv_cache: dict[str, float] = {}
+
+    def classify_liquidity(self, adv: float) -> str:
+        """Return liquidity tier string based on average daily volume."""
+        if adv >= self._LIQUIDITY_TIERS["mega"]:
+            return "mega"
+        elif adv >= self._LIQUIDITY_TIERS["large"]:
+            return "large"
+        elif adv >= self._LIQUIDITY_TIERS["mid"]:
+            return "mid"
+        return "small"
+
+    def estimate_adv(self, ticker: str) -> float:
+        """Estimate average daily volume from recent yfinance data."""
+        if ticker in self._adv_cache:
+            return self._adv_cache[ticker]
+        try:
+            import yfinance as yf
+            hist = yf.Ticker(ticker).history(period="20d")
+            if hist is not None and "Volume" in hist.columns and len(hist) > 0:
+                adv = float(hist["Volume"].mean())
+            else:
+                adv = float(self._LIQUIDITY_TIERS["mid"])
+        except Exception:
+            adv = float(self._LIQUIDITY_TIERS["mid"])
+        self._adv_cache[ticker] = adv
+        return adv
+
+    def half_spread(self, ticker: str) -> float:
+        """Return estimated half-spread in bps for *ticker*."""
+        adv = self.estimate_adv(ticker)
+        tier = self.classify_liquidity(adv)
+        return self._HALF_SPREAD_BPS[tier] * self.spread_multiplier
+
+    def impact_cost_bps(self, ticker: str, order_size: int) -> float:
+        """Market-impact cost using square-root model.
+
+        impact = sqrt(order_size / ADV) * spread_multiplier * base_spread
+        Returns cost in basis points.
+        """
+        adv = self.estimate_adv(ticker)
+        if adv <= 0:
+            return 0.0
+        participation = order_size / adv
+        tier = self.classify_liquidity(adv)
+        base_spread = self._HALF_SPREAD_BPS[tier]
+        impact = np.sqrt(participation) * base_spread * self.spread_multiplier
+        return float(impact)
+
+    def time_of_day_multiplier(self) -> float:
+        """Return slippage multiplier based on current hour (ET approximation)."""
+        try:
+            from datetime import timezone, timedelta
+            utc_now = datetime.now(timezone.utc)
+            et_hour = (utc_now - timedelta(hours=5)).hour  # rough EST
+        except Exception:
+            et_hour = 12
+        return self._TOD_MULTIPLIER.get(et_hour, 1.0)
+
+    def fill_probability(self, ticker: str, order_size: int,
+                         order_type: OrderType = OrderType.MARKET) -> float:
+        """Estimate probability that the order fills.
+
+        Market orders always fill (1.0).  Limit orders get a heuristic
+        probability based on size relative to ADV.
+        """
+        if order_type == OrderType.MARKET:
+            return 1.0
+        adv = self.estimate_adv(ticker)
+        if adv <= 0:
+            return 0.5
+        participation = order_size / adv
+        # Larger participation → lower limit fill probability
+        prob = max(0.1, 1.0 - np.sqrt(participation) * 2.0)
+        return float(min(prob, 0.99))
+
+    def compute_fill_price(self, mid_price: float, ticker: str,
+                           order_size: int, side: OrderSide) -> float:
+        """Return a realistic simulated fill price.
+
+        Components:
+            1. Half-spread cost (always paid)
+            2. Market-impact cost (sqrt model)
+            3. Time-of-day multiplier
+        """
+        spread_bps = self.half_spread(ticker)
+        impact_bps = self.impact_cost_bps(ticker, order_size)
+        tod = self.time_of_day_multiplier()
+
+        total_bps = (spread_bps + impact_bps) * tod
+        cost_frac = total_bps / 10_000.0
+
+        if side in (OrderSide.BUY, OrderSide.COVER):
+            return mid_price * (1.0 + cost_frac)
+        else:
+            return mid_price * (1.0 - cost_frac)
+
+
+# ---------------------------------------------------------------------------
+# RiskLimiter — Pre-trade risk checks
+# ---------------------------------------------------------------------------
+class RiskLimiter:
+    """Enforces portfolio-level risk limits before order execution.
+
+    All thresholds are expressed as fractions of NAV unless noted.
+    """
+
+    def __init__(
+        self,
+        max_position_pct: float = 0.10,
+        max_sector_pct: float = 0.30,
+        max_single_name_pct: float = 0.05,
+        daily_loss_limit_pct: float = 0.03,
+        max_gross_exposure: float = 2.5,
+        max_net_exposure: float = 1.0,
+    ):
+        self.max_position_pct = max_position_pct
+        self.max_sector_pct = max_sector_pct
+        self.max_single_name_pct = max_single_name_pct
+        self.daily_loss_limit_pct = daily_loss_limit_pct
+        self.max_gross_exposure = max_gross_exposure
+        self.max_net_exposure = max_net_exposure
+
+    def check_position_size(self, order_value: float, nav: float) -> tuple[bool, str]:
+        """Check if order value exceeds max position size as % of NAV."""
+        if nav <= 0:
+            return False, "NAV is zero or negative"
+        pct = abs(order_value) / nav
+        if pct > self.max_position_pct:
+            return False, (f"Position size {pct:.1%} exceeds max "
+                           f"{self.max_position_pct:.1%} of NAV")
+        return True, ""
+
+    def check_single_name_exposure(self, ticker: str, new_value: float,
+                                   positions: dict, nav: float) -> tuple[bool, str]:
+        """Check single-name concentration after proposed trade."""
+        if nav <= 0:
+            return False, "NAV is zero or negative"
+        existing = 0.0
+        if ticker in positions:
+            existing = abs(positions[ticker].market_value)
+        total = existing + abs(new_value)
+        pct = total / nav
+        if pct > self.max_single_name_pct:
+            return False, (f"Single-name exposure for {ticker} would be "
+                           f"{pct:.1%}, exceeds {self.max_single_name_pct:.1%}")
+        return True, ""
+
+    def check_sector_concentration(self, sector: str, new_value: float,
+                                   positions: dict, nav: float) -> tuple[bool, str]:
+        """Check sector concentration after proposed trade."""
+        if nav <= 0 or not sector:
+            return True, ""  # Skip if sector unknown
+        sector_total = sum(
+            abs(p.market_value) for p in positions.values()
+            if p.sector == sector
+        )
+        sector_total += abs(new_value)
+        pct = sector_total / nav
+        if pct > self.max_sector_pct:
+            return False, (f"Sector {sector} concentration {pct:.1%} exceeds "
+                           f"max {self.max_sector_pct:.1%}")
+        return True, ""
+
+    def check_daily_loss(self, daily_pnl: float, nav: float) -> tuple[bool, str]:
+        """Check if daily loss limit has been breached."""
+        if nav <= 0:
+            return False, "NAV is zero or negative"
+        loss_pct = -daily_pnl / nav if daily_pnl < 0 else 0.0
+        if loss_pct > self.daily_loss_limit_pct:
+            return False, (f"Daily loss {loss_pct:.1%} exceeds limit "
+                           f"{self.daily_loss_limit_pct:.1%}")
+        return True, ""
+
+    def check_gross_exposure(self, gross_exposure: float) -> tuple[bool, str]:
+        """Check gross exposure limit."""
+        if gross_exposure > self.max_gross_exposure:
+            return False, (f"Gross exposure {gross_exposure:.2f}x exceeds "
+                           f"max {self.max_gross_exposure:.2f}x")
+        return True, ""
+
+    def check_net_exposure(self, net_exposure: float) -> tuple[bool, str]:
+        """Check net exposure limit."""
+        if abs(net_exposure) > self.max_net_exposure:
+            return False, (f"Net exposure {net_exposure:.2f}x exceeds "
+                           f"max {self.max_net_exposure:.2f}x")
+        return True, ""
+
+    def run_all_checks(self, order_value: float, ticker: str, sector: str,
+                       positions: dict, nav: float, daily_pnl: float,
+                       gross_exposure: float, net_exposure: float
+                       ) -> tuple[bool, list[str]]:
+        """Run every pre-trade risk check. Return (passed, list_of_reasons)."""
+        failures: list[str] = []
+
+        ok, msg = self.check_position_size(order_value, nav)
+        if not ok:
+            failures.append(msg)
+
+        ok, msg = self.check_single_name_exposure(ticker, order_value,
+                                                  positions, nav)
+        if not ok:
+            failures.append(msg)
+
+        ok, msg = self.check_sector_concentration(sector, order_value,
+                                                  positions, nav)
+        if not ok:
+            failures.append(msg)
+
+        ok, msg = self.check_daily_loss(daily_pnl, nav)
+        if not ok:
+            failures.append(msg)
+
+        ok, msg = self.check_gross_exposure(gross_exposure)
+        if not ok:
+            failures.append(msg)
+
+        ok, msg = self.check_net_exposure(net_exposure)
+        if not ok:
+            failures.append(msg)
+
+        return (len(failures) == 0), failures
+
+
+# ---------------------------------------------------------------------------
+# PerformanceTracker — Broker-level performance analytics
+# ---------------------------------------------------------------------------
+class PerformanceTracker:
+    """Tracks and computes performance metrics for a paper broker session.
+
+    Maintains a daily P&L series and derives drawdown, Sharpe ratio, win-rate
+    by signal type, average win/loss ratio, and trade-frequency statistics.
+    """
+
+    def __init__(self, initial_nav: float = 1_000_000.0, risk_free_rate: float = 0.05):
+        self.initial_nav = initial_nav
+        self.risk_free_rate = risk_free_rate  # annualised
+        self._daily_navs: list[tuple[str, float]] = []  # (date_str, nav)
+        self._daily_pnls: list[tuple[str, float]] = []  # (date_str, pnl)
+        self._trade_records: list[dict] = []
+        self._high_water_mark: float = initial_nav
+
+    # --- Recording -----------------------------------------------------------
+
+    def record_nav(self, nav: float, date_str: Optional[str] = None):
+        """Record an end-of-day NAV snapshot."""
+        date_str = date_str or datetime.now().strftime("%Y-%m-%d")
+        self._daily_navs.append((date_str, nav))
+        # Compute daily P&L from previous NAV
+        if len(self._daily_navs) >= 2:
+            prev_nav = self._daily_navs[-2][1]
+            pnl = nav - prev_nav
+        else:
+            pnl = nav - self.initial_nav
+        self._daily_pnls.append((date_str, pnl))
+        # Update high water mark
+        if nav > self._high_water_mark:
+            self._high_water_mark = nav
+
+    def record_trade(self, order_dict: dict):
+        """Record a completed trade for signal-type analysis."""
+        self._trade_records.append(order_dict)
+
+    # --- Daily P&L -----------------------------------------------------------
+
+    def get_daily_pnl_series(self) -> pd.DataFrame:
+        """Return a DataFrame with columns ['date', 'pnl']."""
+        if not self._daily_pnls:
+            return pd.DataFrame(columns=["date", "pnl"])
+        df = pd.DataFrame(self._daily_pnls, columns=["date", "pnl"])
+        df["date"] = pd.to_datetime(df["date"])
+        return df
+
+    def get_daily_returns(self) -> np.ndarray:
+        """Return array of daily simple returns from NAV series."""
+        if len(self._daily_navs) < 2:
+            return np.array([])
+        navs = np.array([n for _, n in self._daily_navs], dtype=np.float64)
+        returns = np.diff(navs) / navs[:-1]
+        return returns
+
+    # --- Drawdown ------------------------------------------------------------
+
+    def get_drawdown(self) -> dict:
+        """Return current drawdown and max drawdown as fractions."""
+        if not self._daily_navs:
+            return {"current_drawdown": 0.0, "max_drawdown": 0.0,
+                    "high_water_mark": self.initial_nav}
+
+        navs = np.array([n for _, n in self._daily_navs], dtype=np.float64)
+        running_max = np.maximum.accumulate(navs)
+        drawdowns = (running_max - navs) / np.where(running_max > 0, running_max, 1.0)
+
+        current_dd = float(drawdowns[-1])
+        max_dd = float(np.max(drawdowns))
+
+        return {
+            "current_drawdown": current_dd,
+            "max_drawdown": max_dd,
+            "high_water_mark": float(running_max[-1]),
+        }
+
+    # --- Sharpe ratio --------------------------------------------------------
+
+    def sharpe_ratio(self, rolling_window: Optional[int] = None) -> float:
+        """Compute annualised Sharpe ratio.
+
+        If *rolling_window* is given, compute over last N days only.
+        Uses 252 trading days for annualisation.
+        """
+        returns = self.get_daily_returns()
+        if len(returns) < 2:
+            return 0.0
+        if rolling_window and rolling_window < len(returns):
+            returns = returns[-rolling_window:]
+
+        daily_rf = self.risk_free_rate / 252.0
+        excess = returns - daily_rf
+        mean_excess = np.mean(excess)
+        std_excess = np.std(excess, ddof=1)
+        if std_excess == 0:
+            return 0.0
+        return float(mean_excess / std_excess * np.sqrt(252))
+
+    def rolling_sharpe(self, window: int = 60) -> list[tuple[str, float]]:
+        """Return list of (date, sharpe) for rolling window."""
+        returns = self.get_daily_returns()
+        dates = [d for d, _ in self._daily_navs]
+        result: list[tuple[str, float]] = []
+        daily_rf = self.risk_free_rate / 252.0
+        for i in range(window, len(returns) + 1):
+            chunk = returns[i - window:i]
+            excess = chunk - daily_rf
+            m = np.mean(excess)
+            s = np.std(excess, ddof=1)
+            sr = float(m / s * np.sqrt(252)) if s > 0 else 0.0
+            # dates are 1-indexed relative to returns (returns[0] goes with dates[1])
+            result.append((dates[i], sr))
+        return result
+
+    # --- Win rate by signal type ---------------------------------------------
+
+    def win_rate_by_signal(self) -> dict[str, dict]:
+        """Return win rate and trade count grouped by signal_type."""
+        buckets: dict[str, dict] = {}
+        for trade in self._trade_records:
+            sig = trade.get("signal_type", "HOLD")
+            if sig not in buckets:
+                buckets[sig] = {"wins": 0, "losses": 0, "total": 0,
+                                "total_pnl": 0.0}
+            pnl = trade.get("realized_pnl", 0.0)
+            buckets[sig]["total"] += 1
+            buckets[sig]["total_pnl"] += pnl
+            if pnl > 0:
+                buckets[sig]["wins"] += 1
+            elif pnl < 0:
+                buckets[sig]["losses"] += 1
+
+        for sig, b in buckets.items():
+            b["win_rate"] = b["wins"] / b["total"] if b["total"] > 0 else 0.0
+        return buckets
+
+    # --- Average win / loss ratio --------------------------------------------
+
+    def avg_win_loss_ratio(self) -> float:
+        """Return average winning trade P&L / average losing trade P&L (abs).
+
+        Returns 0.0 if no losing trades.
+        """
+        wins = [t["realized_pnl"] for t in self._trade_records
+                if t.get("realized_pnl", 0) > 0]
+        losses = [t["realized_pnl"] for t in self._trade_records
+                  if t.get("realized_pnl", 0) < 0]
+        if not losses:
+            return float("inf") if wins else 0.0
+        avg_win = np.mean(wins) if wins else 0.0
+        avg_loss = abs(np.mean(losses))
+        if avg_loss == 0:
+            return 0.0
+        return float(avg_win / avg_loss)
+
+    # --- Trade frequency -----------------------------------------------------
+
+    def trade_frequency(self) -> dict:
+        """Return trade-frequency statistics."""
+        if not self._trade_records:
+            return {"total_trades": 0, "trades_per_day": 0.0, "days_traded": 0}
+        dates = set()
+        for t in self._trade_records:
+            ts = t.get("fill_timestamp", t.get("timestamp", ""))
+            if ts:
+                dates.add(ts[:10])
+        n_days = max(len(dates), 1)
+        total = len(self._trade_records)
+        return {
+            "total_trades": total,
+            "trades_per_day": total / n_days,
+            "days_traded": n_days,
+        }
+
+    # --- Aggregate metrics ---------------------------------------------------
+
+    def get_all_metrics(self) -> dict:
+        """Return a dictionary with all performance metrics."""
+        dd = self.get_drawdown()
+        wl = self.avg_win_loss_ratio()
+        freq = self.trade_frequency()
+        return {
+            "sharpe_total": self.sharpe_ratio(),
+            "sharpe_60d": self.sharpe_ratio(rolling_window=60),
+            "current_drawdown": dd["current_drawdown"],
+            "max_drawdown": dd["max_drawdown"],
+            "high_water_mark": dd["high_water_mark"],
+            "avg_win_loss_ratio": wl,
+            "win_rate_by_signal": self.win_rate_by_signal(),
+            "trade_frequency": freq,
+        }
+
+
+# ---------------------------------------------------------------------------
 # Paper Broker
 # ---------------------------------------------------------------------------
 class PaperBroker:
@@ -137,6 +602,8 @@ class PaperBroker:
         initial_cash: float = 1_000_000.0,
         log_dir: Optional[Path] = None,
         slippage_bps: float = 2.0,
+        enable_risk_limits: bool = True,
+        enable_micro_price: bool = True,
     ):
         self.state = PortfolioState(cash=initial_cash, nav=initial_cash)
         self.slippage_bps = slippage_bps
@@ -144,6 +611,51 @@ class PaperBroker:
         self.log_dir.mkdir(parents=True, exist_ok=True)
         self._orders: list[Order] = []
         self._trade_log: list[dict] = []
+
+        # Enhanced components
+        self._initial_cash = initial_cash
+        self._micro_price = MicroPriceModel() if enable_micro_price else None
+        self._risk_limiter = RiskLimiter() if enable_risk_limits else None
+        self._perf_tracker = PerformanceTracker(initial_nav=initial_cash)
+        self._daily_pnl_today: float = 0.0
+        self._last_eod_date: Optional[str] = None
+        self._eod_nav_history: list[tuple[str, float]] = []
+
+    # --- Pre-trade risk checks -----------------------------------------------
+
+    def _check_risk_limits(self, ticker: str, side: OrderSide,
+                           quantity: int, price: float) -> tuple[bool, str]:
+        """Run all pre-trade risk checks. Returns (passed, reason)."""
+        if self._risk_limiter is None:
+            return True, ""
+
+        order_value = quantity * price
+        nav = self.state.nav if self.state.nav > 0 else self._initial_cash
+
+        # Determine sector for the position
+        sector = ""
+        if ticker in self.state.positions:
+            sector = self.state.positions[ticker].sector
+
+        # Get current exposures
+        exposures = self.compute_exposures()
+        gross = exposures.get("gross", 0.0)
+        net = exposures.get("net", 0.0)
+
+        passed, failures = self._risk_limiter.run_all_checks(
+            order_value=order_value,
+            ticker=ticker,
+            sector=sector,
+            positions=self.state.positions,
+            nav=nav,
+            daily_pnl=self._daily_pnl_today,
+            gross_exposure=gross,
+            net_exposure=net,
+        )
+
+        if not passed:
+            return False, "; ".join(failures)
+        return True, ""
 
     # --- Order execution -----------------------------------------------------
 
@@ -177,12 +689,26 @@ class PaperBroker:
             self._orders.append(order)
             return order
 
-        # Apply slippage
-        slip = price * self.slippage_bps / 10_000
-        if side in (OrderSide.BUY, OrderSide.COVER):
-            fill_price = price + slip
+        # Pre-trade risk checks
+        risk_ok, risk_reason = self._check_risk_limits(ticker, side, quantity, price)
+        if not risk_ok:
+            order.status = OrderStatus.REJECTED
+            order.reason = f"Risk limit: {risk_reason}"
+            self._orders.append(order)
+            return order
+
+        # Apply slippage — use MicroPriceModel if available, else simple bps
+        if self._micro_price is not None:
+            fill_price = self._micro_price.compute_fill_price(
+                mid_price=price, ticker=ticker,
+                order_size=quantity, side=side,
+            )
         else:
-            fill_price = price - slip
+            slip = price * self.slippage_bps / 10_000
+            if side in (OrderSide.BUY, OrderSide.COVER):
+                fill_price = price + slip
+            else:
+                fill_price = price - slip
 
         # Limit check
         if limit_price:
@@ -216,6 +742,8 @@ class PaperBroker:
 
         pos = self.state.positions.get(ticker, Position(ticker=ticker))
 
+        realized_pnl_this_trade = 0.0
+
         if order.side == OrderSide.BUY:
             cost = qty * price
             if cost > self.state.cash:
@@ -236,6 +764,7 @@ class PaperBroker:
                 return
             proceeds = sell_qty * price
             pnl = (price - pos.avg_cost) * sell_qty
+            realized_pnl_this_trade = pnl
             pos.realized_pnl += pnl
             pos.quantity -= sell_qty
             self.state.cash += proceeds
@@ -254,6 +783,7 @@ class PaperBroker:
             cover_qty = min(qty, abs(pos.quantity))
             cost = cover_qty * price
             pnl = (pos.avg_cost - price) * cover_qty
+            realized_pnl_this_trade = pnl
             pos.quantity += cover_qty
             pos.realized_pnl += pnl
             self.state.cash -= cost
@@ -272,6 +802,9 @@ class PaperBroker:
             del self.state.positions[ticker]
 
         self.state.total_trades += 1
+
+        # Track daily P&L
+        self._daily_pnl_today += realized_pnl_this_trade
 
     # --- Portfolio state -----------------------------------------------------
 
@@ -338,6 +871,133 @@ class PaperBroker:
             "net_exposure": exp["net"],
         }
 
+    # --- Daily P&L -----------------------------------------------------------
+
+    def get_daily_pnl(self) -> pd.DataFrame:
+        """Return daily P&L as a DataFrame with columns ['date', 'pnl']."""
+        return self._perf_tracker.get_daily_pnl_series()
+
+    # --- Drawdown ------------------------------------------------------------
+
+    def get_drawdown(self) -> dict:
+        """Return current and max drawdown as fractions of peak NAV.
+
+        Returns dict with keys: current_drawdown, max_drawdown, high_water_mark.
+        """
+        return self._perf_tracker.get_drawdown()
+
+    # --- Performance metrics -------------------------------------------------
+
+    def get_performance_metrics(self) -> dict:
+        """Return dict with Sharpe, win rate, drawdown, etc."""
+        metrics = self._perf_tracker.get_all_metrics()
+        # Overlay broker-level win rate
+        total = self.state.win_count + self.state.loss_count
+        metrics["overall_win_rate"] = (
+            self.state.win_count / total if total > 0 else 0.0
+        )
+        metrics["total_pnl"] = self.state.total_pnl
+        metrics["nav"] = self.state.nav
+        metrics["cash"] = self.state.cash
+        return metrics
+
+    # --- EOD reconciliation --------------------------------------------------
+
+    def reconcile(self) -> dict:
+        """End-of-day reconciliation.
+
+        - Refreshes all prices
+        - Recomputes NAV and exposures
+        - Records daily NAV snapshot for performance tracking
+        - Resets daily P&L counter
+        - Logs reconciliation to disk
+
+        Returns a summary dict.
+        """
+        today = datetime.now().strftime("%Y-%m-%d")
+
+        # Refresh and compute
+        nav = self.compute_nav()
+        exposures = self.compute_exposures()
+
+        # Record to performance tracker
+        self._perf_tracker.record_nav(nav, date_str=today)
+
+        # Build reconciliation summary
+        summary = {
+            "date": today,
+            "nav": nav,
+            "cash": self.state.cash,
+            "positions_count": len(self.state.positions),
+            "total_pnl": self.state.total_pnl,
+            "daily_pnl": self._daily_pnl_today,
+            "gross_exposure": exposures["gross"],
+            "net_exposure": exposures["net"],
+            "total_trades_today": sum(
+                1 for o in self._orders
+                if o.status == OrderStatus.FILLED
+                and o.fill_timestamp.startswith(today)
+            ),
+        }
+
+        # Store EOD nav history
+        self._eod_nav_history.append((today, nav))
+
+        # Persist reconciliation
+        recon_file = self.log_dir / f"reconcile_{today}.json"
+        try:
+            with open(recon_file, "w") as f:
+                json.dump(summary, f, indent=2)
+        except Exception:
+            pass
+
+        # Reset daily P&L
+        self._daily_pnl_today = 0.0
+        self._last_eod_date = today
+
+        return summary
+
+    # --- Position export -----------------------------------------------------
+
+    def export_positions_csv(self, filepath: Optional[str] = None) -> str:
+        """Export current positions to CSV.
+
+        If *filepath* is None, returns the CSV as a string.
+        Otherwise writes to *filepath* and returns the path.
+        """
+        self.refresh_prices()
+        headers = [
+            "ticker", "quantity", "avg_cost", "current_price",
+            "market_value", "unrealized_pnl", "realized_pnl", "sector",
+        ]
+        rows = []
+        for ticker, pos in sorted(self.state.positions.items()):
+            rows.append([
+                ticker,
+                pos.quantity,
+                round(pos.avg_cost, 4),
+                round(pos.current_price, 4),
+                round(pos.market_value, 2),
+                round(pos.unrealized_pnl, 2),
+                round(pos.realized_pnl, 2),
+                pos.sector,
+            ])
+
+        if filepath:
+            path = Path(filepath)
+            path.parent.mkdir(parents=True, exist_ok=True)
+            with open(path, "w", newline="") as f:
+                writer = csv.writer(f)
+                writer.writerow(headers)
+                writer.writerows(rows)
+            return str(path)
+        else:
+            buf = io.StringIO()
+            writer = csv.writer(buf)
+            writer.writerow(headers)
+            writer.writerows(rows)
+            return buf.getvalue()
+
     # --- Price fetching ------------------------------------------------------
 
     def _get_current_price(self, ticker: str) -> float:
@@ -355,7 +1015,47 @@ class PaperBroker:
     # --- Logging -------------------------------------------------------------
 
     def _log_trade(self, order: Order):
+        """Log a filled trade with extended metadata."""
         entry = order.to_dict()
+
+        # Enhanced metadata
+        entry["nav_at_fill"] = self.state.nav
+        entry["cash_after"] = self.state.cash
+        entry["positions_count"] = len(self.state.positions)
+        entry["daily_pnl"] = self._daily_pnl_today
+        entry["total_pnl"] = self.state.total_pnl
+        entry["total_trades"] = self.state.total_trades
+
+        # Position-level info if still held
+        if order.ticker in self.state.positions:
+            pos = self.state.positions[order.ticker]
+            entry["pos_quantity"] = pos.quantity
+            entry["pos_avg_cost"] = pos.avg_cost
+            entry["pos_unrealized_pnl"] = pos.unrealized_pnl
+            entry["pos_realized_pnl"] = pos.realized_pnl
+            entry["pos_sector"] = pos.sector
+        else:
+            entry["pos_quantity"] = 0
+            entry["pos_avg_cost"] = 0.0
+            entry["pos_unrealized_pnl"] = 0.0
+            entry["pos_realized_pnl"] = 0.0
+            entry["pos_sector"] = ""
+
+        # Micro-price model info
+        if self._micro_price is not None:
+            entry["spread_bps"] = self._micro_price.half_spread(order.ticker)
+            entry["impact_bps"] = self._micro_price.impact_cost_bps(
+                order.ticker, order.quantity)
+            entry["tod_multiplier"] = self._micro_price.time_of_day_multiplier()
+
+        # Record realized PnL into performance tracker for signal analysis
+        realized = 0.0
+        if order.side in (OrderSide.SELL, OrderSide.COVER):
+            realized = entry.get("pos_realized_pnl", 0.0)
+        perf_entry = dict(entry)
+        perf_entry["realized_pnl"] = realized
+        self._perf_tracker.record_trade(perf_entry)
+
         self._trade_log.append(entry)
         log_file = self.log_dir / f"trades_{datetime.now().strftime('%Y%m%d')}.jsonl"
         with open(log_file, "a") as f:
