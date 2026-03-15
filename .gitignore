@@ -21,3 +21,5 @@ target/
 *.pdf
 *.pptx
 *.zip
+# Large test data
+repos/layer3_ml/AI-Newton/data/test_cases/
