@@ -171,17 +171,25 @@ FACTOR_ETFS = {
 }
 COMMODITY_ETFS = {
     "Gold": "GLD", "Silver": "SLV", "Oil": "USO", "Natural Gas": "UNG",
-    "Broad Commodities": "DJP", "Agriculture": "DBA", "Copper": "CPER", "Platinum": "PPLT",
+    "Broad Commodities": "DBC", "Broad Alt": "DJP",
+    "Agriculture": "DBA", "Copper": "CPER", "Platinum": "PPLT",
 }
 FIXED_INCOME_ETFS = {
     "Treasury 20Y+": "TLT", "Treasury 7-10Y": "IEF", "Treasury 1-3Y": "SHY",
-    "TIPS": "TIP", "Investment Grade Corp": "LQD", "High Yield Corp": "HYG",
+    "Aggregate Bond": "AGG", "Total Bond": "BND",
+    "TIPS": "TIP", "Investment Grade Corp": "LQD", "IG Intermediate": "VCIT",
+    "High Yield Corp": "HYG", "High Yield Junk": "JNK",
+    "Fallen Angels": "ANGL", "Fallen Angels Alt": "FALN",
     "Muni Bond": "MUB", "Floating Rate": "FLOT", "Emerging Market Debt": "EMB",
 }
-VOLATILITY_ETFS = {"VIX Short-Term": "VIXY", "VIX Mid-Term": "VIXM"}
+VOLATILITY_ETFS = {
+    "VIX Short-Term": "VXX", "VIX Ultra": "UVXY", "Short VIX": "SVXY",
+    "VIX Short-Term Alt": "VIXY", "VIX Mid-Term": "VIXM",
+}
 INTERNATIONAL_ETFS = {
-    "MSCI EAFE": "EFA", "Emerging Markets": "EEM", "China": "FXI",
-    "Japan": "EWJ", "Europe": "VGK", "India": "INDA", "Brazil": "EWZ", "UK": "EWU",
+    "MSCI EAFE": "EFA", "Emerging Markets": "EEM", "EM Core": "IEMG",
+    "China": "FXI", "Japan": "EWJ", "Europe": "VGK",
+    "India": "INDA", "Brazil": "EWZ", "UK": "EWU",
 }
 INDEX_ETFS = {
     "S&P 500": "SPY", "NASDAQ 100": "QQQ", "Russell 2000": "IWM",
@@ -216,6 +224,43 @@ RV_PAIRS = [
 ]
 
 
+class SecurityType(str, Enum):
+    """Classification of security type."""
+    EQUITY = "EQUITY"
+    SECTOR_ETF = "SECTOR_ETF"
+    BROAD_ETF = "BROAD_ETF"
+    FACTOR_ETF = "FACTOR_ETF"
+    FIXED_INCOME_ETF = "FIXED_INCOME_ETF"
+    COMMODITY_ETF = "COMMODITY_ETF"
+    VOLATILITY_ETF = "VOLATILITY_ETF"
+    INTERNATIONAL_ETF = "INTERNATIONAL_ETF"
+    INDEX_ETF = "INDEX_ETF"
+    THEMATIC_ETF = "THEMATIC_ETF"
+
+
+class GICSSector(str, Enum):
+    """GICS sector enum."""
+    ENERGY = "Energy"
+    MATERIALS = "Materials"
+    INDUSTRIALS = "Industrials"
+    CONSUMER_DISCRETIONARY = "Consumer Discretionary"
+    CONSUMER_STAPLES = "Consumer Staples"
+    HEALTH_CARE = "Health Care"
+    FINANCIALS = "Financials"
+    INFORMATION_TECHNOLOGY = "Information Technology"
+    COMMUNICATION_SERVICES = "Communication Services"
+    UTILITIES = "Utilities"
+    REAL_ESTATE = "Real Estate"
+
+
+class AvgVolTier(str, Enum):
+    """Average daily volume tier."""
+    ULTRA_LIQUID = "ULTRA_LIQUID"   # >50M shares/day
+    HIGH = "HIGH"                    # 10-50M
+    MEDIUM = "MEDIUM"                # 1-10M
+    LOW = "LOW"                      # <1M
+
+
 class MarketCapTier(str, Enum):
     MEGA = "MEGA"
     LARGE = "LARGE"
@@ -234,17 +279,25 @@ def classify_market_cap(cap: float) -> MarketCapTier:
 
 @dataclass
 class Security:
+    """Security object with full GICS 4-tier classification.
+
+    Each security in the universe carries complete classification data
+    for use across all engine layers.
+    """
     ticker: str = ""
     name: str = ""
+    security_type: str = SecurityType.EQUITY.value
     sector: str = ""
-    industry_group: str = ""
-    industry: str = ""
-    sub_industry: str = ""
+    gics_sector: str = ""          # GICSSector enum value
+    industry_group: str = ""       # GICS tier 2
+    industry: str = ""             # GICS tier 3
+    sub_industry: str = ""         # GICS tier 4
     gics_code: int = 0
     market_cap: float = 0.0
     market_cap_tier: str = ""
     quality_tier: str = "D"
     avg_volume: float = 0.0
+    avg_vol_tier: str = AvgVolTier.MEDIUM.value
     price: float = 0.0
     beta: float = 1.0
     sharpe_12m: float = 0.0
@@ -258,6 +311,9 @@ class Security:
     revenue_growth: float = 0.0
     earnings_growth: float = 0.0
     free_cash_flow_yield: float = 0.0
+    options_eligible: bool = True
+    sector_etf: str = ""           # Associated sector ETF
+    rv_pair: str = ""              # RV pair partner ticker
     is_fallen_angel: bool = False
     is_rv_candidate: bool = False
     last_updated: str = ""
@@ -497,72 +553,157 @@ class RVPairAnalyzer:
         return [r for r in results if r.get("signal", "").startswith("RV_")]
 
 
+# ═══════════════════════════════════════════════════════════════════════════
+# Core Equities — ~110 securities, 10+ per GICS sector
+# ═══════════════════════════════════════════════════════════════════════════
 SP500_TOP_HOLDINGS = [
-    "AAPL", "MSFT", "AMZN", "NVDA", "GOOGL", "META", "TSLA", "BRK-B",
-    "UNH", "JNJ", "JPM", "V", "XOM", "PG", "MA", "HD", "CVX", "MRK",
-    "ABBV", "LLY", "PFE", "KO", "COST", "PEP", "TMO", "AVGO", "WMT",
-    "MCD", "CSCO", "ABT", "CRM", "DHR", "ACN", "CMCSA", "TXN", "VZ",
-    "NEE", "ADBE", "BMY", "PM", "NKE", "RTX", "INTC", "QCOM", "UPS",
-    "ORCL", "AMD", "CAT", "LMT", "DE", "BA", "GS", "MS", "BLK", "LOW",
-    "INTU", "MDLZ", "ADI", "CI", "ISRG", "BKNG", "GILD", "SYK", "AXP",
-    "AMGN", "SBUX", "GE", "MMM", "TGT", "PLD", "SPGI", "BDX", "ZTS",
-    "DUK", "SO", "CME", "CB", "SLB", "USB", "MO", "CL", "FDX", "F",
-    "GM", "ADP", "NSC", "EMR", "COF", "TFC", "PNC", "DG", "HCA",
-    "NFLX", "SPG", "O", "LULU", "PANW", "SNPS", "CDNS", "MRVL",
+    # Information Technology (12)
+    "AAPL", "MSFT", "NVDA", "AVGO", "CSCO", "CRM", "ORCL", "ADBE",
+    "INTC", "AMD", "TXN", "INTU",
+    # Health Care (11)
+    "UNH", "JNJ", "LLY", "ABBV", "MRK", "PFE", "TMO", "ABT",
+    "DHR", "ISRG", "AMGN",
+    # Financials (12)
+    "JPM", "V", "MA", "BRK-B", "GS", "MS", "BLK", "AXP",
+    "CME", "CB", "SPGI", "COF",
+    # Consumer Discretionary (10)
+    "AMZN", "TSLA", "HD", "MCD", "NKE", "LOW", "BKNG", "SBUX",
+    "TGT", "LULU",
+    # Communication Services (8)
+    "GOOGL", "META", "NFLX", "CMCSA", "VZ", "DIS", "T", "TMUS",
+    # Industrials (11)
+    "BA", "LMT", "CAT", "DE", "RTX", "GE", "UPS", "FDX",
+    "NSC", "EMR", "ADP",
+    # Consumer Staples (10)
+    "PG", "KO", "PEP", "COST", "WMT", "PM", "MO", "CL",
+    "MDLZ", "STZ",
+    # Energy (10)
+    "XOM", "CVX", "SLB", "COP", "EOG", "MPC", "PSX", "VLO",
+    "OXY", "HAL",
+    # Utilities (8)
+    "NEE", "DUK", "SO", "AEP", "D", "SRE", "EXC", "XEL",
+    # Real Estate (8)
+    "PLD", "SPG", "O", "AMT", "CCI", "EQIX", "PSA", "DLR",
+    # Materials (7)
+    "LIN", "APD", "SHW", "FCX", "NEM", "ECL", "DD",
+    # Additional high-profile names
+    "GILD", "SYK", "HCA", "BDX", "ZTS", "CI",
+    "USB", "TFC", "PNC", "F", "GM", "DG",
+    "PANW", "SNPS", "CDNS", "MRVL", "QCOM", "ADI",
+    "BMY", "MMM",
 ]
 
+# Full GICS classification for every security in universe
 KNOWN_SECTORS = {
+    # Information Technology
     "AAPL": "Information Technology", "MSFT": "Information Technology",
-    "AMZN": "Consumer Discretionary", "GOOGL": "Communication Services",
-    "META": "Communication Services", "NVDA": "Information Technology",
-    "TSLA": "Consumer Discretionary", "BRK-B": "Financials",
-    "UNH": "Health Care", "JNJ": "Health Care",
-    "JPM": "Financials", "V": "Financials",
-    "XOM": "Energy", "PG": "Consumer Staples",
-    "MA": "Financials", "HD": "Consumer Discretionary",
-    "CVX": "Energy", "MRK": "Health Care",
-    "ABBV": "Health Care", "LLY": "Health Care",
-    "PFE": "Health Care", "KO": "Consumer Staples",
-    "COST": "Consumer Staples", "PEP": "Consumer Staples",
-    "WMT": "Consumer Staples", "MCD": "Consumer Discretionary",
+    "NVDA": "Information Technology", "AVGO": "Information Technology",
     "CSCO": "Information Technology", "CRM": "Information Technology",
-    "NEE": "Utilities", "DUK": "Utilities",
+    "ORCL": "Information Technology", "ADBE": "Information Technology",
+    "INTC": "Information Technology", "AMD": "Information Technology",
+    "TXN": "Information Technology", "INTU": "Information Technology",
+    "QCOM": "Information Technology", "ADI": "Information Technology",
+    "PANW": "Information Technology", "SNPS": "Information Technology",
+    "CDNS": "Information Technology", "MRVL": "Information Technology",
+    # Health Care
+    "UNH": "Health Care", "JNJ": "Health Care",
+    "LLY": "Health Care", "ABBV": "Health Care",
+    "MRK": "Health Care", "PFE": "Health Care",
+    "TMO": "Health Care", "ABT": "Health Care",
+    "DHR": "Health Care", "ISRG": "Health Care",
+    "AMGN": "Health Care", "GILD": "Health Care",
+    "SYK": "Health Care", "HCA": "Health Care",
+    "BDX": "Health Care", "ZTS": "Health Care",
+    "CI": "Health Care", "BMY": "Health Care",
+    # Financials
+    "JPM": "Financials", "V": "Financials",
+    "MA": "Financials", "BRK-B": "Financials",
+    "GS": "Financials", "MS": "Financials",
+    "BLK": "Financials", "AXP": "Financials",
+    "CME": "Financials", "CB": "Financials",
+    "SPGI": "Financials", "COF": "Financials",
+    "USB": "Financials", "TFC": "Financials",
+    "PNC": "Financials",
+    # Consumer Discretionary
+    "AMZN": "Consumer Discretionary", "TSLA": "Consumer Discretionary",
+    "HD": "Consumer Discretionary", "MCD": "Consumer Discretionary",
+    "NKE": "Consumer Discretionary", "LOW": "Consumer Discretionary",
+    "BKNG": "Consumer Discretionary", "SBUX": "Consumer Discretionary",
+    "TGT": "Consumer Discretionary", "LULU": "Consumer Discretionary",
+    "F": "Consumer Discretionary", "GM": "Consumer Discretionary",
+    "DG": "Consumer Discretionary",
+    # Communication Services
+    "GOOGL": "Communication Services", "META": "Communication Services",
+    "NFLX": "Communication Services", "CMCSA": "Communication Services",
+    "VZ": "Communication Services", "DIS": "Communication Services",
+    "T": "Communication Services", "TMUS": "Communication Services",
+    # Industrials
     "BA": "Industrials", "LMT": "Industrials",
     "CAT": "Industrials", "DE": "Industrials",
-    "GS": "Financials", "MS": "Financials",
-    "NFLX": "Communication Services", "DIS": "Communication Services",
-    "AMD": "Information Technology", "INTC": "Information Technology",
-    "AVGO": "Information Technology", "QCOM": "Information Technology",
-    "SPG": "Real Estate", "O": "Real Estate",
-    "SLB": "Energy", "HAL": "Energy",
-    "NKE": "Consumer Discretionary", "LULU": "Consumer Discretionary",
-    "SBUX": "Consumer Discretionary", "F": "Consumer Discretionary",
-    "ABT": "Health Care", "CI": "Health Care",
+    "RTX": "Industrials", "GE": "Industrials",
     "UPS": "Industrials", "FDX": "Industrials",
-    "CMCSA": "Communication Services", "VZ": "Communication Services",
-    "TXN": "Information Technology", "ADBE": "Information Technology",
-    "TMO": "Health Care", "DHR": "Health Care",
-    "ACN": "Information Technology", "BMY": "Health Care",
-    "PM": "Consumer Staples", "RTX": "Industrials",
-    "LOW": "Consumer Discretionary", "BLK": "Financials",
-    "INTU": "Information Technology", "MDLZ": "Consumer Staples",
-    "ADI": "Information Technology", "ISRG": "Health Care",
-    "BKNG": "Consumer Discretionary", "GILD": "Health Care",
-    "SYK": "Health Care", "AXP": "Financials",
-    "AMGN": "Health Care", "GE": "Industrials",
-    "MMM": "Industrials", "TGT": "Consumer Discretionary",
-    "PLD": "Real Estate", "SPGI": "Financials",
-    "BDX": "Health Care", "ZTS": "Health Care",
-    "SO": "Utilities", "CME": "Financials",
-    "CB": "Financials", "USB": "Financials",
-    "MO": "Consumer Staples", "CL": "Consumer Staples",
-    "GM": "Consumer Discretionary", "ADP": "Industrials",
     "NSC": "Industrials", "EMR": "Industrials",
-    "COF": "Financials", "TFC": "Financials",
-    "PNC": "Financials", "DG": "Consumer Discretionary",
-    "HCA": "Health Care", "PANW": "Information Technology",
-    "SNPS": "Information Technology", "CDNS": "Information Technology",
-    "MRVL": "Information Technology", "ORCL": "Information Technology",
+    "ADP": "Industrials", "MMM": "Industrials",
+    # Consumer Staples
+    "PG": "Consumer Staples", "KO": "Consumer Staples",
+    "PEP": "Consumer Staples", "COST": "Consumer Staples",
+    "WMT": "Consumer Staples", "PM": "Consumer Staples",
+    "MO": "Consumer Staples", "CL": "Consumer Staples",
+    "MDLZ": "Consumer Staples", "STZ": "Consumer Staples",
+    # Energy
+    "XOM": "Energy", "CVX": "Energy",
+    "SLB": "Energy", "COP": "Energy",
+    "EOG": "Energy", "MPC": "Energy",
+    "PSX": "Energy", "VLO": "Energy",
+    "OXY": "Energy", "HAL": "Energy",
+    # Utilities
+    "NEE": "Utilities", "DUK": "Utilities",
+    "SO": "Utilities", "AEP": "Utilities",
+    "D": "Utilities", "SRE": "Utilities",
+    "EXC": "Utilities", "XEL": "Utilities",
+    # Real Estate
+    "PLD": "Real Estate", "SPG": "Real Estate",
+    "O": "Real Estate", "AMT": "Real Estate",
+    "CCI": "Real Estate", "EQIX": "Real Estate",
+    "PSA": "Real Estate", "DLR": "Real Estate",
+    # Materials
+    "LIN": "Materials", "APD": "Materials",
+    "SHW": "Materials", "FCX": "Materials",
+    "NEM": "Materials", "ECL": "Materials",
+    "DD": "Materials",
+}
+
+# GICS Tier 2/3/4 classification for key names
+KNOWN_INDUSTRY_GROUPS = {
+    "AAPL": ("Technology Hardware & Equipment", "Technology Hardware, Storage & Peripherals", "Technology Hardware, Storage & Peripherals"),
+    "MSFT": ("Software & Services", "Systems Software", "Systems Software"),
+    "NVDA": ("Semiconductors & Semiconductor Equipment", "Semiconductors", "Semiconductors"),
+    "GOOGL": ("Media & Entertainment", "Interactive Media & Services", "Interactive Media & Services"),
+    "META": ("Media & Entertainment", "Interactive Media & Services", "Interactive Media & Services"),
+    "AMZN": ("Retailing", "Broadline Retail", "Broadline Retail"),
+    "JPM": ("Banks", "Diversified Banks", "Diversified Banks"),
+    "UNH": ("Health Care Equipment & Services", "Managed Health Care", "Managed Health Care"),
+    "XOM": ("Oil, Gas & Consumable Fuels", "Integrated Oil & Gas", "Integrated Oil & Gas"),
+    "PG": ("Household & Personal Products", "Household Products", "Household Products"),
+    "NEE": ("Utilities", "Electric Utilities", "Electric Utilities"),
+    "PLD": ("Equity Real Estate Investment Trusts (REITs)", "Industrial REITs", "Industrial REITs"),
+    "LIN": ("Chemicals", "Industrial Gases", "Industrial Gases"),
+}
+
+# RV pair mapping for quick lookup
+RV_PAIR_MAP = {
+    "GOOGL": "META", "META": "GOOGL",
+    "XOM": "CVX", "CVX": "XOM",
+    "AMD": "INTC", "INTC": "AMD",
+    "JPM": "BAC", "BAC": "JPM",
+    "V": "MA", "MA": "V",
+    "KO": "PEP", "PEP": "KO",
+    "HD": "LOW", "LOW": "HD",
+    "UNH": "CI", "CI": "UNH",
+    "BA": "LMT", "LMT": "BA",
+    "CAT": "DE", "DE": "CAT",
+    "AAPL": "MSFT", "MSFT": "AAPL",
+    "PG": "CL", "CL": "PG",
 }
 
 
@@ -584,7 +725,20 @@ class UniverseEngine:
     def load_universe(self) -> int:
         tickers = list(set(SP500_TOP_HOLDINGS))
         for ticker in tickers:
-            sec = Security(ticker=ticker, name=ticker, sector=KNOWN_SECTORS.get(ticker, ""))
+            sector = KNOWN_SECTORS.get(ticker, "")
+            sector_etf = SECTOR_ETFS.get(sector, "")
+            rv_pair = RV_PAIR_MAP.get(ticker, "")
+            ig = KNOWN_INDUSTRY_GROUPS.get(ticker, ("", "", ""))
+            sec = Security(
+                ticker=ticker, name=ticker,
+                security_type=SecurityType.EQUITY.value,
+                sector=sector, gics_sector=sector,
+                industry_group=ig[0], industry=ig[1], sub_industry=ig[2],
+                options_eligible=True,
+                sector_etf=sector_etf,
+                rv_pair=rv_pair,
+                is_rv_candidate=bool(rv_pair),
+            )
             self._equities.append(sec)
         self._loaded = True
         return len(self._equities)
