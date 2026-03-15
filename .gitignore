@@ -5,3 +5,14 @@ __pycache__/
 .env
 dist/
 build/
+node_modules/
+*.so
+*.o
+*.a
+*.whl
+*.egg
+.venv/
+*.log
+.DS_Store
+target/
+*.pkl
