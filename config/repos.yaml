@@ -256,3 +256,39 @@ repos:
       - gic_pooling
       - fair_value_analysis
     outputs: [pooled_securities, gic_structures]
+
+  quant_developers_resources:
+    path: ../Quant-Developers-Resources
+    role: "Quantitative Finance Reference Library"
+    layer: 1
+    description: "Comprehensive quant development resources — AI/ML, statistics, financial engineering"
+    capabilities:
+      - reference_library
+      - strategy_templates
+      - educational_resources
+    outputs: [reference_materials, strategy_templates]
+
+  # ─── EXECUTION ARM ──────────────────────────────────────────────────
+  wondertrader:
+    path: ../wondertrader
+    role: "HFT Quantitative Trading Platform"
+    layer: 2
+    description: "WonderTrader — high-performance C++ quant framework for CTA/HFT execution strategies"
+    capabilities:
+      - hft_execution
+      - cta_strategies
+      - real_time_data
+      - backtest_engine
+    outputs: [execution_signals, hft_orders, strategy_performance]
+
+  exchange_core:
+    path: ../exchange-core
+    role: "High-Performance Exchange Engine"
+    layer: 5
+    description: "Exchange-core — ultra-low latency Java order matching engine for market arbitrage"
+    capabilities:
+      - order_matching
+      - risk_engine
+      - market_data_distribution
+      - latency_optimization
+    outputs: [matched_orders, market_data, risk_checks]

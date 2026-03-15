@@ -53,18 +53,20 @@ Metadron-Capital/                        ← Master monorepo (Layer 0: Hub)
 ├── run_open.py                          ← 09:30 ET — full pipeline execution
 ├── run_close.py                         ← 16:00 ET — EOD reconciliation
 ├── bootstrap.py                         ← Session health check
-└── repos/                               ← All 20 component repositories
+└── repos/                               ← All 23 component repositories
     ├── layer1_data/
     │   ├── Financial-Data/              ← yfinance market data pipeline
     │   ├── open-bb/                     ← OpenBB investment research terminal
     │   ├── hedgefund-tracker/           ← SEC 13F institutional flow tracker
     │   ├── FRB/                         ← Federal Reserve Bank data (FRED)
-    │   └── EquityLinkedGICPooling/      ← GIC pooling methodology
+    │   ├── EquityLinkedGICPooling/      ← GIC pooling methodology
+    │   └── Quant-Developers-Resources/  ← Quantitative finance reference library
     ├── layer2_signals/
     │   ├── Mav-Analysis/                ← MaverickMCP technical analysis (39+ tools)
     │   ├── quant-trading/               ← Quant strategies (Bollinger, MACD, SAR)
     │   ├── stock-chain/                 ← Time-series chain analysis
-    │   └── CTA-code/                    ← CTA/trend-following (PRML, statistical ML)
+    │   ├── CTA-code/                    ← CTA/trend-following (PRML, statistical ML)
+    │   └── wondertrader/                ← HFT quant trading platform (C++, CTA/HFT)
     ├── layer3_ml/
     │   ├── QLIB/                        ← Microsoft Qlib quantitative ML framework
     │   ├── Stock-prediction/            ← 30+ DL models, 23 trading agents
@@ -77,7 +79,8 @@ Metadron-Capital/                        ← Master monorepo (Layer 0: Hub)
     ├── layer5_infra/
     │   ├── Kserve/                      ← Kubernetes ML model serving
     │   ├── nividia-repo/                ← NVIDIA GPU-optimized DL
-    │   └── Air-LLM/                     ← Memory-efficient LLM inference
+    │   ├── Air-LLM/                     ← Memory-efficient LLM inference
+    │   └── exchange-core/               ← Ultra-low latency HFT exchange engine (Java)
     └── layer6_agents/
         └── Ruflo-agents/                ← claude-flow multi-agent orchestration
 ```
