@@ -597,6 +597,55 @@ class OptionsStrategyBuilder:
         ]
         return self._build_profile("Strangle", legs)
 
+    def short_strangle(self, expiry_days: int = 30, otm_pct: float = 0.05) -> StrategyProfile:
+        """Short strangle: sell OTM call and put (theta harvesting).
+
+        Profit if underlying stays within wings. Max(Θ+Γ) - c·V optimization.
+        """
+        legs = [
+            StrategyLeg("call", self.S * (1 + otm_pct), expiry_days, -1),
+            StrategyLeg("put", self.S * (1 - otm_pct), expiry_days, -1),
+        ]
+        return self._build_profile("Short Strangle", legs)
+
+    def theta_gamma_optimize(self, expiry_days: int = 30, vega_cost: float = 0.5) -> dict:
+        """Optimize max(Θ+Γ) - c·V for P4 sleeve allocation.
+
+        Finds the best strike/expiry combination that maximizes theta+gamma
+        income while penalizing vega exposure (c = vega cost parameter).
+
+        Returns the optimal strategy profile and metrics.
+        """
+        best_score = -np.inf
+        best_strategy = None
+        best_metrics = {}
+
+        # Scan OTM percentages for short strangles
+        for otm in [0.03, 0.05, 0.07, 0.10, 0.15]:
+            profile = self.short_strangle(expiry_days, otm)
+            theta = profile.net_theta
+            gamma = profile.net_gamma
+            vega = abs(profile.net_vega)
+            # max(Θ + Γ) - c·V
+            score = (theta + gamma * 100) - vega_cost * vega
+            if score > best_score:
+                best_score = score
+                best_strategy = profile
+                best_metrics = {
+                    "otm_pct": otm,
+                    "theta": theta,
+                    "gamma": gamma,
+                    "vega": vega,
+                    "score": score,
+                }
+
+        return {
+            "strategy": best_strategy,
+            "metrics": best_metrics,
+            "formula": "max(Θ+Γ) - c·V",
+            "vega_cost": vega_cost,
+        }
+
     def collar(self, expiry_days: int = 30, put_otm: float = 0.05, call_otm: float = 0.05) -> StrategyProfile:
         """Collar: long put + short call (zero or low cost downside hedge)."""
         legs = [

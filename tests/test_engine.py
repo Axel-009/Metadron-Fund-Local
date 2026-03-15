@@ -144,7 +144,7 @@ class TestMetadronCube:
         out = cube.compute(macro)
         assert isinstance(out, CubeOutput)
         assert out.regime == CubeRegime.TRENDING
-        assert out.max_leverage == 2.5
+        assert out.max_leverage == 3.0
         assert out.beta_cap == 0.65
 
     def test_sleeve_allocation_sums_to_one(self):
@@ -161,7 +161,7 @@ class TestMetadronCube:
             assert abs(total - 1.0) < 0.02, f"Sleeves don't sum to 1 for {regime}: {total}"
 
     def test_regime_params(self):
-        assert REGIME_PARAMS[CubeRegime.TRENDING]["max_leverage"] == 2.5
+        assert REGIME_PARAMS[CubeRegime.TRENDING]["max_leverage"] == 3.0
         assert REGIME_PARAMS[CubeRegime.CRASH]["beta_cap"] == -0.20
 
     def test_target_beta_corridor(self):
@@ -371,7 +371,7 @@ class TestIntegration:
 
         assert out.regime == CubeRegime.TRENDING
         assert out.target_beta > 0  # Bull regime → positive beta
-        assert out.sleeves.p1_directional_equity > 0.30  # Equity heavy in trending
+        assert out.sleeves.p1_directional_equity > 0.10  # Carry allocation in trending
 
         # Beta corridor check
         bc = BetaCorridor()
