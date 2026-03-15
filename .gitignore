@@ -16,3 +16,8 @@ node_modules/
 .DS_Store
 target/
 *.pkl
+
+# Large binary files (PDFs, data archives)
+*.pdf
+*.pptx
+*.zip
