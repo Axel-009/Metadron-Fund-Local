@@ -20,8 +20,8 @@ Paper broker mode (Yahoo Finance) — not connected to a live broker.
 ## Signal Pipeline
 
 ```
-UniverseEngine → MacroEngine → MetadronCube → AlphaOptimizer → BetaManager → DecisionMatrix → ExecutionEngine
-     (L1)           (L2)          (L2)            (L3)           (L4)           (L5)             (L5)
+UniverseEngine → MacroEngine → MetadronCube → SocialPrediction → AlphaOptimizer → BetaManager → DecisionMatrix → ExecutionEngine
+     (L1)           (L2)          (L2)           (L2/L3)            (L3)           (L4)           (L5)             (L5)
 ```
 
 ### Layer Architecture (L1 → L5 → L2 → L3 → L4 → L7)
@@ -36,7 +36,7 @@ L4 Portfolio      hedgefund-tracker, open-bb,           → Institutional tracke
                   financial-distressed-repo,
                   sophisticated-distress-analysis
 L5 Infrastructure Kserve, nividia-repo, Air-LLM        → ML serving + GPU inference
-L6 Agents         Ruflo-agents                          → Multi-agent orchestration (supports all layers)
+L6 Agents         Ruflo-agents, MiroFish                → Multi-agent orchestration + social prediction
 L7 HFT/Execution wondertrader, exchange-core,          → HFT micro-price + order matching
                   Quant-Developers-Resources
 ```
@@ -48,6 +48,7 @@ L7 HFT/Execution wondertrader, exchange-core,          → HFT micro-price + ord
 | Data | FRB (avelkoski) | Federal Reserve FRED API → LiquidityTensor |
 | Execution | wondertrader (C++→Python) | HFT micro-price signal → MicroPriceEngine |
 | Execution | exchange-core (Java→Python) | Order matching / paper order book |
+| Prediction | MiroFish (666ghj) | Agent-based social simulation → SocialPredictionEngine |
 | Reference | Quant-Developers-Resources | Quant research catalog (11 categories) |
 
 ### MacroEngine Cadence
@@ -88,11 +89,13 @@ Metadron-Capital/                        ← Master monorepo (Layer 0: Hub)
 │   │   ├── macro_engine.py             ← GMTF: SDR tension, rotation, velocity, FRB
 │   │   ├── metadron_cube.py            ← C(t) = f(L,R,F) + 4-Gate + KillSwitch + FCLP
 │   │   ├── contagion_engine.py         ← L3 graph topology, 21 nodes, 7 shock scenarios
-│   │   └── stat_arb_engine.py          ← Medallion mean reversion + cointegration pairs
+│   │   ├── stat_arb_engine.py          ← Medallion mean reversion + cointegration pairs
+│   │   └── social_prediction_engine.py ← MiroFish bridge → social sentiment signals
 │   ├── ml/                              ← L3: ML/AI models
 │   │   ├── alpha_optimizer.py           ← Walk-forward ML alpha + mean-variance
 │   │   ├── backtester.py               ← Walk-forward, Monte Carlo, scenario engine
-│   │   └── pattern_recognition.py       ← Candlestick, chart patterns, anomalies
+│   │   ├── pattern_recognition.py       ← Candlestick, chart patterns, anomalies
+│   │   └── social_features.py          ← MiroFish social feature engineering for ML
 │   ├── portfolio/                       ← L4: Portfolio construction
 │   │   └── beta_corridor.py            ← Beta corridor 7–12% + vol-normalisation
 │   ├── execution/                       ← L5: Execution
@@ -120,6 +123,14 @@ Metadron-Capital/                        ← Master monorepo (Layer 0: Hub)
 ├── tests/
 │   ├── test_platform.py                 ← 11 core tests
 │   └── test_engine.py                  ← 37 engine tests (48 total)
+├── mirofish/                            ← MiroFish social prediction engine
+│   ├── backend/                         ← Flask API + OASIS simulation
+│   │   ├── app/services/                ← Graph builder, simulation runner, report agent
+│   │   ├── app/api/                     ← REST endpoints (graph, simulation, report)
+│   │   └── run.py                       ← Backend entry (port 5001)
+│   ├── frontend/                        ← Vue 3 + Vite + D3.js
+│   │   └── src/                         ← Components, views, API layer
+│   └── package.json                     ← Monorepo scripts (dev, build, setup)
 ├── run_open.py                          ← 09:30 ET — full pipeline execution
 ├── run_close.py                         ← 16:00 ET — EOD reconciliation
 └── repos/                               ← All 23 component repositories (6 layers)
@@ -220,11 +231,66 @@ python3 core/platform.py
 9. **Tests must pass** before pushing
 10. **Session continuity** — this CLAUDE.md serves as the bootstrap context
 
-## 15 Signal Types
+## 19 Signal Types
 
 MICRO_PRICE_BUY/SELL, RV_LONG/SHORT, FALLEN_ANGEL_BUY,
 ML_AGENT_BUY/SELL, DRL_AGENT_BUY/SELL, TFT_BUY/SELL,
-MC_BUY/SELL, QUALITY_BUY/SELL, HOLD
+MC_BUY/SELL, QUALITY_BUY/SELL,
+SOCIAL_BULLISH, SOCIAL_BEARISH, SOCIAL_MOMENTUM, SOCIAL_REVERSAL,
+HOLD
+
+## MiroFish Social Prediction Engine
+
+### Architecture
+
+```
+MiroFish Backend (Flask :5001) + Frontend (Vue :5174)
+    ├── Document Input → LLM Ontology → Zep Knowledge Graph
+    ├── Entity Extraction → Agent Profile Generation
+    ├── OASIS Social Simulation (Twitter/Reddit)
+    │   └── actions.jsonl (12 action types per agent per round)
+    └── Report Generation (LLM analysis)
+         ↓
+SocialPredictionEngine (engine/signals/)
+    ├── Parse actions.jsonl from latest simulation
+    ├── Build agent behavioral profiles
+    ├── Compute topic-level sentiment
+    ├── Map topics → tickers (TOPIC_TICKER_MAP)
+    ├── Detect narrative regime (trending/reversing/stable)
+    └── Output: SocialSnapshot
+         ↓
+SocialFeatureBuilder (engine/ml/)
+    ├── Sentiment momentum (EMA fast/slow, MACD, z-score)
+    ├── Engagement velocity + acceleration
+    ├── Consensus strength + influence Gini
+    └── Composite social_alpha signal
+         ↓
+MLVoteEnsemble Tier-6 (execution_engine.py)
+    ├── Ticker-specific social sentiment vote
+    ├── Fallback to aggregate market sentiment
+    └── Weighted into 6-tier ensemble score
+```
+
+### Pipeline Integration
+
+Stage 3.7 in run_pipeline() — runs after MetadronCube, before ticker selection.
+Social signals feed into:
+- Tier-6 of 6-tier ML Vote Ensemble (weighted vote ±1)
+- Ticker-level sentiment available via `social.get_ticker_signal(ticker)`
+- Social features available via SocialFeatureBuilder for walk-forward ML
+
+### MiroFish Services
+
+| Service | Port | Function |
+|---------|------|----------|
+| Backend | 5001 | Flask API + simulation orchestration |
+| Frontend | 5174 | Vue 3 + D3.js visualization |
+
+```bash
+# Start MiroFish services
+cd mirofish/backend && python run.py &      # Backend
+cd mirofish/frontend && npm run dev &        # Frontend
+```
 
 ## Agent Hierarchy (DNA Framework)
 

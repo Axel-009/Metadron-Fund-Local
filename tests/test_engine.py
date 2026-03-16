@@ -291,7 +291,7 @@ class TestPaperBroker:
             assert "TEST" in broker.state.positions
 
     def test_signal_types(self):
-        assert len(SignalType) == 16  # 15 signals + HOLD
+        assert len(SignalType) == 20  # 15 original + 4 social signals + HOLD
         assert SignalType.MICRO_PRICE_BUY.value == "MICRO_PRICE_BUY"
 
     def test_portfolio_summary(self):
