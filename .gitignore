@@ -22,6 +22,7 @@ target/
 
 # ML model artifacts needed for integration
 !repos/layer3_ml/QLIB/examples/benchmarks/**/*.pkl
+!intelligence_platform/QLIB/examples/benchmarks/**/*.pkl
 !repos/layer3_ml/Stock-prediction/**/*.pkl
 !repos/layer5_infra/Kserve/**/*.pkl
 
