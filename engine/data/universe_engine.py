@@ -12,7 +12,7 @@ Manages the complete investment universe:
     - Market cap categorisation (mega/large/mid/small/micro)
     - Sector rotation signals
 
-All data via yfinance — unified, free, no broker dependency.
+All data via OpenBB (primary) / yfinance (fallback) — unified, free, no broker dependency.
 try/except on ALL external imports — system runs degraded, never broken.
 """
 

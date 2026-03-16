@@ -15,7 +15,8 @@ Beta managed within a 7–12% return corridor (S&P 500 historical earnings range
 Alpha extracted through top-down macro → GICS sector selection → bottom-up stock picking.
 Money velocity (V = GDP/M2) + cyclical vs secular decomposition drive regime classification.
 Platform targets 95%+ alpha via aggressive multi-sleeve allocation with continuous ML walk-forward optimisation.
-Paper broker mode (Yahoo Finance) — not connected to a live broker.
+Paper broker mode — not connected to a live broker.
+Data sourced via **OpenBB** (34+ providers: FRED, SEC, Polygon, FMP, CBOE, ECB, OECD, etc.) with yfinance fallback.
 
 ## Signal Pipeline
 
@@ -55,8 +56,8 @@ L7 HFT/Execution wondertrader, exchange-core,          → HFT micro-price + ord
 
 ```
 MacroEngine
-    ├── FRED/FRB    → M2V, WALCL, T10Y2Y, FEDFUNDS
-    ├── yfinance    → GSIB basket (JPM,BAC,GS,C,MS + 5 intl)
+    ├── OpenBB/FRED → M2V, WALCL, T10Y2Y, FEDFUNDS, SOFR, CPI, GDP (direct)
+    ├── OpenBB/yf   → GSIB basket (JPM,BAC,GS,C,MS + 5 intl)
     ├── GMTF        → 4 gammas (Liquidity, FX shock, Wage, Reserve)
     ├── CtV signals → carry-to-vol, stop-loss gate
     ├── RV signals  → Z-score on tension-adjusted yields
@@ -84,7 +85,8 @@ Metadron-Capital/                        ← Master monorepo (Layer 0: Hub)
 ├── engine/                              ← INVESTMENT ENGINE
 │   ├── data/                            ← L1: Unified Yahoo data + universe
 │   │   ├── universe_engine.py           ← 150+ securities, GICS 4-tier, 26 RV pairs
-│   │   └── yahoo_data.py               ← Single data source: yfinance
+│   │   ├── openbb_data.py              ← Primary data source: OpenBB (34+ providers)
+│   │   └── yahoo_data.py               ← Re-exports from openbb_data (backward compat)
 │   ├── signals/                         ← L2: Signal processing
 │   │   ├── macro_engine.py             ← GMTF: SDR tension, rotation, velocity, FRB
 │   │   ├── metadron_cube.py            ← C(t) = f(L,R,F) + 4-Gate + KillSwitch + FCLP
@@ -249,7 +251,7 @@ python3 core/platform.py
 
 ## Design Rules
 
-1. **All data via yfinance** — unified, free, no broker dependency
+1. **All data via OpenBB** (34+ providers: FRED, SEC, CBOE, etc.) — yfinance fallback, no broker dependency
 2. **Paper broker only** — no live execution until broker API connected
 3. **6-layer architecture is immutable** — extend within layers
 4. **Beta managed within 7–12% corridor** — vol-normalised
