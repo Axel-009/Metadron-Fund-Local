@@ -3,12 +3,13 @@
 Signal pipeline (execution order):
     UniverseEngine → MacroEngine → MetadronCube → AlphaOptimizer → ExecutionEngine
 
-ML Vote Ensemble (5 tiers, each votes ±1):
+ML Vote Ensemble (6 tiers, each votes ±1):
     Tier-1  Pure-numpy 2-layer net
     Tier-2  Momentum/mean-reversion voter
     Tier-3  Volatility regime voter
     Tier-4  Monte Carlo voter (ARIMA-like + noise)
     Tier-5  Quality tier voter (top-down + bottom-up)
+    Tier-6  Social sentiment voter (MiroFish prediction engine)
 
 effective_min_edge = 2.0 + max(0, -vote_score) bps
 
@@ -42,6 +43,14 @@ from ..portfolio.beta_corridor import BetaCorridor, BetaState, BetaAction
 from .paper_broker import (
     PaperBroker, OrderSide, SignalType, Position,
 )
+
+# Social prediction engine (MiroFish integration)
+try:
+    from ..signals.social_prediction_engine import SocialPredictionEngine, SocialSnapshot
+    from ..ml.social_features import SocialFeatureBuilder
+    _HAS_SOCIAL = True
+except ImportError:
+    _HAS_SOCIAL = False
 
 logger = logging.getLogger(__name__)
 
@@ -542,11 +551,20 @@ class MLVoteEnsemble:
         "T3_vol_regime": 0.8,
         "T4_monte_carlo": 0.9,
         "T5_quality": 1.1,
+        "T6_social": 1.0,
     }
 
     def __init__(self):
         self._feature_builder = DeepTradingFeatures()
         self._vote_history: dict[str, list] = {}
+        self._social_snapshot: Optional[dict] = None
+        self._social_feature_builder = SocialFeatureBuilder() if _HAS_SOCIAL else None
+
+    def set_social_snapshot(self, snapshot_dict: dict) -> None:
+        """Inject social prediction snapshot for Tier-6 voting."""
+        self._social_snapshot = snapshot_dict
+        if self._social_feature_builder:
+            self._social_feature_builder.add_snapshot(snapshot_dict)
 
     def vote(self, ticker: str, returns: pd.Series, alpha_signal: Optional[AlphaSignal] = None) -> VoteResult:
         result = VoteResult(ticker=ticker)
@@ -573,13 +591,17 @@ class MLVoteEnsemble:
         # Tier 5: Quality tier
         result.votes["T5_quality"] = self._tier5_quality(alpha_signal)
 
+        # Tier 6: Social sentiment (MiroFish)
+        result.votes["T6_social"] = self._tier6_social(ticker)
+
         # Weighted aggregate
         weighted_score = sum(
             vote * self.TIER_WEIGHTS.get(tier, 1.0)
             for tier, vote in result.votes.items()
         )
         total_weight = sum(self.TIER_WEIGHTS.get(t, 1.0) for t in result.votes)
-        result.score = weighted_score / max(total_weight / 5, 1)  # Normalize to [-5, +5] range
+        n_tiers = len(result.votes)
+        result.score = weighted_score / max(total_weight / n_tiers, 1)  # Normalize to [-N, +N] range
 
         result.edge_bps = 2.0 + max(0, -result.score)
 
@@ -679,6 +701,33 @@ class MLVoteEnsemble:
             return 1
         elif tier in ("F", "G"):
             return -1
+        return 0
+
+    def _tier6_social(self, ticker: str) -> int:
+        """Social sentiment voter (MiroFish prediction engine).
+
+        Uses social simulation data to vote on ticker direction.
+        Checks both ticker-specific sentiment and overall market sentiment.
+        """
+        if not _HAS_SOCIAL or self._social_snapshot is None:
+            return 0
+
+        # Get ticker-specific signal
+        ticker_signals = self._social_snapshot.get("ticker_signals", {})
+        ticker_sentiment = ticker_signals.get(ticker, 0.0)
+
+        # If we have a strong ticker-specific signal, use it
+        if abs(ticker_sentiment) > 0.3:
+            return 1 if ticker_sentiment > 0 else -1
+
+        # Fall back to aggregate social vote
+        vote_score = self._social_snapshot.get("vote_score", 0)
+        signal_strength = self._social_snapshot.get("signal_strength", 0.0)
+
+        # Only vote if signal is strong enough
+        if signal_strength > 0.4:
+            return vote_score
+
         return 0
 
     def get_vote_history(self, ticker: str) -> list:
@@ -823,6 +872,14 @@ class ExecutionEngine:
         self._run_count = 0
         self._trade_log: list[dict] = []
 
+        # Social prediction engine (MiroFish bridge)
+        self.social: Optional[SocialPredictionEngine] = None
+        if _HAS_SOCIAL:
+            try:
+                self.social = SocialPredictionEngine()
+            except Exception as e:
+                logger.warning(f"SocialPredictionEngine init failed: {e}")
+
     def run_pipeline(self) -> dict:
         """Execute the full signal pipeline.
 
@@ -877,6 +934,29 @@ class ExecutionEngine:
         cross_asset_data = self.cross_asset.compute_correlations()
         result["stages"]["cross_asset"] = cross_asset_data
         self.tracker.record_stage("cross_asset", (datetime.now() - t0).total_seconds() * 1000, cross_asset_data)
+
+        # Stage 3.7: Social prediction (MiroFish agent simulation)
+        t0 = datetime.now()
+        social_data = {}
+        if self.social:
+            try:
+                social_snap = self.social.analyze()
+                social_data = self.social.as_dict()
+                # Feed social snapshot to ML ensemble for Tier-6 voting
+                self.ensemble.set_social_snapshot(social_data)
+                logger.info(
+                    f"Social prediction: signal={social_snap.social_signal} "
+                    f"sentiment={social_snap.overall_sentiment:.3f} "
+                    f"confidence={social_snap.sentiment_confidence:.3f} "
+                    f"agents={social_snap.total_agents}"
+                )
+            except Exception as e:
+                social_data = {"error": str(e)}
+                logger.warning(f"Social prediction stage failed: {e}")
+        else:
+            social_data = {"status": "mirofish_not_available"}
+        result["stages"]["social_prediction"] = social_data
+        self.tracker.record_stage("social_prediction", (datetime.now() - t0).total_seconds() * 1000, social_data)
 
         # Stage 4: Select top names from leading sectors
         t0 = datetime.now()
@@ -1162,6 +1242,26 @@ class ExecutionEngine:
             lines.append("\n  SLEEVE ALLOCATION:")
             for k, v in sleeves.items():
                 lines.append(f"    {k}: {v:.1%}")
+
+        # Social Prediction
+        social = r["stages"].get("social_prediction", {})
+        if social.get("total_agents", 0) > 0:
+            lines.append(f"\nSOCIAL PREDICTION (MiroFish):")
+            lines.append(f"  Signal: {social.get('social_signal', 'N/A')}  |  "
+                          f"Strength: {social.get('signal_strength', 0):.3f}  |  "
+                          f"Vote: {social.get('vote_score', 0):+d}")
+            lines.append(f"  Sentiment: {social.get('overall_sentiment', 0):+.3f}  |  "
+                          f"Confidence: {social.get('sentiment_confidence', 0):.3f}  |  "
+                          f"Trend: {social.get('sentiment_trend', 0):+.3f}")
+            lines.append(f"  Agents: {social.get('total_agents', 0)} "
+                          f"(Bull={social.get('agents_bullish', 0)} / "
+                          f"Bear={social.get('agents_bearish', 0)} / "
+                          f"Neutral={social.get('agents_neutral', 0)})")
+            topics = social.get("top_topics", [])
+            if topics:
+                lines.append(f"  Top Topics:")
+                for t in topics[:5]:
+                    lines.append(f"    {t['topic']}: sentiment={t['sentiment']:+.3f} engagement={t['engagement']}")
 
         # Alpha
         alpha = r["stages"].get("alpha", {})
