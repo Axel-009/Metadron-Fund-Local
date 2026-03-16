@@ -52,6 +52,27 @@ try:
 except ImportError:
     _HAS_SOCIAL = False
 
+# Distressed asset engine
+try:
+    from ..signals.distressed_asset_engine import DistressedAssetEngine
+    _HAS_DISTRESS = True
+except ImportError:
+    _HAS_DISTRESS = False
+
+# CVR engine
+try:
+    from ..signals.cvr_engine import CVREngine
+    _HAS_CVR = True
+except ImportError:
+    _HAS_CVR = False
+
+# Event-driven engine
+try:
+    from ..signals.event_driven_engine import EventDrivenEngine
+    _HAS_EVENT = True
+except ImportError:
+    _HAS_EVENT = False
+
 logger = logging.getLogger(__name__)
 
 
@@ -552,6 +573,9 @@ class MLVoteEnsemble:
         "T4_monte_carlo": 0.9,
         "T5_quality": 1.1,
         "T6_social": 1.0,
+        "T7_distress": 0.9,
+        "T8_event": 1.0,
+        "T9_cvr": 0.7,
     }
 
     def __init__(self):
@@ -559,12 +583,27 @@ class MLVoteEnsemble:
         self._vote_history: dict[str, list] = {}
         self._social_snapshot: Optional[dict] = None
         self._social_feature_builder = SocialFeatureBuilder() if _HAS_SOCIAL else None
+        self._distress_signals: Optional[dict] = None
+        self._event_signals: Optional[dict] = None
+        self._cvr_signals: Optional[dict] = None
 
     def set_social_snapshot(self, snapshot_dict: dict) -> None:
         """Inject social prediction snapshot for Tier-6 voting."""
         self._social_snapshot = snapshot_dict
         if self._social_feature_builder:
             self._social_feature_builder.add_snapshot(snapshot_dict)
+
+    def set_distress_signals(self, signals: dict) -> None:
+        """Inject distressed asset signals for Tier-7 voting."""
+        self._distress_signals = signals
+
+    def set_event_signals(self, signals: dict) -> None:
+        """Inject event-driven signals for Tier-8 voting."""
+        self._event_signals = signals
+
+    def set_cvr_signals(self, signals: dict) -> None:
+        """Inject CVR signals for Tier-9 voting."""
+        self._cvr_signals = signals
 
     def vote(self, ticker: str, returns: pd.Series, alpha_signal: Optional[AlphaSignal] = None) -> VoteResult:
         result = VoteResult(ticker=ticker)
@@ -593,6 +632,15 @@ class MLVoteEnsemble:
 
         # Tier 6: Social sentiment (MiroFish)
         result.votes["T6_social"] = self._tier6_social(ticker)
+
+        # Tier 7: Distressed asset signal
+        result.votes["T7_distress"] = self._tier7_distress(ticker)
+
+        # Tier 8: Event-driven signal
+        result.votes["T8_event"] = self._tier8_event(ticker)
+
+        # Tier 9: CVR signal
+        result.votes["T9_cvr"] = self._tier9_cvr(ticker)
 
         # Weighted aggregate
         weighted_score = sum(
@@ -728,6 +776,66 @@ class MLVoteEnsemble:
         if signal_strength > 0.4:
             return vote_score
 
+        return 0
+
+    def _tier7_distress(self, ticker: str) -> int:
+        """Distressed asset voter.
+
+        Uses DistressedAssetEngine signals to vote:
+        - Fallen angel with positive Kelly → +1 (contrarian buy)
+        - Critical distress → -1 (avoid)
+        - Otherwise neutral
+        """
+        if not self._distress_signals:
+            return 0
+        sig = self._distress_signals.get(ticker, {})
+        if not sig:
+            return 0
+        if sig.get("is_fallen_angel") and sig.get("kelly_fraction", 0) > 0.02:
+            return 1  # Fallen angel opportunity
+        level = sig.get("level", "SAFE")
+        if level in ("CRITICAL", "DISTRESSED"):
+            return -1  # Avoid distressed names
+        return 0
+
+    def _tier8_event(self, ticker: str) -> int:
+        """Event-driven voter.
+
+        Uses EventDrivenEngine signals:
+        - LONG with >50bps alpha → +1
+        - SHORT with < -50bps alpha → -1
+        - Otherwise neutral
+        """
+        if not self._event_signals:
+            return 0
+        sig = self._event_signals.get(ticker, {})
+        if not sig:
+            return 0
+        alpha = sig.get("expected_alpha_bps", 0)
+        signal = sig.get("signal", "HOLD")
+        if signal == "LONG" and alpha > 50:
+            return 1
+        elif signal == "SHORT" and alpha < -50:
+            return -1
+        return 0
+
+    def _tier9_cvr(self, ticker: str) -> int:
+        """CVR voter.
+
+        Uses CVREngine signals:
+        - STRONG_BUY or BUY → +1
+        - SELL or AVOID → -1
+        """
+        if not self._cvr_signals:
+            return 0
+        sig = self._cvr_signals.get(ticker, {})
+        if not sig:
+            return 0
+        signal = sig.get("signal", "HOLD")
+        if signal in ("STRONG_BUY", "BUY"):
+            return 1
+        elif signal in ("SELL", "AVOID"):
+            return -1
         return 0
 
     def get_vote_history(self, ticker: str) -> list:
@@ -880,6 +988,30 @@ class ExecutionEngine:
             except Exception as e:
                 logger.warning(f"SocialPredictionEngine init failed: {e}")
 
+        # Distressed asset engine
+        self.distress = None
+        if _HAS_DISTRESS:
+            try:
+                self.distress = DistressedAssetEngine()
+            except Exception as e:
+                logger.warning(f"DistressedAssetEngine init failed: {e}")
+
+        # CVR engine
+        self.cvr = None
+        if _HAS_CVR:
+            try:
+                self.cvr = CVREngine()
+            except Exception as e:
+                logger.warning(f"CVREngine init failed: {e}")
+
+        # Event-driven engine
+        self.event = None
+        if _HAS_EVENT:
+            try:
+                self.event = EventDrivenEngine()
+            except Exception as e:
+                logger.warning(f"EventDrivenEngine init failed: {e}")
+
     def run_pipeline(self) -> dict:
         """Execute the full signal pipeline.
 
@@ -957,6 +1089,86 @@ class ExecutionEngine:
             social_data = {"status": "mirofish_not_available"}
         result["stages"]["social_prediction"] = social_data
         self.tracker.record_stage("social_prediction", (datetime.now() - t0).total_seconds() * 1000, social_data)
+
+        # Stage 3.8: Distressed asset analysis
+        t0 = datetime.now()
+        distress_data = {}
+        if self.distress:
+            try:
+                self.distress.analyze()
+                distress_signals = self.distress.get_distress_signals()
+                self.ensemble.set_distress_signals(distress_signals)
+                fallen_angels = self.distress.get_fallen_angels()
+                critical = self.distress.get_critical()
+                distress_data = {
+                    "total_analyzed": len(distress_signals),
+                    "fallen_angels": [s.ticker for s in fallen_angels],
+                    "critical_names": [s.ticker for s in critical],
+                    "opportunities": len(self.distress.get_opportunities()),
+                }
+                logger.info(f"Distress analysis: {len(distress_signals)} names, "
+                            f"{len(fallen_angels)} fallen angels, {len(critical)} critical")
+            except Exception as e:
+                distress_data = {"error": str(e)}
+                logger.warning(f"Distressed asset stage failed: {e}")
+        else:
+            distress_data = {"status": "distress_engine_not_available"}
+        result["stages"]["distressed_assets"] = distress_data
+        self.tracker.record_stage("distressed_assets", (datetime.now() - t0).total_seconds() * 1000, distress_data)
+
+        # Stage 3.85: CVR analysis
+        t0 = datetime.now()
+        cvr_data = {}
+        if self.cvr:
+            try:
+                self.cvr.analyze()
+                cvr_signals = self.cvr.get_trading_signals()
+                self.ensemble.set_cvr_signals(cvr_signals)
+                buy_signals = self.cvr.get_buy_signals()
+                cvr_data = {
+                    "total_instruments": len(cvr_signals),
+                    "buy_signals": [v.ticker for v in buy_signals],
+                    "signals": {k: v["signal"] for k, v in cvr_signals.items()},
+                }
+                logger.info(f"CVR analysis: {len(cvr_signals)} instruments, "
+                            f"{len(buy_signals)} buy signals")
+            except Exception as e:
+                cvr_data = {"error": str(e)}
+                logger.warning(f"CVR stage failed: {e}")
+        else:
+            cvr_data = {"status": "cvr_engine_not_available"}
+        result["stages"]["cvr"] = cvr_data
+        self.tracker.record_stage("cvr", (datetime.now() - t0).total_seconds() * 1000, cvr_data)
+
+        # Stage 3.9: Event-driven analysis
+        t0 = datetime.now()
+        event_data = {}
+        if self.event:
+            try:
+                # Pass regime multiplier based on cube regime
+                regime_mult = {"TRENDING": 1.0, "RANGE": 0.8, "STRESS": 0.5, "CRASH": 0.3}
+                mult = regime_mult.get(cube_out.regime.value, 0.8)
+                event_result = self.event.analyze(regime_multiplier=mult)
+                event_signals = self.event.get_trading_signals()
+                self.ensemble.set_event_signals(event_signals)
+                top_ideas = self.event.get_top_ideas(min_alpha_bps=50)
+                event_data = {
+                    "total_events": event_result.total_events,
+                    "positions": len(event_result.positions),
+                    "weighted_alpha_bps": event_result.weighted_expected_alpha_bps,
+                    "top_ideas": [{"ticker": p.ticker, "type": p.event_type.value,
+                                   "alpha_bps": p.expected_alpha_bps} for p in top_ideas[:5]],
+                    "event_counts": event_result.event_counts,
+                }
+                logger.info(f"Event analysis: {event_result.total_events} events, "
+                            f"wtd alpha={event_result.weighted_expected_alpha_bps:+.0f}bps")
+            except Exception as e:
+                event_data = {"error": str(e)}
+                logger.warning(f"Event-driven stage failed: {e}")
+        else:
+            event_data = {"status": "event_engine_not_available"}
+        result["stages"]["event_driven"] = event_data
+        self.tracker.record_stage("event_driven", (datetime.now() - t0).total_seconds() * 1000, event_data)
 
         # Stage 4: Select top names from leading sectors
         t0 = datetime.now()
@@ -1262,6 +1474,39 @@ class ExecutionEngine:
                 lines.append(f"  Top Topics:")
                 for t in topics[:5]:
                     lines.append(f"    {t['topic']}: sentiment={t['sentiment']:+.3f} engagement={t['engagement']}")
+
+        # Distressed Assets
+        distress = r["stages"].get("distressed_assets", {})
+        if distress.get("total_analyzed", 0) > 0:
+            lines.append(f"\nDISTRESSED ASSETS:")
+            lines.append(f"  Analyzed: {distress.get('total_analyzed', 0)}  |  "
+                          f"Fallen Angels: {len(distress.get('fallen_angels', []))}  |  "
+                          f"Critical: {len(distress.get('critical_names', []))}  |  "
+                          f"Opportunities: {distress.get('opportunities', 0)}")
+            if distress.get("fallen_angels"):
+                lines.append(f"  Fallen Angels: {', '.join(distress['fallen_angels'])}")
+            if distress.get("critical_names"):
+                lines.append(f"  Critical: {', '.join(distress['critical_names'])}")
+
+        # CVR
+        cvr = r["stages"].get("cvr", {})
+        if cvr.get("total_instruments", 0) > 0:
+            lines.append(f"\nCVR ANALYSIS:")
+            lines.append(f"  Instruments: {cvr.get('total_instruments', 0)}  |  "
+                          f"Buy Signals: {len(cvr.get('buy_signals', []))}")
+            if cvr.get("buy_signals"):
+                lines.append(f"  Buy: {', '.join(cvr['buy_signals'])}")
+
+        # Event-Driven
+        event = r["stages"].get("event_driven", {})
+        if event.get("total_events", 0) > 0:
+            lines.append(f"\nEVENT-DRIVEN:")
+            lines.append(f"  Events: {event.get('total_events', 0)}  |  "
+                          f"Positions: {event.get('positions', 0)}  |  "
+                          f"Wtd Alpha: {event.get('weighted_alpha_bps', 0):+.0f}bps")
+            top = event.get("top_ideas", [])
+            for idea in top[:3]:
+                lines.append(f"    {idea['ticker']}: {idea['type']} → {idea['alpha_bps']:+.0f}bps")
 
         # Alpha
         alpha = r["stages"].get("alpha", {})

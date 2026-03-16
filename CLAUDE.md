@@ -20,8 +20,8 @@ Paper broker mode (Yahoo Finance) — not connected to a live broker.
 ## Signal Pipeline
 
 ```
-UniverseEngine → MacroEngine → MetadronCube → SocialPrediction → AlphaOptimizer → BetaManager → DecisionMatrix → ExecutionEngine
-     (L1)           (L2)          (L2)           (L2/L3)            (L3)           (L4)           (L5)             (L5)
+UniverseEngine → MacroEngine → MetadronCube → SocialPrediction → DistressedAssets → CVR → EventDriven → AlphaOptimizer → BetaManager → DecisionMatrix → ExecutionEngine
+     (L1)           (L2)          (L2)           (L2/L3)              (L2)          (L2)     (L2)           (L3)           (L4)           (L5)             (L5)
 ```
 
 ### Layer Architecture (L1 → L5 → L2 → L3 → L4 → L7)
@@ -90,7 +90,10 @@ Metadron-Capital/                        ← Master monorepo (Layer 0: Hub)
 │   │   ├── metadron_cube.py            ← C(t) = f(L,R,F) + 4-Gate + KillSwitch + FCLP
 │   │   ├── contagion_engine.py         ← L3 graph topology, 21 nodes, 7 shock scenarios
 │   │   ├── stat_arb_engine.py          ← Medallion mean reversion + cointegration pairs
-│   │   └── social_prediction_engine.py ← MiroFish bridge → social sentiment signals
+│   │   ├── social_prediction_engine.py ← MiroFish bridge → social sentiment signals
+│   │   ├── distressed_asset_engine.py  ← 5-model distress ensemble (Z/KMV/O/Zmij/ML)
+│   │   ├── cvr_engine.py              ← CVR valuation (5 models, 4 instruments)
+│   │   └── event_driven_engine.py      ← 12-category event-driven (M&A arb, PEAD, etc.)
 │   ├── ml/                              ← L3: ML/AI models
 │   │   ├── alpha_optimizer.py           ← Walk-forward ML alpha + mean-variance
 │   │   ├── backtester.py               ← Walk-forward, Monte Carlo, scenario engine
@@ -122,7 +125,7 @@ Metadron-Capital/                        ← Master monorepo (Layer 0: Hub)
 │   └── portfolio.py                     ← Portfolio analytics engine
 ├── tests/
 │   ├── test_platform.py                 ← 11 core tests
-│   └── test_engine.py                  ← 37 engine tests (48 total)
+│   └── test_engine.py                  ← 58 engine tests (69 total)
 ├── mirofish/                            ← MiroFish social prediction engine
 │   ├── backend/                         ← Flask API + OASIS simulation
 │   │   ├── app/services/                ← Graph builder, simulation runner, report agent
@@ -190,6 +193,9 @@ HY OAS +35bp & VIX term flat/inverted & breadth <50% → auto β ≤ 0.35
 - **ContagionEngine**: L3 graph topology, 21 nodes, 7 shock scenarios, multi-step propagation
 - **StatArbEngine**: Medallion mean reversion + cointegration pairs + factor residuals (Σβ≈0)
 - **OptionsEngine**: Black-Scholes Greeks, θ+Γ optimizer, vol surface, P4 sleeve allocation
+- **DistressedAssetEngine**: 5-model ensemble (Altman Z, Merton KMV, Ohlson O, Zmijewski, ML GBM), fallen angel detector, LGD estimator, Kelly-sized opportunities
+- **CVREngine**: 5-model CVR valuation (binary option, barrier option, milestone tree, Monte Carlo, real options), liquidity/credit adjustments, 4 live instruments
+- **EventDrivenEngine**: 12 event categories, Mitchell-Pulvino M&A arb, PEAD SUE drift, Kelly-sized positions, 10 live events
 
 ## Beta Corridor (Dataset 1)
 
@@ -208,7 +214,7 @@ VaR ≤ $0.30M (95%/1-day) on $20M NAV
 # Run full pipeline (morning open)
 cd /home/user/Metadron-Capital && python3 run_open.py
 
-# Run all tests (48 tests)
+# Run all tests (69 tests)
 python3 -m pytest tests/ -v
 
 # Platform health check
@@ -231,12 +237,15 @@ python3 core/platform.py
 9. **Tests must pass** before pushing
 10. **Session continuity** — this CLAUDE.md serves as the bootstrap context
 
-## 19 Signal Types
+## 29 Signal Types
 
 MICRO_PRICE_BUY/SELL, RV_LONG/SHORT, FALLEN_ANGEL_BUY,
 ML_AGENT_BUY/SELL, DRL_AGENT_BUY/SELL, TFT_BUY/SELL,
 MC_BUY/SELL, QUALITY_BUY/SELL,
 SOCIAL_BULLISH, SOCIAL_BEARISH, SOCIAL_MOMENTUM, SOCIAL_REVERSAL,
+DISTRESS_FALLEN_ANGEL, DISTRESS_RECOVERY, DISTRESS_AVOID,
+CVR_BUY, CVR_SELL,
+EVENT_MERGER_ARB, EVENT_PEAD_LONG, EVENT_PEAD_SHORT, EVENT_CATALYST,
 HOLD
 
 ## MiroFish Social Prediction Engine

@@ -291,7 +291,7 @@ class TestPaperBroker:
             assert "TEST" in broker.state.positions
 
     def test_signal_types(self):
-        assert len(SignalType) == 20  # 15 original + 4 social signals + HOLD
+        assert len(SignalType) == 29  # 15 original + 4 social + 3 distress + 2 CVR + 4 event + HOLD
         assert SignalType.MICRO_PRICE_BUY.value == "MICRO_PRICE_BUY"
 
     def test_portfolio_summary(self):
@@ -393,9 +393,235 @@ class TestIntegration:
             "MC_BUY", "MC_SELL",
             "QUALITY_BUY", "QUALITY_SELL",
             "HOLD",
+            # Distress, CVR, and Event signals
+            "DISTRESS_FALLEN_ANGEL", "DISTRESS_RECOVERY", "DISTRESS_AVOID",
+            "CVR_BUY", "CVR_SELL",
+            "EVENT_MERGER_ARB", "EVENT_PEAD_LONG", "EVENT_PEAD_SHORT", "EVENT_CATALYST",
         ]
         for sig in expected:
             assert hasattr(SignalType, sig)
+
+
+# ===========================================================================
+# Distressed Asset Engine
+# ===========================================================================
+class TestDistressedAssetEngine:
+    def test_init(self):
+        from engine.signals.distressed_asset_engine import DistressedAssetEngine
+        dae = DistressedAssetEngine()
+        assert len(dae.universe) == 11
+
+    def test_analyze(self):
+        from engine.signals.distressed_asset_engine import DistressedAssetEngine, DistressLevel
+        dae = DistressedAssetEngine()
+        results = dae.analyze()
+        assert len(results) == 11
+        for ticker, score in results.items():
+            assert score.ticker == ticker
+            assert isinstance(score.level, DistressLevel)
+            assert 0 <= score.ensemble_prob <= 1
+            assert score.feature_count == 40
+
+    def test_altman_z_zones(self):
+        from engine.signals.distressed_asset_engine import DistressedAssetEngine
+        dae = DistressedAssetEngine()
+        # Low leverage → should be SAFE or GREY
+        safe_result = dae._altman_z("TEST", {"debt_to_equity": 0.5, "market_cap_B": 50, "interest_coverage": 8})
+        assert safe_result.zone in ("SAFE", "GREY")
+        # High leverage → should be GREY or DISTRESS
+        risky_result = dae._altman_z("TEST", {"debt_to_equity": 8.0, "market_cap_B": 2, "interest_coverage": 0.5})
+        assert risky_result.z_score < safe_result.z_score
+
+    def test_merton_kvv_convergence(self):
+        from engine.signals.distressed_asset_engine import DistressedAssetEngine
+        dae = DistressedAssetEngine()
+        result = dae._merton_kmv("TEST", {"debt_to_equity": 2.0, "market_cap_B": 10, "interest_coverage": 3})
+        assert result.iterations < 100  # Should converge
+        assert result.distance_to_default > 0
+        assert 0 <= result.default_probability <= 1
+
+    def test_fallen_angels(self):
+        from engine.signals.distressed_asset_engine import DistressedAssetEngine
+        dae = DistressedAssetEngine()
+        dae.analyze()
+        angels = dae.get_fallen_angels()
+        assert isinstance(angels, list)
+
+    def test_distress_signals(self):
+        from engine.signals.distressed_asset_engine import DistressedAssetEngine
+        dae = DistressedAssetEngine()
+        dae.analyze()
+        signals = dae.get_distress_signals()
+        assert isinstance(signals, dict)
+        for ticker, sig in signals.items():
+            assert "ensemble_prob" in sig
+            assert "level" in sig
+            assert "merton_dd" in sig
+
+    def test_report_format(self):
+        from engine.signals.distressed_asset_engine import DistressedAssetEngine
+        dae = DistressedAssetEngine()
+        dae.analyze()
+        report = dae.format_distress_report()
+        assert "DISTRESSED ASSET ENGINE" in report
+        assert "5-Model Ensemble" in report
+
+
+# ===========================================================================
+# CVR Engine
+# ===========================================================================
+class TestCVREngine:
+    def test_init(self):
+        from engine.signals.cvr_engine import CVREngine
+        cvr = CVREngine()
+        assert len(cvr.catalog) == 4
+
+    def test_analyze(self):
+        from engine.signals.cvr_engine import CVREngine
+        cvr = CVREngine()
+        results = cvr.analyze()
+        assert len(results) == 4
+        for ticker, val in results.items():
+            assert val.fair_value >= 0
+            assert val.market_price >= 0
+
+    def test_binary_option(self):
+        from engine.signals.cvr_engine import CVREngine, CVRInstrument, CVRType
+        cvr = CVREngine()
+        inst = CVRInstrument(
+            ticker="TEST", name="Test CVR", cvr_type=CVRType.PHARMA_MILESTONE,
+            payment_usd=5.0, market_price=2.0, expiry_months=24,
+            acquirer_rating="A",
+        )
+        val = cvr._binary_option(inst, trigger_prob=0.6)
+        assert val > 0
+        assert val < 5.0  # Less than full payment
+
+    def test_barrier_option(self):
+        from engine.signals.cvr_engine import CVREngine, CVRInstrument, CVRType
+        cvr = CVREngine()
+        inst = CVRInstrument(
+            ticker="TEST", name="Test", cvr_type=CVRType.REVENUE_EARNOUT,
+            payment_usd=10.0, market_price=4.0, trigger_price=100,
+            underlying_price=80, underlying_vol=0.30, expiry_months=36,
+        )
+        val = cvr._barrier_option(inst)
+        assert val > 0
+
+    def test_milestone_tree(self):
+        from engine.signals.cvr_engine import CVREngine, CVRInstrument, CVRType, MilestoneStage
+        cvr = CVREngine()
+        inst = CVRInstrument(
+            ticker="TEST", name="Test", cvr_type=CVRType.PHARMA_MILESTONE,
+            payment_usd=5.0, market_price=2.0, expiry_months=36,
+            milestones=[
+                MilestoneStage("Phase II", 0.60, 12),
+                MilestoneStage("Phase III", 0.50, 18),
+            ],
+        )
+        val, prob = cvr._milestone_tree(inst)
+        assert prob == pytest.approx(0.30, abs=0.01)  # 0.6 * 0.5
+        assert val > 0
+
+    def test_trading_signals(self):
+        from engine.signals.cvr_engine import CVREngine
+        cvr = CVREngine()
+        cvr.analyze()
+        signals = cvr.get_trading_signals()
+        assert isinstance(signals, dict)
+        for ticker, sig in signals.items():
+            assert "signal" in sig
+            assert "fair_value" in sig
+            assert "mispricing_pct" in sig
+
+    def test_report_format(self):
+        from engine.signals.cvr_engine import CVREngine
+        cvr = CVREngine()
+        cvr.analyze()
+        report = cvr.format_cvr_report()
+        assert "CVR ENGINE" in report
+        assert "Contingent Value Rights" in report
+
+
+# ===========================================================================
+# Event-Driven Engine
+# ===========================================================================
+class TestEventDrivenEngine:
+    def test_init(self):
+        from engine.signals.event_driven_engine import EventDrivenEngine
+        ede = EventDrivenEngine()
+        assert len(ede.events) == 10
+
+    def test_analyze(self):
+        from engine.signals.event_driven_engine import EventDrivenEngine
+        ede = EventDrivenEngine()
+        result = ede.analyze()
+        assert result.total_events == 10
+        assert len(result.positions) == 10
+        assert result.weighted_expected_alpha_bps != 0
+
+    def test_merger_arb(self):
+        from engine.signals.event_driven_engine import EventDrivenEngine, EventCategory, DealStatus
+        ede = EventDrivenEngine()
+        event = {
+            "type": EventCategory.MERGER_ARB,
+            "ticker": "TEST",
+            "acquirer": "BIG_CO",
+            "deal_price": 100.0,
+            "current_price": 95.0,
+            "days_to_close": 60,
+            "status": DealStatus.REGULATORY_REVIEW,
+        }
+        arb, pos = ede._merger_arb(event)
+        assert arb.gross_spread_pct > 0
+        assert arb.deal_break_prob < 0.20
+        assert arb.expected_return > 0  # Positive expected return for typical spread
+
+    def test_pead(self):
+        from engine.signals.event_driven_engine import EventDrivenEngine, EventCategory
+        ede = EventDrivenEngine()
+        event = {
+            "type": EventCategory.PEAD,
+            "ticker": "TEST",
+            "sue_zscore": 2.5,
+            "surprise_pct": 0.15,
+            "revision_momentum": 0.10,
+            "days_since": 5,
+        }
+        pead, pos = ede._pead(event)
+        assert pead.drift_alpha_bps > 0  # Positive SUE → positive drift
+        assert pead.decay_factor > 0.5   # Recent → low decay
+
+    def test_trading_signals(self):
+        from engine.signals.event_driven_engine import EventDrivenEngine
+        ede = EventDrivenEngine()
+        ede.analyze()
+        signals = ede.get_trading_signals()
+        assert isinstance(signals, dict)
+        assert len(signals) > 0
+        for ticker, sig in signals.items():
+            assert "signal" in sig
+            assert "expected_alpha_bps" in sig
+            assert "conviction" in sig
+            assert "kelly_fraction" in sig
+
+    def test_top_ideas(self):
+        from engine.signals.event_driven_engine import EventDrivenEngine
+        ede = EventDrivenEngine()
+        ede.analyze()
+        ideas = ede.get_top_ideas(min_alpha_bps=50)
+        assert isinstance(ideas, list)
+        # Should have several ideas above 50bps
+        assert len(ideas) >= 3
+
+    def test_report_format(self):
+        from engine.signals.event_driven_engine import EventDrivenEngine
+        ede = EventDrivenEngine()
+        ede.analyze()
+        report = ede.format_event_report()
+        assert "EVENT-DRIVEN ENGINE" in report
+        assert "MERGER ARBITRAGE DETAIL" in report
+        assert "PEAD SIGNALS" in report
 
 
 if __name__ == "__main__":
