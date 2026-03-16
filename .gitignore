@@ -18,16 +18,10 @@ target/
 *.pkl
 
 # ── Sub-repo overrides ──────────────────────────────────────
-# OpenBB build configs (Dockerfiles, conda recipes, PyPI scripts)
-!repos/layer1_data/open-bb/build/
-!repos/layer1_data/open-bb/build/**
-!intelligence_platform/open-bb/build/
-!intelligence_platform/open-bb/build/**
+# Keep build/ ignored globally (including open-bb build configs)
 
-# QLIB benchmark model artifacts
+# ML model artifacts needed for integration
 !repos/layer3_ml/QLIB/examples/benchmarks/**/*.pkl
-
-# Stock-prediction & Kserve example models
 !repos/layer3_ml/Stock-prediction/**/*.pkl
 !repos/layer5_infra/Kserve/**/*.pkl
 
