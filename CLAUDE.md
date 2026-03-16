@@ -134,6 +134,29 @@ Metadron-Capital/                        ← Master monorepo (Layer 0: Hub)
 │   ├── frontend/                        ← Vue 3 + Vite + D3.js
 │   │   └── src/                         ← Components, views, API layer
 │   └── package.json                     ← Monorepo scripts (dev, build, setup)
+├── intelligence_platform/               ← 21 reference repos (Python-coherent, 16K+ files)
+│   ├── README.md                       ← Index of all 21 repos
+│   ├── AI-Newton/                      ← Physics-informed ML
+│   ├── Air-LLM/                        ← LLM inference
+│   ├── CTA-code/                       ← CTA trend-following
+│   ├── Financial-Data/                 ← Data pipelines
+│   ├── FinancialDistressPrediction/    ← GBM distress (ref for DistressedAssetEngine)
+│   ├── Kserve/                         ← ML model serving (Python SDK)
+│   ├── ML-Macro-Market/                ← Macro ML models
+│   ├── Mav-Analysis/                   ← Portfolio analytics
+│   ├── MiroFish/                       ← Social prediction (ref for SocialEngine)
+│   ├── QLIB/                           ← Microsoft QLIB framework
+│   ├── Ruflo-agents/                   ← Agent orchestration (Python only)
+│   ├── Stock-techincal-prediction-model/ ← Technical analysis
+│   ├── TradeTheEvent/                  ← Event-driven ML (ref for EventDrivenEngine)
+│   ├── ai-hedgefund/                   ← AI hedge fund simulation
+│   ├── financial-distressed-repo/      ← Distress baseline
+│   ├── hedgefund-tracker/              ← Fund tracking
+│   ├── nividia-repo/                   ← GPU/AI compute
+│   ├── open-bb/                        ← OpenBB terminal
+│   ├── quant-trading/                  ← Quant strategies
+│   ├── sophisticated-distress-analysis/ ← Advanced distress
+│   └── stock-chain/                    ← Blockchain+stocks
 ├── run_open.py                          ← 09:30 ET — full pipeline execution
 ├── run_close.py                         ← 16:00 ET — EOD reconciliation
 └── repos/                               ← All 23 component repositories (6 layers)
