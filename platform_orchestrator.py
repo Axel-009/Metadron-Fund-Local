@@ -1,3 +1,9 @@
+# ============================================================
+# SOURCE: https://github.com/Axel-009/Metadron-Capital
+# LAYER:  platform (root)
+# ROLE:   Master orchestrator — coordinates all subsystems into
+#         a synchronized daily investment pipeline
+# ============================================================
 """
 Investment Platform Orchestrator for Metadron Capital.
 

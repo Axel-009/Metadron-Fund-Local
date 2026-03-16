@@ -1,3 +1,8 @@
+# ============================================================
+# SOURCE: https://github.com/keigito/FinancialDistressPrediction
+# LAYER:  layer4_portfolio
+# ROLE:   OpenBB universe bridge for academic distress models
+# ============================================================
 """
 Unified OpenBB Data Module for Metadron Capital Investment Platform.
 

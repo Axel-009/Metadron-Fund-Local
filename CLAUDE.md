@@ -2,6 +2,8 @@
 
 ## Session Bootstrap
 
+> **START HERE:** Read `Architecture_DNA/AI_SESSION_INSTRUCTIONS.md` first — it explains the two-zone architecture (repos/ archive vs intelligence_platform/ unified system), change flow rules, and how to add new repos. Then continue below.
+>
 > "Continue building the Metadron Capital investment platform. The master repo is at `/home/user/Metadron-Capital` with a 6-layer architecture. The investment engine is in `engine/`. All 20 component repos are under `repos/`. Core platform code is in `core/`. Run `python3 -m pytest tests/ -v` to verify. Run `python3 run_open.py` to execute the full signal pipeline."
 
 ## Mission

@@ -1,3 +1,8 @@
+# ============================================================
+# SOURCE: https://github.com/Axel-009/ai-hedgefund
+# LAYER:  layer4_portfolio
+# ROLE:   Daily portfolio reporting and performance tracking
+# ============================================================
 # -*- coding: utf-8 -*-
 """
 Daily Report Generator

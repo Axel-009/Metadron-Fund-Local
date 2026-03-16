@@ -1,3 +1,8 @@
+# ============================================================
+# SOURCE: https://github.com/Axel-009/quant-trading
+# LAYER:  layer2_signals
+# ROLE:   OpenBB data bridge for quantitative trading signals
+# ============================================================
 # -*- coding: utf-8 -*-
 """
 Unified OpenBB Data Module for quant-trading backtests.

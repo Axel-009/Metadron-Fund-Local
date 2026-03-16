@@ -1,3 +1,8 @@
+# ============================================================
+# SOURCE: https://github.com/Axel-009/sophisticated-distress-analysis
+# LAYER:  layer4_portfolio
+# ROLE:   Advanced financial distress scanning engine
+# ============================================================
 """
 Distress Scanner Module for the Unified Investment Platform.
 

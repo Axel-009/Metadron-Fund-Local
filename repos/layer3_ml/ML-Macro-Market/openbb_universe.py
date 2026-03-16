@@ -1,3 +1,8 @@
+# ============================================================
+# SOURCE: https://github.com/Axel-009/ML-Macro-Market
+# LAYER:  layer3_ml
+# ROLE:   OpenBB universe bridge for macro ML predictions
+# ============================================================
 """
 Unified OpenBB Universe Module for ML-Macro-Market.
 

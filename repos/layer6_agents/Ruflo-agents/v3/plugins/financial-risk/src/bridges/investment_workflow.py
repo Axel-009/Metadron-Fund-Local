@@ -1,3 +1,8 @@
+# ============================================================
+# SOURCE: https://github.com/Axel-009/Ruflo-agents
+# LAYER:  layer6_agents
+# ROLE:   Investment workflow orchestration bridge for Ruflo agents
+# ============================================================
 """
 Investment Workflow Agent for Ruflo Agent Framework.
 

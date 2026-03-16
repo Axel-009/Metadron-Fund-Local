@@ -1,3 +1,8 @@
+# ============================================================
+# SOURCE: https://github.com/Axel-009/hedgefund-tracker
+# LAYER:  layer1_data
+# ROLE:   Investment thesis generation from 13F data
+# ============================================================
 """
 Trade Thesis Generator for Hedge Fund Tracker.
 

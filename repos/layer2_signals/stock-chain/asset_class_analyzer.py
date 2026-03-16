@@ -1,3 +1,8 @@
+# ============================================================
+# SOURCE: https://github.com/Axel-009/stock-chain
+# LAYER:  layer2_signals
+# ROLE:   Multi-asset class analysis engine
+# ============================================================
 """
 Multi-Asset Analysis Engine for Stock-Chain.
 

@@ -1,3 +1,8 @@
+# ============================================================
+# SOURCE: https://github.com/Axel-009/Air-LLM
+# LAYER:  layer5_infra
+# ROLE:   Air-LLM lightweight inference integration for research agents
+# ============================================================
 """
 Air-LLM integration for the Metadron Capital Investment Platform.
 

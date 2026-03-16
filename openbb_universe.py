@@ -1,3 +1,9 @@
+# ============================================================
+# SOURCE: https://github.com/Axel-009/Metadron-Capital
+# LAYER:  platform (root)
+# ROLE:   Unified OpenBB universe engine — defines the 150+
+#         security investable universe across all asset classes
+# ============================================================
 """
 Unified OpenBB Universe Module for Investment Platform.
 

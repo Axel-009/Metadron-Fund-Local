@@ -1,3 +1,8 @@
+# ============================================================
+# SOURCE: https://github.com/Axel-009/Kserve
+# LAYER:  layer5_infra
+# ROLE:   KServe model serving integration for investment platform
+# ============================================================
 """
 KServe integration for serving ML models in the Metadron Capital Investment Platform.
 

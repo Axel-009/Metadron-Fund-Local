@@ -1,3 +1,8 @@
+# ============================================================
+# SOURCE: https://github.com/Axel-009/nividia-repo
+# LAYER:  layer5_infra
+# ROLE:   NVIDIA GPU acceleration integration for investment platform
+# ============================================================
 """
 NVIDIA GPU acceleration for the Metadron Capital Investment Platform.
 

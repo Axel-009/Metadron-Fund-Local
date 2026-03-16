@@ -1,3 +1,8 @@
+# ============================================================
+# SOURCE: https://github.com/keigito/FinancialDistressPrediction
+# LAYER:  layer4_portfolio
+# ROLE:   Financial distress prediction engine
+# ============================================================
 """
 Financial distress prediction engine using full universe data from OpenBB.
 

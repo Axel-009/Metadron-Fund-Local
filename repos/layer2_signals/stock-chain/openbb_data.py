@@ -1,3 +1,8 @@
+# ============================================================
+# SOURCE: https://github.com/Axel-009/stock-chain
+# LAYER:  layer2_signals
+# ROLE:   OpenBB data bridge for blockchain stock analysis
+# ============================================================
 """
 Unified OpenBB Universe Module for Stock-Chain.
 

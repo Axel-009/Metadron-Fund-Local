@@ -1,3 +1,8 @@
+# ============================================================
+# SOURCE: https://github.com/Axel-009/AI-Newton
+# LAYER:  layer3_ml
+# ROLE:   AI-Newton integration bridge for investment platform
+# ============================================================
 """
 AI-Newton integration with the Metadron Capital Investment Platform.
 

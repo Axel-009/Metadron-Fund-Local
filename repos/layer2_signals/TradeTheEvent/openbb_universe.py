@@ -1,3 +1,8 @@
+# ============================================================
+# SOURCE: https://github.com/Zhihan1996/TradeTheEvent
+# LAYER:  layer2_signals
+# ROLE:   OpenBB universe bridge for event-driven trading
+# ============================================================
 """
 Unified OpenBB Data Module for Metadron Capital Investment Platform.
 

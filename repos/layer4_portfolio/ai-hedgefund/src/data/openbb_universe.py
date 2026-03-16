@@ -1,3 +1,8 @@
+# ============================================================
+# SOURCE: https://github.com/Axel-009/ai-hedgefund
+# LAYER:  layer4_portfolio
+# ROLE:   OpenBB universe bridge for core hedge fund engine
+# ============================================================
 # -*- coding: utf-8 -*-
 """
 Unified OpenBB Data Module -- SOLE data source for the AI Hedge Fund.

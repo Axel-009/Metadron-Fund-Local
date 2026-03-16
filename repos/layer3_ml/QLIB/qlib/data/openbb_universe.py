@@ -1,3 +1,8 @@
+# ============================================================
+# SOURCE: https://github.com/Axel-009/QLIB
+# LAYER:  layer3_ml
+# ROLE:   OpenBB universe bridge for Qlib ML framework
+# ============================================================
 """
 OpenBB Universe Data Module — QLIB Provider Interface
 =====================================================

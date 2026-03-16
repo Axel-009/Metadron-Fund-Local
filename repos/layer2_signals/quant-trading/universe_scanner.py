@@ -1,3 +1,8 @@
+# ============================================================
+# SOURCE: https://github.com/Axel-009/quant-trading
+# LAYER:  layer2_signals
+# ROLE:   Universe scanning and opportunity detection
+# ============================================================
 # -*- coding: utf-8 -*-
 """
 Full Universe Scanner for quant-trading backtests.

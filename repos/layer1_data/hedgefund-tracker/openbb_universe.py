@@ -1,3 +1,8 @@
+# ============================================================
+# SOURCE: https://github.com/Axel-009/hedgefund-tracker
+# LAYER:  layer1_data
+# ROLE:   OpenBB universe bridge for hedge fund 13F tracking
+# ============================================================
 """
 Unified OpenBB Universe Module for Hedge Fund Tracker.
 
