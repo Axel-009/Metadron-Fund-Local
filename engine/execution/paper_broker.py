@@ -53,7 +53,7 @@ class OrderStatus(str, Enum):
 
 
 class SignalType(str, Enum):
-    """15 signal types."""
+    """Signal types for trade classification."""
     MICRO_PRICE_BUY = "MICRO_PRICE_BUY"
     MICRO_PRICE_SELL = "MICRO_PRICE_SELL"
     RV_LONG = "RV_LONG"
@@ -73,6 +73,18 @@ class SignalType(str, Enum):
     SOCIAL_BEARISH = "SOCIAL_BEARISH"
     SOCIAL_MOMENTUM = "SOCIAL_MOMENTUM"
     SOCIAL_REVERSAL = "SOCIAL_REVERSAL"
+    # Distressed asset signals
+    DISTRESS_FALLEN_ANGEL = "DISTRESS_FALLEN_ANGEL"
+    DISTRESS_RECOVERY = "DISTRESS_RECOVERY"
+    DISTRESS_AVOID = "DISTRESS_AVOID"
+    # CVR signals
+    CVR_BUY = "CVR_BUY"
+    CVR_SELL = "CVR_SELL"
+    # Event-driven signals
+    EVENT_MERGER_ARB = "EVENT_MERGER_ARB"
+    EVENT_PEAD_LONG = "EVENT_PEAD_LONG"
+    EVENT_PEAD_SHORT = "EVENT_PEAD_SHORT"
+    EVENT_CATALYST = "EVENT_CATALYST"
     HOLD = "HOLD"
 
 

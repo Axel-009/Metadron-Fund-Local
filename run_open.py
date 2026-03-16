@@ -149,6 +149,36 @@ def main():
     except Exception as e:
         print(f"  Stat arb engine: {e}")
 
+    # Distressed Asset Engine
+    try:
+        from engine.signals.distressed_asset_engine import DistressedAssetEngine
+        dae = DistressedAssetEngine()
+        dae.analyze()
+        print(dae.format_distress_report())
+        print()
+    except Exception as e:
+        print(f"  Distressed asset engine: {e}")
+
+    # CVR Engine
+    try:
+        from engine.signals.cvr_engine import CVREngine
+        cvr = CVREngine()
+        cvr.analyze()
+        print(cvr.format_cvr_report())
+        print()
+    except Exception as e:
+        print(f"  CVR engine: {e}")
+
+    # Event-Driven Engine
+    try:
+        from engine.signals.event_driven_engine import EventDrivenEngine
+        ede = EventDrivenEngine()
+        ede.analyze()
+        print(ede.format_event_report())
+        print()
+    except Exception as e:
+        print(f"  Event-driven engine: {e}")
+
     # Options Theta-Gamma Optimizer
     try:
         from engine.execution.options_engine import OptionsStrategyBuilder
