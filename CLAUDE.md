@@ -24,19 +24,31 @@ UniverseEngine → MacroEngine → MetadronCube → AlphaOptimizer → BetaManag
      (L1)           (L2)          (L2)            (L3)           (L4)           (L5)             (L5)
 ```
 
-### Pipeline Flow (L1 → L5 → L2 → L3 → L4 → L7)
+### Layer Architecture (L1 → L5 → L2 → L3 → L4 → L7)
 
 ```
-L1 Data         Financial-Data, QLIB, FRB        → Market data + factor research
-L2 Signals      quant-trading, ML-Macro-Market    → Strategy library + regime classifier
-L3 Intelligence ai-hedgefund, Mav-Analysis,       → Multi-agent decision engine
-                Air-LLM, AI-Newton
-L4 Portfolio    hedgefund-tracker, Ruflo-agents,   → Institutional tracker + orchestration
-                open-bb
-L5 Execution    wondertrader, exchange-core        → HFT micro-price + order matching
-L6 Agents       Ruflo-agents                       → Multi-agent orchestration
-L7 Reference    Quant-Developers-Resources         → Quant research catalog
+L1 Data           Financial-Data, QLIB, FRB           → Market data + factor research
+L2 Signals        quant-trading, ML-Macro-Market,      → Strategy library + regime classifier
+                  CTA-code, stock-chain
+L3 Intelligence   ai-hedgefund, Mav-Analysis,          → Multi-agent decision engine
+                  Air-LLM, AI-Newton
+L4 Portfolio      hedgefund-tracker, open-bb,           → Institutional tracker + orchestration
+                  financial-distressed-repo,
+                  sophisticated-distress-analysis
+L5 Infrastructure Kserve, nividia-repo, Air-LLM        → ML serving + GPU inference
+L6 Agents         Ruflo-agents                          → Multi-agent orchestration (supports all layers)
+L7 HFT/Execution wondertrader, exchange-core,          → HFT micro-price + order matching
+                  Quant-Developers-Resources
 ```
+
+### Reference Repo Mapping
+
+| Role | Repo | Function |
+|------|------|----------|
+| Data | FRB (avelkoski) | Federal Reserve FRED API → LiquidityTensor |
+| Execution | wondertrader (C++→Python) | HFT micro-price signal → MicroPriceEngine |
+| Execution | exchange-core (Java→Python) | Order matching / paper order book |
+| Reference | Quant-Developers-Resources | Quant research catalog (11 categories) |
 
 ### MacroEngine Cadence
 
