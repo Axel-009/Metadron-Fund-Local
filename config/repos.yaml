@@ -235,7 +235,50 @@ repos:
       - unified_api
     outputs: [investment_decisions, portfolio_analytics, risk_reports]
 
-  # ─── ADDED EXTERNAL REPOS ─────────────────────────────────────────────
+  # ─── ADDITIONAL REPOS ────────────────────────────────────────────────
+  mirofish:
+    path: ../MiroFish
+    role: "Social Prediction Engine"
+    layer: 6
+    description: "Agent-based social simulation — OASIS Twitter/Reddit, LLM ontology, sentiment signals"
+    capabilities:
+      - social_simulation
+      - sentiment_analysis
+      - agent_behavior_modeling
+      - narrative_regime_detection
+    outputs: [social_signals, sentiment_scores, narrative_regimes]
+
+  trade_the_event:
+    path: ../TradeTheEvent
+    role: "Event-Driven ML Reference"
+    layer: 2
+    description: "BERT-based event detection — news classification, event impact prediction"
+    capabilities:
+      - event_detection
+      - news_classification
+      - impact_prediction
+    outputs: [event_signals, news_classifications]
+
+  financial_distress_prediction:
+    path: ../FinancialDistressPrediction
+    role: "GBM Distress Prediction Reference"
+    layer: 4
+    description: "Gradient Boosted Machine bankruptcy prediction — reference for DistressedAssetEngine"
+    capabilities:
+      - bankruptcy_prediction
+      - financial_health_scoring
+    outputs: [distress_predictions, bankruptcy_probabilities]
+
+  stock_prediction:
+    path: ../Stock-prediction
+    role: "Technical Price Prediction"
+    layer: 3
+    description: "Additional stock price prediction models — technical analysis, ML forecasting"
+    capabilities:
+      - price_forecasting
+      - technical_pattern_detection
+    outputs: [price_predictions, pattern_signals]
+
   frb:
     path: ../FRB
     role: "Federal Reserve Bank Data"
