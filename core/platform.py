@@ -60,8 +60,24 @@ class MetadronPlatform:
             config = yaml.safe_load(f)
 
         base_dir = self.config_path.parent.parent
+        intel_dir = base_dir / "intelligence_platform"
+        repos_dir = base_dir / "repos"
+
         for name, repo_cfg in config.get("repos", {}).items():
             repo_path = (base_dir / repo_cfg["path"]).resolve()
+            # Fallback: check intelligence_platform/ and repos/ if primary path missing
+            if not repo_path.exists():
+                repo_dirname = Path(repo_cfg["path"]).name
+                alt_intel = intel_dir / repo_dirname
+                if alt_intel.exists():
+                    repo_path = alt_intel
+                else:
+                    # Search repos/ layer dirs
+                    for layer_dir in sorted(repos_dir.glob("layer*")):
+                        alt_repo = layer_dir / repo_dirname
+                        if alt_repo.exists():
+                            repo_path = alt_repo
+                            break
             self.modules[name] = RepoModule(
                 name=name,
                 path=repo_path,
@@ -83,11 +99,11 @@ class MetadronPlatform:
             module.errors.append(f"Path does not exist: {module.path}")
             return False
 
-        # Check for Python files
-        py_files = list(module.path.glob("*.py")) + list(module.path.glob("**/*.py"))
-        if not py_files and name != "metadron_capital":
+        # Check for any source files (Python, Java, Go, Rust, C++, etc.)
+        has_files = any(module.path.rglob("*"))
+        if not has_files and name != "metadron_capital":
             module.status = "error"
-            module.errors.append("No Python files found")
+            module.errors.append("No files found")
             return False
 
         module.status = "initialized"

@@ -1,41 +1,73 @@
-# Intelligence Platform — Reference Repository Collection
+# Intelligence Platform — Complete Repository Collection
 
-All 21 reference repositories consolidated into Metadron Capital as a unified
-Python-coherent intelligence platform. Non-Python source code (Go, Rust, C++,
-TypeScript, JavaScript, Vue, Java) has been excluded to maintain language coherence
-across the entire Metadron Capital codebase.
+All 28 reference repositories fully consolidated into Metadron Capital as the unified
+intelligence platform. **Every file from every source repo is included** — Python, Go,
+Rust, C++, CUDA, TypeScript, JavaScript, Vue, Java, proto, configs, data, and assets.
 
 ## Repository Index
 
+### Layer 1: Data Ingestion & Market Intelligence
+
 | # | Repository | Focus | Key Capabilities |
 |---|-----------|-------|-------------------|
-| 1 | **AI-Newton** | Physics-informed ML | Neural ODEs, scientific computing |
-| 2 | **Air-LLM** | LLM inference | Memory-efficient large model serving |
-| 3 | **CTA-code** | Commodity Trading Advisors | Trend-following, momentum strategies |
-| 4 | **Financial-Data** | Data pipelines | Financial data ingestion, cleaning |
-| 5 | **Kserve** | ML model serving | KServe inference, model deployment (Python SDK only) |
-| 6 | **ML-Macro-Market** | Macro ML models | Macro factor prediction, regime detection |
-| 7 | **Mav-Analysis** | Maverick analysis | Portfolio analytics, risk modeling |
-| 8 | **QLIB** | Quant library | Microsoft QLIB framework, factor research |
-| 9 | **Ruflo-agents** | Agent orchestration | Multi-agent workflows (Python components only) |
-| 10 | **Stock-techincal-prediction-model** | Technical analysis | Price prediction, pattern recognition |
-| 11 | **ai-hedgefund** | AI hedge fund | Full hedge fund simulation, alpha models |
-| 12 | **financial-distressed-repo** | Distress analysis | Financial distress prediction baseline |
-| 13 | **hedgefund-tracker** | Fund tracking | Hedge fund performance monitoring |
-| 14 | **nividia-repo** | GPU/AI compute | NVIDIA ML pipelines, deep learning |
-| 15 | **open-bb** | OpenBB terminal | Financial data terminal, research platform |
-| 16 | **quant-trading** | Quant strategies | Algorithmic trading strategies |
-| 17 | **sophisticated-distress-analysis** | Advanced distress | Enhanced distress modeling |
-| 18 | **stock-chain** | Blockchain + stocks | DeFi/TradFi integration |
-| 19 | **MiroFish** | Social prediction | Agent-based social sentiment simulation |
-| 20 | **FinancialDistressPrediction** | Distress ML | GBM bankruptcy prediction (reference for DistressedAssetEngine) |
-| 21 | **TradeTheEvent** | Event-driven ML | BERT event detection (reference for EventDrivenEngine) |
+| 1 | **Financial-Data** | Data pipelines | Financial data ingestion, cleaning |
+| 2 | **open-bb** | OpenBB terminal | Financial data terminal, research platform |
+| 3 | **hedgefund-tracker** | Fund tracking | Hedge fund performance, 13F filings |
+| 4 | **FRB** | Federal Reserve data | FRED API, M1/M2, rates, GDP, employment |
+| 5 | **EquityLinkedGICPooling** | GIC pooling | Fair value tolerance, notional minimums |
+| 6 | **Quant-Developers-Resources** | Quant reference | AI/ML, statistics, financial engineering |
+
+### Layer 2: Signal Processing & Feature Engineering
+
+| # | Repository | Focus | Key Capabilities |
+|---|-----------|-------|-------------------|
+| 7 | **Mav-Analysis** | Technical analysis | Maverick MCP, indicators, backtesting |
+| 8 | **quant-trading** | Quant strategies | Bollinger, London Breakout, Dual Thrust |
+| 9 | **stock-chain** | Chain analysis | Price-volume relationships, order flow |
+| 10 | **CTA-code** | CTA strategies | Trend following, momentum, mean reversion |
+| 11 | **TradeTheEvent** | Event-driven ML | BERT event detection, news trading |
+| 12 | **wondertrader** | HFT execution | C++ quant framework, CTA/HFT strategies |
+
+### Layer 3: ML/AI Models & Prediction
+
+| # | Repository | Focus | Key Capabilities |
+|---|-----------|-------|-------------------|
+| 13 | **QLIB** | Quant ML framework | Microsoft QLIB, alpha factor mining |
+| 14 | **Stock-techincal-prediction-model** | Price prediction | LSTM, CNN, ensemble forecasting |
+| 15 | **Stock-prediction** | Technical prediction | Additional prediction models |
+| 16 | **ML-Macro-Market** | Macro ML | Regime classification, business cycle |
+| 17 | **AI-Newton** | Physics-informed ML | Neural ODEs, differential equations |
+
+### Layer 4: Portfolio Construction & Risk Management
+
+| # | Repository | Focus | Key Capabilities |
+|---|-----------|-------|-------------------|
+| 18 | **ai-hedgefund** | AI hedge fund | Multi-agent portfolio, risk management |
+| 19 | **financial-distressed-repo** | Credit risk | Altman Z, Ohlson O, ML distress |
+| 20 | **sophisticated-distress-analysis** | Advanced distress | Multi-factor deep health scoring |
+| 21 | **FinancialDistressPrediction** | Distress ML | GBM bankruptcy prediction |
+
+### Layer 5: Execution & Serving Infrastructure
+
+| # | Repository | Focus | Key Capabilities |
+|---|-----------|-------|-------------------|
+| 22 | **Kserve** | Model serving | KServe ML inference, auto-scaling |
+| 23 | **nividia-repo** | GPU deep learning | NVIDIA optimized training/inference |
+| 24 | **Air-LLM** | LLM inference | Memory-efficient large model serving |
+| 25 | **exchange-core** | Exchange engine | Ultra-low latency Java order matching |
+
+### Layer 6: Agent Orchestration & Decision Intelligence
+
+| # | Repository | Focus | Key Capabilities |
+|---|-----------|-------|-------------------|
+| 26 | **Ruflo-agents** | Agent orchestration | Multi-agent workflows, swarm intelligence |
+| 27 | **MiroFish** | Social prediction | Agent-based social sentiment simulation |
 
 ## Integration into Metadron Capital
 
-These repositories serve as reference implementations. The actual production engines
-in `engine/signals/` are institutional-grade implementations that far exceed the
-reference repos:
+These repositories serve as reference implementations. The production engines
+in `engine/` are institutional-grade implementations that synthesize and elevate
+the reference code:
 
 - **DistressedAssetEngine** (`engine/signals/distressed_asset_engine.py`)
   - References: `FinancialDistressPrediction/`, `financial-distressed-repo/`, `sophisticated-distress-analysis/`
@@ -53,14 +85,37 @@ reference repos:
   - References: `MiroFish/`, `Ruflo-agents/`
   - Elevation: Raw social data → agent-based sentiment simulation with topic modeling
 
-## File Statistics
+- **MacroEngine** (`engine/signals/macro_engine.py`)
+  - References: `FRB/`, `ML-Macro-Market/`, `QLIB/`
+  - Elevation: FRED data → GMTF with SDR tension, rotation, velocity
 
-- **8,643 Python files** — core source code
-- **3,120 Markdown files** — documentation
-- **1,267 Shell scripts** — build/deploy automation
-- **1,114 YAML configs** — configuration
-- **963 CSV files** — data samples
-- **228 Jupyter notebooks** — research/analysis
+- **StatArbEngine** (`engine/signals/stat_arb_engine.py`)
+  - References: `quant-trading/`, `CTA-code/`, `stock-chain/`
+  - Elevation: Simple pairs → Medallion mean reversion + cointegration + factor residuals
 
-All files are Python-ecosystem coherent. No Go, Rust, C++, TypeScript, JavaScript,
-or other non-Python source code is included.
+- **AlphaOptimizer** (`engine/ml/alpha_optimizer.py`)
+  - References: `QLIB/`, `AI-Newton/`, `Stock-techincal-prediction-model/`
+  - Elevation: Single model → Walk-forward ML alpha + mean-variance optimization
+
+## Multi-Language Ecosystem
+
+The intelligence platform contains code across multiple languages, integrated
+through the `plugins/` bridge layer:
+
+| Language | Files | Key Repos |
+|----------|-------|-----------|
+| Python | ~12,000+ | All repos |
+| C++ / CUDA | ~4,000+ | Kserve (TensorFlow), nividia-repo, wondertrader |
+| Go | ~4,000+ | Kserve (KFServing controller) |
+| Java | ~300+ | Kserve, exchange-core |
+| TypeScript/JS | ~160+ | ai-hedgefund, open-bb |
+| Rust | ~40+ | AI-Newton |
+| Vue | ~15+ | MiroFish |
+
+### Plugin Bridges (`plugins/`)
+
+- `unified_bridge.py` — Central multi-language integration
+- `cuda_plugin.py` — GPU compute bridge (nividia-repo, Kserve)
+- `rust_plugin.py` — Rust bridge (AI-Newton)
+- `go_plugin.py` — Go bridge (Kserve KFServing)
+- `typescript_plugin.py` — TypeScript bridge (ai-hedgefund, open-bb)
