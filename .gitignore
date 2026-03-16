@@ -16,3 +16,21 @@ node_modules/
 .DS_Store
 target/
 *.pkl
+
+# ── Sub-repo overrides ──────────────────────────────────────
+# OpenBB build configs (Dockerfiles, conda recipes, PyPI scripts)
+!repos/layer1_data/open-bb/build/
+!repos/layer1_data/open-bb/build/**
+!intelligence_platform/open-bb/build/
+!intelligence_platform/open-bb/build/**
+
+# QLIB benchmark model artifacts
+!repos/layer3_ml/QLIB/examples/benchmarks/**/*.pkl
+
+# Stock-prediction & Kserve example models
+!repos/layer3_ml/Stock-prediction/**/*.pkl
+!repos/layer5_infra/Kserve/**/*.pkl
+
+# NVIDIA CUDA pre-built plugin binaries
+!repos/layer5_infra/nividia-repo/**/*.so
+!repos/layer5_infra/nividia-repo/**/*.o
