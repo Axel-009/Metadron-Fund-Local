@@ -1,3 +1,8 @@
+# ============================================================
+# SOURCE: https://github.com/Axel-009/ML-Macro-Market
+# LAYER:  layer3_ml
+# ROLE:   Stock history data provider with OpenBB integration
+# ============================================================
 """
 Stock history data module for ML-Macro-Market.
 

@@ -1,3 +1,8 @@
+# ============================================================
+# SOURCE: https://github.com/Axel-009/Mav-Analysis
+# LAYER:  layer2_signals
+# ROLE:   OpenBB data bridge for multi-asset volatility
+# ============================================================
 """
 Unified OpenBB Universe Module for Mav-Analysis (Maverick Portfolio Analytics).
 

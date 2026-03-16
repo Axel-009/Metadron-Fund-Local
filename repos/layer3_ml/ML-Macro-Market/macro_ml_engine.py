@@ -1,3 +1,8 @@
+# ============================================================
+# SOURCE: https://github.com/Axel-009/ML-Macro-Market
+# LAYER:  layer3_ml
+# ROLE:   Macro-level ML prediction and regime detection engine
+# ============================================================
 """
 Macro-driven ML Engine for regime detection and investment implications.
 

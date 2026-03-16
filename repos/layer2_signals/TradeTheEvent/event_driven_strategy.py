@@ -1,3 +1,8 @@
+# ============================================================
+# SOURCE: https://github.com/Zhihan1996/TradeTheEvent
+# LAYER:  layer2_signals
+# ROLE:   Event-driven trading strategy from news/earnings
+# ============================================================
 """
 Event-driven trading strategy integrated with full OpenBB universe.
 

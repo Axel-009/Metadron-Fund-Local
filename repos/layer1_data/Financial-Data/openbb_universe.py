@@ -1,3 +1,8 @@
+# ============================================================
+# SOURCE: https://github.com/Axel-009/Financial-Data
+# LAYER:  layer1_data
+# ROLE:   OpenBB universe data bridge for financial data collection
+# ============================================================
 """
 OpenBB Universe Data Module
 ============================

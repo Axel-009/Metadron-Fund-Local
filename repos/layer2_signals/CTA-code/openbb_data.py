@@ -1,3 +1,8 @@
+# ============================================================
+# SOURCE: https://github.com/Axel-009/CTA-code
+# LAYER:  layer2_signals
+# ROLE:   OpenBB data bridge for CTA/managed futures
+# ============================================================
 """
 Unified OpenBB Universe Module for CTA Trend-Following.
 

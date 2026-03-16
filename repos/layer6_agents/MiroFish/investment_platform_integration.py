@@ -1,3 +1,8 @@
+# ============================================================
+# SOURCE: https://github.com/666ghj/MiroFish
+# LAYER:  layer6_agents
+# ROLE:   MiroFish multi-agent research integration for investment platform
+# ============================================================
 """
 MiroFish integration with Metadron Capital Investment Platform.
 

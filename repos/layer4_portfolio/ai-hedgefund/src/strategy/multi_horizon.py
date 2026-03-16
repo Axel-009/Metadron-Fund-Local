@@ -1,3 +1,8 @@
+# ============================================================
+# SOURCE: https://github.com/Axel-009/ai-hedgefund
+# LAYER:  layer4_portfolio
+# ROLE:   Multi-horizon strategy engine (intraday to weekly)
+# ============================================================
 # -*- coding: utf-8 -*-
 """
 Multi-Horizon Strategy Engine

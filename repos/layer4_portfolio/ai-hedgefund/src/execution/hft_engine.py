@@ -1,3 +1,8 @@
+# ============================================================
+# SOURCE: https://github.com/Axel-009/ai-hedgefund
+# LAYER:  layer4_portfolio
+# ROLE:   High-frequency trading execution engine
+# ============================================================
 # -*- coding: utf-8 -*-
 """
 HFT Execution Engine

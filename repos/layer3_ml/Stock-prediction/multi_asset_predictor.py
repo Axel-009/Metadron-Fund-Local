@@ -1,3 +1,8 @@
+# ============================================================
+# SOURCE: https://github.com/Axel-009/Stock-techincal-prediction-model
+# LAYER:  layer3_ml
+# ROLE:   Multi-asset prediction engine across equities/crypto/commodities
+# ============================================================
 """
 Multi-Asset Prediction Engine using Ensemble ML Methods.
 

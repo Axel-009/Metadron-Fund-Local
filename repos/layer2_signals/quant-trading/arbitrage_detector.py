@@ -1,3 +1,8 @@
+# ============================================================
+# SOURCE: https://github.com/Axel-009/quant-trading
+# LAYER:  layer2_signals
+# ROLE:   Statistical arbitrage and pair trading detection
+# ============================================================
 # -*- coding: utf-8 -*-
 """
 Arbitrage Detector

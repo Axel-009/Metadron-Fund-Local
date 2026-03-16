@@ -1,3 +1,8 @@
+# ============================================================
+# SOURCE: https://github.com/Axel-009/Stock-techincal-prediction-model
+# LAYER:  layer3_ml
+# ROLE:   OpenBB data bridge for stock prediction models
+# ============================================================
 """
 Unified OpenBB Universe Module for Stock Technical Prediction Model.
 

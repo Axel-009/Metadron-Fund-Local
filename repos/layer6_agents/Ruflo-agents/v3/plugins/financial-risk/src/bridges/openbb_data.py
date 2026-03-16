@@ -1,3 +1,8 @@
+# ============================================================
+# SOURCE: https://github.com/Axel-009/Ruflo-agents
+# LAYER:  layer6_agents
+# ROLE:   OpenBB data bridge for Ruflo financial risk plugin
+# ============================================================
 """
 OpenBB Data Bridge for Ruflo-agents Financial Risk Plugin
 ==========================================================

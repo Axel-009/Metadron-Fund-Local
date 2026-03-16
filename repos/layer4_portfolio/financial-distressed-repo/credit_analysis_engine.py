@@ -1,3 +1,8 @@
+# ============================================================
+# SOURCE: https://github.com/Axel-009/financial-distressed-repo
+# LAYER:  layer4_portfolio
+# ROLE:   Credit analysis and distress prediction engine
+# ============================================================
 """
 Credit Analysis Engine for the Unified Investment Platform.
 

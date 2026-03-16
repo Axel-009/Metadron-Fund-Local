@@ -1,3 +1,8 @@
+# ============================================================
+# SOURCE: https://github.com/Axel-009/Mav-Analysis
+# LAYER:  layer2_signals
+# ROLE:   Multi-asset volatility analysis across equities/FX/crypto
+# ============================================================
 """
 Multi-Asset Analysis Engine for Mav-Analysis.
 

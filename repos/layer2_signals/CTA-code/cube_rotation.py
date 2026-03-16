@@ -1,3 +1,8 @@
+# ============================================================
+# SOURCE: https://github.com/Axel-009/CTA-code
+# LAYER:  layer2_signals
+# ROLE:   Metadron Cube rotation strategy engine
+# ============================================================
 """
 CUBE ROTATION ENGINE - Core Alpha Generation Mechanism for CTA.
 

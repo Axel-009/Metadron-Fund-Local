@@ -1,3 +1,8 @@
+# ============================================================
+# SOURCE: https://github.com/Axel-009/hedgefund-tracker
+# LAYER:  layer1_data
+# ROLE:   Daily PnL reporting engine
+# ============================================================
 """
 Daily P&L Reporting Module for Hedge Fund Tracker.
 
