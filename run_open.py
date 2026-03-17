@@ -237,6 +237,16 @@ def main():
     except Exception as e:
         print(f"  Memory monitor: {e}")
 
+    # Credit Quality Scoring
+    try:
+        from engine.ml.universe_classifier import UniverseClassifier
+        classifier = UniverseClassifier()
+        print("CREDIT QUALITY SCORING:")
+        print(f"  Classifier loaded: {classifier is not None}")
+        print()
+    except Exception as e:
+        print(f"  Credit quality scoring: {e}")
+
     # Macro Intelligence (GMTF)
     try:
         from engine.signals.macro_engine import MacroEngine as ME2

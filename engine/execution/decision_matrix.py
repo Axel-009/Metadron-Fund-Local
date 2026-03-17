@@ -511,6 +511,7 @@ class DecisionMatrix:
         quality_tier = proposal.get("quality_tier", "G")
         alpha_signal = proposal.get("alpha_signal", 0.0)
         edge_bps = proposal.get("edge_bps", 0.0)
+        credit_quality = proposal.get("credit_quality_score", 0.0)
 
         # Sharpe component (0-1 mapped from -1 to 3)
         sharpe_score = np.clip((sharpe + 1.0) / 4.0, 0.0, 1.0)
@@ -524,11 +525,16 @@ class DecisionMatrix:
         # Edge component (higher edge = better)
         edge_score = np.clip(edge_bps / 50.0, 0.0, 1.0)
 
-        # Weighted blend
-        gate.score = (0.35 * sharpe_score + 0.25 * tier_score +
-                      0.25 * alpha_score + 0.15 * edge_score)
+        # Credit quality component (0-1 score)
+        credit_score = np.clip(credit_quality, 0.0, 1.0)
+
+        # Weighted blend (15% credit quality, rebalanced from original)
+        gate.score = (0.30 * sharpe_score + 0.20 * tier_score +
+                      0.20 * alpha_score + 0.15 * credit_score +
+                      0.15 * edge_score)
         gate.details = (f"Sharpe={sharpe:.2f} Tier={quality_tier} "
-                        f"Alpha={alpha_signal:.4f} Edge={edge_bps:.1f}bps")
+                        f"Alpha={alpha_signal:.4f} Edge={edge_bps:.1f}bps "
+                        f"Credit={credit_quality:.2f}")
         gate.evaluate()
         return gate
 

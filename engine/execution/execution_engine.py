@@ -576,6 +576,7 @@ class MLVoteEnsemble:
         "T7_distress": 0.9,
         "T8_event": 1.0,
         "T9_cvr": 0.7,
+        "T10_credit_quality": 0.9,
     }
 
     def __init__(self):
@@ -586,6 +587,7 @@ class MLVoteEnsemble:
         self._distress_signals: Optional[dict] = None
         self._event_signals: Optional[dict] = None
         self._cvr_signals: Optional[dict] = None
+        self._credit_scores: Optional[dict] = None
 
     def set_social_snapshot(self, snapshot_dict: dict) -> None:
         """Inject social prediction snapshot for Tier-6 voting."""
@@ -604,6 +606,10 @@ class MLVoteEnsemble:
     def set_cvr_signals(self, signals: dict) -> None:
         """Inject CVR signals for Tier-9 voting."""
         self._cvr_signals = signals
+
+    def set_credit_scores(self, scores: dict) -> None:
+        """Inject credit quality scores for Tier-10 voting."""
+        self._credit_scores = scores
 
     def vote(self, ticker: str, returns: pd.Series, alpha_signal: Optional[AlphaSignal] = None) -> VoteResult:
         result = VoteResult(ticker=ticker)
@@ -641,6 +647,9 @@ class MLVoteEnsemble:
 
         # Tier 9: CVR signal
         result.votes["T9_cvr"] = self._tier9_cvr(ticker)
+
+        # Tier 10: Credit quality
+        result.votes["T10_credit_quality"] = self._tier10_credit_quality(ticker)
 
         # Weighted aggregate
         weighted_score = sum(
@@ -836,6 +845,26 @@ class MLVoteEnsemble:
             return 1
         elif signal in ("SELL", "AVOID"):
             return -1
+        return 0
+
+    def _tier10_credit_quality(self, ticker: str) -> int:
+        """Credit quality voter.
+
+        Uses CreditQualityClassifier scores:
+        - Strong credit (score > 0.7) → +1 (bullish)
+        - Weak credit (score < 0.3) → -1 (bearish)
+        - Otherwise neutral
+        """
+        if not self._credit_scores:
+            return 0
+        score_data = self._credit_scores.get(ticker, {})
+        if not score_data:
+            return 0
+        credit_score = score_data.get("credit_quality_score", 0.5)
+        if credit_score > 0.7:
+            return 1  # Strong credit quality
+        elif credit_score < 0.3:
+            return -1  # Weak credit quality
         return 0
 
     def get_vote_history(self, ticker: str) -> list:
