@@ -49,54 +49,26 @@ from .paper_broker import (
 )
 
 # L7 HFT Technical Execution (quant-trading strategies)
-try:
-    from .quant_strategy_executor import QuantStrategyExecutor
-    _HAS_QUANT_HFT = True
-except ImportError:
-    _HAS_QUANT_HFT = False
+from .quant_strategy_executor import QuantStrategyExecutor
 
 # Social prediction engine (MiroFish integration)
-try:
-    from ..signals.social_prediction_engine import SocialPredictionEngine, SocialSnapshot
-    from ..ml.social_features import SocialFeatureBuilder
-    _HAS_SOCIAL = True
-except ImportError:
-    _HAS_SOCIAL = False
+from ..signals.social_prediction_engine import SocialPredictionEngine, SocialSnapshot
+from ..ml.social_features import SocialFeatureBuilder
 
 # Distressed asset engine
-try:
-    from ..signals.distressed_asset_engine import DistressedAssetEngine
-    _HAS_DISTRESS = True
-except ImportError:
-    _HAS_DISTRESS = False
+from ..signals.distressed_asset_engine import DistressedAssetEngine
 
 # CVR engine
-try:
-    from ..signals.cvr_engine import CVREngine
-    _HAS_CVR = True
-except ImportError:
-    _HAS_CVR = False
+from ..signals.cvr_engine import CVREngine
 
 # Event-driven engine
-try:
-    from ..signals.event_driven_engine import EventDrivenEngine
-    _HAS_EVENT = True
-except ImportError:
-    _HAS_EVENT = False
+from ..signals.event_driven_engine import EventDrivenEngine
 
 # L2/L2.5 Security Analysis (Graham-Dodd-Klarman)
-try:
-    from ..signals.security_analysis_engine import SecurityAnalysisEngine
-    _HAS_SECURITY_ANALYSIS = True
-except ImportError:
-    _HAS_SECURITY_ANALYSIS = False
+from ..signals.security_analysis_engine import SecurityAnalysisEngine
 
 # L2 Pattern Discovery (MiroFish + AI-Newton)
-try:
-    from ..signals.pattern_discovery_engine import PatternDiscoveryEngine
-    _HAS_DISCOVERY = True
-except ImportError:
-    _HAS_DISCOVERY = False
+from ..signals.pattern_discovery_engine import PatternDiscoveryEngine
 
 logger = logging.getLogger(__name__)
 
@@ -608,7 +580,7 @@ class MLVoteEnsemble:
         self._feature_builder = DeepTradingFeatures()
         self._vote_history: dict[str, list] = {}
         self._social_snapshot: Optional[dict] = None
-        self._social_feature_builder = SocialFeatureBuilder() if _HAS_SOCIAL else None
+        self._social_feature_builder = SocialFeatureBuilder()
         self._distress_signals: Optional[dict] = None
         self._event_signals: Optional[dict] = None
         self._cvr_signals: Optional[dict] = None
@@ -826,7 +798,7 @@ class MLVoteEnsemble:
         Uses social simulation data to vote on ticker direction.
         Checks both ticker-specific sentiment and overall market sentiment.
         """
-        if not _HAS_SOCIAL or self._social_snapshot is None:
+        if self._social_snapshot is None:
             return 0
 
         # Get ticker-specific signal
@@ -1071,59 +1043,52 @@ class ExecutionEngine:
 
         # Social prediction engine (MiroFish bridge)
         self.social: Optional[SocialPredictionEngine] = None
-        if _HAS_SOCIAL:
-            try:
-                self.social = SocialPredictionEngine()
-            except Exception as e:
-                logger.warning(f"SocialPredictionEngine init failed: {e}")
+        try:
+            self.social = SocialPredictionEngine()
+        except Exception as e:
+            logger.warning(f"SocialPredictionEngine init failed: {e}")
 
         # Distressed asset engine
         self.distress = None
-        if _HAS_DISTRESS:
-            try:
-                self.distress = DistressedAssetEngine()
-            except Exception as e:
-                logger.warning(f"DistressedAssetEngine init failed: {e}")
+        try:
+            self.distress = DistressedAssetEngine()
+        except Exception as e:
+            logger.warning(f"DistressedAssetEngine init failed: {e}")
 
         # CVR engine
         self.cvr = None
-        if _HAS_CVR:
-            try:
-                self.cvr = CVREngine()
-            except Exception as e:
-                logger.warning(f"CVREngine init failed: {e}")
+        try:
+            self.cvr = CVREngine()
+        except Exception as e:
+            logger.warning(f"CVREngine init failed: {e}")
 
         # Event-driven engine
         self.event = None
-        if _HAS_EVENT:
-            try:
-                self.event = EventDrivenEngine()
-            except Exception as e:
-                logger.warning(f"EventDrivenEngine init failed: {e}")
+        try:
+            self.event = EventDrivenEngine()
+        except Exception as e:
+            logger.warning(f"EventDrivenEngine init failed: {e}")
 
         # L2/L2.5 Security Analysis (Graham-Dodd-Klarman)
         self.security_analysis = None
-        if _HAS_SECURITY_ANALYSIS:
-            try:
-                self.security_analysis = SecurityAnalysisEngine()
-            except Exception as e:
-                logger.warning(f"SecurityAnalysisEngine init failed: {e}")
+        try:
+            self.security_analysis = SecurityAnalysisEngine()
+        except Exception as e:
+            logger.warning(f"SecurityAnalysisEngine init failed: {e}")
 
         # L2 Pattern Discovery (MiroFish dual simulation + AI-Newton symbolic regression)
         self.discovery = None
-        if _HAS_DISCOVERY:
-            try:
-                self.discovery = PatternDiscoveryEngine()
-            except Exception as e:
-                logger.warning(f"PatternDiscoveryEngine init failed: {e}")
+        try:
+            self.discovery = PatternDiscoveryEngine()
+        except Exception as e:
+            logger.warning(f"PatternDiscoveryEngine init failed: {e}")
 
         # L7 HFT Technical Execution (quant-trading strategies)
         self.quant_hft = None
-        if _HAS_QUANT_HFT:
-            try:
-                self.quant_hft = QuantStrategyExecutor()
-            except Exception as e:
-                logger.warning(f"QuantStrategyExecutor init failed: {e}")
+        try:
+            self.quant_hft = QuantStrategyExecutor()
+        except Exception as e:
+            logger.warning(f"QuantStrategyExecutor init failed: {e}")
 
     def run_pipeline(self) -> dict:
         """Execute the full signal pipeline.

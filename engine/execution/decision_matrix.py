@@ -29,22 +29,11 @@ from dataclasses import dataclass, field
 from typing import Optional, Dict, List, Tuple
 from datetime import datetime
 
-try:
-    from ..portfolio.beta_corridor import (
-        BetaCorridor, BetaState, BetaAction,
-        EXECUTION_MULTIPLIER, BETA_MAX, BETA_INV,
-        R_LOW, R_HIGH, ALPHA as CORRIDOR_ALPHA, VOL_STANDARD,
-    )
-    _HAS_BETA_CORRIDOR = True
-except Exception:
-    _HAS_BETA_CORRIDOR = False
-    EXECUTION_MULTIPLIER = 4.7
-    BETA_MAX = 2.0
-    BETA_INV = -0.136
-    R_LOW = 0.07
-    R_HIGH = 0.12
-    CORRIDOR_ALPHA = 0.02
-    VOL_STANDARD = 0.15
+from ..portfolio.beta_corridor import (
+    BetaCorridor, BetaState, BetaAction,
+    EXECUTION_MULTIPLIER, BETA_MAX, BETA_INV,
+    R_LOW, R_HIGH, ALPHA as CORRIDOR_ALPHA, VOL_STANDARD,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -275,12 +264,11 @@ class AlphaBetaUnleashed:
 
         # BetaCorridor integration
         self._corridor = None
-        if _HAS_BETA_CORRIDOR:
-            try:
-                self._corridor = BetaCorridor()
-                logger.info("AlphaBetaUnleashed: BetaCorridor loaded")
-            except Exception as exc:
-                logger.warning("BetaCorridor init failed: %s", exc)
+        try:
+            self._corridor = BetaCorridor()
+            logger.info("AlphaBetaUnleashed: BetaCorridor loaded")
+        except Exception as exc:
+            logger.warning("BetaCorridor init failed: %s", exc)
 
         # State tracking
         self._last_target_beta: float = 0.0

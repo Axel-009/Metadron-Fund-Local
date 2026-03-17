@@ -34,17 +34,8 @@ from scipy.optimize import minimize
 from sklearn.linear_model import LinearRegression, Ridge
 from sklearn.preprocessing import StandardScaler
 
-try:
-    from xgboost import XGBRegressor
-    _HAS_XGBOOST = True
-except ImportError:
-    _HAS_XGBOOST = False
-
-try:
-    from sklearn.ensemble import GradientBoostingRegressor
-    _HAS_GBR = True
-except ImportError:
-    _HAS_GBR = False
+from xgboost import XGBRegressor
+from sklearn.ensemble import GradientBoostingRegressor
 
 from ..data.yahoo_data import get_adj_close, get_returns, get_prices
 
@@ -546,13 +537,13 @@ class WalkForwardOptimizer:
         self.train_window = train_window
         self.test_window = test_window
         self.step_size = step_size
-        self.use_xgboost = use_xgboost and _HAS_XGBOOST
+        self.use_xgboost = use_xgboost
         self._oos_results: List[Dict] = []
         self._feature_importances: Optional[pd.DataFrame] = None
 
     def _get_model(self):
         """Select best available model."""
-        if self.use_xgboost and _HAS_XGBOOST:
+        if self.use_xgboost:
             return XGBRegressor(
                 n_estimators=100,
                 max_depth=3,
