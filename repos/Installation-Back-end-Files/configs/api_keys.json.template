@@ -1,0 +1,9 @@
+{
+    "_comment": "Copy this to api_keys.json and fill in your keys. NEVER commit api_keys.json.",
+    "fmp": "YOUR_FMP_API_KEY",
+    "polygon": "YOUR_POLYGON_API_KEY",
+    "fred": "YOUR_FRED_API_KEY",
+    "intrinio": "YOUR_INTRINIO_API_KEY",
+    "benzinga": "YOUR_BENZINGA_API_KEY",
+    "tradier": "YOUR_TRADIER_API_KEY"
+}
