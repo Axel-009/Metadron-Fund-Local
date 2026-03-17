@@ -63,6 +63,13 @@ Rust, C++, CUDA, TypeScript, JavaScript, Vue, Java, proto, configs, data, and as
 | 26 | **Ruflo-agents** | Agent orchestration | Multi-agent workflows, swarm intelligence |
 | 27 | **MiroFish** | Social prediction | Agent-based social sentiment simulation |
 
+### Layer 7: Global Monitoring & Regime Models
+
+| # | Repository | Focus | Key Capabilities |
+|---|-----------|-------|-------------------|
+| 28 | **worldmonitor** | Global event monitoring | 30+ categories: market, economic, conflict, supply-chain, trade, news |
+| 29 | **markov-model** | HMM regime detection | hmmlearn library: GaussianHMM, GMMHMM for market regime classification |
+
 ## Integration into Metadron Capital
 
 These repositories serve as reference implementations. The production engines
