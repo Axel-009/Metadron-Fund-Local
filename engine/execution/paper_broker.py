@@ -1,4 +1,4 @@
-"""PaperBroker — Simulated execution engine using Yahoo Finance data.
+"""PaperBroker — Simulated execution engine using OpenBB data.
 
 Not connected to any live broker. Provides:
     - Order placement (market, limit)
@@ -151,7 +151,7 @@ class MicroPriceModel:
     market impact estimation, and time-of-day slippage adjustments.
 
     All parameters are calibrated to US equity markets and driven entirely
-    by yfinance data — no live order-book feed required.
+    by OpenBB data — no live order-book feed required.
     """
 
     # Approximate average daily volumes for liquidity tiers (shares)
@@ -198,14 +198,25 @@ class MicroPriceModel:
         return "small"
 
     def estimate_adv(self, ticker: str) -> float:
-        """Estimate average daily volume from recent yfinance data."""
+        """Estimate average daily volume from recent OpenBB data."""
         if ticker in self._adv_cache:
             return self._adv_cache[ticker]
         try:
-            import yfinance as yf
-            hist = yf.Ticker(ticker).history(period="20d")
-            if hist is not None and "Volume" in hist.columns and len(hist) > 0:
-                adv = float(hist["Volume"].mean())
+            from ..data.openbb_data import get_prices
+            from datetime import timedelta
+            end = datetime.now().strftime("%Y-%m-%d")
+            start = (datetime.now() - timedelta(days=30)).strftime("%Y-%m-%d")
+            hist = get_prices(ticker, start=start, end=end)
+            if hist is not None and not hist.empty:
+                # Extract volume from DataFrame (may be MultiIndex or flat)
+                if isinstance(hist.columns, pd.MultiIndex):
+                    vol = hist["Volume"] if "Volume" in hist.columns.get_level_values(0) else None
+                else:
+                    vol = hist["Volume"] if "Volume" in hist.columns else None
+                if vol is not None and len(vol) > 0:
+                    adv = float(vol.mean())
+                else:
+                    adv = float(self._LIQUIDITY_TIERS["mid"])
             else:
                 adv = float(self._LIQUIDITY_TIERS["mid"])
         except Exception:
@@ -608,7 +619,7 @@ class PerformanceTracker:
 # Paper Broker
 # ---------------------------------------------------------------------------
 class PaperBroker:
-    """Simulated broker using Yahoo Finance prices.
+    """Simulated broker using OpenBB prices.
 
     Drop-in replacement for live broker — same interface.
     """
@@ -684,7 +695,7 @@ class PaperBroker:
         limit_price: Optional[float] = None,
         reason: str = "",
     ) -> Order:
-        """Place and immediately fill a market order using latest Yahoo price."""
+        """Place and immediately fill a market order using latest price."""
         order = Order(
             id=str(uuid.uuid4())[:8],
             ticker=ticker,
@@ -825,7 +836,7 @@ class PaperBroker:
     # --- Portfolio state -----------------------------------------------------
 
     def refresh_prices(self):
-        """Update all position prices from Yahoo."""
+        """Update all position prices from OpenBB."""
         tickers = list(self.state.positions.keys())
         if not tickers:
             return
@@ -1017,7 +1028,7 @@ class PaperBroker:
     # --- Price fetching ------------------------------------------------------
 
     def _get_current_price(self, ticker: str) -> float:
-        """Get latest price from Yahoo Finance."""
+        """Get latest price from OpenBB."""
         try:
             prices = get_adj_close(ticker, start=(
                 pd.Timestamp.now() - pd.Timedelta(days=10)).strftime("%Y-%m-%d")

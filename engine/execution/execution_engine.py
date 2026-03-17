@@ -97,7 +97,7 @@ class MicroPriceEstimate:
 
 
 class MicroPriceEngine:
-    """Estimate micro-prices from daily OHLCV data (Yahoo proxy).
+    """Estimate micro-prices from daily OHLCV data (OpenBB).
 
     In paper broker mode, we estimate bid/ask from high/low range
     and compute order flow imbalance from close position within range.

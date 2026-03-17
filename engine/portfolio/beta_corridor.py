@@ -1,7 +1,7 @@
 """Beta Corridor Engine — Dataset 1 integration.
 Manages portfolio beta within the 7%-12% return corridor.
 Alpha extracted through IG/Fallen Angel names or RV mispricing.
-Uses Yahoo Finance for market data (paper broker mode).
+Uses OpenBB for market data (paper broker mode).
 """
 
 import numpy as np
@@ -293,7 +293,7 @@ class BetaCorridor:
         self._current_vol_percentile: float = 50.0
 
     def update_market_stats(self) -> dict:
-        """Refresh market drift and vol from Yahoo Finance."""
+        """Refresh market drift and vol from OpenBB."""
         stats = get_market_stats(benchmark="^GSPC", lookback_years=1)
         return stats
 

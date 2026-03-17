@@ -1,7 +1,7 @@
 """L1 Data — Universe Engine.
 
 Manages the complete investment universe:
-    - S&P 500/400/600 equity universe via yfinance
+    - S&P 500/400/600 equity universe via OpenBB
     - Full GICS 4-tier taxonomy (11 sectors / 25 industry groups / 74 industries / 163 sub-industries)
     - 70+ ETFs covering sectors, factors, commodities, fixed income, volatility
     - 26 relative value (RV) pairs for pair trading
@@ -12,7 +12,7 @@ Manages the complete investment universe:
     - Market cap categorisation (mega/large/mid/small/micro)
     - Sector rotation signals
 
-All data via OpenBB (primary) / yfinance (fallback) — unified, free, no broker dependency.
+All data via OpenBB — unified, free, no broker dependency.
 try/except on ALL external imports — system runs degraded, never broken.
 """
 

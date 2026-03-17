@@ -336,7 +336,7 @@ class PortfolioReportGenerator:
         lines.append(_center(self.timestamp.strftime("%Y-%m-%d  %H:%M:%S ET")))
         lines.append(_hline("="))
         lines.append("")
-        lines.append(_center("Paper Trading System — Yahoo Finance Data"))
+        lines.append(_center("Paper Trading System — OpenBB Data"))
         lines.append(_center("All figures are simulated placeholder values"))
         lines.append("")
 

@@ -1240,7 +1240,7 @@ def estimate_avg_daily_volume(ticker: str, lookback_days: int = 30) -> float:
         prices = get_adj_close(ticker, start=start)
         if prices.empty:
             return 0.0
-        # Use price as proxy; actual volume would need yfinance Ticker object
+        # Use price as proxy; actual volume would need OpenBB volume data
         if isinstance(prices, pd.DataFrame):
             latest_price = float(prices.iloc[-1].iloc[0])
         else:

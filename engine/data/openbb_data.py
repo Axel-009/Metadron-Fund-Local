@@ -1,10 +1,9 @@
 """OpenBB unified data provider for Metadron Capital.
 
-Primary data source replacing direct yfinance calls. OpenBB provides
-access to 34+ data providers (FRED, SEC, Polygon, FMP, Intrinio, yfinance,
-CBOE, ECB, OECD, etc.) through a single unified API.
+OpenBB is the SOLE data source, providing access to 34+ data providers
+(FRED, SEC, Polygon, FMP, Intrinio, CBOE, ECB, OECD, etc.) through a
+single unified API.
 
-Falls back to yfinance when OpenBB is unavailable.
 try/except on ALL external imports — system runs degraded, never broken.
 """
 
@@ -31,21 +30,14 @@ try:
     _openbb_available = True
     logger.info("OpenBB SDK loaded — primary data source active")
 except ImportError:
-    logger.warning("OpenBB SDK not available — falling back to yfinance")
+    logger.warning("OpenBB SDK not available — data fetching will return empty frames")
 
-try:
-    import yfinance as yf
-    _yf_available = True
-except ImportError:
-    yf = None
-    _yf_available = False
-
-# Default provider for equity data (yfinance is free, no API key needed)
-DEFAULT_EQUITY_PROVIDER = "yfinance"
+# Default provider for equity data (FMP has a free tier; alternatives: intrinio, polygon)
+DEFAULT_EQUITY_PROVIDER = "fmp"
 # Provider for macro/economic data
 DEFAULT_MACRO_PROVIDER = "fred"
 # Provider for fundamental data
-DEFAULT_FUNDAMENTAL_PROVIDER = "yfinance"
+DEFAULT_FUNDAMENTAL_PROVIDER = "fmp"
 
 
 # ---------------------------------------------------------------------------
@@ -86,7 +78,7 @@ def _retry(func, retries: int = 2, delay: float = 1.0):
 
 
 # ═══════════════════════════════════════════════════════════════════════════
-# PRICE DATA — OpenBB primary, yfinance fallback
+# PRICE DATA — OpenBB (sole source)
 # ═══════════════════════════════════════════════════════════════════════════
 
 def get_prices(
@@ -96,7 +88,7 @@ def get_prices(
     interval: str = "1d",
     provider: Optional[str] = None,
 ) -> pd.DataFrame:
-    """Fetch OHLCV price data via OpenBB (primary) or yfinance (fallback).
+    """Fetch OHLCV price data via OpenBB.
 
     Returns DataFrame with MultiIndex columns (field, ticker) for compatibility
     with existing engine code.
@@ -125,25 +117,13 @@ def get_prices(
         except Exception as e:
             logger.warning(f"OpenBB price fetch failed ({prov}): {e}")
 
-    # --- yfinance fallback ---
-    if _yf_available:
-        try:
-            raw = yf.download(
-                tickers, start=start, end=end, interval=interval,
-                auto_adjust=False, progress=False, threads=True,
-            )
-            if not raw.empty:
-                return raw
-        except Exception as e:
-            logger.warning(f"yfinance price fetch failed: {e}")
-
     return pd.DataFrame()
 
 
 def _normalize_ohlcv(df: pd.DataFrame, tickers: list[str]) -> pd.DataFrame:
-    """Normalize OpenBB price data to match yfinance MultiIndex format.
+    """Normalize OpenBB price data to standard MultiIndex format.
 
-    yfinance returns: MultiIndex columns (field, ticker) where field is
+    Output: MultiIndex columns (field, ticker) where field is
     Open/High/Low/Close/Adj Close/Volume.
     """
     if df.empty:
@@ -164,7 +144,7 @@ def _normalize_ohlcv(df: pd.DataFrame, tickers: list[str]) -> pd.DataFrame:
     has_ohlcv = ohlcv_cols.issubset({c.lower() for c in df.columns})
 
     if len(tickers) == 1 and has_ohlcv:
-        # Map to yfinance-style column names
+        # Map to standard column names
         col_map = {}
         for c in df.columns:
             cl = c.lower()
@@ -268,7 +248,7 @@ def get_market_stats(
 def get_fundamentals(ticker: str, provider: Optional[str] = None) -> dict:
     """Fetch key fundamental data for a single ticker.
 
-    OpenBB providers: yfinance (free), fmp, intrinio, polygon.
+    OpenBB providers: fmp (free tier), intrinio, polygon.
     """
     prov = provider or DEFAULT_FUNDAMENTAL_PROVIDER
 
@@ -284,35 +264,6 @@ def get_fundamentals(ticker: str, provider: Optional[str] = None) -> dict:
                 return _parse_openbb_fundamentals(ticker, row)
         except Exception as e:
             logger.debug(f"OpenBB fundamentals failed for {ticker}: {e}")
-
-    # --- yfinance fallback ---
-    if _yf_available:
-        try:
-            t = yf.Ticker(ticker)
-            info = t.info or {}
-            return {
-                "ticker": ticker,
-                "market_cap": info.get("marketCap", 0),
-                "pe_ratio": info.get("trailingPE"),
-                "forward_pe": info.get("forwardPE"),
-                "pb_ratio": info.get("priceToBook"),
-                "dividend_yield": info.get("dividendYield"),
-                "roe": info.get("returnOnEquity"),
-                "roa": info.get("returnOnAssets"),
-                "debt_to_equity": info.get("debtToEquity"),
-                "free_cash_flow": info.get("freeCashflow"),
-                "revenue_growth": info.get("revenueGrowth"),
-                "earnings_growth": info.get("earningsGrowth"),
-                "profit_margin": info.get("profitMargins"),
-                "sector": info.get("sector", ""),
-                "industry": info.get("industry", ""),
-                "beta": info.get("beta"),
-                "52w_high": info.get("fiftyTwoWeekHigh"),
-                "52w_low": info.get("fiftyTwoWeekLow"),
-                "avg_volume": info.get("averageVolume"),
-            }
-        except Exception:
-            pass
 
     return {"ticker": ticker}
 
@@ -818,8 +769,7 @@ def get_data_source_status() -> dict:
     """Return status of all data source backends."""
     status = {
         "openbb_available": _openbb_available,
-        "yfinance_available": _yf_available,
-        "primary_source": "openbb" if _openbb_available else "yfinance",
+        "primary_source": "openbb",
         "equity_provider": DEFAULT_EQUITY_PROVIDER,
         "macro_provider": DEFAULT_MACRO_PROVIDER if _openbb_available else "etf_proxy",
         "fundamental_provider": DEFAULT_FUNDAMENTAL_PROVIDER,

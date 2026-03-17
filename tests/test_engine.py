@@ -1,7 +1,7 @@
 """Tests for Metadron Capital investment engine.
 
 Tests all 6 layers:
-    L1 Data (UniverseEngine, Yahoo data)
+    L1 Data (UniverseEngine, OpenBB data)
     L2 Signals (MacroEngine, MetadronCube, GMTF)
     L3 ML (AlphaOptimizer)
     L4 Portfolio (BetaCorridor)

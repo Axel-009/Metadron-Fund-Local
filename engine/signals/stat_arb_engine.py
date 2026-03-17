@@ -14,7 +14,7 @@ Signal thresholds:
     Exit        : |z| < 0.5 (mean reverted)
     Stop-loss   : |z| > 4.0 (regime break / structural divergence)
 
-All data via yfinance. Pure Python + numpy. No external stat libraries required.
+All data via OpenBB. Pure Python + numpy. No external stat libraries required.
 try/except on ALL external imports — system runs degraded, never broken.
 """
 

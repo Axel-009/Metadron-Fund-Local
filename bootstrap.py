@@ -19,7 +19,7 @@ INTEL_DIR = PLATFORM_ROOT / "intelligence_platform"
 
 LAYER_MAP = {
     "layer1_data": {
-        "Financial-Data": "yfinance market data pipeline",
+        "Financial-Data": "OpenBB market data pipeline",
         "open-bb": "OpenBB investment research terminal",
         "hedgefund-tracker": "SEC 13F institutional flow tracker",
         "FRB": "Federal Reserve FRED API data",

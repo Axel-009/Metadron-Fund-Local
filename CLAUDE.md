@@ -18,7 +18,7 @@ Alpha extracted through top-down macro → GICS sector selection → bottom-up s
 Money velocity (V = GDP/M2) + cyclical vs secular decomposition drive regime classification.
 Platform targets 95%+ alpha via aggressive multi-sleeve allocation with continuous ML walk-forward optimisation.
 Paper broker mode — not connected to a live broker.
-Data sourced via **OpenBB** (34+ providers: FRED, SEC, Polygon, FMP, CBOE, ECB, OECD, etc.) with yfinance fallback.
+Data sourced via **OpenBB** (34+ providers: FRED, SEC, Polygon, FMP, CBOE, ECB, OECD, etc.) — sole data source, no yfinance dependency.
 
 ## Signal Pipeline
 
@@ -59,7 +59,7 @@ L7 HFT/Execution wondertrader, exchange-core,          → HFT micro-price + ord
 ```
 MacroEngine
     ├── OpenBB/FRED → M2V, WALCL, T10Y2Y, FEDFUNDS, SOFR, CPI, GDP (direct)
-    ├── OpenBB/yf   → GSIB basket (JPM,BAC,GS,C,MS + 5 intl)
+    ├── OpenBB/FMP  → GSIB basket (JPM,BAC,GS,C,MS + 5 intl)
     ├── GMTF        → 4 gammas (Liquidity, FX shock, Wage, Reserve)
     ├── CtV signals → carry-to-vol, stop-loss gate
     ├── RV signals  → Z-score on tension-adjusted yields
@@ -85,7 +85,7 @@ AlphaBetaUnleashed (Dataset 1) — 1-min cadence
 ```
 Metadron-Capital/                        ← Master monorepo (Layer 0: Hub)
 ├── engine/                              ← INVESTMENT ENGINE
-│   ├── data/                            ← L1: Unified Yahoo data + universe
+│   ├── data/                            ← L1: Unified OpenBB data + universe
 │   │   ├── universe_engine.py           ← 150+ securities, GICS 4-tier, 26 RV pairs
 │   │   ├── openbb_data.py              ← Primary data source: OpenBB (34+ providers)
 │   │   └── yahoo_data.py               ← Re-exports from openbb_data (backward compat)
@@ -116,7 +116,7 @@ Metadron-Capital/                        ← Master monorepo (Layer 0: Hub)
 │   ├── portfolio/                       ← L4: Portfolio construction
 │   │   └── beta_corridor.py            ← Beta corridor 7–12% + vol-normalisation
 │   ├── execution/                       ← L5: Execution
-│   │   ├── paper_broker.py             ← Simulated broker (Yahoo prices)
+│   │   ├── paper_broker.py             ← Simulated broker (OpenBB prices)
 │   │   ├── execution_engine.py         ← Full pipeline orchestrator + ML vote ensemble
 │   │   ├── decision_matrix.py          ← 6-gate trade approval + Kelly sizing + ABU beta
 │   │   ├── options_engine.py           ← Black-Scholes, Greeks, vol surface, θ+Γ optimizer
@@ -297,7 +297,7 @@ python3 core/platform.py
 
 ## Design Rules
 
-1. **All data via OpenBB** (34+ providers: FRED, SEC, CBOE, etc.) — yfinance fallback, no broker dependency
+1. **All data via OpenBB** (34+ providers: FRED, SEC, CBOE, etc.) — sole data source, no broker dependency
 2. **Paper broker only** — no live execution until broker API connected
 3. **6-layer architecture is immutable** — extend within layers
 4. **Beta managed within 7–12% corridor** — vol-normalised

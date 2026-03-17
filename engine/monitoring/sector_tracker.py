@@ -3,7 +3,7 @@ sector_tracker.py — Sector Tracking Engine for Metadron Capital
 
 Tracks all 11 GICS sectors with performance data, flow signals,
 heatmap generation, rotation detection, missed opportunity logging,
-and error tracking. All data sourced via yfinance.
+and error tracking. All data sourced via OpenBB.
 """
 
 import datetime
@@ -14,50 +14,20 @@ from typing import Any, Dict, List, Optional, Tuple
 import numpy as np
 
 try:
-    import yfinance as yf
-except ImportError:
-    yf = None
-
-try:
     from ..data.yahoo_data import get_adj_close, get_returns, get_prices
     from ..data.universe_engine import SECTOR_ETFS, GICS_SECTORS, SP500_TOP_HOLDINGS
 except ImportError:
     def get_adj_close(ticker: str, period: str = "1y") -> Optional[np.ndarray]:
-        """Stub: fetch adjusted close prices via yfinance."""
-        if yf is None:
-            return None
-        try:
-            data = yf.Ticker(ticker).history(period=period)
-            if data.empty:
-                return None
-            return np.array(data["Close"].values, dtype=np.float64)
-        except Exception:
-            return None
+        """Stub: returns None when data layer unavailable."""
+        return None
 
     def get_returns(ticker: str, period: str = "1y") -> Optional[np.ndarray]:
-        """Stub: fetch daily returns."""
-        prices = get_adj_close(ticker, period)
-        if prices is None or len(prices) < 2:
-            return None
-        return np.diff(prices) / prices[:-1]
+        """Stub: returns None when data layer unavailable."""
+        return None
 
     def get_prices(ticker: str, period: str = "1y") -> Optional[dict]:
-        """Stub: fetch OHLCV price data."""
-        if yf is None:
-            return None
-        try:
-            data = yf.Ticker(ticker).history(period=period)
-            if data.empty:
-                return None
-            return {
-                "open": np.array(data["Open"].values, dtype=np.float64),
-                "high": np.array(data["High"].values, dtype=np.float64),
-                "low": np.array(data["Low"].values, dtype=np.float64),
-                "close": np.array(data["Close"].values, dtype=np.float64),
-                "volume": np.array(data["Volume"].values, dtype=np.float64),
-            }
-        except Exception:
-            return None
+        """Stub: returns None when data layer unavailable."""
+        return None
 
     SECTOR_ETFS = {
         "Information Technology": "XLK",

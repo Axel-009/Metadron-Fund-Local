@@ -6,7 +6,7 @@ Each bot is a specialized research agent for one GICS sector that:
     - Feeds research into the investment decision matrix
     - Tracks its own performance and improves over time
     - Identifies mathematical best outcome estimates
-    - Uses reliable, verifiable data sources (yfinance only)
+    - Uses reliable, verifiable data sources (OpenBB)
 
 Bot Hierarchy:
     DIRECTOR   — Sharpe >3.0, accuracy >85%, 6+ consecutive top weeks
