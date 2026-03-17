@@ -48,6 +48,13 @@ from .paper_broker import (
     PaperBroker, OrderSide, SignalType, Position,
 )
 
+# L7 HFT Technical Execution (quant-trading strategies)
+try:
+    from .quant_strategy_executor import QuantStrategyExecutor
+    _HAS_QUANT_HFT = True
+except ImportError:
+    _HAS_QUANT_HFT = False
+
 # Social prediction engine (MiroFish integration)
 try:
     from ..signals.social_prediction_engine import SocialPredictionEngine, SocialSnapshot
@@ -1045,6 +1052,14 @@ class ExecutionEngine:
             except Exception as e:
                 logger.warning(f"EventDrivenEngine init failed: {e}")
 
+        # L7 HFT Technical Execution (quant-trading strategies)
+        self.quant_hft = None
+        if _HAS_QUANT_HFT:
+            try:
+                self.quant_hft = QuantStrategyExecutor()
+            except Exception as e:
+                logger.warning(f"QuantStrategyExecutor init failed: {e}")
+
     def run_pipeline(self) -> dict:
         """Execute the full signal pipeline.
 
@@ -1330,6 +1345,51 @@ class ExecutionEngine:
         self.tracker.record_stage("decision_matrix", (datetime.now() - t0).total_seconds() * 1000,
                                   result["stages"].get("decision_matrix", {}))
 
+        # Stage 5.7: L7 HFT Technical Execution (quant-trading strategies)
+        # Each approved ticker runs through 12 independent technical strategies
+        # (Bollinger W, MACD, RSI, Parabolic SAR, Heikin-Ashi, Shooting Star,
+        #  Dual Thrust, London Breakout, Awesome Osc, Pair Trading, Arbitrage,
+        #  Options Straddle) with VIX regime gating.
+        # Consensus adjusts position sizing before order submission.
+        t0 = datetime.now()
+        hft_technical = {}
+        hft_size_adjustments = {}  # ticker → size_multiplier from technical consensus
+        if self.quant_hft:
+            vix_level = macro_snap.vix if macro_snap else 20.0
+            for ticker in list(alpha_out.optimal_weights.keys()):
+                try:
+                    ohlcv = get_adj_close(ticker, start=(
+                        pd.Timestamp.now() - pd.Timedelta(days=120)
+                    ).strftime("%Y-%m-%d"))
+                    if isinstance(ohlcv, pd.DataFrame) and not ohlcv.empty:
+                        # Ensure OHLCV columns exist
+                        if "Close" in ohlcv.columns:
+                            hft_result = self.quant_hft.execute(
+                                ticker=ticker, ohlcv=ohlcv, vix=vix_level,
+                            )
+                            hft_technical[ticker] = {
+                                "active": hft_result.get("active_count", 0),
+                                "consensus": hft_result.get("consensus_direction", 0),
+                                "signal": round(hft_result.get("consensus_signal", 0), 4),
+                                "agreement": round(hft_result.get("agreement", 0), 3),
+                                "size_mult": round(hft_result.get("size_multiplier", 1.0), 3),
+                                "regime": hft_result.get("regime", "unknown"),
+                                "strategies": list(hft_result.get("active_names", [])),
+                            }
+                            hft_size_adjustments[ticker] = hft_result.get("size_multiplier", 1.0)
+
+                            # If kill switch is active, remove ticker from approved set
+                            if hft_result.get("kill_switch", False):
+                                alpha_out.optimal_weights[ticker] = 0.0
+                                logger.warning(f"[{ticker}] HFT kill switch — removed from execution")
+                except Exception as e:
+                    logger.warning(f"[{ticker}] HFT technical stage failed: {e}")
+                    hft_technical[ticker] = {"error": str(e)}
+        else:
+            hft_technical = {"status": "quant_hft_not_available"}
+        result["stages"]["hft_technical"] = hft_technical
+        self.tracker.record_stage("hft_technical", (datetime.now() - t0).total_seconds() * 1000, hft_technical)
+
         # Stage 6: Beta corridor + AlphaBetaUnleashed
         t0 = datetime.now()
         beta_state, beta_action = self.beta.run_cycle(
@@ -1411,6 +1471,15 @@ class ExecutionEngine:
                 price=price,
             )
 
+            # L7 HFT size adjustment from technical strategy consensus
+            hft_mult = hft_size_adjustments.get(ticker, 1.0)
+            if hft_mult < 1.0 and allocation["quantity"] > 0:
+                original_qty = allocation["quantity"]
+                allocation["quantity"] = max(1, int(allocation["quantity"] * hft_mult))
+                if allocation["quantity"] != original_qty:
+                    logger.info(f"[{ticker}] HFT size adj: {original_qty}→{allocation['quantity']} "
+                                f"(mult={hft_mult:.2f})")
+
             if allocation["side"] is None or allocation["quantity"] <= 0:
                 continue
 
@@ -1453,6 +1522,8 @@ class ExecutionEngine:
                 "confidence": vote.confidence,
                 "signal": vote.signal.value,
                 "order_id": order.id,
+                "hft_size_mult": hft_size_adjustments.get(ticker, 1.0),
+                "hft_consensus": hft_technical.get(ticker, {}).get("consensus", 0),
             }
             trades.append(trade_record)
             self._trade_log.append(trade_record)
