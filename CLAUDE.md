@@ -23,8 +23,8 @@ Data sourced via **OpenBB** (34+ providers: FRED, SEC, Polygon, FMP, CBOE, ECB, 
 ## Signal Pipeline
 
 ```
-UniverseEngine → MacroEngine → MetadronCube → SocialPrediction → DistressedAssets → CVR → EventDriven → AlphaOptimizer → BetaManager → DecisionMatrix → ExecutionEngine
-     (L1)           (L2)          (L2)           (L2/L3)              (L2)          (L2)     (L2)           (L3)           (L4)           (L5)             (L5)
+UniverseEngine → MacroEngine → MetadronCube → CrossAssetContagion → SocialPrediction → DistressedAssets → CVR → EventDriven → TickerSelection → AlphaOptimizer → BetaCorridor → DecisionMatrix → ExecutionEngine
+     (L1)           (L2)          (L2)              (L2/3.5)           (L2/L3)              (L2)          (L2)     (L2)          (L2/4)          (L3)            (L4)           (L5)             (L5)
 ```
 
 ### Layer Architecture (L1 → L5 → L2 → L3 → L4 → L7)
@@ -99,10 +99,20 @@ Metadron-Capital/                        ← Master monorepo (Layer 0: Hub)
 │   │   ├── cvr_engine.py              ← CVR valuation (5 models, 4 instruments)
 │   │   └── event_driven_engine.py      ← 12-category event-driven (M&A arb, PEAD, etc.)
 │   ├── ml/                              ← L3: ML/AI models
-│   │   ├── alpha_optimizer.py           ← Walk-forward ML alpha + mean-variance
+│   │   ├── alpha_optimizer.py           ← Walk-forward ML alpha + mean-variance + credit quality
 │   │   ├── backtester.py               ← Walk-forward, Monte Carlo, scenario engine
 │   │   ├── pattern_recognition.py       ← Candlestick, chart patterns, anomalies
-│   │   └── social_features.py          ← MiroFish social feature engineering for ML
+│   │   ├── social_features.py          ← MiroFish social feature engineering for ML
+│   │   ├── universe_classifier.py       ← XGBoost 4-model ensemble, quality tiers A-G
+│   │   ├── model_evaluator.py           ← Per-class P/R/F1, tier-aware distance weighting
+│   │   ├── deep_learning_engine.py      ← Pure-numpy PPO agent, 50-feature state vector
+│   │   └── bridges/                     ← ML model bridge adapters
+│   │       ├── finrl_bridge.py          ← FinRL deep RL framework adapter
+│   │       ├── nvidia_tft_adapter.py    ← NVIDIA Temporal Fusion Transformer
+│   │       ├── monte_carlo_bridge.py    ← Monte Carlo simulation bridge
+│   │       ├── stock_prediction_bridge.py ← Stock prediction model bridge
+│   │       ├── deep_trading_features.py ← Deep trading feature engineering
+│   │       └── kserve_adapter.py        ← KServe ML model serving adapter
 │   ├── portfolio/                       ← L4: Portfolio construction
 │   │   └── beta_corridor.py            ← Beta corridor 7–12% + vol-normalisation
 │   ├── execution/                       ← L5: Execution
@@ -114,15 +124,30 @@ Metadron-Capital/                        ← Master monorepo (Layer 0: Hub)
 │   ├── agents/                          ← L6: Agent orchestration
 │   │   ├── sector_bots.py             ← 11 GICS sector micro-bots + scorecard
 │   │   ├── research_bots.py           ← 11 GICS research bots + DNA hierarchy
-│   │   └── agent_scorecard.py          ← Agent ranking + promotion/demotion
+│   │   ├── agent_scorecard.py          ← Agent ranking + promotion/demotion
+│   │   ├── gics_sector_agents.py       ← 11 GICS sector agents, 8 scoring dimensions
+│   │   ├── agent_monitor.py            ← 4-tier hierarchy (ELITE/STRONG/DEV/UNDER)
+│   │   └── investor_personas.py        ← 12 investor personas (Buffett, Munger, etc.)
 │   └── monitoring/                      ← Monitoring layer
 │       ├── daily_report.py             ← Open/close reports + sector heatmap
 │       ├── platinum_report.py           ← 30-section Platinum Report (9 parts)
+│       ├── platinum_report_v2.py        ← Enhanced Platinum Report generator
 │       ├── portfolio_report.py          ← Portfolio Analytics Report (3 parts)
+│       ├── portfolio_analytics.py       ← Scenario engine + performance analytics
 │       ├── sector_tracker.py           ← Sector performance + missed opportunities
+│       ├── heatmap_engine.py            ← Sector heatmap visualization engine
+│       ├── live_dashboard.py            ← Rich-based terminal dashboard (550+ symbols)
+│       ├── live_earnings_graph.py       ← Live earnings graph rendering
 │       ├── market_wrap.py              ← Market wrap narrative
 │       ├── anomaly_detector.py          ← Statistical anomaly scanner
 │       └── memory_monitor.py           ← Session tracking + EOD summary
+├── app/                                 ← Web application (FastAPI)
+│   └── backend/                         ← API server + services
+│       ├── main.py                      ← FastAPI entry point
+│       ├── api/                         ← REST + SSE endpoints
+│       ├── models/                      ← SQLAlchemy models
+│       ├── schemas/                     ← Pydantic schemas
+│       └── services/                    ← Agent, graph, backtest services
 ├── core/                                ← Platform orchestrator (original)
 │   ├── platform.py                      ← Central orchestrator (20 modules)
 │   ├── signals.py                       ← Cyclical vs secular decomposition
@@ -223,6 +248,25 @@ HY OAS +35bp & VIX term flat/inverted & breadth <50% → auto β ≤ 0.35
 - **DistressedAssetEngine**: 5-model ensemble (Altman Z, Merton KMV, Ohlson O, Zmijewski, ML GBM), fallen angel detector, LGD estimator, Kelly-sized opportunities
 - **CVREngine**: 5-model CVR valuation (binary option, barrier option, milestone tree, Monte Carlo, real options), liquidity/credit adjustments, 4 live instruments
 - **EventDrivenEngine**: 12 event categories, Mitchell-Pulvino M&A arb, PEAD SUE drift, Kelly-sized positions, 10 live events
+- **UniverseClassifier**: XGBoost 4-model soft-voting ensemble (GaussianNB+GBM+RF+XGB), quality tiers A-G, reconciliation engine
+- **CreditQualityClassifier**: 6-factor weighted credit scoring (AAA-D), feeds Tier-10 of MLVoteEnsemble
+- **DeepLearningEngine**: Pure-numpy PPO agent, 50-feature state vector, no external ML dependency
+- **InvestorPersonaManager**: 12 investor persona agents (Buffett, Munger, Graham, Ackman, Dalio, etc.)
+
+### MLVoteEnsemble (10 Tiers)
+
+| Tier | Name | Weight | Source |
+|------|------|--------|--------|
+| T1 | Neural | 1.0 | DRL/FinRL bridge |
+| T2 | Momentum | 1.2 | Technical signals |
+| T3 | Vol Regime | 0.8 | Volatility regime |
+| T4 | Monte Carlo | 0.9 | MC simulation |
+| T5 | Quality | 1.1 | Quality ranker |
+| T6 | Social | 1.0 | MiroFish sentiment |
+| T7 | Distress | 0.9 | Distressed asset engine |
+| T8 | Event | 1.0 | Event-driven engine |
+| T9 | CVR | 0.7 | CVR engine |
+| T10 | Credit Quality | 0.9 | UniverseClassifier/CreditQualityClassifier |
 
 ## Beta Corridor (Dataset 1)
 
@@ -301,17 +345,17 @@ SocialFeatureBuilder (engine/ml/)
     ├── Consensus strength + influence Gini
     └── Composite social_alpha signal
          ↓
-MLVoteEnsemble Tier-6 (execution_engine.py)
+MLVoteEnsemble Tier-10 (execution_engine.py)
     ├── Ticker-specific social sentiment vote
     ├── Fallback to aggregate market sentiment
-    └── Weighted into 6-tier ensemble score
+    └── Weighted into 10-tier ensemble score
 ```
 
 ### Pipeline Integration
 
 Stage 3.7 in run_pipeline() — runs after MetadronCube, before ticker selection.
 Social signals feed into:
-- Tier-6 of 6-tier ML Vote Ensemble (weighted vote ±1)
+- Tier-6 of 10-tier ML Vote Ensemble (weighted vote ±1)
 - Ticker-level sentiment available via `social.get_ticker_signal(ticker)`
 - Social features available via SocialFeatureBuilder for walk-forward ML
 

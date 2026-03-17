@@ -761,13 +761,14 @@ class QualityRanker:
 
     # Weights for composite score
     WEIGHTS = {
-        "sharpe": 0.25,
-        "momentum": 0.20,
-        "stability": 0.15,
-        "drawdown": 0.10,
-        "roe_proxy": 0.10,
-        "de_proxy": 0.10,
-        "earnings_stability": 0.10,
+        "sharpe": 0.22,
+        "momentum": 0.17,
+        "stability": 0.13,
+        "drawdown": 0.08,
+        "roe_proxy": 0.08,
+        "de_proxy": 0.08,
+        "earnings_stability": 0.09,
+        "credit_quality": 0.15,
     }
 
     def __init__(self):
@@ -819,6 +820,13 @@ class QualityRanker:
         norm_sharpe = min(max((sharpe + 1) / 4, 0), 1)  # [-1, 3] -> [0, 1]
         norm_mom = min(max((mom + 0.2) / 0.6, 0), 1)    # [-0.2, 0.4] -> [0, 1]
 
+        # Credit quality proxy: blend of leverage safety + profitability efficiency
+        # High roe_proxy + low de_proxy → strong credit; inverse → weak credit
+        credit_quality_raw = (0.5 * min(max(roe_proxy, 0), 1) +
+                              0.3 * de_proxy +
+                              0.2 * earn_stab)
+        credit_quality = min(max(credit_quality_raw, 0), 1)
+
         composite = (
             self.WEIGHTS["sharpe"] * norm_sharpe
             + self.WEIGHTS["momentum"] * norm_mom
@@ -827,6 +835,7 @@ class QualityRanker:
             + self.WEIGHTS["roe_proxy"] * min(max(roe_proxy, 0), 1)
             + self.WEIGHTS["de_proxy"] * de_proxy
             + self.WEIGHTS["earnings_stability"] * earn_stab
+            + self.WEIGHTS["credit_quality"] * credit_quality
         )
 
         return {
@@ -837,6 +846,7 @@ class QualityRanker:
             "roe_proxy": roe_proxy,
             "de_proxy": de_proxy,
             "earnings_stability": earn_stab,
+            "credit_quality": credit_quality,
             "composite": composite,
             "quality_tier": classify_quality(sharpe, mom),
         }

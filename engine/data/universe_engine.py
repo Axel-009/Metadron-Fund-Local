@@ -224,6 +224,20 @@ RV_PAIRS = [
 ]
 
 
+class CreditRating(str, Enum):
+    """Credit rating scale."""
+    AAA = "AAA"
+    AA = "AA"
+    A = "A"
+    BBB = "BBB"
+    BB = "BB"
+    B = "B"
+    CCC = "CCC"
+    CC = "CC"
+    C = "C"
+    D = "D"
+
+
 class SecurityType(str, Enum):
     """Classification of security type."""
     EQUITY = "EQUITY"
@@ -314,6 +328,9 @@ class Security:
     options_eligible: bool = True
     sector_etf: str = ""           # Associated sector ETF
     rv_pair: str = ""              # RV pair partner ticker
+    credit_quality_score: float = 0.0
+    credit_rating: str = ""
+    interest_coverage: float = 0.0
     is_fallen_angel: bool = False
     is_rv_candidate: bool = False
     last_updated: str = ""
@@ -832,6 +849,16 @@ class UniverseEngine:
     def get_sector_momentum(self) -> dict[str, float]:
         return self._sector_rotation.compute_sector_momentum()
 
+    def get_sectors(self) -> list[str]:
+        """Return list of unique sectors in the universe."""
+        return list(set(s.sector for s in self._equities if s.sector))
+
+    def load(self) -> int:
+        """Alias for load_universe() — used by execution pipeline."""
+        if not self._loaded:
+            return self.load_universe()
+        return self.size()
+
     def summary(self) -> str:
         lines = ["=" * 60, "METADRON CAPITAL — UNIVERSE ENGINE", "=" * 60,
                   f"  Total Securities: {self.size()}", f"  Loaded: {self._loaded}",
@@ -841,3 +868,17 @@ class UniverseEngine:
             lines.append(f"  {sector:<35} {count:>4}")
         lines.append("=" * 60)
         return "\n".join(lines)
+
+
+# ---------------------------------------------------------------------------
+# Module-level singleton
+# ---------------------------------------------------------------------------
+_ENGINE_INSTANCE: Optional[UniverseEngine] = None
+
+
+def get_engine() -> UniverseEngine:
+    """Get or create the singleton UniverseEngine instance."""
+    global _ENGINE_INSTANCE
+    if _ENGINE_INSTANCE is None:
+        _ENGINE_INSTANCE = UniverseEngine(load=True)
+    return _ENGINE_INSTANCE
