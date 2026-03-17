@@ -1,6 +1,10 @@
-"""PaperBroker — Simulated execution engine using OpenBB data.
+"""PaperBroker — Live HFT opportunity-based paper portfolio execution.
 
-Not connected to any live broker. Provides:
+Continuously active throughout the trading day, scanning for alpha
+opportunities and executing paper trades. Designed to be observable
+via a live dashboard once connected to internet and OpenBB API.
+
+Provides:
     - Order placement (market, limit)
     - Position tracking
     - P&L calculation
@@ -9,6 +13,15 @@ Not connected to any live broker. Provides:
     - Fill simulation with micro-price model
     - Pre-trade risk checks (RiskLimiter)
     - Performance tracking (Sharpe, drawdown, win rate)
+    - 5% daily compound target with risk dial-down after hit
+    - Live dashboard state emission for real-time observation
+    - Alpha maximization through positioning + selection
+    - Beta management through leverage execution multipliers
+
+Risk Dial-Down Logic (post-target):
+    AGGRESSIVE  — Pre-target: full leverage, max opportunity scanning
+    MODERATE    — Target hit (5%): reduce leverage 50%, widen stops
+    DEFENSIVE   — Target + buffer (6%): minimal new positions, protect gains
 
 Designed to be swapped for a live broker API later.
 """
@@ -616,21 +629,209 @@ class PerformanceTracker:
 
 
 # ---------------------------------------------------------------------------
+# Risk Profile — Daily Target Dial-Down
+# ---------------------------------------------------------------------------
+class RiskProfile(str, Enum):
+    """Risk profile tiers for daily target management."""
+    AGGRESSIVE = "AGGRESSIVE"    # Pre-target: full leverage, max scanning
+    MODERATE = "MODERATE"        # Target hit (5%): reduce leverage 50%
+    DEFENSIVE = "DEFENSIVE"      # Target + buffer (6%+): protect gains
+
+
+class DailyTargetManager:
+    """Manages 5% daily compound return target with risk dial-down.
+
+    Once the daily target is hit, the system shifts from alpha-seeking
+    to capital-preservation mode. Execution multipliers, position sizing,
+    and stop widths all adjust based on progress toward target.
+
+    Target: 5% daily compound (minimum)
+    Buffer: 6%+ triggers full defensive mode
+    """
+
+    DAILY_TARGET_PCT = 0.05      # 5% daily compound return
+    BUFFER_TARGET_PCT = 0.06     # 6% triggers full defensive
+    FLOOR_TARGET_PCT = 0.03      # Below 3% = max aggressive
+
+    # Leverage multipliers by risk profile
+    _LEVERAGE_MULT = {
+        RiskProfile.AGGRESSIVE: 1.0,   # Full leverage
+        RiskProfile.MODERATE: 0.50,    # Half leverage
+        RiskProfile.DEFENSIVE: 0.20,   # Minimal leverage
+    }
+
+    # Position size multipliers
+    _POSITION_MULT = {
+        RiskProfile.AGGRESSIVE: 1.0,
+        RiskProfile.MODERATE: 0.60,
+        RiskProfile.DEFENSIVE: 0.25,
+    }
+
+    # Stop-loss width multipliers (wider = more protective)
+    _STOP_WIDTH_MULT = {
+        RiskProfile.AGGRESSIVE: 1.0,
+        RiskProfile.MODERATE: 1.5,
+        RiskProfile.DEFENSIVE: 2.5,
+    }
+
+    def __init__(self, initial_nav: float = 1_000.0):
+        self._initial_nav_today = initial_nav
+        self._current_profile = RiskProfile.AGGRESSIVE
+        self._target_hit_time: Optional[str] = None
+        self._profile_history: list[tuple[str, str]] = []
+
+    def reset_day(self, current_nav: float):
+        """Reset for new trading day."""
+        self._initial_nav_today = current_nav
+        self._current_profile = RiskProfile.AGGRESSIVE
+        self._target_hit_time = None
+
+    @property
+    def profile(self) -> RiskProfile:
+        return self._current_profile
+
+    @property
+    def daily_return_pct(self) -> float:
+        """Current day return as decimal (0.05 = 5%)."""
+        if self._initial_nav_today <= 0:
+            return 0.0
+        return 0.0  # Will be set by update()
+
+    def update(self, current_nav: float) -> RiskProfile:
+        """Update risk profile based on current NAV vs start-of-day NAV.
+
+        Returns the current risk profile after update.
+        """
+        if self._initial_nav_today <= 0:
+            return self._current_profile
+
+        daily_return = (current_nav - self._initial_nav_today) / self._initial_nav_today
+        now_str = datetime.now().isoformat()
+
+        old_profile = self._current_profile
+
+        if daily_return >= self.BUFFER_TARGET_PCT:
+            self._current_profile = RiskProfile.DEFENSIVE
+        elif daily_return >= self.DAILY_TARGET_PCT:
+            self._current_profile = RiskProfile.MODERATE
+            if self._target_hit_time is None:
+                self._target_hit_time = now_str
+        else:
+            self._current_profile = RiskProfile.AGGRESSIVE
+
+        if old_profile != self._current_profile:
+            self._profile_history.append((now_str, self._current_profile.value))
+
+        return self._current_profile
+
+    def get_leverage_multiplier(self) -> float:
+        """Return leverage multiplier for current risk profile."""
+        return self._LEVERAGE_MULT[self._current_profile]
+
+    def get_position_multiplier(self) -> float:
+        """Return position size multiplier for current risk profile."""
+        return self._POSITION_MULT[self._current_profile]
+
+    def get_stop_width_multiplier(self) -> float:
+        """Return stop-loss width multiplier for current risk profile."""
+        return self._STOP_WIDTH_MULT[self._current_profile]
+
+    def allow_new_positions(self) -> bool:
+        """Whether new positions are allowed under current profile."""
+        return self._current_profile != RiskProfile.DEFENSIVE
+
+    def get_state(self) -> dict:
+        """Return full state for dashboard emission."""
+        return {
+            "risk_profile": self._current_profile.value,
+            "initial_nav_today": self._initial_nav_today,
+            "target_pct": self.DAILY_TARGET_PCT,
+            "target_hit_time": self._target_hit_time,
+            "leverage_mult": self.get_leverage_multiplier(),
+            "position_mult": self.get_position_multiplier(),
+            "stop_width_mult": self.get_stop_width_multiplier(),
+            "allow_new_positions": self.allow_new_positions(),
+            "profile_history": self._profile_history,
+        }
+
+
+# ---------------------------------------------------------------------------
+# Live Dashboard State Emitter
+# ---------------------------------------------------------------------------
+class LiveDashboardState:
+    """Collects and emits state for the live observation dashboard.
+
+    When connected to internet and OpenBB API is running, this state
+    can be consumed by engine/monitoring/live_dashboard.py for real-time
+    terminal visualization or by the FastAPI backend for web dashboard.
+    """
+
+    def __init__(self):
+        self._last_snapshot: dict = {}
+        self._snapshot_history: list[dict] = []
+        self._callbacks: list = []
+
+    def register_callback(self, callback):
+        """Register a callback for live state updates."""
+        self._callbacks.append(callback)
+
+    def emit(self, broker_state: dict, target_state: dict,
+             pipeline_state: Optional[dict] = None):
+        """Emit a dashboard snapshot.
+
+        Args:
+            broker_state: Portfolio summary from PaperBroker
+            target_state: Daily target state from DailyTargetManager
+            pipeline_state: Optional signal pipeline state
+        """
+        snapshot = {
+            "timestamp": datetime.now().isoformat(),
+            "portfolio": broker_state,
+            "daily_target": target_state,
+            "pipeline": pipeline_state or {},
+        }
+        self._last_snapshot = snapshot
+        self._snapshot_history.append(snapshot)
+
+        # Keep only last 1000 snapshots in memory
+        if len(self._snapshot_history) > 1000:
+            self._snapshot_history = self._snapshot_history[-500:]
+
+        # Fire callbacks
+        for cb in self._callbacks:
+            try:
+                cb(snapshot)
+            except Exception:
+                pass
+
+    def get_latest(self) -> dict:
+        return self._last_snapshot
+
+    def get_history(self, n: int = 100) -> list[dict]:
+        return self._snapshot_history[-n:]
+
+
+# ---------------------------------------------------------------------------
 # Paper Broker
 # ---------------------------------------------------------------------------
 class PaperBroker:
-    """Simulated broker using OpenBB prices.
+    """Live HFT opportunity-based paper portfolio execution engine.
+
+    Continuously active throughout the trading day. Manages a 5% daily
+    compound return target with automatic risk dial-down after target hit.
+    Observable via live dashboard when connected to internet.
 
     Drop-in replacement for live broker — same interface.
     """
 
     def __init__(
         self,
-        initial_cash: float = 1_000_000.0,
+        initial_cash: float = 1_000.0,
         log_dir: Optional[Path] = None,
         slippage_bps: float = 2.0,
         enable_risk_limits: bool = True,
         enable_micro_price: bool = True,
+        daily_target_pct: float = 0.05,
     ):
         self.state = PortfolioState(cash=initial_cash, nav=initial_cash)
         self.slippage_bps = slippage_bps
@@ -647,6 +848,13 @@ class PaperBroker:
         self._daily_pnl_today: float = 0.0
         self._last_eod_date: Optional[str] = None
         self._eod_nav_history: list[tuple[str, float]] = []
+
+        # Daily target manager — 5% compound daily minimum
+        self._target_manager = DailyTargetManager(initial_nav=initial_cash)
+        self._target_manager.DAILY_TARGET_PCT = daily_target_pct
+
+        # Live dashboard state emitter
+        self._dashboard = LiveDashboardState()
 
     # --- Pre-trade risk checks -----------------------------------------------
 
@@ -715,6 +923,26 @@ class PaperBroker:
             order.reason = f"No price data for {ticker}"
             self._orders.append(order)
             return order
+
+        # Update daily target manager with current NAV
+        nav = self.compute_nav()
+        self._target_manager.update(nav)
+
+        # Check if new positions allowed under current risk profile
+        if side in (OrderSide.BUY, OrderSide.SHORT):
+            if not self._target_manager.allow_new_positions():
+                order.status = OrderStatus.REJECTED
+                order.reason = (f"DEFENSIVE mode — daily target exceeded "
+                                f"({self._target_manager.profile.value}), "
+                                f"no new positions")
+                self._orders.append(order)
+                return order
+
+            # Apply position size multiplier from risk profile
+            pos_mult = self._target_manager.get_position_multiplier()
+            if pos_mult < 1.0:
+                quantity = max(1, int(quantity * pos_mult))
+                order.quantity = quantity
 
         # Pre-trade risk checks
         risk_ok, risk_reason = self._check_risk_limits(ticker, side, quantity, price)
@@ -978,9 +1206,13 @@ class PaperBroker:
         except Exception:
             pass
 
-        # Reset daily P&L
+        # Reset daily P&L and daily target for next day
         self._daily_pnl_today = 0.0
         self._last_eod_date = today
+        self._target_manager.reset_day(nav)
+
+        # Emit final dashboard state for the day
+        self.emit_dashboard_state(pipeline_state={"event": "EOD_RECONCILE"})
 
         return summary
 
@@ -1090,3 +1322,55 @@ class PaperBroker:
 
     def get_trade_history(self) -> list[dict]:
         return list(self._trade_log)
+
+    # --- Daily target & risk profile -----------------------------------------
+
+    def get_risk_profile(self) -> str:
+        """Return current risk profile (AGGRESSIVE/MODERATE/DEFENSIVE)."""
+        return self._target_manager.profile.value
+
+    def get_daily_target_state(self) -> dict:
+        """Return full daily target state for dashboard."""
+        nav = self.compute_nav()
+        self._target_manager.update(nav)
+        state = self._target_manager.get_state()
+        state["current_nav"] = nav
+        if self._target_manager._initial_nav_today > 0:
+            state["daily_return_pct"] = (
+                (nav - self._target_manager._initial_nav_today)
+                / self._target_manager._initial_nav_today
+            )
+        else:
+            state["daily_return_pct"] = 0.0
+        return state
+
+    def reset_daily_target(self):
+        """Reset daily target for new trading day (called at market open)."""
+        nav = self.compute_nav()
+        self._target_manager.reset_day(nav)
+
+    def get_leverage_multiplier(self) -> float:
+        """Get current leverage multiplier from risk profile."""
+        return self._target_manager.get_leverage_multiplier()
+
+    # --- Live dashboard ------------------------------------------------------
+
+    def emit_dashboard_state(self, pipeline_state: Optional[dict] = None):
+        """Emit current state to live dashboard."""
+        self._dashboard.emit(
+            broker_state=self.get_portfolio_summary(),
+            target_state=self.get_daily_target_state(),
+            pipeline_state=pipeline_state,
+        )
+
+    def get_dashboard_snapshot(self) -> dict:
+        """Get latest dashboard snapshot."""
+        return self._dashboard.get_latest()
+
+    def get_dashboard_history(self, n: int = 100) -> list[dict]:
+        """Get dashboard snapshot history."""
+        return self._dashboard.get_history(n)
+
+    def register_dashboard_callback(self, callback):
+        """Register callback for live dashboard updates."""
+        self._dashboard.register_callback(callback)

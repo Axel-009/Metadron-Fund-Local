@@ -17,7 +17,9 @@ Beta managed within a 7–12% return corridor (S&P 500 historical earnings range
 Alpha extracted through top-down macro → GICS sector selection → bottom-up stock picking.
 Money velocity (V = GDP/M2) + cyclical vs secular decomposition drive regime classification.
 Platform targets 95%+ alpha via aggressive multi-sleeve allocation with continuous ML walk-forward optimisation.
-Paper broker mode — not connected to a live broker.
+Paper broker mode — live HFT opportunity-based execution, continuously scanning for alpha throughout the day.
+**5% daily compound target (minimum)** — once hit, risk dials down (AGGRESSIVE → MODERATE → DEFENSIVE) to retain gains on close.
+Alpha maximized through positioning + selection; beta managed through leverage execution multipliers.
 Data sourced via **OpenBB** (34+ providers: FRED, SEC, Polygon, FMP, CBOE, ECB, OECD, etc.) — sole data source, no yfinance dependency.
 
 ## Signal Pipeline
@@ -49,8 +51,8 @@ L7 HFT/Execution quant-trading, wondertrader,           → 12 technical strateg
 | Role | Repo | Function |
 |------|------|----------|
 | Data | FRB (avelkoski) | **DEPRECATED** — FRED data now via OpenBB `openbb-fred` provider |
-| HFT/Execution | wondertrader (C++→Python) | L7 — HFT micro-price signal, CTA, low-latency order routing |
-| HFT/Execution | exchange-core v2 (Java) | L7 — Ultra-low-latency order matching engine (LMAX Disruptor, 10M+ ops/sec) |
+| HFT/Execution | wondertrader (C++→Python) | L7 — CTA trend-following, HFT micro-price, TWAP/VWAP routing, multi-timeframe |
+| HFT/Execution | exchange-core v2 (Java→Python) | L7 — Ultra-low-latency order matching engine (LMAX Disruptor ring buffer, Python wrapper) |
 | Prediction | MiroFish (666ghj) | Agent-based social simulation → SocialPredictionEngine |
 | Reference | Quant-Developers-Resources | Quant research catalog (11 categories) |
 | Backend | Installation-Back-end-Files | ML backends: OpenBB SDK, CAMEL-AI/OASIS, PySR, QLIB, FinBERT, Air-LLM |
@@ -127,11 +129,13 @@ Metadron-Capital/                        ← Master monorepo (Layer 0: Hub)
 │   │   ├── execution_engine.py         ← Full pipeline orchestrator + ML vote ensemble
 │   │   ├── decision_matrix.py          ← 6-gate trade approval + Kelly sizing + ABU beta
 │   │   ├── options_engine.py           ← Black-Scholes, Greeks, vol surface, θ+Γ optimizer
-│   │   └── conviction_override.py       ← 3-tier conviction override system
+│   │   ├── conviction_override.py       ← 3-tier conviction override system
+│   │   ├── exchange_core_engine.py     ← L7 LMAX Disruptor ring buffer order matching (Python)
+│   │   └── wondertrader_engine.py      ← L7 CTA trend-following + HFT micro-price + TWAP/VWAP
 │   │   # L7 HFT Execution arm:
 │   │   # quant_strategy_executor.py  → 12 independent technical strategies (Stage 6.5)
-│   │   # exchange-core v2            → order matching (LMAX Disruptor, 10M+ ops/sec)
-│   │   # wondertrader                → micro-price, CTA, low-latency routing
+│   │   # exchange-core v2 (source)   → Java reference (repos/layer7_execution/)
+│   │   # wondertrader (source)       → C++ reference (repos/layer7_execution/)
 │   ├── agents/                          ← L6: Agent orchestration
 │   │   ├── sector_bots.py             ← 11 GICS sector micro-bots + scorecard
 │   │   ├── research_bots.py           ← 11 GICS research bots + DNA hierarchy
