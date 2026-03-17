@@ -3,13 +3,17 @@
 Signal pipeline (execution order):
     UniverseEngine → MacroEngine → MetadronCube → AlphaOptimizer → ExecutionEngine
 
-ML Vote Ensemble (6 tiers, each votes ±1):
-    Tier-1  Pure-numpy 2-layer net
-    Tier-2  Momentum/mean-reversion voter
-    Tier-3  Volatility regime voter
-    Tier-4  Monte Carlo voter (ARIMA-like + noise)
-    Tier-5  Quality tier voter (top-down + bottom-up)
-    Tier-6  Social sentiment voter (MiroFish prediction engine)
+ML Vote Ensemble (10 tiers, each votes ±1):
+    Tier-1   Pure-numpy 2-layer net
+    Tier-2   Momentum/mean-reversion voter
+    Tier-3   Volatility regime voter
+    Tier-4   Monte Carlo voter (ARIMA-like + noise)
+    Tier-5   Quality tier voter (top-down + bottom-up)
+    Tier-6   Social sentiment voter (MiroFish prediction engine)
+    Tier-7   Distressed asset voter
+    Tier-8   Event-driven voter
+    Tier-9   CVR voter
+    Tier-10  Credit quality voter (UniverseClassifier)
 
 effective_min_edge = 2.0 + max(0, -vote_score) bps
 
@@ -1199,6 +1203,43 @@ class ExecutionEngine:
         result["stages"]["event_driven"] = event_data
         self.tracker.record_stage("event_driven", (datetime.now() - t0).total_seconds() * 1000, event_data)
 
+        # Stage 3.95: Credit quality classification (UniverseClassifier)
+        t0 = datetime.now()
+        credit_data = {}
+        try:
+            from ..ml.universe_classifier import UniverseClassifier
+            classifier = UniverseClassifier()
+            # Build fundamentals from return data for universe
+            all_tickers = [s.ticker for s in self.universe.get_all()[:50]]
+            returns_df = get_returns(all_tickers, start="2024-01-01")
+            if not returns_df.empty:
+                for ticker in returns_df.columns:
+                    if ticker in returns_df.columns:
+                        classifier.store.compute_from_returns(ticker, returns_df[ticker].dropna())
+                classifier.train()
+                classifications = classifier.classify_universe()
+                credit_scores = classifier.get_credit_scores()
+                self.ensemble.set_credit_scores(credit_scores)
+                # Run reconciliation
+                classifier.reconcile_universe()
+                flagged = classifier.get_flagged()
+                credit_data = {
+                    "classified": len(classifications),
+                    "ml_available": classifier.is_ml_available,
+                    "flagged_divergences": len(flagged),
+                    "rising_stars": len(classifier.get_rising_stars()),
+                    "fallen_angels": len(classifier.get_fallen_angels()),
+                }
+                logger.info(f"Credit quality: {len(classifications)} classified, "
+                            f"{len(flagged)} flagged divergences")
+            else:
+                credit_data = {"status": "no_return_data"}
+        except Exception as e:
+            credit_data = {"error": str(e)}
+            logger.warning(f"Credit quality stage failed: {e}")
+        result["stages"]["credit_quality"] = credit_data
+        self.tracker.record_stage("credit_quality", (datetime.now() - t0).total_seconds() * 1000, credit_data)
+
         # Stage 4: Select top names from leading sectors
         t0 = datetime.now()
         leader_sectors = cube_out.flow.leader_sectors
@@ -1252,6 +1293,11 @@ class ExecutionEngine:
                 if weight < 0.01:
                     continue
                 sig = alpha_map.get(ticker)
+                # Include credit quality score if available
+                cq_score = 0.5
+                if hasattr(self.ensemble, '_credit_scores') and self.ensemble._credit_scores:
+                    cq_data = self.ensemble._credit_scores.get(ticker, {})
+                    cq_score = cq_data.get("credit_quality_score", 0.5)
                 proposals.append({
                     "ticker": ticker,
                     "weight": weight,
@@ -1260,6 +1306,7 @@ class ExecutionEngine:
                     "regime": cube_out.regime.value,
                     "conviction": weight * 2,
                     "adv_ratio": 0.01,
+                    "credit_quality_score": cq_score,
                 })
             dm_results = decision_mx.evaluate_batch(proposals)
             approved = [r for r in dm_results if r.get("approved", False)]

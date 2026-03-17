@@ -95,7 +95,39 @@ the reference code:
 
 - **AlphaOptimizer** (`engine/ml/alpha_optimizer.py`)
   - References: `QLIB/`, `AI-Newton/`, `Stock-techincal-prediction-model/`
-  - Elevation: Single model → Walk-forward ML alpha + mean-variance optimization
+  - Elevation: Single model → Walk-forward ML alpha + mean-variance + credit quality scoring
+
+- **UniverseClassifier** (`engine/ml/universe_classifier.py`)
+  - References: `FinancialDistressPrediction/`, `sophisticated-distress-analysis/`
+  - Elevation: Binary distress → XGBoost 4-model ensemble quality tiers (A-G) + credit ratings (AAA-D)
+
+- **DeepLearningEngine** (`engine/ml/deep_learning_engine.py`)
+  - References: `QLIB/`, `Stock-techincal-prediction-model/`, `nividia-repo/`
+  - Elevation: Framework-specific → Pure-numpy PPO agent with 50-feature state vector
+
+- **ML Model Bridges** (`engine/ml/bridges/`)
+  - References: `QLIB/`, `Kserve/`, `nividia-repo/`, `Stock-techincal-prediction-model/`
+  - Elevation: Siloed models → Unified bridge adapters producing SignalType for MLVoteEnsemble
+
+- **InvestorPersonaManager** (`engine/agents/investor_personas.py`)
+  - References: `ai-hedgefund/`, `Ruflo-agents/`
+  - Elevation: Single agent → 12 investor personas + 8 core analysis agents
+
+- **GICSSectorAgentManager** (`engine/agents/gics_sector_agents.py`)
+  - References: `Mav-Analysis/`, `CTA-code/`
+  - Elevation: Basic sector tracking → 11 sector agents with 8 scoring dimensions each
+
+- **AgentMonitor** (`engine/agents/agent_monitor.py`)
+  - References: `Ruflo-agents/`
+  - Elevation: Basic scoring → 4-tier performance hierarchy with memory profiling
+
+- **LiveDashboard** (`engine/monitoring/live_dashboard.py`)
+  - References: `hedgefund-tracker/`, `open-bb/`
+  - Elevation: Static reports → Rich-based real-time terminal dashboard (550+ symbols)
+
+- **FastAPI Web App** (`app/backend/`)
+  - References: `ai-hedgefund/`, `open-bb/`
+  - Elevation: CLI-only → REST API + SSE streaming + SQLAlchemy persistence
 
 ## Multi-Language Ecosystem
 
