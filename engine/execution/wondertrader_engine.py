@@ -514,11 +514,20 @@ class WonderTraderEngine:
         -------
         MicroPriceResult
         """
-        o = np.asarray(ohlcv["open"], dtype=float)
-        h = np.asarray(ohlcv["high"], dtype=float)
-        lo = np.asarray(ohlcv["low"], dtype=float)
-        c = np.asarray(ohlcv["close"], dtype=float)
-        v = np.asarray(ohlcv["volume"], dtype=float)
+        # Accept any case for column names (Open/open/OPEN)
+        def _get(key):
+            for k in (key, key.capitalize(), key.upper()):
+                if hasattr(ohlcv, 'columns'):
+                    if k in ohlcv.columns:
+                        return np.asarray(ohlcv[k], dtype=float)
+                elif isinstance(ohlcv, dict) and k in ohlcv:
+                    return np.asarray(ohlcv[k], dtype=float)
+            raise KeyError(f"Missing column: {key}")
+        o = _get("open")
+        h = _get("high")
+        lo = _get("low")
+        c = _get("close")
+        v = _get("volume")
 
         if len(c) == 0:
             return MicroPriceResult(
@@ -791,22 +800,58 @@ class WonderTraderEngine:
     def _normalise_prices(prices) -> Dict[str, np.ndarray]:
         """Convert a DataFrame or dict into a dict of numpy arrays.
 
-        Expected columns/keys: ticker, open, high, low, close, volume.
+        Accepts columns in any case (Open/OPEN/open). If 'ticker' column
+        is missing, fills with 'UNKNOWN'. This allows standard OHLCV
+        DataFrames (from OpenBB, yfinance, etc.) to work directly.
         """
-        if hasattr(prices, "to_dict"):
+        # Column name mapping: accept any case
+        _ALIASES = {
+            "open": ["open", "Open", "OPEN"],
+            "high": ["high", "High", "HIGH"],
+            "low": ["low", "Low", "LOW"],
+            "close": ["close", "Close", "CLOSE", "Adj Close", "adj_close"],
+            "volume": ["volume", "Volume", "VOLUME"],
+            "ticker": ["ticker", "Ticker", "TICKER", "symbol", "Symbol"],
+        }
+
+        def _find_col(source_cols, target):
+            for alias in _ALIASES.get(target, [target]):
+                if alias in source_cols:
+                    return alias
+            return None
+
+        if hasattr(prices, "columns"):
             # pandas DataFrame path
+            cols = list(prices.columns)
             out = {}
-            for col in ("ticker", "open", "high", "low", "close", "volume"):
-                if col in prices.columns:
-                    out[col] = np.asarray(prices[col])
+            for key in ("open", "high", "low", "close", "volume"):
+                found = _find_col(cols, key)
+                if found is not None:
+                    out[key] = np.asarray(prices[found])
                 else:
-                    raise ValueError(f"prices_df missing required column: {col}")
+                    raise ValueError(f"prices_df missing required column: {key}")
+            # ticker is optional — fill with 'UNKNOWN' if absent
+            ticker_col = _find_col(cols, "ticker")
+            if ticker_col is not None:
+                out["ticker"] = np.asarray(prices[ticker_col])
+            else:
+                out["ticker"] = np.array(["UNKNOWN"] * len(prices))
             return out
         elif isinstance(prices, dict):
-            for col in ("ticker", "open", "high", "low", "close", "volume"):
-                if col not in prices:
-                    raise ValueError(f"prices dict missing required key: {col}")
-            return {k: np.asarray(v) for k, v in prices.items()}
+            out = {}
+            keys = list(prices.keys())
+            for key in ("open", "high", "low", "close", "volume"):
+                found = _find_col(keys, key)
+                if found is not None:
+                    out[key] = np.asarray(prices[found])
+                else:
+                    raise ValueError(f"prices dict missing required key: {key}")
+            ticker_key = _find_col(keys, "ticker")
+            if ticker_key is not None:
+                out["ticker"] = np.asarray(prices[ticker_key])
+            else:
+                out["ticker"] = np.array(["UNKNOWN"])
+            return out
         else:
             raise TypeError(
                 f"prices_df must be a pandas DataFrame or dict, got {type(prices)}"
