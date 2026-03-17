@@ -41,14 +41,7 @@ logger = logging.getLogger(__name__)
 # hmmlearn from local source or installed package
 MARKOV_MODEL_DIR = Path(__file__).parent.parent.parent.parent / "repos" / "markov-model"
 
-try:
-    from hmmlearn.hmm import GaussianHMM
-    _HAS_HMMLEARN = True
-    logger.info("hmmlearn loaded for regime detection")
-except ImportError:
-    _HAS_HMMLEARN = False
-    GaussianHMM = None
-    logger.warning("hmmlearn not available — using numpy regime fallback")
+from hmmlearn.hmm import GaussianHMM
 
 
 # CubeRegime mapping (must match engine/signals/macro_engine.py)
@@ -98,15 +91,13 @@ class MarkovRegimeBridge:
         self._state_map: dict[int, str] = {}
         self._feature_names: list[str] = []
 
-        if _HAS_HMMLEARN:
-            self._model = GaussianHMM(
-                n_components=n_regimes,
-                covariance_type=covariance_type,
-                n_iter=n_iter,
-                random_state=random_state,
-            )
-        logger.info(f"MarkovRegimeBridge initialized (hmmlearn: {_HAS_HMMLEARN}, "
-                    f"n_regimes={n_regimes})")
+        self._model = GaussianHMM(
+            n_components=n_regimes,
+            covariance_type=covariance_type,
+            n_iter=n_iter,
+            random_state=random_state,
+        )
+        logger.info(f"MarkovRegimeBridge initialized (n_regimes={n_regimes})")
 
     def fit(self, returns: np.ndarray, volatility: np.ndarray,
             credit_spread: Optional[np.ndarray] = None,
@@ -150,33 +141,26 @@ class MarkovRegimeBridge:
             logger.warning(f"Insufficient data for HMM fitting ({len(X)} obs)")
             return {"error": "insufficient data", "n_obs": len(X)}
 
-        if _HAS_HMMLEARN and self._model is not None:
-            try:
-                self._model.fit(X)
-                self._fitted = True
-
-                # Map HMM states to regime names based on return/vol characteristics
-                self._map_states_to_regimes(X)
-
-                score = self._model.score(X)
-                logger.info(f"HMM fitted: {len(X)} obs, log-likelihood={score:.2f}")
-                return {
-                    "n_obs": len(X),
-                    "n_features": X.shape[1],
-                    "log_likelihood": float(score),
-                    "converged": self._model.monitor_.converged,
-                    "n_iter": self._model.monitor_.iter,
-                    "state_map": self._state_map,
-                }
-            except Exception as e:
-                logger.warning(f"HMM fitting failed: {e}")
-                return {"error": str(e)}
-        else:
-            # Numpy fallback: simple threshold-based regime detection
+        try:
+            self._model.fit(X)
             self._fitted = True
-            self._state_map = {0: "TRENDING", 1: "RANGE", 2: "STRESS", 3: "CRASH"}
-            logger.info("Using numpy fallback regime detection")
-            return {"method": "numpy_fallback", "n_obs": len(X)}
+
+            # Map HMM states to regime names based on return/vol characteristics
+            self._map_states_to_regimes(X)
+
+            score = self._model.score(X)
+            logger.info(f"HMM fitted: {len(X)} obs, log-likelihood={score:.2f}")
+            return {
+                "n_obs": len(X),
+                "n_features": X.shape[1],
+                "log_likelihood": float(score),
+                "converged": self._model.monitor_.converged,
+                "n_iter": self._model.monitor_.iter,
+                "state_map": self._state_map,
+            }
+        except Exception as e:
+            logger.warning(f"HMM fitting failed: {e}")
+            return {"error": str(e)}
 
     def predict_regime(self, returns: float, volatility: float,
                         credit_spread: Optional[float] = None,
@@ -201,39 +185,36 @@ class MarkovRegimeBridge:
 
         X = np.array([obs])
 
-        if _HAS_HMMLEARN and self._model is not None:
-            try:
-                state_probs = self._model.predict_proba(X)[0]
-                best_state = int(np.argmax(state_probs))
-                regime_name = self._state_map.get(best_state, "RANGE")
-                confidence = float(state_probs[best_state])
+        try:
+            state_probs = self._model.predict_proba(X)[0]
+            best_state = int(np.argmax(state_probs))
+            regime_name = self._state_map.get(best_state, "RANGE")
+            confidence = float(state_probs[best_state])
 
-                # Map probabilities to regime order
-                regime_probs = [0.0] * 4
-                for state_idx, prob in enumerate(state_probs):
-                    regime = self._state_map.get(state_idx, "RANGE")
-                    regime_idx = REGIME_NAMES.index(regime) if regime in REGIME_NAMES else 1
-                    regime_probs[regime_idx] += prob
+            # Map probabilities to regime order
+            regime_probs = [0.0] * 4
+            for state_idx, prob in enumerate(state_probs):
+                regime = self._state_map.get(state_idx, "RANGE")
+                regime_idx = REGIME_NAMES.index(regime) if regime in REGIME_NAMES else 1
+                regime_probs[regime_idx] += prob
 
-                return RegimePrediction(
-                    regime=regime_name,
-                    regime_index=REGIME_NAMES.index(regime_name) if regime_name in REGIME_NAMES else 1,
-                    confidence=confidence,
-                    state_probabilities=regime_probs,
-                    transition_matrix=self._model.transmat_,
-                    log_likelihood=float(self._model.score(X)),
-                )
-            except Exception as e:
-                logger.warning(f"HMM prediction failed: {e}")
-
-        # Numpy fallback: simple threshold detection
-        regime = self._threshold_regime(returns, volatility)
-        return RegimePrediction(
-            regime=regime,
-            regime_index=REGIME_NAMES.index(regime),
-            confidence=0.5,
-            metadata={"method": "threshold_fallback"},
-        )
+            return RegimePrediction(
+                regime=regime_name,
+                regime_index=REGIME_NAMES.index(regime_name) if regime_name in REGIME_NAMES else 1,
+                confidence=confidence,
+                state_probabilities=regime_probs,
+                transition_matrix=self._model.transmat_,
+                log_likelihood=float(self._model.score(X)),
+            )
+        except Exception as e:
+            logger.warning(f"HMM prediction failed: {e}")
+            regime = self._threshold_regime(returns, volatility)
+            return RegimePrediction(
+                regime=regime,
+                regime_index=REGIME_NAMES.index(regime),
+                confidence=0.5,
+                metadata={"method": "threshold_fallback"},
+            )
 
     def get_transition_matrix(self) -> Optional[np.ndarray]:
         """Get the learned transition probability matrix.
@@ -241,7 +222,7 @@ class MarkovRegimeBridge:
         Returns 4x4 matrix indexed by REGIME_NAMES order.
         Can be used to replace MetadronCube RegimeEngine.TRANSITION_PROBS.
         """
-        if not _HAS_HMMLEARN or self._model is None or not self._fitted:
+        if self._model is None or not self._fitted:
             return None
 
         try:

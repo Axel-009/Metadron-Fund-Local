@@ -31,6 +31,8 @@ from dataclasses import dataclass, field
 import numpy as np
 import pandas as pd
 
+from backends.transformers_bert.local_finbert import LocalFinBERT
+
 logger = logging.getLogger(__name__)
 
 try:
@@ -113,9 +115,17 @@ class EventBERTBackend:
         self._init_models()
 
     def _init_models(self):
-        """Initialize BERT models."""
+        """Initialize BERT models.
+
+        Tries in order:
+            1. Local FinBERT checkpoint (no network)
+            2. HuggingFace ``ProsusAI/finbert`` download
+            3. LocalFinBERT dictionary-based fallback (always available)
+        """
         if not _HAS_TRANSFORMERS or not _HAS_TORCH:
-            logger.warning("BERT backend in rule-based fallback mode")
+            logger.warning("BERT backend: torch/transformers unavailable — using LocalFinBERT")
+            self._sentiment_pipeline = LocalFinBERT()
+            self._initialized = True
             return
 
         try:
@@ -133,8 +143,10 @@ class EventBERTBackend:
             self._initialized = True
             logger.info(f"FinBERT sentiment pipeline loaded: {model_source}")
         except (OSError, ConnectionError, Exception) as e:
-            logger.warning(f"FinBERT init failed (using rule-based fallback): {e}")
-            self._sentiment_pipeline = None
+            logger.warning(f"FinBERT init failed, falling back to LocalFinBERT: {e}")
+            self._sentiment_pipeline = LocalFinBERT()
+            self._initialized = True
+            logger.info("LocalFinBERT dictionary-based sentiment model activated")
 
         # Try to load custom event classifier if checkpoint exists
         checkpoint_path = CHECKPOINTS_DIR / "event_classifier"
@@ -187,7 +199,11 @@ class EventBERTBackend:
                 magnitude=magnitude,
                 direction=direction,
                 metadata={
-                    "model": self.model_name if self._initialized else "rule_based",
+                    "model": (
+                    self.model_name
+                    if self._initialized and not isinstance(self._sentiment_pipeline, LocalFinBERT)
+                    else "local_finbert"
+                ),
                 },
             ))
 
@@ -239,17 +255,19 @@ class EventBERTBackend:
             except Exception:
                 pass
 
-        # Rule-based fallback
-        text_lower = text.lower()
-        pos_count = sum(1 for w in self.SENTIMENT_WORDS["positive"] if w in text_lower)
-        neg_count = sum(1 for w in self.SENTIMENT_WORDS["negative"] if w in text_lower)
-        total = pos_count + neg_count
-        if total == 0:
-            return 0.0, 0.3
-
-        sentiment = (pos_count - neg_count) / total
-        confidence = min(total / 5, 1.0) * 0.7  # cap at 0.7 for rule-based
-        return sentiment, confidence
+        # LocalFinBERT dictionary fallback (should not normally reach here
+        # because _init_models always sets _sentiment_pipeline, but kept
+        # as a safety net).
+        fallback = LocalFinBERT()
+        result = fallback(text[:512])[0]
+        label = result["label"].lower()
+        score = result["score"]
+        if label == "positive":
+            return score, score
+        elif label == "negative":
+            return -score, score
+        else:
+            return 0.0, score
 
     def _estimate_magnitude(self, event_type: str, sentiment: float,
                              confidence: float) -> float:

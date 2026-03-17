@@ -38,28 +38,9 @@ if _BACKEND_PATH.exists() and str(_BACKEND_PATH) not in sys.path:
     sys.path.insert(0, str(_BACKEND_PATH))
 
 # Import backends via bridges
-try:
-    from bridges.mirofish_bridge import MiroFishDualSimulation, DiscoveredPattern
-    _HAS_MIROFISH = True
-    logger.info("MiroFish backend connected via bridge")
-except ImportError:
-    _HAS_MIROFISH = False
-    logger.warning("MiroFish backend not available")
-
-try:
-    from bridges.newton_bridge import AINewtonEngine, DiscoveredLaw
-    _HAS_NEWTON = True
-    logger.info("AI-Newton backend connected via bridge")
-except ImportError:
-    _HAS_NEWTON = False
-    logger.warning("AI-Newton backend not available")
-
-try:
-    from bridges.openbb_bridge import OpenBBBackend
-    _HAS_OPENBB_BACKEND = True
-    logger.info("OpenBB backend connected via bridge")
-except ImportError:
-    _HAS_OPENBB_BACKEND = False
+from bridges.mirofish_bridge import MiroFishDualSimulation, DiscoveredPattern
+from bridges.newton_bridge import AINewtonEngine, DiscoveredLaw
+from bridges.openbb_bridge import OpenBBBackend
 
 
 # ---------------------------------------------------------------------------
@@ -220,25 +201,22 @@ class PatternDiscoveryEngine:
 
         # Initialize backends
         self.mirofish: Optional[MiroFishDualSimulation] = None
-        if _HAS_MIROFISH:
-            try:
-                self.mirofish = MiroFishDualSimulation()
-            except Exception as e:
-                logger.warning(f"MiroFish init failed: {e}")
+        try:
+            self.mirofish = MiroFishDualSimulation()
+        except Exception as e:
+            logger.warning(f"MiroFish init failed: {e}")
 
         self.newton: Optional[AINewtonEngine] = None
-        if _HAS_NEWTON:
-            try:
-                self.newton = AINewtonEngine()
-            except Exception as e:
-                logger.warning(f"AI-Newton init failed: {e}")
+        try:
+            self.newton = AINewtonEngine()
+        except Exception as e:
+            logger.warning(f"AI-Newton init failed: {e}")
 
         self.openbb: Optional[OpenBBBackend] = None
-        if _HAS_OPENBB_BACKEND:
-            try:
-                self.openbb = OpenBBBackend()
-            except Exception as e:
-                logger.warning(f"OpenBB backend init failed: {e}")
+        try:
+            self.openbb = OpenBBBackend()
+        except Exception as e:
+            logger.warning(f"OpenBB backend init failed: {e}")
 
         logger.info(f"PatternDiscoveryEngine initialized: "
                     f"MiroFish={'ON' if self.mirofish else 'OFF'} "

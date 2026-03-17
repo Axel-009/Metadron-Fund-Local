@@ -14,17 +14,12 @@ import numpy as np
 
 logger = logging.getLogger(__name__)
 
-try:
-    from sklearn.metrics import (
-        balanced_accuracy_score,
-        confusion_matrix as sk_confusion_matrix,
-        f1_score,
-        precision_recall_fscore_support,
-    )
-    _HAS_SKLEARN = True
-except ImportError:
-    logger.warning("sklearn not available; using manual metric implementations.")
-    _HAS_SKLEARN = False
+from sklearn.metrics import (
+    balanced_accuracy_score,
+    confusion_matrix as sk_confusion_matrix,
+    f1_score,
+    precision_recall_fscore_support,
+)
 
 
 class ModelEvaluator:
@@ -57,38 +52,18 @@ class ModelEvaluator:
         if labels is None:
             labels = sorted(set(y_true) | set(y_pred))
 
-        if _HAS_SKLEARN:
-            prec, rec, f1, sup = precision_recall_fscore_support(
-                y_true, y_pred, labels=labels, zero_division=0,
-            )
-            return {
-                label: {
-                    "precision": float(prec[i]),
-                    "recall": float(rec[i]),
-                    "f1": float(f1[i]),
-                    "support": int(sup[i]),
-                }
-                for i, label in enumerate(labels)
+        prec, rec, f1, sup = precision_recall_fscore_support(
+            y_true, y_pred, labels=labels, zero_division=0,
+        )
+        return {
+            label: {
+                "precision": float(prec[i]),
+                "recall": float(rec[i]),
+                "f1": float(f1[i]),
+                "support": int(sup[i]),
             }
-
-        # Manual fallback
-        results: Dict[Any, Dict[str, float]] = {}
-        for label in labels:
-            tp = int(np.sum((y_true == label) & (y_pred == label)))
-            fp = int(np.sum((y_true != label) & (y_pred == label)))
-            fn = int(np.sum((y_true == label) & (y_pred != label)))
-            support = int(np.sum(y_true == label))
-            precision = tp / (tp + fp) if (tp + fp) > 0 else 0.0
-            recall = tp / (tp + fn) if (tp + fn) > 0 else 0.0
-            f1_val = (
-                2 * precision * recall / (precision + recall)
-                if (precision + recall) > 0 else 0.0
-            )
-            results[label] = {
-                "precision": precision, "recall": recall,
-                "f1": f1_val, "support": support,
-            }
-        return results
+            for i, label in enumerate(labels)
+        }
 
     # ------------------------------------------------------------------ #
     #  Macro / aggregate metrics                                          #
@@ -105,51 +80,16 @@ class ModelEvaluator:
         y_true = np.asarray(y_true)
         y_pred = np.asarray(y_pred)
 
-        if _HAS_SKLEARN:
-            return {
-                "balanced_accuracy": float(
-                    balanced_accuracy_score(y_true, y_pred)
-                ),
-                "macro_f1": float(
-                    f1_score(y_true, y_pred, average="macro", zero_division=0)
-                ),
-                "weighted_f1": float(
-                    f1_score(y_true, y_pred, average="weighted", zero_division=0)
-                ),
-            }
-
-        # Manual fallback
-        labels = sorted(set(y_true) | set(y_pred))
-        per_class_recall: List[float] = []
-        per_class_f1: List[float] = []
-        weights: List[int] = []
-
-        for label in labels:
-            tp = int(np.sum((y_true == label) & (y_pred == label)))
-            fp = int(np.sum((y_true != label) & (y_pred == label)))
-            fn = int(np.sum((y_true == label) & (y_pred != label)))
-            support = int(np.sum(y_true == label))
-            prec = tp / (tp + fp) if (tp + fp) > 0 else 0.0
-            rec = tp / (tp + fn) if (tp + fn) > 0 else 0.0
-            f1_val = (
-                2 * prec * rec / (prec + rec)
-                if (prec + rec) > 0 else 0.0
-            )
-            per_class_recall.append(rec)
-            per_class_f1.append(f1_val)
-            weights.append(support)
-
-        balanced_acc = float(np.mean(per_class_recall)) if per_class_recall else 0.0
-        macro_f1_val = float(np.mean(per_class_f1)) if per_class_f1 else 0.0
-        total = sum(weights)
-        weighted_f1_val = (
-            float(sum(f * w for f, w in zip(per_class_f1, weights)) / total)
-            if total > 0 else 0.0
-        )
         return {
-            "balanced_accuracy": balanced_acc,
-            "macro_f1": macro_f1_val,
-            "weighted_f1": weighted_f1_val,
+            "balanced_accuracy": float(
+                balanced_accuracy_score(y_true, y_pred)
+            ),
+            "macro_f1": float(
+                f1_score(y_true, y_pred, average="macro", zero_division=0)
+            ),
+            "weighted_f1": float(
+                f1_score(y_true, y_pred, average="weighted", zero_division=0)
+            ),
         }
 
     # ------------------------------------------------------------------ #
@@ -167,17 +107,7 @@ class ModelEvaluator:
         if labels is None:
             labels = sorted(set(y_true) | set(y_pred))
 
-        if _HAS_SKLEARN:
-            return sk_confusion_matrix(y_true, y_pred, labels=labels)
-
-        # Manual fallback
-        label_to_idx = {lbl: idx for idx, lbl in enumerate(labels)}
-        n = len(labels)
-        cm = np.zeros((n, n), dtype=int)
-        for t, p in zip(y_true, y_pred):
-            if t in label_to_idx and p in label_to_idx:
-                cm[label_to_idx[t], label_to_idx[p]] += 1
-        return cm
+        return sk_confusion_matrix(y_true, y_pred, labels=labels)
 
     # ------------------------------------------------------------------ #
     #  Tier-weighted confusion                                            #
