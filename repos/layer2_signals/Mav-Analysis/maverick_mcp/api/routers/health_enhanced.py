@@ -277,7 +277,7 @@ async def _check_external_apis_health() -> dict[str, ComponentStatus]:
     api_mapping = {
         "yfinance": "Yahoo Finance API",
         "finviz": "Finviz API",
-        "fred_api": "FRED Economic Data API",
+        "fred_api": "FRED Economic Data API (via OpenBB)",
         "tiingo": "Tiingo Market Data API",
         "openrouter": "OpenRouter AI API",
         "exa": "Exa Search API",

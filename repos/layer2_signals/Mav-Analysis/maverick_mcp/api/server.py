@@ -540,7 +540,7 @@ try:
     if circuit_breaker_success:
         logger.info("✅ Circuit breakers initialized for all external APIs")
         logger.info("Enhanced Circuit Breaker Protection Enabled")
-        logger.info("  yfinance, Tiingo, FRED, OpenRouter, Exa APIs protected")
+        logger.info("  yfinance, Tiingo, FRED (via OpenBB), OpenRouter, Exa APIs protected")
         logger.info("  Failure detection and automatic recovery active")
         logger.info("  Circuit breaker monitoring and alerting enabled")
     else:

@@ -52,7 +52,7 @@ FINVIZ_CONFIG = CircuitBreakerConfig(
 )
 
 FRED_CONFIG = CircuitBreakerConfig(
-    name="fred_api",
+    name="fred_api",  # FRED data routed via OpenBB Platform API (port 6900)
     failure_threshold=5,
     failure_rate_threshold=0.5,
     timeout_threshold=15.0,
@@ -195,10 +195,10 @@ class MarketDataCircuitBreaker(EnhancedCircuitBreaker):
 
 
 class EconomicDataCircuitBreaker(EnhancedCircuitBreaker):
-    """Circuit breaker for economic data APIs (FRED)."""
+    """Circuit breaker for economic data APIs (FRED via OpenBB Platform)."""
 
     def __init__(self):
-        """Initialize with FRED configuration."""
+        """Initialize with FRED/OpenBB configuration."""
         super().__init__(FRED_CONFIG)
         self.fallback = ECONOMIC_DATA_FALLBACK
 
