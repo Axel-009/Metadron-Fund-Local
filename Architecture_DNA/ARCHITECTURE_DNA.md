@@ -612,7 +612,7 @@ HOLD
 | EquityLinkedGICPooling | L1 | GIC pooling methodology |
 | Quant-Developers-Resources | L1 | Strategy templates library |
 | Mav-Analysis | L2 | Technical indicators, backtesting |
-| quant-trading | L2 | Strategy library (Bollinger, Dual Thrust) |
+| quant-trading | L2+L7 | Strategy library (Bollinger, Dual Thrust) + **HFT Execution** (12 technical strategies run independently in ExecutionEngine Stage 6.5) |
 | stock-chain | L2 | Chain analysis, flow decomposition |
 | CTA-code | L2 | Trend-following, momentum signals |
 | TradeTheEvent | L2 | EventDrivenEngine (BERT event detection) |
@@ -685,8 +685,12 @@ HOLD
      └────────┬────────┘
               │
      ┌────────▼────────┐
-     │ L7 HFT/Exec    │ ← exchange-core (order matching, LMAX Disruptor)
-     │ wondertrader    │ ← micro-price, CTA, low-latency routing
+     │ L7 HFT/Exec    │ ← quant-trading: 12 independent technical strategies
+     │ Stage 6.5       │   (Bollinger, MACD, RSI, SAR, Heikin-Ashi, Dual Thrust,
+     │                 │    Shooting Star, London Breakout, Awesome Osc, Pair
+     │                 │    Trading, Arbitrage, Options Straddle) + VIX gate
+     │ exchange-core   │ ← order matching engine (LMAX Disruptor, 10M+ ops/sec)
+     │ wondertrader    │ ← micro-price, CTA, low-latency order routing
      └────────┬────────┘
               │
     ┌─────────┴─────────┐

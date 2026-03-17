@@ -31,7 +31,7 @@ UniverseEngine → MacroEngine → MetadronCube → CrossAssetContagion → Soci
 
 ```
 L1 Data           Financial-Data, QLIB, open-bb        → Market data + factor research (FRED via OpenBB)
-L2 Signals        quant-trading, ML-Macro-Market,      → Strategy library + regime classifier
+L2 Signals        quant-trading (also L7), ML-Macro-Market → Strategy library + regime classifier + HFT execution
                   CTA-code, stock-chain
 L3 Intelligence   ai-hedgefund, Mav-Analysis,          → Multi-agent decision engine
                   Air-LLM, AI-Newton
@@ -40,8 +40,8 @@ L4 Portfolio      hedgefund-tracker, open-bb,           → Institutional tracke
                   sophisticated-distress-analysis
 L5 Infrastructure Kserve, nividia-repo, Air-LLM        → ML serving + GPU inference
 L6 Agents         Ruflo-agents, MiroFish                → Multi-agent orchestration + social prediction
-L7 HFT/Execution wondertrader, exchange-core,          → HFT micro-price + order matching
-                  Quant-Developers-Resources
+L7 HFT/Execution quant-trading, wondertrader,           → 12 technical strategies + micro-price + order matching
+                  exchange-core, Quant-Dev-Resources
 ```
 
 ### Reference Repo Mapping
@@ -121,9 +121,10 @@ Metadron-Capital/                        ← Master monorepo (Layer 0: Hub)
 │   │   ├── decision_matrix.py          ← 6-gate trade approval + Kelly sizing + ABU beta
 │   │   ├── options_engine.py           ← Black-Scholes, Greeks, vol surface, θ+Γ optimizer
 │   │   └── conviction_override.py       ← 3-tier conviction override system
-│   │   # L7 HFT arm (Java/C++ → Python bridge):
-│   │   # exchange-core v2 → order matching (LMAX Disruptor, 10M+ ops/sec)
-│   │   # wondertrader    → micro-price, CTA, low-latency routing
+│   │   # L7 HFT Execution arm:
+│   │   # quant_strategy_executor.py  → 12 independent technical strategies (Stage 6.5)
+│   │   # exchange-core v2            → order matching (LMAX Disruptor, 10M+ ops/sec)
+│   │   # wondertrader                → micro-price, CTA, low-latency routing
 │   ├── agents/                          ← L6: Agent orchestration
 │   │   ├── sector_bots.py             ← 11 GICS sector micro-bots + scorecard
 │   │   ├── research_bots.py           ← 11 GICS research bots + DNA hierarchy
