@@ -23,8 +23,8 @@ Data sourced via **OpenBB** (34+ providers: FRED, SEC, Polygon, FMP, CBOE, ECB, 
 ## Signal Pipeline
 
 ```
-UniverseEngine → MacroEngine → MetadronCube → CrossAssetContagion → SocialPrediction → DistressedAssets → CVR → EventDriven → TickerSelection → AlphaOptimizer → BetaCorridor → DecisionMatrix → ExecutionEngine
-     (L1)           (L2)          (L2)              (L2/3.5)           (L2/L3)              (L2)          (L2)     (L2)          (L2/4)          (L3)            (L4)           (L5)             (L5)
+UniverseEngine → MacroEngine → MetadronCube → PatternDiscovery → CrossAssetContagion → SocialPrediction → DistressedAssets → CVR → EventDriven → TickerSelection → AlphaOptimizer → BetaCorridor → DecisionMatrix → HFTTechnical → ExecutionEngine
+     (L1)           (L2)          (L2)           (L2/3.2)            (L2/3.5)             (L2/L3)            (L2)          (L2)     (L2)          (L2/4)          (L3)            (L4)           (L5)          (L7/6.5)        (L7)
 ```
 
 ### Layer Architecture (L1 → L5 → L2 → L3 → L4 → L7)
@@ -53,6 +53,7 @@ L7 HFT/Execution quant-trading, wondertrader,           → 12 technical strateg
 | HFT/Execution | exchange-core v2 (Java) | L7 — Ultra-low-latency order matching engine (LMAX Disruptor, 10M+ ops/sec) |
 | Prediction | MiroFish (666ghj) | Agent-based social simulation → SocialPredictionEngine |
 | Reference | Quant-Developers-Resources | Quant research catalog (11 categories) |
+| Backend | Installation-Back-end-Files | ML backends: OpenBB SDK, CAMEL-AI/OASIS, PySR, QLIB, FinBERT, Air-LLM |
 
 ### MacroEngine Cadence
 
@@ -94,6 +95,7 @@ Metadron-Capital/                        ← Master monorepo (Layer 0: Hub)
 │   │   ├── metadron_cube.py            ← C(t) = f(L,R,F) + 4-Gate + KillSwitch + FCLP
 │   │   ├── contagion_engine.py         ← L3 graph topology, 21 nodes, 7 shock scenarios
 │   │   ├── stat_arb_engine.py          ← Medallion mean reversion + cointegration pairs
+│   │   ├── pattern_discovery_engine.py ← L2 Pattern Discovery (MiroFish + AI-Newton → PatternDiscoveryBus)
 │   │   ├── social_prediction_engine.py ← MiroFish bridge → social sentiment signals
 │   │   ├── distressed_asset_engine.py  ← 5-model distress ensemble (Z/KMV/O/Zmij/ML)
 │   │   ├── cvr_engine.py              ← CVR valuation (5 models, 4 instruments)
@@ -246,6 +248,7 @@ HY OAS +35bp & VIX term flat/inverted & breadth <50% → auto β ≤ 0.35
 
 ### New Engines
 
+- **PatternDiscoveryEngine**: L2 MiroFish dual simulation (CAMEL-AI) + AI-Newton symbolic regression (PySR) → PatternDiscoveryBus → enrichment features for AlphaOptimizer
 - **ContagionEngine**: L3 graph topology, 21 nodes, 7 shock scenarios, multi-step propagation
 - **StatArbEngine**: Medallion mean reversion + cointegration pairs + factor residuals (Σβ≈0)
 - **OptionsEngine**: Black-Scholes Greeks, θ+Γ optimizer, vol surface, P4 sleeve allocation

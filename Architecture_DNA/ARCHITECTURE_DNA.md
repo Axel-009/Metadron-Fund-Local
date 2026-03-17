@@ -620,7 +620,7 @@ HOLD
 | Stock-techincal-prediction-model | L3 | AlphaOptimizer (LSTM/CNN predictions) |
 | Stock-prediction | L3 | Additional prediction models |
 | ML-Macro-Market | L3 | MacroEngine (regime classification) |
-| AI-Newton | L3 | Physics-informed models (differential equations) |
+| AI-Newton | L2+L4 | **Pattern Discovery** (PySR symbolic regression: conservation laws, lead-lag, fair value) + Decision validation |
 | ai-hedgefund | L4 | Multi-agent portfolio, CVREngine |
 | financial-distressed-repo | L4 | DistressedAssetEngine (baseline) |
 | sophisticated-distress-analysis | L4 | DistressedAssetEngine (advanced) |
@@ -629,7 +629,7 @@ HOLD
 | nividia-repo | L5 | GPU-accelerated training/inference |
 | Air-LLM | L5 | Efficient LLM inference |
 | Ruflo-agents | L6 | Agent orchestration framework |
-| MiroFish | L6 | SocialPredictionEngine (sentiment) |
+| MiroFish | L2+L6 | **Pattern Discovery** (CAMEL-AI dual sim: clustering, herding, contagion, divergence) + Social prediction |
 | exchange-core | L7 | **HFT Execution** — Ultra-low-latency order matching engine (Java, LMAX Disruptor) |
 | wondertrader | L7 | **HFT Execution** — Micro-price engine, CTA execution, low-latency order routing |
 
@@ -684,6 +684,15 @@ HOLD
      │  + PaperBroker  │ ← MicroPrice, cross-asset, deep features
      └────────┬────────┘
               │
+     ┌────────▼────────┐
+     │ L2 Discovery   │ ← MiroFish: dual sim (CAMEL-AI + OASIS)
+     │ Stage 3.2       │   Mode A: Synthetic Market (clustering, herding, regime)
+     │                 │   Mode B: Contagion Network (correlations, divergence)
+     │                 │ ← AI-Newton: symbolic regression (PySR)
+     │                 │   Conservation laws, lead-lag, fair value formulas
+     │                 │ → PatternDiscoveryBus → features for L3 Alpha
+     └────────┬────────┘
+              │ discovered patterns as structured features
      ┌────────▼────────┐
      │ L7 HFT/Exec    │ ← quant-trading: 12 independent technical strategies
      │ Stage 6.5       │   (Bollinger, MACD, RSI, SAR, Heikin-Ashi, Dual Thrust,

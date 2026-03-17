@@ -84,6 +84,13 @@ try:
 except ImportError:
     _HAS_EVENT = False
 
+# L2 Pattern Discovery (MiroFish + AI-Newton)
+try:
+    from ..signals.pattern_discovery_engine import PatternDiscoveryEngine
+    _HAS_DISCOVERY = True
+except ImportError:
+    _HAS_DISCOVERY = False
+
 logger = logging.getLogger(__name__)
 
 
@@ -1052,6 +1059,14 @@ class ExecutionEngine:
             except Exception as e:
                 logger.warning(f"EventDrivenEngine init failed: {e}")
 
+        # L2 Pattern Discovery (MiroFish dual simulation + AI-Newton symbolic regression)
+        self.discovery = None
+        if _HAS_DISCOVERY:
+            try:
+                self.discovery = PatternDiscoveryEngine()
+            except Exception as e:
+                logger.warning(f"PatternDiscoveryEngine init failed: {e}")
+
         # L7 HFT Technical Execution (quant-trading strategies)
         self.quant_hft = None
         if _HAS_QUANT_HFT:
@@ -1114,6 +1129,45 @@ class ExecutionEngine:
         cross_asset_data = self.cross_asset.compute_correlations()
         result["stages"]["cross_asset"] = cross_asset_data
         self.tracker.record_stage("cross_asset", (datetime.now() - t0).total_seconds() * 1000, cross_asset_data)
+
+        # Stage 3.2: L2 Pattern Discovery (MiroFish dual sim + AI-Newton symbolic regression)
+        # Discovers patterns in the classified universe BEFORE alpha optimization.
+        # MiroFish: emergent clustering, herding, contagion, regime shifts, divergences
+        # AI-Newton: conservation laws, lead-lag relationships, fair value formulas
+        # Outputs feed into AlphaOptimizer as enrichment features.
+        t0 = datetime.now()
+        discovery_data = {}
+        discovery_features = {}
+        if self.discovery:
+            try:
+                # Build price dict from universe
+                all_tickers = [s.ticker for s in self.universe.get_all()[:50]]
+                price_dict = {}
+                for ticker in all_tickers:
+                    try:
+                        adj = get_adj_close(ticker, start=(
+                            pd.Timestamp.now() - pd.Timedelta(days=180)
+                        ).strftime("%Y-%m-%d"))
+                        if isinstance(adj, pd.DataFrame) and not adj.empty and "Close" in adj.columns:
+                            price_dict[ticker] = adj["Close"]
+                    except Exception:
+                        continue
+
+                if price_dict:
+                    bus = self.discovery.discover(price_dict)
+                    discovery_features = self.discovery.get_alpha_features(list(price_dict.keys()))
+                    discovery_data = bus.as_dict()
+                    logger.info(f"Pattern Discovery: {discovery_data.get('total_signals', 0)} patterns, "
+                                f"{discovery_data.get('actionable', 0)} actionable")
+                else:
+                    discovery_data = {"status": "no_price_data"}
+            except Exception as e:
+                discovery_data = {"error": str(e)}
+                logger.warning(f"Pattern Discovery stage failed: {e}")
+        else:
+            discovery_data = {"status": "discovery_engine_not_available"}
+        result["stages"]["pattern_discovery"] = discovery_data
+        self.tracker.record_stage("pattern_discovery", (datetime.now() - t0).total_seconds() * 1000, discovery_data)
 
         # Stage 3.7: Social prediction (MiroFish agent simulation)
         t0 = datetime.now()
