@@ -1,10 +1,10 @@
 """Unified data provider for the entire platform.
 
-Delegates to OpenBB (primary) with yfinance fallback.
+Delegates to OpenBB as the sole data source.
 All existing imports from this module continue to work unchanged.
 
 OpenBB provides access to 34+ data providers (FRED, SEC, Polygon, FMP,
-Intrinio, yfinance, CBOE, ECB, OECD, etc.) through a single unified API.
+Intrinio, CBOE, ECB, OECD, etc.) through a single unified API.
 """
 
 # ---------------------------------------------------------------------------

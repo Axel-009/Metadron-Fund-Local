@@ -3,7 +3,7 @@
 ## Mission
 **$1,000 → $100,000 in 100 days** (~4.6% daily compound return)
 Target 95%+ alpha. Compete with and outperform the Medallion fund.
-Paper broker mode (Yahoo Finance). Beta managed within 7–12% corridor.
+Paper broker mode (OpenBB data). Beta managed within 7–12% corridor.
 
 ---
 
@@ -46,7 +46,7 @@ Paper broker mode (Yahoo Finance). Beta managed within 7–12% corridor.
 
 ---
 
-## LAYER 1: DATA INGESTION — UniverseEngine + YahooData
+## LAYER 1: DATA INGESTION — UniverseEngine + OpenBB Data
 
 ### UniverseEngine (`engine/data/universe_engine.py`)
 - **150+ securities** across GICS 4-tier hierarchy
@@ -56,8 +56,8 @@ Paper broker mode (Yahoo Finance). Beta managed within 7–12% corridor.
 - **Macro tickers**: SPY, QQQ, IWM, TLT, GLD, USO, UUP, HYG, LQD, VXX
 - Methods: `get_by_sector()`, `get_rv_pairs()`, `get_sectors()`, `get_gsib_basket()`
 
-### YahooData (`engine/data/yahoo_data.py`)
-- **Single data source**: All data via yfinance — unified, free, no broker dependency
+### OpenBB Data (`engine/data/yahoo_data.py` → re-exports from `openbb_data.py`)
+- **Single data source**: All data via OpenBB (34+ providers) — unified, no broker dependency
 - `get_adj_close(tickers, start, end)` → Adjusted close prices
 - `get_returns(tickers, start, end)` → Daily log returns
 - `get_prices(tickers, start)` → Full OHLCV data
@@ -472,7 +472,7 @@ MES_hedge_beta = target_beta - sleeve_beta
 | G8 Cash Sufficiency | Trade value | Cash check for buys |
 
 ### PaperBroker (`engine/execution/paper_broker.py`)
-- Simulated broker using Yahoo Finance prices
+- Simulated broker using OpenBB prices
 - Tracks positions, P&L, NAV, cash, exposures
 - Supports: BUY, SELL, SHORT, COVER
 - Position tracking with sector tagging
@@ -605,7 +605,7 @@ HOLD
 
 | Repo | Layer | Feeds Into |
 |------|-------|-----------|
-| Financial-Data | L1 | YahooData, UniverseEngine |
+| Financial-Data | L1 | OpenBB Data, UniverseEngine |
 | open-bb | L1 | MacroEngine, SectorRanker |
 | hedgefund-tracker | L1 | InstitutionalFlow signals |
 | FRB | L1 | MacroEngine (FRED API → LiquidityTensor) |
@@ -639,8 +639,8 @@ HOLD
 
 ```
                     ┌──────────────┐
-                    │  OpenBB Data │ ← Primary (34+ providers, FRED, SEC, CBOE)
-                    │  + yfinance  │ ← Fallback (free, no signup required)
+                    │  OpenBB Data │ ← Sole source (34+ providers, FRED, SEC, CBOE)
+                    │  (187 APIs)  │ ← FMP, Intrinio, Polygon, Tiingo, etc.
                     └──────┬───────┘
                            │
                     ┌──────▼───────┐
@@ -757,7 +757,7 @@ python3 -m pytest tests/ -v
 
 ## DESIGN RULES (IMMUTABLE)
 
-1. **All data via OpenBB + yfinance fallback** — free, open-source, no signup/API keys required
+1. **All data via OpenBB** (sole source, 34+ providers) — no yfinance dependency
 2. **Paper broker only** — no live execution until broker API connected
 3. **6-layer architecture is immutable** — extend within layers, not across
 4. **Beta managed within 7–12% corridor** — vol-normalised

@@ -14,9 +14,8 @@ dependencies = [
     "tensorflow>=2.15",
     "xgboost>=2.0",
     "lightgbm>=4.0",
-    # Financial data & analysis — OpenBB primary, yfinance fallback
+    # Financial data & analysis — OpenBB as sole data source
     "openbb>=4.0",
-    "openbb-yfinance>=1.0",
     "openbb-fred>=1.0",
     "openbb-sec>=1.0",
     "openbb-cboe>=1.0",
@@ -29,7 +28,6 @@ dependencies = [
     "openbb-polygon>=1.0",
     "openbb-oecd>=1.0",
     "openbb-finra>=1.0",
-    "yfinance>=0.2",
     "statsmodels>=0.14",
     "fredapi>=0.5",
     # AI/LLM orchestration

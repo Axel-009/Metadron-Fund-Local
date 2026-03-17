@@ -623,7 +623,7 @@ def get_historical(
             symbol=symbol,
             start_date=start,
             end_date=end,
-            provider="yfinance",
+            provider="fmp",
         )
         return result.to_dataframe()
 
@@ -646,35 +646,35 @@ def get_fundamentals(symbol: str) -> dict:
     result: dict = {}
 
     try:
-        income = obb.equity.fundamental.income(symbol=symbol, provider="yfinance")
+        income = obb.equity.fundamental.income(symbol=symbol, provider="fmp")
         result["income_statement"] = income.to_dataframe()
     except Exception as exc:
         logger.warning("Income statement fetch failed for %s: %s", symbol, exc)
         result["income_statement"] = pd.DataFrame()
 
     try:
-        balance = obb.equity.fundamental.balance(symbol=symbol, provider="yfinance")
+        balance = obb.equity.fundamental.balance(symbol=symbol, provider="fmp")
         result["balance_sheet"] = balance.to_dataframe()
     except Exception as exc:
         logger.warning("Balance sheet fetch failed for %s: %s", symbol, exc)
         result["balance_sheet"] = pd.DataFrame()
 
     try:
-        cash = obb.equity.fundamental.cash(symbol=symbol, provider="yfinance")
+        cash = obb.equity.fundamental.cash(symbol=symbol, provider="fmp")
         result["cash_flow"] = cash.to_dataframe()
     except Exception as exc:
         logger.warning("Cash flow fetch failed for %s: %s", symbol, exc)
         result["cash_flow"] = pd.DataFrame()
 
     try:
-        ratios = obb.equity.fundamental.ratios(symbol=symbol, provider="yfinance")
+        ratios = obb.equity.fundamental.ratios(symbol=symbol, provider="fmp")
         result["ratios"] = ratios.to_dataframe()
     except Exception as exc:
         logger.warning("Ratios fetch failed for %s: %s", symbol, exc)
         result["ratios"] = pd.DataFrame()
 
     try:
-        profile = obb.equity.profile(symbol=symbol, provider="yfinance")
+        profile = obb.equity.profile(symbol=symbol, provider="fmp")
         result["profile"] = profile.to_dataframe()
     except Exception as exc:
         logger.warning("Profile fetch failed for %s: %s", symbol, exc)
@@ -770,7 +770,7 @@ def get_etf_holdings(symbol: str) -> pd.DataFrame:
     obb = _get_obb()
 
     def _fetch():
-        result = obb.etf.holdings(symbol=symbol, provider="yfinance")
+        result = obb.etf.holdings(symbol=symbol, provider="fmp")
         return result.to_dataframe()
 
     return _retry_with_backoff(_fetch)

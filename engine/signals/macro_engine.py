@@ -4,7 +4,7 @@ Incorporates Dataset 3: Global Monetary Tension Framework (GMTF).
 Regimes: BULL / BEAR / TRANSITION / STRESS
 Money velocity: Fisher equation V = GDP/M2, sigmoid triggers, carry-to-volatility.
 Ranks sector universe by macro regime.
-Data: yfinance (market proxies) + FRB/FRED (when API key available).
+Data: OpenBB (market proxies + FRED/FRB direct series).
 
 Extended modules:
     MoneyVelocityModule   — Fisher V=GDP/M2, credit impulse, TED/SOFR, Liquidity Score
@@ -1988,7 +1988,7 @@ class MacroEngine:
         self._macro_data: Optional[pd.DataFrame] = None
 
     def analyze(self, lookback_days: int = 252) -> MacroSnapshot:
-        """Run full macro analysis using Yahoo Finance data."""
+        """Run full macro analysis using OpenBB data."""
         snapshot = MacroSnapshot()
 
         try:
