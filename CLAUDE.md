@@ -49,8 +49,8 @@ L7 HFT/Execution wondertrader, exchange-core,          → HFT micro-price + ord
 | Role | Repo | Function |
 |------|------|----------|
 | Data | FRB (avelkoski) | **DEPRECATED** — FRED data now via OpenBB `openbb-fred` provider |
-| Execution | wondertrader (C++→Python) | HFT micro-price signal → MicroPriceEngine |
-| Execution | exchange-core (Java→Python) | Order matching / paper order book |
+| HFT/Execution | wondertrader (C++→Python) | L7 — HFT micro-price signal, CTA, low-latency order routing |
+| HFT/Execution | exchange-core v2 (Java) | L7 — Ultra-low-latency order matching engine (LMAX Disruptor, 10M+ ops/sec) |
 | Prediction | MiroFish (666ghj) | Agent-based social simulation → SocialPredictionEngine |
 | Reference | Quant-Developers-Resources | Quant research catalog (11 categories) |
 
@@ -115,12 +115,15 @@ Metadron-Capital/                        ← Master monorepo (Layer 0: Hub)
 │   │       └── kserve_adapter.py        ← KServe ML model serving adapter
 │   ├── portfolio/                       ← L4: Portfolio construction
 │   │   └── beta_corridor.py            ← Beta corridor 7–12% + vol-normalisation
-│   ├── execution/                       ← L5: Execution
+│   ├── execution/                       ← L5: Execution + L7 HFT routing
 │   │   ├── paper_broker.py             ← Simulated broker (OpenBB prices)
 │   │   ├── execution_engine.py         ← Full pipeline orchestrator + ML vote ensemble
 │   │   ├── decision_matrix.py          ← 6-gate trade approval + Kelly sizing + ABU beta
 │   │   ├── options_engine.py           ← Black-Scholes, Greeks, vol surface, θ+Γ optimizer
 │   │   └── conviction_override.py       ← 3-tier conviction override system
+│   │   # L7 HFT arm (Java/C++ → Python bridge):
+│   │   # exchange-core v2 → order matching (LMAX Disruptor, 10M+ ops/sec)
+│   │   # wondertrader    → micro-price, CTA, low-latency routing
 │   ├── agents/                          ← L6: Agent orchestration
 │   │   ├── sector_bots.py             ← 11 GICS sector micro-bots + scorecard
 │   │   ├── research_bots.py           ← 11 GICS research bots + DNA hierarchy

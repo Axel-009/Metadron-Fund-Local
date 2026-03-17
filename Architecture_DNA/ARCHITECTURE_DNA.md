@@ -616,7 +616,6 @@ HOLD
 | stock-chain | L2 | Chain analysis, flow decomposition |
 | CTA-code | L2 | Trend-following, momentum signals |
 | TradeTheEvent | L2 | EventDrivenEngine (BERT event detection) |
-| wondertrader | L2 | HFT micro-price, CTA execution |
 | QLIB | L3 | AlphaOptimizer (factor mining, pipeline) |
 | Stock-techincal-prediction-model | L3 | AlphaOptimizer (LSTM/CNN predictions) |
 | Stock-prediction | L3 | Additional prediction models |
@@ -629,9 +628,10 @@ HOLD
 | Kserve | L5 | Model serving infrastructure |
 | nividia-repo | L5 | GPU-accelerated training/inference |
 | Air-LLM | L5 | Efficient LLM inference |
-| exchange-core | L5 | Order matching engine (Java) |
 | Ruflo-agents | L6 | Agent orchestration framework |
 | MiroFish | L6 | SocialPredictionEngine (sentiment) |
+| exchange-core | L7 | **HFT Execution** — Ultra-low-latency order matching engine (Java, LMAX Disruptor) |
+| wondertrader | L7 | **HFT Execution** — Micro-price engine, CTA execution, low-latency order routing |
 
 ---
 
@@ -682,6 +682,11 @@ HOLD
      ┌────────▼────────┐
      │ExecutionEngine  │ ← 10-tier ML vote, 8 risk gates
      │  + PaperBroker  │ ← MicroPrice, cross-asset, deep features
+     └────────┬────────┘
+              │
+     ┌────────▼────────┐
+     │ L7 HFT/Exec    │ ← exchange-core (order matching, LMAX Disruptor)
+     │ wondertrader    │ ← micro-price, CTA, low-latency routing
      └────────┬────────┘
               │
     ┌─────────┴─────────┐
