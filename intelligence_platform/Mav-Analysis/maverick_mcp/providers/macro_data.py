@@ -1,6 +1,9 @@
 """
 Macroeconomic data providers and utilities for Maverick-MCP.
 Provides GDP, inflation rate, unemployment rate, and other macroeconomic indicators.
+
+All FRED data is routed through the OpenBB Platform API (port 6900) using the
+openbb-fred provider, eliminating the direct fredapi dependency.
 """
 
 import logging
@@ -10,53 +13,48 @@ from datetime import UTC, datetime, timedelta
 import pandas as pd
 from sklearn.preprocessing import MinMaxScaler
 
+from maverick_mcp.providers.openbb_fred_client import OpenBBFredClient
 from maverick_mcp.utils.circuit_breaker_decorators import (
     with_economic_data_circuit_breaker,
 )
 
 logger = logging.getLogger("maverick_mcp.macro_data")
 
-# Configuration
+# Configuration — FRED API key is now managed by OpenBB Platform credentials
+# but we still pass it through for backwards compatibility
 FRED_API_KEY = os.getenv("FRED_API_KEY", "")
 
 
 class MacroDataProvider:
-    """Provider for macroeconomic data using FRED API."""
+    """Provider for macroeconomic data using FRED via OpenBB Platform API."""
 
     MAX_WINDOW_DAYS = 365
 
     def __init__(self, window_days: int = MAX_WINDOW_DAYS):
-        try:
-            from fredapi import Fred
+        # Initialize OpenBB FRED client (replaces fredapi.Fred)
+        self.fred = OpenBBFredClient(api_key=FRED_API_KEY)
+        self.scaler = MinMaxScaler()
+        self.window_days = window_days
+        self.historical_data_bounds: dict[str, dict[str, str]] = {}
+        self.update_historical_bounds()
 
-            self.fred = Fred(api_key=FRED_API_KEY)
-            self.scaler = MinMaxScaler()
-            self.window_days = window_days
-            self.historical_data_bounds: dict[str, dict[str, str]] = {}
-            self.update_historical_bounds()
+        # For momentum swings, shorter lookbacks
+        self.lookback_days = 30
 
-            # For momentum swings, shorter lookbacks
-            self.lookback_days = 30
+        # Weights for macro sentiment
+        self.weights = {
+            # Short-term signals (60% total)
+            "vix": 0.20,
+            "sp500_momentum": 0.20,
+            "nasdaq_momentum": 0.15,
+            "usd_momentum": 0.05,
+            # Macro signals (40% total)
+            "inflation_rate": 0.15,
+            "gdp_growth_rate": 0.15,
+            "unemployment_rate": 0.10,
+        }
 
-            # Weights for macro sentiment
-            self.weights = {
-                # Short-term signals (60% total)
-                "vix": 0.20,
-                "sp500_momentum": 0.20,
-                "nasdaq_momentum": 0.15,
-                "usd_momentum": 0.05,
-                # Macro signals (40% total)
-                "inflation_rate": 0.15,
-                "gdp_growth_rate": 0.15,
-                "unemployment_rate": 0.10,
-            }
-
-            self.previous_sentiment_score = None
-        except ImportError:
-            logger.error(
-                "fredapi not installed. Please install with 'pip install fredapi'"
-            )
-            raise
+        self.previous_sentiment_score = None
 
     @with_economic_data_circuit_breaker(
         use_fallback=False
@@ -65,7 +63,7 @@ class MacroDataProvider:
         self, series_id: str, start_date: str, end_date: str
     ) -> pd.Series:
         """
-        Get FRED series data with circuit breaker protection.
+        Get FRED series data via OpenBB with circuit breaker protection.
 
         Args:
             series_id: FRED series identifier
@@ -116,7 +114,7 @@ class MacroDataProvider:
                     )
             else:
                 logger.warning(
-                    f"Unexpected data type from FRED API for {series_id}: {type(series_data)}"
+                    f"Unexpected data type from OpenBB FRED for {series_id}: {type(series_data)}"
                 )
         return total_performance
 
@@ -195,7 +193,7 @@ class MacroDataProvider:
             )
             if not isinstance(series_data, pd.Series):
                 logger.error(
-                    f"Expected pandas Series from FRED API, got {type(series_data)}"
+                    f"Expected pandas Series from OpenBB FRED, got {type(series_data)}"
                 )
                 return {"current": 0.0, "previous": 0.0}
 
@@ -220,7 +218,7 @@ class MacroDataProvider:
             # Get ~5 years of data to ensure we have enough
             start_date = end_date - timedelta(days=5 * 365)
 
-            # 1) Fetch monthly CPILFESL data from FRED
+            # 1) Fetch monthly CPILFESL data via OpenBB FRED provider
             series_data = self.fred.get_series(
                 "CPILFESL",
                 observation_start=start_date.strftime("%Y-%m-%d"),
@@ -230,7 +228,7 @@ class MacroDataProvider:
             # 2) Ensure it's a pandas Series and clean it
             if not isinstance(series_data, pd.Series):
                 logger.error(
-                    f"Expected pandas Series from FRED API, got {type(series_data)}"
+                    f"Expected pandas Series from OpenBB FRED, got {type(series_data)}"
                 )
                 return {"current": None, "previous": None, "bounds": (None, None)}
 
@@ -248,16 +246,10 @@ class MacroDataProvider:
             latest_value = data.iloc[-1]
 
             # 4) Get data for exactly one year prior (the matching month)
-            #    Because we forced MS freq, this is typically just `iloc[-13]` (12 steps back),
-            #    but let's keep the logic explicit:
             if isinstance(latest_idx, pd.Timestamp):
                 year_ago_idx = latest_idx - pd.DateOffset(years=1)
             else:
-                # Fallback for unexpected index types
                 year_ago_idx = pd.Timestamp(latest_idx) - pd.DateOffset(years=1)
-            # If your data is strictly monthly, you can do:
-            # year_ago_value = data.loc[year_ago_idx]  # might fail if missing data
-            # Or fallback to "on or before" logic:
             year_ago_series = data[data.index <= year_ago_idx]
             if year_ago_series.empty:
                 logger.warning(
@@ -286,7 +278,6 @@ class MacroDataProvider:
                 ):
                     prev_year_ago_idx = prev_month_idx - pd.DateOffset(years=1)
                 else:
-                    # Handle NaT or other types
                     prev_year_ago_idx = pd.Timestamp(prev_month_idx) - pd.DateOffset(
                         years=1
                     )
@@ -331,7 +322,7 @@ class MacroDataProvider:
             return {"current": None, "previous": None, "bounds": (None, None)}
 
     def get_vix(self) -> float | None:
-        """Get VIX data from FRED."""
+        """Get VIX data — tries yfinance first, falls back to FRED via OpenBB."""
         try:
             import yfinance as yf
 
@@ -341,7 +332,7 @@ class MacroDataProvider:
             if not data.empty:
                 return float(data["Close"].iloc[-1])
 
-            # fallback to FRED
+            # Fallback to FRED via OpenBB
             end_date = datetime.now(UTC)
             start_date = end_date - timedelta(days=7)
             series_data = self.fred.get_series(

@@ -60,8 +60,7 @@ dependencies = [
     "sentry-sdk[fastapi]>=2.22.0",
     # Prometheus metrics
     "prometheus-client>=0.21.1",
-    # Trading
-    "fredapi>=0.5.2",
+    # Trading (FRED data routed via OpenBB Platform API - no fredapi needed)
     "pandas-datareader>=0.10.0",
     "pandas-market-calendars>=5.1.0",
     "tiingo>=0.16.1",

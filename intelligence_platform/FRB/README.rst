@@ -1,5 +1,13 @@
-Python Client for FRED® API
-===========================
+Python Client for FRED® API — DEPRECATED
+=========================================
+
+.. warning::
+
+   **DEPRECATED**: This FRB package is no longer used by Metadron Capital.
+   All FRED data is now routed through the **OpenBB Platform API** using the
+   ``openbb-fred`` provider (port 6900). See ``intelligence_platform/open-bb/``
+   and ``engine/data/openbb_data.py`` for the active integration.
+
 Python client for interfacing with the Federal Reserve Bank's
 FRED API. Our goal is to provide a simple, well-documented
 solution for FRED-related programming in Python.

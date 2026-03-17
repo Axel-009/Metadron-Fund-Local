@@ -608,7 +608,7 @@ HOLD
 | Financial-Data | L1 | OpenBB Data, UniverseEngine |
 | open-bb | L1 | MacroEngine, SectorRanker |
 | hedgefund-tracker | L1 | InstitutionalFlow signals |
-| FRB | L1 | MacroEngine (FRED API → LiquidityTensor) |
+| FRB | L1 | **DEPRECATED** — FRED data now routed via OpenBB (`openbb-fred` provider). See `open-bb` |
 | EquityLinkedGICPooling | L1 | GIC pooling methodology |
 | Quant-Developers-Resources | L1 | Strategy templates library |
 | Mav-Analysis | L2 | Technical indicators, backtesting |

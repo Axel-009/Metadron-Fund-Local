@@ -30,7 +30,7 @@ UniverseEngine → MacroEngine → MetadronCube → CrossAssetContagion → Soci
 ### Layer Architecture (L1 → L5 → L2 → L3 → L4 → L7)
 
 ```
-L1 Data           Financial-Data, QLIB, FRB           → Market data + factor research
+L1 Data           Financial-Data, QLIB, open-bb        → Market data + factor research (FRED via OpenBB)
 L2 Signals        quant-trading, ML-Macro-Market,      → Strategy library + regime classifier
                   CTA-code, stock-chain
 L3 Intelligence   ai-hedgefund, Mav-Analysis,          → Multi-agent decision engine
@@ -48,7 +48,7 @@ L7 HFT/Execution wondertrader, exchange-core,          → HFT micro-price + ord
 
 | Role | Repo | Function |
 |------|------|----------|
-| Data | FRB (avelkoski) | Federal Reserve FRED API → LiquidityTensor |
+| Data | FRB (avelkoski) | **DEPRECATED** — FRED data now via OpenBB `openbb-fred` provider |
 | Execution | wondertrader (C++→Python) | HFT micro-price signal → MicroPriceEngine |
 | Execution | exchange-core (Java→Python) | Order matching / paper order book |
 | Prediction | MiroFish (666ghj) | Agent-based social simulation → SocialPredictionEngine |

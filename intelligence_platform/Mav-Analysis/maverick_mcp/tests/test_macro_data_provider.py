@@ -1,5 +1,8 @@
 """
 Tests for the MacroDataProvider class.
+
+MacroDataProvider now uses OpenBBFredClient (via OpenBB Platform API)
+instead of fredapi.Fred directly.
 """
 
 import unittest
@@ -14,27 +17,29 @@ from maverick_mcp.providers.macro_data import MacroDataProvider
 class TestMacroDataProvider(unittest.TestCase):
     """Test suite for MacroDataProvider."""
 
-    @patch("fredapi.Fred")
-    def setUp(self, mock_fred_class):
+    @patch("maverick_mcp.providers.macro_data.OpenBBFredClient")
+    def setUp(self, mock_client_class):
         """Set up test fixtures."""
         mock_fred = MagicMock()
-        mock_fred_class.return_value = mock_fred
-        # Create provider with mocked FRED
+        mock_fred.get_series.return_value = pd.Series([], dtype=float)
+        mock_client_class.return_value = mock_fred
+        # Create provider with mocked OpenBB FRED client
         self.provider = MacroDataProvider()
         self.provider.fred = mock_fred
 
-    @patch("fredapi.Fred")
-    def test_init_with_fred_api(self, mock_fred_class):
-        """Test initialization with FRED API."""
+    @patch("maverick_mcp.providers.macro_data.OpenBBFredClient")
+    def test_init_with_openbb_fred(self, mock_client_class):
+        """Test initialization with OpenBB FRED client."""
         mock_fred = MagicMock()
-        mock_fred_class.return_value = mock_fred
+        mock_fred.get_series.return_value = pd.Series([], dtype=float)
+        mock_client_class.return_value = mock_fred
 
         provider = MacroDataProvider(window_days=180)
 
         self.assertEqual(provider.window_days, 180)
         self.assertIsNotNone(provider.scaler)
         self.assertIsNotNone(provider.weights)
-        mock_fred_class.assert_called_once()
+        mock_client_class.assert_called_once()
 
     def test_calculate_weighted_rolling_performance(self):
         """Test weighted rolling performance calculation."""
@@ -178,8 +183,8 @@ class TestMacroDataProvider(unittest.TestCase):
 
             self.assertEqual(result, 18.5)
 
-    def test_get_vix_fallback_to_fred(self):
-        """Test VIX fetching with FRED fallback."""
+    def test_get_vix_fallback_to_openbb_fred(self):
+        """Test VIX fetching with OpenBB FRED fallback."""
         with patch("yfinance.Ticker") as mock_ticker_class:
             mock_ticker = MagicMock()
             mock_ticker_class.return_value = mock_ticker
