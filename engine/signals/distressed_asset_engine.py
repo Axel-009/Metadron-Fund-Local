@@ -1,22 +1,32 @@
 """DistressedAssetEngine — Institutional-Grade Financial Distress Analysis.
 
-5-Model Ensemble + ML Meta-Learner:
+5-Model Ensemble + ML Meta-Learner + Graham-Mielle Framework:
     1. Altman Z-Score (Z, Z', Z'') — manufacturing, non-mfg, emerging market
     2. Merton KMV Distance-to-Default — structural credit via iterative asset inversion
     3. Ohlson O-Score — 9-factor logit bankruptcy probability
     4. Zmijewski Score — 3-factor probit calibrated probability
     5. ML Gradient Boosting — 40+ engineered features, walk-forward trained
 
+Graham-Mielle Enhancements (Security Analysis 7th Edition):
+    6. Fulcrum security identification (Mielle framework)
+    7. Orderly liquidation value (Graham Ch.42 asset liquidation rates)
+    8. Balance sheet × income statement cross-referencing (Mielle)
+    9. Cash flow statement analysis as the diagnostic link (Mielle)
+    10. Asset seizure / collateral analysis (senior secured recovery)
+    11. Howard Marks 8-factor credit analysis
+
 Outputs:
     - Per-ticker DistressScore with ensemble probability
     - Fallen angel detector (IG → HY migration candidates)
-    - LGD recovery estimator by seniority
+    - LGD recovery estimator by seniority + Graham liquidation rates
     - Kelly-sized opportunity ranker for distressed investing
     - Contagion-adjusted systemic importance weighting
+    - Fulcrum security position in capital structure
+    - Orderly liquidation value vs market cap
 
 Reference: Integrates techniques from keigito/FinancialDistressPrediction
            (GBM with StandardScaler, 82 features, -0.5 threshold)
-           Elevated to institutional-grade multi-model ensemble.
+           Enhanced with Graham-Dodd-Klarman-Mielle distressed frameworks.
 
 Usage:
     from engine.signals.distressed_asset_engine import DistressedAssetEngine
@@ -107,6 +117,70 @@ class LGDEstimate:
     workout_months: int = 18
 
 
+# ---------------------------------------------------------------------------
+# Graham-Mielle Enhancements (Security Analysis 7th Edition)
+# ---------------------------------------------------------------------------
+
+# Graham's asset liquidation rates (Chapter 42)
+GRAHAM_LIQUIDATION_RATES = {
+    "cash": 1.00,
+    "govt_securities": 1.00,
+    "marketable_securities": 0.85,
+    "accounts_receivable": 0.77,
+    "inventory_finished": 0.62,
+    "inventory_raw": 0.57,
+    "prepaid_expenses": 0.37,
+    "net_ppe": 0.25,
+    "intangibles": 0.00,
+    "long_term_investments": 0.82,
+}
+
+# Howard Marks 8-factor credit analysis
+MARKS_CREDIT_FACTORS = [
+    "economy_health",           # Where in economic cycle
+    "industry_outlook",         # Sector fundamentals
+    "competitive_position",     # Moat / market share
+    "management_capability",    # Track record / alignment
+    "financial_strength",       # Leverage / coverage / liquidity
+    "capital_structure",        # Seniority / subordination
+    "covenants_terms",          # Protective provisions
+    "valuation_price",          # Are you being compensated for risk
+]
+
+
+class FulcrumPosition(str, Enum):
+    """Mielle: Position in capital structure relative to fulcrum security."""
+    ABOVE_FULCRUM = "ABOVE_FULCRUM"      # Will recover full value
+    AT_FULCRUM = "AT_FULCRUM"            # Partially impaired, gets equity
+    BELOW_FULCRUM = "BELOW_FULCRUM"      # Likely total loss
+
+
+@dataclass
+class GrahamMielleAssessment:
+    """Graham-Mielle distressed credit assessment (7th Edition enhancements)."""
+    # Fulcrum analysis (Mielle)
+    fulcrum_position: FulcrumPosition = FulcrumPosition.BELOW_FULCRUM
+    fulcrum_recovery_pct: float = 0.0       # Recovery at fulcrum level
+    enterprise_value_coverage: float = 0.0  # EV / Total Debt
+
+    # Graham Chapter 42: Orderly liquidation value
+    orderly_liquidation_value: float = 0.0  # Sum of assets × liquidation rates
+    liquidation_surplus: float = 0.0        # OLV - Total Liabilities
+    liquidation_coverage: float = 0.0       # OLV / Total Liabilities
+
+    # Balance sheet × income statement cross-ref (Mielle)
+    bs_is_consistency: float = 0.0          # 0-1 score of consistency
+    cash_flow_diagnostic: float = 0.0       # FCF / Total Debt
+
+    # Howard Marks credit factors
+    marks_credit_score: float = 0.0         # 0-100 composite
+    marks_factor_scores: Dict = field(default_factory=dict)
+
+    # Collateral / asset seizure analysis
+    tangible_asset_coverage: float = 0.0    # Tangible assets / Total Debt
+    secured_debt_coverage: float = 0.0      # Pledged assets / Secured Debt
+
+
 @dataclass
 class DistressScore:
     """Complete distress assessment for a single name."""
@@ -134,6 +208,9 @@ class DistressScore:
     # ML features
     feature_count: int = 0
     top_risk_factors: list = field(default_factory=list)
+
+    # Graham-Mielle enhancements
+    graham_mielle: GrahamMielleAssessment = field(default_factory=GrahamMielleAssessment)
 
 
 # ---------------------------------------------------------------------------
@@ -602,6 +679,166 @@ class DistressedAssetEngine:
         return max(0.0, min(kelly, 0.25))  # Cap at 25% allocation
 
     # -----------------------------------------------------------------------
+    # Graham-Mielle Distressed Framework (7th Edition Enhancements)
+    # -----------------------------------------------------------------------
+    def _graham_mielle_analysis(self, ticker: str, data: dict,
+                                 ensemble_prob: float) -> GrahamMielleAssessment:
+        """Comprehensive Graham-Mielle distressed credit assessment.
+
+        Implements:
+        - Mielle's fulcrum security analysis (where in capital structure
+          does value break → equity conversion in reorganization)
+        - Graham Ch.42 orderly liquidation rates applied to asset mix
+        - Balance sheet × income statement cross-referencing
+        - Cash flow statement as diagnostic link
+        - Howard Marks 8-factor credit quality scoring
+        - Tangible asset coverage for senior secured recovery
+        """
+        gm = GrahamMielleAssessment()
+        de = data.get("debt_to_equity", 2.0)
+        mc = data.get("market_cap_B", 10.0) * 1e9
+        ic = data.get("interest_coverage", 2.0)
+
+        # Derive synthetic balance sheet
+        total_assets = mc * (1 + de) / max(de, 0.01)
+        total_liabilities = total_assets - mc / max(de, 0.01)
+        if total_liabilities <= 0:
+            total_liabilities = mc * 0.5
+        total_debt = total_liabilities * 0.8  # Assume 80% is financial debt
+
+        # ---- Fulcrum Security Analysis (Mielle) ----
+        # EV = Market Cap + Net Debt
+        net_debt = total_debt - total_assets * 0.05  # 5% assumed cash
+        enterprise_value = mc + max(net_debt, 0)
+        gm.enterprise_value_coverage = enterprise_value / max(total_debt, 1e6)
+
+        # Fulcrum: where EV falls in the capital stack
+        if gm.enterprise_value_coverage > 1.5:
+            gm.fulcrum_position = FulcrumPosition.ABOVE_FULCRUM
+            gm.fulcrum_recovery_pct = 1.0
+        elif gm.enterprise_value_coverage > 0.8:
+            gm.fulcrum_position = FulcrumPosition.AT_FULCRUM
+            gm.fulcrum_recovery_pct = max(0, (gm.enterprise_value_coverage - 0.3) / 0.7)
+        else:
+            gm.fulcrum_position = FulcrumPosition.BELOW_FULCRUM
+            gm.fulcrum_recovery_pct = max(0, gm.enterprise_value_coverage / 2.0)
+
+        # ---- Graham Chapter 42: Orderly Liquidation Value ----
+        # Apply Graham's liquidation rates to synthetic asset composition
+        asset_mix = {
+            "cash": total_assets * 0.05,
+            "accounts_receivable": total_assets * 0.12,
+            "inventory_finished": total_assets * 0.08,
+            "inventory_raw": total_assets * 0.04,
+            "prepaid_expenses": total_assets * 0.02,
+            "net_ppe": total_assets * 0.35,
+            "intangibles": total_assets * 0.20,
+            "long_term_investments": total_assets * 0.08,
+            "marketable_securities": total_assets * 0.03,
+            "govt_securities": total_assets * 0.03,
+        }
+
+        olv = sum(
+            amount * GRAHAM_LIQUIDATION_RATES.get(asset, 0.0)
+            for asset, amount in asset_mix.items()
+        )
+        gm.orderly_liquidation_value = olv
+        gm.liquidation_surplus = olv - total_liabilities
+        gm.liquidation_coverage = olv / max(total_liabilities, 1e6)
+
+        # ---- Balance Sheet × Income Statement Cross-Reference (Mielle) ----
+        # Check consistency: high revenue growth should show in receivables,
+        # high margins should be consistent with asset turnover
+        revenue_proxy = total_assets * max(0.3, 0.8 + 0.1 * ic)
+        margin_proxy = max(0.0, ic * 0.03)
+        ebit_proxy = revenue_proxy * margin_proxy
+
+        # Receivable days vs revenue
+        ar = asset_mix["accounts_receivable"]
+        dso_proxy = (ar / max(revenue_proxy / 365, 1)) if revenue_proxy > 0 else 0
+        dso_score = 1.0 if dso_proxy < 60 else max(0, 1.0 - (dso_proxy - 60) / 120)
+
+        # Leverage vs profitability consistency
+        if de > 3.0 and margin_proxy < 0.05:
+            leverage_profit_score = 0.2  # High leverage, low margins = inconsistent
+        elif de < 1.5 and margin_proxy > 0.10:
+            leverage_profit_score = 0.9  # Low leverage, good margins = consistent
+        else:
+            leverage_profit_score = 0.5
+
+        gm.bs_is_consistency = (dso_score + leverage_profit_score) / 2.0
+
+        # ---- Cash Flow Diagnostic (Mielle: "the link") ----
+        # FCF = EBIT × (1 - tax) + D&A - CapEx - ΔWC
+        depreciation_proxy = asset_mix["net_ppe"] * 0.05
+        capex_proxy = depreciation_proxy * 1.1  # Slight growth capex
+        fcf_proxy = ebit_proxy * 0.75 + depreciation_proxy - capex_proxy
+        gm.cash_flow_diagnostic = fcf_proxy / max(total_debt, 1e6)
+
+        # ---- Howard Marks 8-Factor Credit Score ----
+        factor_scores = {}
+
+        # 1. Economy health (use IC as proxy for cycle position)
+        factor_scores["economy_health"] = min(100, max(0, ic * 15 + 20))
+
+        # 2. Industry outlook (sector-specific)
+        sector = data.get("sector", "")
+        if sector in ("Information Technology", "Health Care"):
+            factor_scores["industry_outlook"] = 70
+        elif sector in ("Energy", "Materials"):
+            factor_scores["industry_outlook"] = 50
+        elif sector in ("Communication Services",):
+            factor_scores["industry_outlook"] = 45
+        else:
+            factor_scores["industry_outlook"] = 55
+
+        # 3. Competitive position (market cap as moat proxy)
+        factor_scores["competitive_position"] = min(90, max(20, 30 + np.log(max(mc / 1e9, 0.1)) * 15))
+
+        # 4. Management capability (coverage consistency as proxy)
+        factor_scores["management_capability"] = min(80, max(20, ic * 10 + 30))
+
+        # 5. Financial strength (leverage + coverage composite)
+        fin_strength = 100 - min(100, de * 12) + min(50, ic * 8)
+        factor_scores["financial_strength"] = max(0, min(100, fin_strength))
+
+        # 6. Capital structure (seniority / subordination)
+        if de < 1.0:
+            factor_scores["capital_structure"] = 85
+        elif de < 2.0:
+            factor_scores["capital_structure"] = 65
+        elif de < 4.0:
+            factor_scores["capital_structure"] = 40
+        else:
+            factor_scores["capital_structure"] = 20
+
+        # 7. Covenants / terms (assume moderate for public cos)
+        factor_scores["covenants_terms"] = 50  # Neutral default
+
+        # 8. Valuation / price (implied yield compensation)
+        implied_yield = ensemble_prob * 100 + 5.0  # Risk-free + default premium
+        if implied_yield > 15:
+            factor_scores["valuation_price"] = 75  # Compensated for risk
+        elif implied_yield > 8:
+            factor_scores["valuation_price"] = 50
+        else:
+            factor_scores["valuation_price"] = 25  # Not compensated
+
+        gm.marks_factor_scores = factor_scores
+        gm.marks_credit_score = sum(factor_scores.values()) / len(factor_scores)
+
+        # ---- Tangible Asset Coverage ----
+        tangible_assets = total_assets - asset_mix["intangibles"]
+        gm.tangible_asset_coverage = tangible_assets / max(total_debt, 1e6)
+
+        # Secured debt coverage (assume 30% of debt is secured)
+        secured_debt = total_debt * 0.3
+        pledged_assets = asset_mix["net_ppe"] + asset_mix["inventory_finished"] + asset_mix["accounts_receivable"]
+        gm.secured_debt_coverage = pledged_assets / max(secured_debt, 1e6)
+
+        return gm
+
+    # -----------------------------------------------------------------------
     # Fallen Angel Detection
     # -----------------------------------------------------------------------
     def _detect_fallen_angel(self, score: DistressScore) -> bool:
@@ -674,6 +911,20 @@ class DistressedAssetEngine:
             # LGD & recovery
             score.lgd = self._estimate_lgd(ticker, data, score.ensemble_prob)
 
+            # Graham-Mielle distressed analysis
+            score.graham_mielle = self._graham_mielle_analysis(
+                ticker, data, score.ensemble_prob
+            )
+
+            # Adjust LGD recovery using Graham liquidation rates
+            if score.graham_mielle.liquidation_coverage > 0:
+                graham_recovery = min(1.0, score.graham_mielle.liquidation_coverage)
+                # Blend Moody's historical with Graham analytical
+                score.lgd.expected_recovery = (
+                    0.6 * score.lgd.expected_recovery +
+                    0.4 * graham_recovery
+                )
+
             # Fallen angel detection
             score.is_fallen_angel = self._detect_fallen_angel(score)
 
@@ -726,8 +977,41 @@ class DistressedAssetEngine:
                 "risk_reward": score.risk_reward_ratio,
                 "merton_dd": score.merton.distance_to_default,
                 "altman_zone": score.altman.zone,
+                # Graham-Mielle enhancements
+                "fulcrum_position": score.graham_mielle.fulcrum_position.value,
+                "liquidation_coverage": score.graham_mielle.liquidation_coverage,
+                "marks_credit_score": score.graham_mielle.marks_credit_score,
+                "tangible_asset_coverage": score.graham_mielle.tangible_asset_coverage,
+                "ev_coverage": score.graham_mielle.enterprise_value_coverage,
             }
         return signals
+
+    def get_fulcrum_opportunities(self) -> List[DistressScore]:
+        """Return names at or near fulcrum — Mielle reorganization equity plays.
+
+        These are the most interesting distressed opportunities:
+        at the fulcrum, debt converts to equity in reorganization,
+        offering significant upside if the company survives.
+        """
+        if not self._analyzed:
+            self.analyze()
+        return [
+            s for s in self._results.values()
+            if s.graham_mielle.fulcrum_position == FulcrumPosition.AT_FULCRUM
+        ]
+
+    def get_liquidation_candidates(self) -> List[DistressScore]:
+        """Return names where liquidation value exceeds market cap (Graham Ch.42).
+
+        These are Graham's classic net-net type situations in distressed context:
+        even in liquidation, assets cover liabilities with surplus.
+        """
+        if not self._analyzed:
+            self.analyze()
+        return [
+            s for s in self._results.values()
+            if s.graham_mielle.liquidation_surplus > 0
+        ]
 
     # -----------------------------------------------------------------------
     # Report
@@ -782,6 +1066,26 @@ class DistressedAssetEngine:
                     f"R/R={s.risk_reward_ratio:.1f}x "
                     f"Recovery={s.lgd.expected_recovery:.0%} ({s.lgd.seniority.value})"
                 )
+
+        # Graham-Mielle Analysis
+        lines.extend([
+            "",
+            "  GRAHAM-MIELLE DISTRESSED FRAMEWORK:",
+            f"  {'Ticker':<8} {'Fulcrum':<16} {'EV/Debt':>8} {'Liq Cov':>8} "
+            f"{'Marks':>6} {'Tang Cov':>9} {'FCF/Debt':>9}",
+            "  " + "-" * 68,
+        ])
+        for ticker in sorted(self._results, key=lambda t: self._results[t].ensemble_prob, reverse=True):
+            s = self._results[ticker]
+            gm = s.graham_mielle
+            lines.append(
+                f"  {ticker:<8} {gm.fulcrum_position.value:<16} "
+                f"{gm.enterprise_value_coverage:>7.2f}x "
+                f"{gm.liquidation_coverage:>7.2f}x "
+                f"{gm.marks_credit_score:>5.0f} "
+                f"{gm.tangible_asset_coverage:>8.2f}x "
+                f"{gm.cash_flow_diagnostic:>8.2f}x"
+            )
 
         lines.extend(["", "=" * 78])
         return "\n".join(lines)

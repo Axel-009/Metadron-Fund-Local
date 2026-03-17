@@ -1,7 +1,7 @@
 """ExecutionEngine — Full signal pipeline orchestrator.
 
 Signal pipeline (execution order):
-    UniverseEngine → MacroEngine → MetadronCube → AlphaOptimizer → ExecutionEngine
+    UniverseEngine → MacroEngine → MetadronCube → SecurityAnalysis → AlphaOptimizer → ExecutionEngine
 
 ML Vote Ensemble (10 tiers, each votes ±1):
     Tier-1   Pure-numpy 2-layer net
@@ -83,6 +83,13 @@ try:
     _HAS_EVENT = True
 except ImportError:
     _HAS_EVENT = False
+
+# L2/L2.5 Security Analysis (Graham-Dodd-Klarman)
+try:
+    from ..signals.security_analysis_engine import SecurityAnalysisEngine
+    _HAS_SECURITY_ANALYSIS = True
+except ImportError:
+    _HAS_SECURITY_ANALYSIS = False
 
 # L2 Pattern Discovery (MiroFish + AI-Newton)
 try:
@@ -606,6 +613,11 @@ class MLVoteEnsemble:
         self._event_signals: Optional[dict] = None
         self._cvr_signals: Optional[dict] = None
         self._credit_scores: Optional[dict] = None
+        self._sa_result = None  # SecurityAnalysisResult
+
+    def set_security_analysis(self, sa_result) -> None:
+        """Inject SecurityAnalysisResult for enhanced Tier-5 quality voting."""
+        self._sa_result = sa_result
 
     def set_social_snapshot(self, snapshot_dict: dict) -> None:
         """Inject social prediction snapshot for Tier-6 voting."""
@@ -652,7 +664,7 @@ class MLVoteEnsemble:
         result.votes["T4_monte_carlo"] = self._tier4_mc(r)
 
         # Tier 5: Quality tier
-        result.votes["T5_quality"] = self._tier5_quality(alpha_signal)
+        result.votes["T5_quality"] = self._tier5_quality(alpha_signal, ticker)
 
         # Tier 6: Social sentiment (MiroFish)
         result.votes["T6_social"] = self._tier6_social(ticker)
@@ -767,8 +779,38 @@ class MLVoteEnsemble:
             return -1
         return 0
 
-    def _tier5_quality(self, alpha_signal: Optional[AlphaSignal]) -> int:
-        """Quality tier voter."""
+    def _tier5_quality(self, alpha_signal: Optional[AlphaSignal], ticker: str = "") -> int:
+        """Quality tier voter — enhanced with Graham-Dodd Security Analysis.
+
+        When SecurityAnalysisEngine result is available, incorporates:
+        - Investment grade classification (STRONG_INVESTMENT to AVOID)
+        - Margin of safety scoring
+        - ROIC-WACC spread
+        Falls back to alpha_signal quality tier when SA unavailable.
+        """
+        sa_vote = 0
+        if self._sa_result is not None and ticker:
+            bottom_up = getattr(self._sa_result, "bottom_up", {})
+            score = bottom_up.get(ticker)
+            if score is not None:
+                grade = getattr(score, "investment_grade", None)
+                mos = getattr(score, "margin_of_safety", 0.0)
+                composite = getattr(score, "composite_score", 50.0)
+                if grade is not None:
+                    grade_val = grade.value if hasattr(grade, "value") else str(grade)
+                    if grade_val in ("strong_investment", "investment"):
+                        sa_vote = 1
+                    elif grade_val in ("speculative", "avoid"):
+                        sa_vote = -1
+                # Strengthen vote based on composite score
+                if composite >= 75:
+                    sa_vote = max(sa_vote, 1)
+                elif composite <= 25:
+                    sa_vote = min(sa_vote, -1)
+                if sa_vote != 0:
+                    return sa_vote
+
+        # Fallback to alpha quality tier
         if alpha_signal is None:
             return 0
         tier = alpha_signal.quality_tier
@@ -1059,6 +1101,14 @@ class ExecutionEngine:
             except Exception as e:
                 logger.warning(f"EventDrivenEngine init failed: {e}")
 
+        # L2/L2.5 Security Analysis (Graham-Dodd-Klarman)
+        self.security_analysis = None
+        if _HAS_SECURITY_ANALYSIS:
+            try:
+                self.security_analysis = SecurityAnalysisEngine()
+            except Exception as e:
+                logger.warning(f"SecurityAnalysisEngine init failed: {e}")
+
         # L2 Pattern Discovery (MiroFish dual simulation + AI-Newton symbolic regression)
         self.discovery = None
         if _HAS_DISCOVERY:
@@ -1123,6 +1173,73 @@ class ExecutionEngine:
             "risk": cube_out.risk.value,
         }
         self.tracker.record_stage("cube", (datetime.now() - t0).total_seconds() * 1000, result["stages"]["cube"])
+
+        # Stage 3.1: Security Analysis (Graham-Dodd-Klarman L2/L2.5)
+        # Top-down: macro valuation regime (CAPE, ERP, speculative component)
+        # Bottom-up: per-ticker Graham Number, NCAV, MoS, investment grading
+        t0 = datetime.now()
+        security_analysis_data = {}
+        sa_result = None
+        if self.security_analysis:
+            try:
+                # Build macro data dict from MacroSnapshot
+                sa_macro = {
+                    "treasury_10y": getattr(macro_snap, "treasury_10y", 0.045),
+                    "sp500_pe": getattr(macro_snap, "sp500_pe", 22.0),
+                    "cape": getattr(macro_snap, "cape", 28.0),
+                    "hy_spread": getattr(macro_snap, "hy_spread", 4.0),
+                    "ig_spread": getattr(macro_snap, "ig_spread", 1.5),
+                    "vix": macro_snap.vix,
+                    "gdp_growth": getattr(macro_snap, "gdp_growth", 0.02),
+                    "cpi": getattr(macro_snap, "cpi", 0.03),
+                    "fedfunds": getattr(macro_snap, "fedfunds", 0.05),
+                }
+
+                # Build security data from universe
+                all_tickers = [s.ticker for s in self.universe.get_all()[:50]]
+                security_data = {}
+                for ticker in all_tickers:
+                    try:
+                        stats = get_market_stats(ticker)
+                        if stats:
+                            security_data[ticker] = stats
+                    except Exception:
+                        continue
+
+                if security_data:
+                    sa_result = self.security_analysis.analyze(
+                        list(security_data.keys()), sa_macro, security_data
+                    )
+                    security_analysis_data = {
+                        "regime": sa_result.top_down.regime.value,
+                        "cape": sa_result.top_down.cape_ratio,
+                        "equity_risk_premium": sa_result.top_down.equity_risk_premium,
+                        "max_investment_pe": sa_result.top_down.max_investment_pe,
+                        "speculative_pct": sa_result.top_down.speculative_component,
+                        "tickers_analyzed": sa_result.tickers_analyzed,
+                        "investment_universe": sa_result.investment_universe[:20],
+                        "speculative_universe": sa_result.speculative_universe[:10],
+                        "net_net_candidates": sa_result.net_net_candidates,
+                        "distressed": sa_result.distressed_opportunities,
+                    }
+                    logger.info(
+                        f"Security Analysis: {sa_result.tickers_analyzed} analyzed, "
+                        f"{len(sa_result.investment_universe)} investment grade, "
+                        f"regime={sa_result.top_down.regime.value}"
+                    )
+                else:
+                    security_analysis_data = {"status": "no_security_data"}
+            except Exception as e:
+                security_analysis_data = {"error": str(e)}
+                logger.warning(f"Security Analysis stage failed: {e}")
+        else:
+            security_analysis_data = {"status": "security_analysis_engine_not_available"}
+        result["stages"]["security_analysis"] = security_analysis_data
+        self.tracker.record_stage("security_analysis", (datetime.now() - t0).total_seconds() * 1000, security_analysis_data)
+
+        # Inject SA result into MLVoteEnsemble for enhanced Tier-5 quality voting
+        if sa_result is not None:
+            self.ensemble.set_security_analysis(sa_result)
 
         # Stage 3.5: Cross-asset correlation check
         t0 = datetime.now()

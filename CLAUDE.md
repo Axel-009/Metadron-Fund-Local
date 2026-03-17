@@ -23,8 +23,8 @@ Data sourced via **OpenBB** (34+ providers: FRED, SEC, Polygon, FMP, CBOE, ECB, 
 ## Signal Pipeline
 
 ```
-UniverseEngine → MacroEngine → MetadronCube → PatternDiscovery → CrossAssetContagion → SocialPrediction → DistressedAssets → CVR → EventDriven → TickerSelection → AlphaOptimizer → BetaCorridor → DecisionMatrix → HFTTechnical → ExecutionEngine
-     (L1)           (L2)          (L2)           (L2/3.2)            (L2/3.5)             (L2/L3)            (L2)          (L2)     (L2)          (L2/4)          (L3)            (L4)           (L5)          (L7/6.5)        (L7)
+UniverseEngine → MacroEngine → MetadronCube → SecurityAnalysis → PatternDiscovery → CrossAssetContagion → SocialPrediction → DistressedAssets → CVR → EventDriven → TickerSelection → AlphaOptimizer → BetaCorridor → DecisionMatrix → HFTTechnical → ExecutionEngine
+     (L1)           (L2)          (L2)          (L2/3.1)          (L2/3.2)            (L2/3.5)             (L2/L3)            (L2)          (L2)     (L2)          (L2/4)          (L3)            (L4)           (L5)          (L7/6.5)        (L7)
 ```
 
 ### Layer Architecture (L1 → L5 → L2 → L3 → L4 → L7)
@@ -95,11 +95,12 @@ Metadron-Capital/                        ← Master monorepo (Layer 0: Hub)
 │   ├── signals/                         ← L2: Signal processing
 │   │   ├── macro_engine.py             ← GMTF: SDR tension, rotation, velocity, FRB
 │   │   ├── metadron_cube.py            ← C(t) = f(L,R,F) + 4-Gate + KillSwitch + FCLP
+│   │   ├── security_analysis_engine.py ← L2/L2.5 Graham-Dodd-Klarman (top-down + bottom-up, Stage 3.1)
 │   │   ├── contagion_engine.py         ← L3 graph topology, 21 nodes, 7 shock scenarios
 │   │   ├── stat_arb_engine.py          ← Medallion mean reversion + cointegration pairs
 │   │   ├── pattern_discovery_engine.py ← L2 Pattern Discovery (MiroFish + AI-Newton → PatternDiscoveryBus)
 │   │   ├── social_prediction_engine.py ← MiroFish bridge → social sentiment signals
-│   │   ├── distressed_asset_engine.py  ← 5-model distress ensemble (Z/KMV/O/Zmij/ML)
+│   │   ├── distressed_asset_engine.py  ← 5-model distress + Graham-Mielle (fulcrum/liquidation/Marks)
 │   │   ├── cvr_engine.py              ← CVR valuation (5 models, 4 instruments)
 │   │   └── event_driven_engine.py      ← 12-category event-driven (M&A arb, PEAD, etc.)
 │   ├── ml/                              ← L3: ML/AI models
@@ -252,11 +253,12 @@ HY OAS +35bp & VIX term flat/inverted & breadth <50% → auto β ≤ 0.35
 
 ### New Engines
 
+- **SecurityAnalysisEngine**: L2/L2.5 Graham-Dodd-Klarman framework (Stage 3.1) — top-down (CAPE, ERP, speculative component, max investment P/E) + bottom-up (Graham Number, NCAV, MoS ≥33%, normalized EPS, ROIC-WACC, DuPont ROE, owner earnings, 8-test investment grading, 5-method IV estimation). Feeds Tier-5 of MLVoteEnsemble. Outputs 12 alpha features for ML walk-forward
 - **PatternDiscoveryEngine**: L2 MiroFish dual simulation (CAMEL-AI) + AI-Newton symbolic regression (PySR) → PatternDiscoveryBus → enrichment features for AlphaOptimizer
 - **ContagionEngine**: L3 graph topology, 21 nodes, 7 shock scenarios, multi-step propagation
 - **StatArbEngine**: Medallion mean reversion + cointegration pairs + factor residuals (Σβ≈0)
 - **OptionsEngine**: Black-Scholes Greeks, θ+Γ optimizer, vol surface, P4 sleeve allocation
-- **DistressedAssetEngine**: 5-model ensemble (Altman Z, Merton KMV, Ohlson O, Zmijewski, ML GBM), fallen angel detector, LGD estimator, Kelly-sized opportunities
+- **DistressedAssetEngine**: 5-model ensemble (Altman Z, Merton KMV, Ohlson O, Zmijewski, ML GBM) + Graham-Mielle framework (fulcrum security analysis, Ch.42 orderly liquidation rates, BS×IS cross-ref, Howard Marks 8-factor credit), fallen angel detector, LGD estimator, Kelly-sized opportunities
 - **CVREngine**: 5-model CVR valuation (binary option, barrier option, milestone tree, Monte Carlo, real options), liquidity/credit adjustments, 4 live instruments
 - **EventDrivenEngine**: 12 event categories, Mitchell-Pulvino M&A arb, PEAD SUE drift, Kelly-sized positions, 10 live events
 - **UniverseClassifier**: XGBoost 4-model soft-voting ensemble (GaussianNB+GBM+RF+XGB), quality tiers A-G, reconciliation engine

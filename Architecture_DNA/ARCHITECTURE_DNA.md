@@ -13,8 +13,8 @@ Paper broker mode (OpenBB data). Beta managed within 7–12% corridor.
 ┌─────────────────────────────────────────────────────────────────────────────┐
 │                         MORNING OPEN (09:30 ET)                            │
 │                                                                            │
-│  UniverseEngine ─→ MacroEngine ─→ MetadronCube ─→ CrossAssetCorr          │
-│       (L1)            (L2)           (L2)          (L2/3.5)               │
+│  UniverseEngine ─→ MacroEngine ─→ MetadronCube ─→ SecurityAnalysis ─→ CrossAssetCorr │
+│       (L1)            (L2)           (L2)          (L2/3.1)           (L2/3.5)       │
 │         │               │              │                │                  │
 │         ▼               ▼              ▼                ▼                  │
 │  SocialPrediction ─→ DistressedAssets ─→ CVR ─→ EventDriven              │
@@ -219,9 +219,32 @@ entry_scores, kill_switch_active, crash_floor
 - Detects narrative regime (trending/reversing/stable)
 - **Output**: `SocialSnapshot` → feeds into Tier-6 of ML Vote Ensemble
 
+### SecurityAnalysisEngine (`engine/signals/security_analysis_engine.py`)
+**Reference**: Security Analysis 7th Edition (Graham, Dodd, Klarman)
+- **Pipeline Position**: Stage 3.1 — after MetadronCube (L2), before PatternDiscovery (L2/3.2)
+- **Top-Down Analysis** (Part I):
+  - Interest rate as master variable → rate-adjusted max P/E = min(20, 1/treasury_10y)
+  - CAPE/Shiller cyclically adjusted P/E → expected 10yr return = 1/CAPE
+  - Equity Risk Premium = earnings_yield − treasury_10y
+  - Speculative component = (market_pe − max_investment_pe) / market_pe
+  - Credit cycle indicators (HY spreads → implied default probability)
+  - Market regime: DEEPLY_UNDERVALUED → EXTREMELY_OVERVALUED
+- **Bottom-Up Analysis** (Parts II-V):
+  - Graham Number = √(22.5 × EPS × BVPS)
+  - NCAV = Current Assets − ALL Liabilities (net-net screen)
+  - 5-method intrinsic value estimation (Graham Number, Earning Power, Max P/E, NCAV, DCF-lite)
+  - Margin of Safety = (IV − Price) / IV ≥ 33%
+  - Normalized EPS (5-10yr average), earnings stability ratio
+  - ROIC-WACC spread (7th Ed. primary metric), DuPont ROE decomposition
+  - Owner earnings (Buffett/7th Ed.), economic profit/EVA
+  - 8-test investment grading (STRONG_INVESTMENT → AVOID)
+  - Composite score: 25% MoS + 20% earnings + 15% balance sheet + 15% ROIC + 10% coverage + 10% valuation + 5% top-down
+- **Comparative Analysis**: Peer group relative metrics, Graham's 50% exchange premium rule
+- **Output**: SecurityAnalysisResult → feeds Tier-5 of MLVoteEnsemble + 12 alpha features for ML walk-forward
+
 ### DistressedAssetEngine (`engine/signals/distressed_asset_engine.py`)
-**Reference**: FinancialDistressPrediction, financial-distressed-repo, sophisticated-distress-analysis
-- **5-model ensemble**:
+**Reference**: FinancialDistressPrediction, financial-distressed-repo, sophisticated-distress-analysis, Security Analysis 7th Edition (Mielle, Marks chapters)
+- **5-model ensemble + Graham-Mielle framework**:
   1. Altman Z-Score: Z = 1.2×WC/TA + 1.4×RE/TA + 3.3×EBIT/TA + 0.6×MV/TL + 1.0×S/TA
   2. Merton KMV: Distance-to-default via option pricing on firm equity
   3. Ohlson O-Score: Logistic regression on financial ratios
@@ -444,7 +467,7 @@ MES_hedge_beta = target_beta - sleeve_beta
 | 2 | Momentum/mean-reversion | 1.2 | Mom_21d > 0 → +1; z-score_63d < -2 → +1 (mean revert) |
 | 3 | Volatility regime | 0.8 | Vol_21d < Vol_63d → +1 (vol compression = bullish) |
 | 4 | Monte Carlo | 0.9 | ARIMA-like drift + noise → direction vote |
-| 5 | Quality tier | 1.1 | Tier A/B → +1; Tier F/G → -1 |
+| 5 | Quality tier | 1.1 | SecurityAnalysis grade (STRONG_INVESTMENT/INVESTMENT → +1) + alpha quality fallback |
 | 6 | Social sentiment | 1.0 | MiroFish ticker sentiment → ±1 |
 | 7 | Distress | 0.9 | DistressedAssetEngine signals → ±1 |
 | 8 | Event-driven | 1.0 | EventDrivenEngine signals → ±1 |
@@ -686,6 +709,13 @@ HOLD
      │  + PaperBroker  │ ← MicroPrice, cross-asset, deep features
      └────────┬────────┘
               │
+     ┌────────▼────────┐
+     │ L2 Security    │ ← Graham-Dodd-Klarman (7th Edition)
+     │ Analysis 3.1   │   Top-down: CAPE, ERP, max investment P/E, speculative %
+     │                 │   Bottom-up: Graham Number, NCAV, MoS, ROIC-WACC, 8-test
+     │                 │ → SecurityAnalysisResult → Tier-5 MLVoteEnsemble
+     └────────┬────────┘
+              │ investment grades + MoS weights
      ┌────────▼────────┐
      │ L2 Discovery   │ ← MiroFish: dual sim (CAMEL-AI + OASIS)
      │ Stage 3.2       │   Mode A: Synthetic Market (clustering, herding, regime)
