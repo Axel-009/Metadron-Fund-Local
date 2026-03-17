@@ -495,10 +495,35 @@ MES_hedge_beta = target_beta - sleeve_beta
 | G8 Cash Sufficiency | Trade value | Cash check for buys |
 
 ### PaperBroker (`engine/execution/paper_broker.py`)
-- Simulated broker using OpenBB prices
-- Tracks positions, P&L, NAV, cash, exposures
-- Supports: BUY, SELL, SHORT, COVER
-- Position tracking with sector tagging
+**Purpose**: Live HFT opportunity-based paper portfolio execution
+- Simulated broker using OpenBB prices — continuously active throughout the day
+- **Constantly scanning** for alpha opportunities via signal pipeline
+- **5% daily compound target** (minimum) — once hit, risk dials down to retain gains
+- Risk dial-down tiers: AGGRESSIVE (pre-target) → MODERATE (target hit) → DEFENSIVE (target + buffer)
+- Tracks positions, P&L, NAV, cash, exposures with real-time dashboard hooks
+- MicroPriceModel: bid/ask estimation, order flow imbalance, time-of-day slippage
+- RiskLimiter: 6 pre-trade risk checks (position size, sector concentration, daily loss, exposure)
+- PerformanceTracker: Sharpe, drawdown, win rate by signal type, rolling analytics
+- **Live Dashboard**: Observable via `engine/monitoring/live_dashboard.py` when connected to internet
+- Supports: BUY, SELL, SHORT, COVER with full audit trail
+- Position tracking with sector tagging, reconciliation, CSV export
+
+### ExchangeCoreEngine (`engine/execution/exchange_core_engine.py`)
+**Purpose**: Ultra-low-latency order matching (Python implementation of exchange-core concepts)
+- LMAX Disruptor-style ring buffer event processing (pre-allocated numpy arrays)
+- Limit order book with price-time priority matching
+- Market/Limit/Stop order types with L3 order book depth
+- Batch processing for multiple simultaneous orders
+- Latency tracking (simulated microsecond timestamps)
+- Routes through matching engine before PaperBroker fill
+
+### WonderTraderEngine (`engine/execution/wondertrader_engine.py`)
+**Purpose**: CTA strategy execution + HFT micro-price engine
+- CTA trend-following signals (dual MA crossover, channel breakout, momentum)
+- Multi-timeframe analysis (1m, 5m, 15m, 1h, 4h bars)
+- Smart order routing (TWAP/VWAP splitting for large orders)
+- Execution quality scoring (slippage vs benchmark)
+- Dynamic stop-loss / take-profit management
 
 ### OptionsEngine (`engine/execution/options_engine.py`)
 - Black-Scholes pricing (calls + puts)
@@ -653,8 +678,8 @@ HOLD
 | Air-LLM | L5 | Efficient LLM inference |
 | Ruflo-agents | L6 | Agent orchestration framework |
 | MiroFish | L2+L6 | **Pattern Discovery** (CAMEL-AI dual sim: clustering, herding, contagion, divergence) + Social prediction |
-| exchange-core | L7 | **HFT Execution** — Ultra-low-latency order matching engine (Java, LMAX Disruptor) |
-| wondertrader | L7 | **HFT Execution** — Micro-price engine, CTA execution, low-latency order routing |
+| exchange-core | L7 | **HFT Execution** — Ultra-low-latency order matching engine (Python/LMAX Disruptor ring buffer, 10M+ ops/sec concept) |
+| wondertrader | L7 | **HFT Execution** — CTA trend-following, micro-price engine, TWAP/VWAP routing, multi-timeframe analysis |
 | worldmonitor | L2 | **Global Event Monitoring** — 30+ categories (market, economic, conflict, supply-chain, trade, news) → EventDrivenEngine + MacroEngine feed via WorldMonitorBridge |
 | markov-model | L3 | **HMM Regime Detection** — hmmlearn GaussianHMM for data-driven regime classification → MetadronCube RegimeEngine via MarkovRegimeBridge |
 
@@ -700,16 +725,6 @@ HOLD
      └────────┬────────┘
               │
      ┌────────▼────────┐
-     │  DecisionMatrix │ ← 6 gates, Kelly sizing, ABU beta
-     │  MIN_SCORE=0.55 │
-     └────────┬────────┘
-              │
-     ┌────────▼────────┐
-     │ExecutionEngine  │ ← 10-tier ML vote, 8 risk gates
-     │  + PaperBroker  │ ← MicroPrice, cross-asset, deep features
-     └────────┬────────┘
-              │
-     ┌────────▼────────┐
      │ L2 Security    │ ← Graham-Dodd-Klarman (7th Edition)
      │ Analysis 3.1   │   Top-down: CAPE, ERP, max investment P/E, speculative %
      │                 │   Bottom-up: Graham Number, NCAV, MoS, ROIC-WACC, 8-test
@@ -726,6 +741,18 @@ HOLD
      └────────┬────────┘
               │ discovered patterns as structured features
      ┌────────▼────────┐
+     │  DecisionMatrix │ ← 6 gates, Kelly sizing, ABU beta
+     │  MIN_SCORE=0.55 │
+     └────────┬────────┘
+              │
+     ┌────────▼────────┐
+     │ExecutionEngine  │ ← 10-tier ML vote, 8 risk gates
+     │  + PaperBroker  │ ← Live HFT opportunity-based execution
+     │                 │   Continuously scans for alpha throughout day
+     │                 │   5% daily target → risk dial-down after hit
+     └────────┬────────┘
+              │
+     ┌────────▼────────┐
      │ L7 HFT/Exec    │ ← quant-trading: 12 independent technical strategies
      │ Stage 6.5       │   (Bollinger, MACD, RSI, SAR, Heikin-Ashi, Dual Thrust,
      │                 │    Shooting Star, London Breakout, Awesome Osc, Pair
@@ -741,6 +768,7 @@ HOLD
 │ + P&L  │       │ Platinum/    │
 │ + NAV  │       │ Portfolio/   │
 └────────┘       │ Sector/Wrap  │
+                 │ Live Dashboard│
                  └──────────────┘
 ```
 

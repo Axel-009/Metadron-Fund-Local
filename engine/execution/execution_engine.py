@@ -1602,7 +1602,11 @@ class ExecutionEngine:
         trades = []
         blocked_trades = []
         nav = self.broker.compute_nav()
-        equity_budget = nav * cube_out.sleeves.p1_directional_equity
+
+        # Apply daily target leverage multiplier
+        leverage_mult = self.broker.get_leverage_multiplier()
+        risk_profile = self.broker.get_risk_profile()
+        equity_budget = nav * cube_out.sleeves.p1_directional_equity * leverage_mult
 
         for ticker, weight in alpha_out.optimal_weights.items():
             if weight < 0.01:
@@ -1714,8 +1718,20 @@ class ExecutionEngine:
             "trades": trades,
             "blocked_trades": blocked_trades,
             "portfolio": self.broker.get_portfolio_summary(),
+            "risk_profile": risk_profile,
+            "leverage_multiplier": leverage_mult,
+            "daily_target": self.broker.get_daily_target_state(),
         }
         self.tracker.record_stage("execution", (datetime.now() - t0).total_seconds() * 1000, result["stages"]["execution"])
+
+        # Emit dashboard state for live observation
+        self.broker.emit_dashboard_state(pipeline_state={
+            "event": "PIPELINE_COMPLETE",
+            "run_number": self._run_count,
+            "trades_executed": len(trades),
+            "trades_blocked": len(blocked_trades),
+            "risk_profile": risk_profile,
+        })
 
         # Pipeline summary
         result["pipeline"] = self.tracker.get_summary()
