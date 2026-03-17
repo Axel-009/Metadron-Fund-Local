@@ -76,9 +76,13 @@ These repositories serve as reference implementations. The production engines
 in `engine/` are institutional-grade implementations that synthesize and elevate
 the reference code:
 
+- **SecurityAnalysisEngine** (`engine/signals/security_analysis_engine.py`)
+  - References: Security Analysis 7th Edition (Graham, Dodd, Klarman)
+  - Stage 3.1: Top-down macro (CAPE, ERP, speculative component) + bottom-up (Graham Number, NCAV, MoS, ROIC-WACC, DuPont, 8-test grading, 5-method IV). Feeds Tier-5 MLVoteEnsemble
+
 - **DistressedAssetEngine** (`engine/signals/distressed_asset_engine.py`)
-  - References: `FinancialDistressPrediction/`, `financial-distressed-repo/`, `sophisticated-distress-analysis/`
-  - Elevation: Single GBM → 5-model ensemble (Altman Z, Merton KMV, Ohlson O, Zmijewski, ML GBM)
+  - References: `FinancialDistressPrediction/`, `financial-distressed-repo/`, `sophisticated-distress-analysis/`, Security Analysis 7th Ed. (Mielle, Marks)
+  - Elevation: Single GBM → 5-model ensemble + Graham-Mielle (fulcrum security, Ch.42 liquidation rates, Marks 8-factor credit)
 
 - **CVREngine** (`engine/signals/cvr_engine.py`)
   - References: `ai-hedgefund/`, `Financial-Data/`
