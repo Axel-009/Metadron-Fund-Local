@@ -13,16 +13,20 @@ Paper broker mode (Yahoo Finance). Beta managed within 7–12% corridor.
 ┌─────────────────────────────────────────────────────────────────────────────┐
 │                         MORNING OPEN (09:30 ET)                            │
 │                                                                            │
-│  UniverseEngine ─→ MacroEngine ─→ MetadronCube ─→ SocialPrediction        │
-│       (L1)            (L2)           (L2)            (L2/L3)               │
+│  UniverseEngine ─→ MacroEngine ─→ MetadronCube ─→ CrossAssetCorr          │
+│       (L1)            (L2)           (L2)          (L2/3.5)               │
 │         │               │              │                │                  │
 │         ▼               ▼              ▼                ▼                  │
-│  DistressedAssets ─→ CVREngine ─→ EventDriven ─→ AlphaOptimizer           │
-│       (L2)            (L2)          (L2)            (L3)                   │
-│                                                       │                   │
-│                                                       ▼                   │
-│  BetaCorridor ─→ DecisionMatrix ─→ ExecutionEngine ─→ PaperBroker        │
-│      (L4)            (L5)             (L5)             (L5)               │
+│  SocialPrediction ─→ DistressedAssets ─→ CVR ─→ EventDriven              │
+│     (L2/L3)              (L2)          (L2)       (L2)                    │
+│         │                                           │                     │
+│         ▼                                           ▼                     │
+│  CreditQuality ─→ TickerSelection ─→ AlphaOptimizer ─→ BetaCorridor     │
+│     (L3/3.95)         (L2/4)            (L3)              (L4)            │
+│                                           │                               │
+│                                           ▼                               │
+│  DecisionMatrix ─→ ExecutionEngine ─→ PaperBroker                        │
+│      (L5)             (L5)             (L5)                               │
 │                                        │                                  │
 │                                        ▼                                  │
 │  ContagionEngine   StatArbEngine   OptionsEngine   SectorBots             │
@@ -318,6 +322,40 @@ annual_volatility, sharpe_ratio, max_drawdown, rebalance_cost, alpha_predictions
 - Monte Carlo simulation (10,000 paths)
 - Scenario engine (historical stress scenarios)
 
+### UniverseClassifier (`engine/ml/universe_classifier.py`)
+**Purpose**: XGBoost 4-model soft-voting ensemble for quality tier classification (A-G)
+- **4 models**: GaussianNB (15%), GradientBoosting (25%), RandomForest (25%), XGBoost (35%)
+- **T3.1 hyperparams**: n_estimators=120, max_depth=6, lr=0.1, gamma=0, reg_lambda=10
+- **16 features**: Sharpe, momentum (3M/6M), volatility, max drawdown, ROE, D/E, interest coverage, current ratio, revenue growth, earnings stability, FCF yield, gross margin, Piotroski F, Altman Z, beta
+- **CreditQualityClassifier**: 6-factor weighted model (AAA-D credit ratings)
+  - Interest coverage (25%), D/E ratio (20%), ROE (15%), earnings stability (15%), Altman Z (15%), FCF yield (10%)
+- **Reconciliation engine**: top-down vs bottom-up tier divergence detection
+  - Rising stars: observable tier better than fundamental
+  - Fallen angels: fundamental tier better than observable
+- Feeds credit scores into T10 of MLVoteEnsemble
+
+### ModelEvaluator (`engine/ml/model_evaluator.py`)
+- Per-class precision/recall/F1 scoring
+- Confusion matrix with tier-aware distance weighting
+- Walk-forward evaluation metrics
+
+### DeepLearningEngine (`engine/ml/deep_learning_engine.py`)
+**Purpose**: Pure-numpy PPO agent for trading decisions
+- 50-feature state vector (no external ML framework dependency)
+- Actor-Critic architecture with GAE (Generalized Advantage Estimation)
+- Trading environment with position management and transaction costs
+
+### ML Model Bridges (`engine/ml/bridges/`)
+Signal bridges that produce SignalType values for MLVoteEnsemble:
+- **FinRLBridge**: FinRL deep RL framework adapter → DRL_AGENT signals
+- **NvidiaTFTAdapter**: NVIDIA Temporal Fusion Transformer → TFT signals
+- **MonteCarloBridge**: Monte Carlo simulation → MC signals
+- **StockPredictionBridge**: Stock prediction model → ML_AGENT signals
+- **DeepTradingFeatureBuilder**: Deep trading feature engineering
+- **KServeAdapter**: KServe ML model serving → remote inference
+
+All bridges follow: try/except on imports, pure-numpy fallbacks, graceful degradation.
+
 ---
 
 ## LAYER 4: PORTFOLIO — BetaCorridor + DecisionMatrix
@@ -399,17 +437,21 @@ MES_hedge_beta = target_beta - sleeve_beta
 ### ExecutionEngine (`engine/execution/execution_engine.py`)
 **Purpose**: Full pipeline orchestrator + ML vote ensemble + risk gates
 
-#### ML Vote Ensemble (6 tiers, each votes ±1)
-| Tier | Name | Logic |
-|------|------|-------|
-| 1 | Pure-numpy 2-layer net | Feature → hidden(20) → output, sigmoid activation |
-| 2 | Momentum/mean-reversion | Mom_21d > 0 → +1; z-score_63d < -2 → +1 (mean revert) |
-| 3 | Volatility regime | Vol_21d < Vol_63d → +1 (vol compression = bullish) |
-| 4 | Monte Carlo | ARIMA-like drift + noise → direction vote |
-| 5 | Quality tier | Tier A/B → +1; Tier F/G → -1 |
-| 6 | Social sentiment | MiroFish ticker sentiment → ±1 |
+#### ML Vote Ensemble (10 tiers, each votes ±1)
+| Tier | Name | Weight | Logic |
+|------|------|--------|-------|
+| 1 | Pure-numpy 2-layer net | 1.0 | Feature → hidden(20) → output, sigmoid activation |
+| 2 | Momentum/mean-reversion | 1.2 | Mom_21d > 0 → +1; z-score_63d < -2 → +1 (mean revert) |
+| 3 | Volatility regime | 0.8 | Vol_21d < Vol_63d → +1 (vol compression = bullish) |
+| 4 | Monte Carlo | 0.9 | ARIMA-like drift + noise → direction vote |
+| 5 | Quality tier | 1.1 | Tier A/B → +1; Tier F/G → -1 |
+| 6 | Social sentiment | 1.0 | MiroFish ticker sentiment → ±1 |
+| 7 | Distress | 0.9 | DistressedAssetEngine signals → ±1 |
+| 8 | Event-driven | 1.0 | EventDrivenEngine signals → ±1 |
+| 9 | CVR | 0.7 | CVREngine valuation signals → ±1 |
+| 10 | Credit quality | 0.9 | UniverseClassifier CQS > 0.7 → +1; < 0.3 → -1 |
 
-**Final vote**: Sum of 6 tiers → [-6, +6]
+**Final vote**: Weighted sum of 10 tiers → [-10, +10]
 **Minimum edge**: `effective_min_edge = 2.0 + max(0, -vote_score)` bps
 
 #### Deep Trading Features
@@ -474,18 +516,70 @@ MES_hedge_beta = target_beta - sleeve_beta
 | LIEUTENANT | Sharpe >1.0, accuracy >50% | Default |
 | RECRUIT | Below thresholds | Demoted after 2 bottom weeks |
 
+### GICS Sector Agents (`engine/agents/gics_sector_agents.py`)
+- **11 GICS sector agents** with 8 scoring dimensions each
+- Scoring: momentum, quality, value, growth, risk, sentiment, technical, macro alignment
+- Sector-specific weight calibration
+- Cross-sector signal correlation tracking
+
+### Agent Monitor (`engine/agents/agent_monitor.py`)
+**4-tier performance hierarchy**:
+| Tier | Sharpe | Win Rate | Status |
+|------|--------|----------|--------|
+| ELITE | >2.0 | >70% | Full autonomy |
+| STRONG | >1.5 | >60% | Standard operation |
+| DEVELOPING | >0.5 | >45% | Restricted sizing |
+| UNDERPERFORM | <0.5 | <45% | Review + potential shutdown |
+
+- Per-agent memory tracking via `tracemalloc`
+- Performance decay detection
+- Automatic promotion/demotion with hysteresis
+
+### Investor Personas (`engine/agents/investor_personas.py`)
+**12 investor persona agents**, each with unique investment philosophy:
+- **Warren Buffett**: Intrinsic value, moat, long-term hold
+- **Charlie Munger**: Multi-disciplinary mental models
+- **Benjamin Graham**: Deep value, margin of safety
+- **Bill Ackman**: Activist + concentrated positions
+- **Ray Dalio**: All-weather, macro regime balancing
+- **Howard Marks**: Credit cycles, risk awareness
+- **Seth Klarman**: Deep value + special situations
+- **Peter Lynch**: Growth-at-reasonable-price (GARP)
+- **George Soros**: Reflexivity, macro momentum
+- **Stanley Druckenmiller**: Macro + growth conviction
+- **David Einhorn**: Forensic accounting, short selling
+- **Cathie Wood**: Disruptive innovation, hyper-growth
+
+**8 Core Analysis Agents**: fundamentals, technicals, sentiment, risk management, macro, valuation, portfolio optimization, sector rotation
+
 ---
 
 ## MONITORING & REPORTING
 
 ### PlatinumReport — 30-section executive macro state (9 parts)
+### PlatinumReportV2 (`engine/monitoring/platinum_report_v2.py`) — Enhanced platinum report generator
 ### PortfolioReport — Scenario engine + performance deep-dive (3 parts)
+### PortfolioAnalytics (`engine/monitoring/portfolio_analytics.py`) — Deep portfolio analytics + scenario engine
 ### DailyReport — Open/close reports + sector heatmap
+### HeatmapEngine (`engine/monitoring/heatmap_engine.py`) — GICS sector heatmap visualization
 ### SectorTracker — Sector performance + missed opportunities (>20% movers)
+### LiveDashboard (`engine/monitoring/live_dashboard.py`) — Rich-based terminal dashboard (550+ symbols)
+### LiveEarningsGraph (`engine/monitoring/live_earnings_graph.py`) — Live P&L visualization
 ### AnomalyDetector — Statistical anomaly scanner
 ### MarketWrap — Narrative market summary
 ### MemoryMonitor — Session tracking + EOD summary
 ### HourlyRecap — Hourly reconciliation
+
+---
+
+## WEB APPLICATION (`app/backend/`)
+
+FastAPI-based web interface for the investment platform:
+- **REST API**: Portfolio state, signal pipeline, flow management
+- **SSE Streaming**: Real-time pipeline event streaming
+- **SQLAlchemy Models**: Flows, FlowRuns, Trades, Portfolio, API keys
+- **Pydantic Schemas**: Type-safe request/response validation
+- **Services**: Agent orchestration, graph visualization, backtesting
 
 ---
 
@@ -545,8 +639,8 @@ HOLD
 
 ```
                     ┌──────────────┐
-                    │  Yahoo Data  │ ← Single source of truth
-                    │  (yfinance)  │
+                    │  OpenBB Data │ ← Primary (34+ providers, FRED, SEC, CBOE)
+                    │  + yfinance  │ ← Fallback (free, no signup required)
                     └──────┬───────┘
                            │
                     ┌──────▼───────┐
@@ -586,7 +680,7 @@ HOLD
      └────────┬────────┘
               │
      ┌────────▼────────┐
-     │ExecutionEngine  │ ← 6-tier ML vote, 8 risk gates
+     │ExecutionEngine  │ ← 10-tier ML vote, 8 risk gates
      │  + PaperBroker  │ ← MicroPrice, cross-asset, deep features
      └────────┬────────┘
               │
@@ -663,7 +757,7 @@ python3 -m pytest tests/ -v
 
 ## DESIGN RULES (IMMUTABLE)
 
-1. **All data via yfinance** — unified, free, no broker dependency
+1. **All data via OpenBB + yfinance fallback** — free, open-source, no signup/API keys required
 2. **Paper broker only** — no live execution until broker API connected
 3. **6-layer architecture is immutable** — extend within layers, not across
 4. **Beta managed within 7–12% corridor** — vol-normalised
