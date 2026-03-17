@@ -632,6 +632,8 @@ HOLD
 | MiroFish | L2+L6 | **Pattern Discovery** (CAMEL-AI dual sim: clustering, herding, contagion, divergence) + Social prediction |
 | exchange-core | L7 | **HFT Execution** — Ultra-low-latency order matching engine (Java, LMAX Disruptor) |
 | wondertrader | L7 | **HFT Execution** — Micro-price engine, CTA execution, low-latency order routing |
+| worldmonitor | L2 | **Global Event Monitoring** — 30+ categories (market, economic, conflict, supply-chain, trade, news) → EventDrivenEngine + MacroEngine feed via WorldMonitorBridge |
+| markov-model | L3 | **HMM Regime Detection** — hmmlearn GaussianHMM for data-driven regime classification → MetadronCube RegimeEngine via MarkovRegimeBridge |
 
 ---
 

@@ -33,6 +33,7 @@ LAYER_MAP = {
         "CTA-code": "CTA/trend-following signals",
         "TradeTheEvent": "Event-driven ML (BERT news classification)",
         "wondertrader": "HFT quantitative trading (C++/Python)",
+        "worldmonitor": "Global real-time event monitoring (event + macro engine feed)",
     },
     "layer3_ml": {
         "QLIB": "Microsoft Qlib quantitative ML framework",
@@ -40,6 +41,7 @@ LAYER_MAP = {
         "Stock-prediction": "DL price prediction models",
         "ML-Macro-Market": "Macro-to-market regime classification",
         "AI-Newton": "Physics-inspired financial models",
+        "markov-model": "Hidden Markov Model regime detection (hmmlearn)",
     },
     "layer4_portfolio": {
         "ai-hedgefund": "Multi-agent AI hedge fund",
@@ -61,14 +63,17 @@ LAYER_MAP = {
 
 
 def check_repo(layer: str, repo: str) -> tuple[bool, int]:
-    """Check if a repo exists in repos/ or intelligence_platform/ and count files."""
+    """Check if a repo exists in repos/, repos/{layer}/, or intelligence_platform/ and count files."""
     repo_path = REPOS_DIR / layer / repo
+    repo_flat_path = REPOS_DIR / repo
     intel_path = INTEL_DIR / repo
 
-    # Check both locations
+    # Check all locations
     path = None
     if repo_path.exists():
         path = repo_path
+    elif repo_flat_path.exists():
+        path = repo_flat_path
     elif intel_path.exists():
         path = intel_path
 
