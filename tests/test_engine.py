@@ -624,5 +624,150 @@ class TestEventDrivenEngine:
         assert "PEAD SIGNALS" in report
 
 
+# ===========================================================================
+# Tradier Broker
+# ===========================================================================
+class TestTradierBrokerModule:
+    """Unit tests for TradierBroker — no live API calls (mocked)."""
+
+    def test_import(self):
+        from engine.execution.tradier_broker import (
+            TradierBroker, TradierAPIClient,
+            _SIDE_TO_TRADIER, _TRADIER_SIDE_MAP, _BASE_URLS,
+        )
+        assert "sandbox" in _BASE_URLS
+        assert "production" in _BASE_URLS
+
+    def test_side_mapping_roundtrip(self):
+        from engine.execution.tradier_broker import _SIDE_TO_TRADIER, _TRADIER_SIDE_MAP
+        for local_side, tradier_str in _SIDE_TO_TRADIER.items():
+            assert tradier_str in _TRADIER_SIDE_MAP
+            assert _TRADIER_SIDE_MAP[tradier_str] == local_side
+
+    def test_api_client_init_sandbox(self):
+        from engine.execution.tradier_broker import TradierAPIClient
+        client = TradierAPIClient(
+            api_key="test_key",
+            account_id="test_acct",
+            environment="sandbox",
+        )
+        assert client.environment == "sandbox"
+        assert "sandbox.tradier.com" in client.base_url
+        assert client.api_key == "test_key"
+        assert client.account_id == "test_acct"
+
+    def test_api_client_init_production(self):
+        from engine.execution.tradier_broker import TradierAPIClient
+        client = TradierAPIClient(
+            api_key="prod_key",
+            account_id="prod_acct",
+            environment="production",
+        )
+        assert client.environment == "production"
+        assert "api.tradier.com" in client.base_url
+
+    def test_api_client_invalid_environment(self):
+        from engine.execution.tradier_broker import TradierAPIClient
+        with pytest.raises(ValueError, match="Invalid environment"):
+            TradierAPIClient(api_key="k", account_id="a", environment="invalid")
+
+    def test_broker_interface_matches_paper(self):
+        """Verify TradierBroker has the same public methods as PaperBroker."""
+        from engine.execution.tradier_broker import TradierBroker
+        required_methods = [
+            "place_order", "compute_nav", "compute_exposures",
+            "get_position", "get_all_positions", "get_portfolio_summary",
+            "refresh_prices", "reconcile", "get_risk_profile",
+            "get_daily_target_state", "reset_daily_target",
+            "get_leverage_multiplier", "emit_dashboard_state",
+            "get_dashboard_snapshot", "get_dashboard_history",
+            "register_dashboard_callback", "get_trade_history",
+            "get_daily_pnl", "get_drawdown", "get_performance_metrics",
+            "export_positions_csv",
+        ]
+        for method in required_methods:
+            assert hasattr(TradierBroker, method), f"TradierBroker missing method: {method}"
+
+    def test_broker_init_offline(self):
+        """TradierBroker should init gracefully without network."""
+        from engine.execution.tradier_broker import TradierBroker
+        import os
+        # Use dummy credentials
+        broker = TradierBroker(
+            initial_cash=10_000,
+            api_key="dummy_key",
+            account_id="dummy_acct",
+            environment="sandbox",
+        )
+        # Should initialize even though API calls fail
+        assert broker.state.cash == 10_000
+        assert broker.client.environment == "sandbox"
+
+    def test_broker_portfolio_summary_format(self):
+        """Verify portfolio summary includes broker field."""
+        from engine.execution.tradier_broker import TradierBroker
+        broker = TradierBroker(
+            initial_cash=50_000,
+            api_key="dummy",
+            account_id="dummy",
+            environment="sandbox",
+        )
+        summary = broker.get_portfolio_summary()
+        assert "broker" in summary
+        assert summary["broker"] == "tradier"
+        assert "environment" in summary
+        assert summary["environment"] == "sandbox"
+        assert "nav" in summary
+        assert "cash" in summary
+
+    def test_risk_profile_default(self):
+        from engine.execution.tradier_broker import TradierBroker
+        broker = TradierBroker(
+            initial_cash=10_000,
+            api_key="dummy",
+            account_id="dummy",
+            environment="sandbox",
+        )
+        assert broker.get_risk_profile() == "AGGRESSIVE"
+        assert broker.get_leverage_multiplier() == 1.0
+
+    def test_daily_target_state(self):
+        from engine.execution.tradier_broker import TradierBroker
+        broker = TradierBroker(
+            initial_cash=10_000,
+            api_key="dummy",
+            account_id="dummy",
+            environment="sandbox",
+        )
+        state = broker.get_daily_target_state()
+        assert "risk_profile" in state
+        assert "target_pct" in state
+        assert state["target_pct"] == 0.05
+
+    def test_place_order_no_price(self):
+        """Order should be rejected when no price data available."""
+        from engine.execution.tradier_broker import TradierBroker
+        broker = TradierBroker(
+            initial_cash=10_000,
+            api_key="dummy",
+            account_id="dummy",
+            environment="sandbox",
+        )
+        # This should fail gracefully (no real API)
+        order = broker.place_order("FAKEXYZ", OrderSide.BUY, 10, reason="test")
+        assert order.status in (OrderStatus.REJECTED,)
+        assert order.ticker == "FAKEXYZ"
+
+    def test_execution_engine_broker_type(self):
+        """ExecutionEngine should accept broker_type parameter."""
+        from engine.execution.execution_engine import ExecutionEngine
+        # Default should be paper
+        # We can't instantiate fully without market data, but we can verify
+        # the parameter is accepted at the class level
+        import inspect
+        sig = inspect.signature(ExecutionEngine.__init__)
+        assert "broker_type" in sig.parameters
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])

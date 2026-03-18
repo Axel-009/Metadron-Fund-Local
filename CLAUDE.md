@@ -82,7 +82,7 @@ AlphaBetaUnleashed (Dataset 1) — 1-min cadence
     ├── Rm_adjusted = Rm_realized + macro.rm_adjustment
     ├── target_beta = corridor_fn(Rm_adjusted) × 4.7 × vol_adj
     ├── MES_hedge_beta = target_beta - sleeve_beta
-    └── execute via PaperBroker (→ IBBroker when live)
+    └── execute via PaperBroker or TradierBroker (broker_type="tradier")
 ```
 
 ## Architecture
@@ -126,7 +126,8 @@ Metadron-Capital/                        ← Master monorepo (Layer 0: Hub)
 │   │   └── beta_corridor.py            ← Beta corridor 7–12% + vol-normalisation
 │   ├── execution/                       ← L5: Execution + L7 HFT routing
 │   │   ├── paper_broker.py             ← Simulated broker (OpenBB prices)
-│   │   ├── execution_engine.py         ← Full pipeline orchestrator + ML vote ensemble
+│   │   ├── tradier_broker.py           ← Live broker via Tradier API (sandbox/production)
+│   │   ├── execution_engine.py         ← Full pipeline orchestrator + ML vote ensemble (broker_type="paper"|"tradier")
 │   │   ├── decision_matrix.py          ← 6-gate trade approval + Kelly sizing + ABU beta
 │   │   ├── options_engine.py           ← Black-Scholes, Greeks, vol surface, θ+Γ optimizer
 │   │   ├── conviction_override.py       ← 3-tier conviction override system
@@ -315,7 +316,7 @@ python3 core/platform.py
 ## Design Rules
 
 1. **All data via OpenBB** (34+ providers: FRED, SEC, CBOE, etc.) — sole data source, no broker dependency
-2. **Paper broker only** — no live execution until broker API connected
+2. **Paper broker default** — TradierBroker available for live/sandbox execution (set TRADIER_API_KEY, TRADIER_ACCOUNT_ID, TRADIER_ENVIRONMENT in .env)
 3. **6-layer architecture is immutable** — extend within layers
 4. **Beta managed within 7–12% corridor** — vol-normalised
 5. **Alpha targeted at 95%+** — aggressive multi-sleeve allocation
