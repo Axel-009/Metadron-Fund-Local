@@ -156,7 +156,8 @@ Metadron-Capital/                        ← Master monorepo (Layer 0: Hub)
 │       ├── live_earnings_graph.py       ← Live earnings graph rendering
 │       ├── market_wrap.py              ← Market wrap narrative
 │       ├── anomaly_detector.py          ← Statistical anomaly scanner
-│       └── memory_monitor.py           ← Session tracking + EOD summary
+│       ├── memory_monitor.py           ← Session tracking + EOD summary
+│       └── learning_loop.py            ← Closed-loop feedback: signal accuracy → tier weights → regime calibration
 ├── app/                                 ← Web application (FastAPI)
 │   └── backend/                         ← API server + services
 │       ├── main.py                      ← FastAPI entry point

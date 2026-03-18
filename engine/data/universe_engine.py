@@ -252,6 +252,58 @@ class SecurityType(str, Enum):
     THEMATIC_ETF = "THEMATIC_ETF"
 
 
+class AssetClass(str, Enum):
+    """Asset class routing — determines whether an instrument flows through
+    the execution pipeline or is macro-analysis-only.
+
+    TRADEABLE: Stocks, equity ETFs, futures, options → allocator → alpha →
+               beta corridor → decision matrix → execution via broker.
+    MACRO_ONLY: Bonds, currencies, commodities (non-ETF) → analysed for
+                macro regime, sector allocation, cross-asset correlation,
+                but NEVER sent to execution.
+    """
+    TRADEABLE = "TRADEABLE"
+    MACRO_ONLY = "MACRO_ONLY"
+
+
+# Map SecurityType → AssetClass for pipeline routing
+# Stocks, sector/index/factor/thematic ETFs are tradeable on Tradier.
+# Fixed income, commodity, and volatility ETFs are tradeable as ETFs on
+# Tradier but serve primarily as macro signals — we allow execution of
+# sector/index/factor/thematic ETFs only.
+SECURITY_TYPE_ASSET_CLASS = {
+    SecurityType.EQUITY: AssetClass.TRADEABLE,
+    SecurityType.SECTOR_ETF: AssetClass.TRADEABLE,
+    SecurityType.INDEX_ETF: AssetClass.TRADEABLE,
+    SecurityType.FACTOR_ETF: AssetClass.TRADEABLE,
+    SecurityType.THEMATIC_ETF: AssetClass.TRADEABLE,
+    SecurityType.BROAD_ETF: AssetClass.TRADEABLE,
+    SecurityType.INTERNATIONAL_ETF: AssetClass.TRADEABLE,
+    # Macro-only: analysed but NOT executed
+    SecurityType.FIXED_INCOME_ETF: AssetClass.MACRO_ONLY,
+    SecurityType.COMMODITY_ETF: AssetClass.MACRO_ONLY,
+    SecurityType.VOLATILITY_ETF: AssetClass.MACRO_ONLY,
+}
+
+# Ticker-level override for ETFs that should be macro-only
+# These tickers are used by CrossAssetMonitor/MacroEngine for regime
+# detection but should never flow through the execution pipeline.
+MACRO_ONLY_TICKERS = set(
+    list(FIXED_INCOME_ETFS.values()) +
+    list(COMMODITY_ETFS.values()) +
+    list(VOLATILITY_ETFS.values())
+)
+
+# Tradeable ETFs — execution eligible
+TRADEABLE_ETFS = set(
+    list(SECTOR_ETFS.values()) +
+    list(INDEX_ETFS.values()) +
+    list(FACTOR_ETFS.values()) +
+    list(THEMATIC_ETFS.values()) +
+    list(INTERNATIONAL_ETFS.values())
+)
+
+
 class GICSSector(str, Enum):
     """GICS sector enum."""
     ENERGY = "Energy"
@@ -338,6 +390,31 @@ class Security:
     @property
     def cap_tier(self) -> MarketCapTier:
         return classify_market_cap(self.market_cap)
+
+    @property
+    def asset_class(self) -> AssetClass:
+        """Determine whether this security is tradeable or macro-only."""
+        # Ticker-level override first
+        if self.ticker in MACRO_ONLY_TICKERS:
+            return AssetClass.MACRO_ONLY
+        if self.ticker in TRADEABLE_ETFS:
+            return AssetClass.TRADEABLE
+        # Fall back to SecurityType mapping
+        try:
+            sec_type = SecurityType(self.security_type)
+            return SECURITY_TYPE_ASSET_CLASS.get(sec_type, AssetClass.TRADEABLE)
+        except ValueError:
+            return AssetClass.TRADEABLE  # Default: equities are tradeable
+
+    @property
+    def is_tradeable(self) -> bool:
+        """True if this instrument can flow through allocator → execution."""
+        return self.asset_class == AssetClass.TRADEABLE
+
+    @property
+    def is_macro_only(self) -> bool:
+        """True if this instrument is analysed for macro context only."""
+        return self.asset_class == AssetClass.MACRO_ONLY
 
 
 class GICPoolingEngine:
@@ -852,6 +929,40 @@ class UniverseEngine:
     def get_sectors(self) -> list[str]:
         """Return list of unique sectors in the universe."""
         return list(set(s.sector for s in self._equities if s.sector))
+
+    def get_tradeable(self) -> list[Security]:
+        """Return only tradeable securities (stocks, equity ETFs, futures, options).
+
+        These are the instruments that flow through:
+        allocator → alpha optimizer → beta corridor → decision matrix → execution.
+        """
+        return [s for s in self._equities if s.is_tradeable]
+
+    def get_macro_only(self) -> list[str]:
+        """Return macro-only instrument tickers (bonds, commodities, volatility ETFs).
+
+        These are analysed for regime detection and sector allocation via GICS
+        but are NEVER sent to the execution pipeline.
+        """
+        return sorted(MACRO_ONLY_TICKERS)
+
+    def get_tradeable_tickers(self) -> set[str]:
+        """Return set of all tradeable ticker symbols."""
+        equity_tickers = {s.ticker for s in self._equities if s.is_tradeable}
+        return equity_tickers | TRADEABLE_ETFS
+
+    def is_ticker_tradeable(self, ticker: str) -> bool:
+        """Check if a specific ticker is execution-eligible."""
+        if ticker in MACRO_ONLY_TICKERS:
+            return False
+        if ticker in TRADEABLE_ETFS:
+            return True
+        # Check if it's an equity in our universe
+        sec = self.get_by_ticker(ticker)
+        if sec:
+            return sec.is_tradeable
+        # Unknown tickers default to tradeable (individual stocks)
+        return True
 
     def load(self) -> int:
         """Alias for load_universe() — used by execution pipeline."""
