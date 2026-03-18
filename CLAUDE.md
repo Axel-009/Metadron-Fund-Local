@@ -94,7 +94,9 @@ Metadron-Capital/                        ← Master monorepo (Layer 0: Hub)
 │   │   ├── universe_engine.py           ← 1,044+ securities (SP500+SP400+SP600), GICS 4-tier, 26 RV pairs
 │   │   ├── cross_asset_universe.py     ← Static cross-asset universe data + GICS sector map
 │   │   ├── openbb_data.py              ← Primary data source: OpenBB (34+ providers)
-│   │   └── yahoo_data.py               ← Re-exports from openbb_data (backward compat)
+│   │   ├── yahoo_data.py               ← Re-exports from openbb_data (backward compat)
+│   │   ├── ingestion_orchestrator.py   ← Multi-asset continuous ingestion (no crypto, US+FTSE equities, G10+India FI/FX)
+│   │   └── universal_pooling.py        ← Cross-asset data pooling → engine layer routing
 │   ├── signals/                         ← L2: Signal processing
 │   │   ├── macro_engine.py             ← GMTF: SDR tension, rotation, velocity, FRB
 │   │   ├── metadron_cube.py            ← C(t) = f(L,R,F) + 4-Gate + KillSwitch + FCLP
@@ -105,10 +107,12 @@ Metadron-Capital/                        ← Master monorepo (Layer 0: Hub)
 │   │   ├── social_prediction_engine.py ← MiroFish bridge → social sentiment signals
 │   │   ├── distressed_asset_engine.py  ← 5-model distress + Graham-Mielle (fulcrum/liquidation/Marks)
 │   │   ├── cvr_engine.py              ← CVR valuation (5 models, 4 instruments)
-│   │   └── event_driven_engine.py      ← 12-category event-driven (M&A arb, PEAD, etc.)
+│   │   ├── event_driven_engine.py      ← 12-category event-driven (M&A arb, PEAD, etc.)
+│   │   └── fed_liquidity_plumbing.py  ← Fed balance sheet, reserves, money velocity, sector flow allocation
 │   ├── ml/                              ← L3: ML/AI models
 │   │   ├── alpha_optimizer.py           ← Walk-forward ML alpha + mean-variance + credit quality
 │   │   ├── backtester.py               ← Walk-forward, Monte Carlo, scenario engine
+│   │   ├── qstrader_backtest_bridge.py ← QSTrader institutional backtesting integration
 │   │   ├── pattern_recognition.py       ← Candlestick, chart patterns, anomalies
 │   │   ├── social_features.py          ← MiroFish social feature engineering for ML
 │   │   ├── universe_classifier.py       ← XGBoost 4-model ensemble, quality tiers A-G
@@ -134,6 +138,7 @@ Metadron-Capital/                        ← Master monorepo (Layer 0: Hub)
 │   │   ├── conviction_override.py       ← 3-tier conviction override system
 │   │   ├── exchange_core_engine.py     ← L7 LMAX Disruptor ring buffer order matching (Python)
 │   │   └── wondertrader_engine.py      ← L7 CTA trend-following + HFT micro-price + TWAP/VWAP
+│   ├── live_loop_orchestrator.py       ← End-to-end continuous live loop (ingestion → execution → learning)
 │   │   # L7 HFT Execution arm:
 │   │   # quant_strategy_executor.py  → 12 independent technical strategies (Stage 6.5)
 │   │   # exchange-core v2 (source)   → Java reference (repos/layer7_execution/)
@@ -181,7 +186,7 @@ Metadron-Capital/                        ← Master monorepo (Layer 0: Hub)
 │   ├── frontend/                        ← Vue 3 + Vite + D3.js
 │   │   └── src/                         ← Components, views, API layer
 │   └── package.json                     ← Monorepo scripts (dev, build, setup)
-├── intelligence_platform/               ← 21 reference repos (Python-coherent, 16K+ files)
+├── intelligence_platform/               ← 21 reference repos + QSTrader backtester + plugins (Python-coherent, 16K+ files)
 │   ├── README.md                       ← Index of all 21 repos
 │   ├── AI-Newton/                      ← Physics-informed ML
 │   ├── Air-LLM/                        ← LLM inference
@@ -207,6 +212,71 @@ Metadron-Capital/                        ← Master monorepo (Layer 0: Hub)
 ├── run_open.py                          ← 09:30 ET — full pipeline execution
 ├── run_close.py                         ← 16:00 ET — EOD reconciliation
 └── repos/                               ← All 23 component repositories (6 layers)
+```
+
+## Data Ingestion Constraints (NO CRYPTO)
+
+```
+DataIngestionOrchestrator → UniversalDataPool → Engine Layers
+    ├── Equities: US S&P 1500 + London FTSE 100 ONLY
+    ├── Commodities: Major ETFs only (GLD,SLV,USO,UNG,DBA,DBC,COPX,WEAT,CORN)
+    │   → Price reference, cyclical patterns, global trade signals
+    ├── Indices: SPY,QQQ,IWM,DIA,VT,EFA,EEM → benchmarking + monthly rebalancing
+    ├── Fixed Income:
+    │   ├── Sovereign: G10 + India + Japan
+    │   ├── Corporate: US credit bonds ONLY (IG: LQD,VCIT,VCSH | HY: HYG,JNK)
+    │   └── Structured: Major benchmarks only (MBS: MBB,VMBS)
+    ├── Currencies: G10 + INR + JPY (via ETFs + FRED)
+    ├── Econometrics: 40+ FRED series (GDP,CPI,M2,WALCL,SOFR,etc.)
+    ├── SEC Filings: Major updates ONLY (10-K,10-Q,8-K material) — monthly tracking
+    ├── Options: Selected securities opportunistically → alpha maximization
+    └── Futures: ES,NQ,YM,RTY,VX,ZN,ZB → beta management corridor
+```
+
+## Live Loop Architecture
+
+```
+CONTINUOUS LOOP (1-min heartbeat, 09:30-16:00 ET):
+  1. DATA INGESTION   → DataIngestionOrchestrator → UniversalDataPool
+  2. SIGNAL GENERATION → FedLiquidityPlumbing + MacroEngine + MetadronCube + all engines
+  3. INTELLIGENCE      → AlphaOptimizer + MLVoteEnsemble + Agent bots
+  4. DECISION          → DecisionMatrix + BetaCorridor + Options scan
+  5. EXECUTION         → ExecutionEngine + OptionsEngine + Futures beta hedge
+  6. LEARNING          → LearningLoop + GSDPlugin + PaulPlugin
+  7. MONITORING        → Portfolio P&L + Risk checks + Anomaly detection
+
+Pre-market (08:00): Full refresh + overnight signals + SEC scan
+After-hours (16:00-20:00): Reduced frequency + earnings scan
+Overnight: QSTrader backtesting + ML training + pattern evolution
+```
+
+## QSTrader Backtesting (intelligence_platform/qstrader/)
+
+```
+QSTraderBacktestRunner
+    ├── MetadronAlphaModel → wraps signal pipeline as QSTrader alpha
+    ├── MetadronRiskModel  → wraps BetaCorridor as QSTrader risk model
+    ├── MetadronFeeModel   → realistic spread + commission + impact
+    ├── StrategyFactory    → pre-built strategies (cube, macro, ensemble, etc.)
+    ├── Walk-forward validation → sliding train/test windows
+    ├── Regime backtesting → test across TRENDING/RANGE/STRESS/CRASH
+    ├── Strategy comparison → side-by-side Sharpe/DD/alpha analysis
+    └── Learning loop integration → feed results into continuous improvement
+```
+
+## GSD + Paul Learning Plugins
+
+```
+GSDPlugin (Gradient Signal Dynamics):
+    Signal momentum | convergence | divergence | gradient decay
+    Cross-engine alignment | adaptive learning rate per agent
+
+PaulPlugin (Pattern Awareness & Unified Learning):
+    Pattern memory | matching | evolution | context-aware replay
+    Unified pattern library shared across all agents
+
+AgentLearningWrapper:
+    Attaches GSD + Paul to any agent for continuous learning
 ```
 
 ## MetadronCube — C(t) = f(L_t, R_t, F_t)
