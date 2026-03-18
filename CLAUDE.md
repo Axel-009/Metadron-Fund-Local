@@ -91,7 +91,8 @@ AlphaBetaUnleashed (Dataset 1) — 1-min cadence
 Metadron-Capital/                        ← Master monorepo (Layer 0: Hub)
 ├── engine/                              ← INVESTMENT ENGINE
 │   ├── data/                            ← L1: Unified OpenBB data + universe
-│   │   ├── universe_engine.py           ← 150+ securities, GICS 4-tier, 26 RV pairs
+│   │   ├── universe_engine.py           ← 1,044+ securities (SP500+SP400+SP600), GICS 4-tier, 26 RV pairs
+│   │   ├── cross_asset_universe.py     ← Static cross-asset universe data + GICS sector map
 │   │   ├── openbb_data.py              ← Primary data source: OpenBB (34+ providers)
 │   │   └── yahoo_data.py               ← Re-exports from openbb_data (backward compat)
 │   ├── signals/                         ← L2: Signal processing

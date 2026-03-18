@@ -1,9 +1,12 @@
 """L1 Data — Universe Engine.
 
-Manages the complete investment universe:
-    - S&P 500/400/600 equity universe via OpenBB
+Manages the complete cross-asset investment universe:
+    - ~2,500+ equities: S&P 500 + S&P MidCap 400 + S&P SmallCap 600 + extras
+    - Dynamic loading via OpenBB index.constituents() when API keys available
+    - Static fallback from cross_asset_universe.py for offline operation
     - Full GICS 4-tier taxonomy (11 sectors / 25 industry groups / 74 industries / 163 sub-industries)
     - 70+ ETFs covering sectors, factors, commodities, fixed income, volatility
+    - Asset class routing: TRADEABLE vs MACRO_ONLY (bonds/commodities/vol for analysis only)
     - 26 relative value (RV) pairs for pair trading
     - GIC pooling integration methodology
     - DailyUniverseScanner for morning pre-market scans
@@ -36,6 +39,13 @@ except ImportError:
     def get_prices(*a, **kw): return pd.DataFrame()
     def get_fundamentals(*a, **kw): return {}
     def get_bulk_fundamentals(*a, **kw): return {}
+
+from .cross_asset_universe import (
+    SP500_TICKERS, SP400_TICKERS, SP600_TICKERS, EXTRA_TICKERS,
+    SECTOR_MAP, INDUSTRY_GROUP_MAP, OPENBB_INDEX_SYMBOLS,
+    get_all_static_tickers, get_sector_for_ticker,
+    get_industry_group_for_ticker,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -648,141 +658,14 @@ class RVPairAnalyzer:
 
 
 # ═══════════════════════════════════════════════════════════════════════════
-# Core Equities — ~110 securities, 10+ per GICS sector
+# Cross-Asset Universe — ~2,500+ equities from cross_asset_universe.py
 # ═══════════════════════════════════════════════════════════════════════════
-SP500_TOP_HOLDINGS = [
-    # Information Technology (12)
-    "AAPL", "MSFT", "NVDA", "AVGO", "CSCO", "CRM", "ORCL", "ADBE",
-    "INTC", "AMD", "TXN", "INTU",
-    # Health Care (11)
-    "UNH", "JNJ", "LLY", "ABBV", "MRK", "PFE", "TMO", "ABT",
-    "DHR", "ISRG", "AMGN",
-    # Financials (12)
-    "JPM", "V", "MA", "BRK-B", "GS", "MS", "BLK", "AXP",
-    "CME", "CB", "SPGI", "COF",
-    # Consumer Discretionary (10)
-    "AMZN", "TSLA", "HD", "MCD", "NKE", "LOW", "BKNG", "SBUX",
-    "TGT", "LULU",
-    # Communication Services (8)
-    "GOOGL", "META", "NFLX", "CMCSA", "VZ", "DIS", "T", "TMUS",
-    # Industrials (11)
-    "BA", "LMT", "CAT", "DE", "RTX", "GE", "UPS", "FDX",
-    "NSC", "EMR", "ADP",
-    # Consumer Staples (10)
-    "PG", "KO", "PEP", "COST", "WMT", "PM", "MO", "CL",
-    "MDLZ", "STZ",
-    # Energy (10)
-    "XOM", "CVX", "SLB", "COP", "EOG", "MPC", "PSX", "VLO",
-    "OXY", "HAL",
-    # Utilities (8)
-    "NEE", "DUK", "SO", "AEP", "D", "SRE", "EXC", "XEL",
-    # Real Estate (8)
-    "PLD", "SPG", "O", "AMT", "CCI", "EQIX", "PSA", "DLR",
-    # Materials (7)
-    "LIN", "APD", "SHW", "FCX", "NEM", "ECL", "DD",
-    # Additional high-profile names
-    "GILD", "SYK", "HCA", "BDX", "ZTS", "CI",
-    "USB", "TFC", "PNC", "F", "GM", "DG",
-    "PANW", "SNPS", "CDNS", "MRVL", "QCOM", "ADI",
-    "BMY", "MMM",
-]
+# Backward-compatible alias — old code referencing SP500_TOP_HOLDINGS still works
+SP500_TOP_HOLDINGS = SP500_TICKERS
 
-# Full GICS classification for every security in universe
-KNOWN_SECTORS = {
-    # Information Technology
-    "AAPL": "Information Technology", "MSFT": "Information Technology",
-    "NVDA": "Information Technology", "AVGO": "Information Technology",
-    "CSCO": "Information Technology", "CRM": "Information Technology",
-    "ORCL": "Information Technology", "ADBE": "Information Technology",
-    "INTC": "Information Technology", "AMD": "Information Technology",
-    "TXN": "Information Technology", "INTU": "Information Technology",
-    "QCOM": "Information Technology", "ADI": "Information Technology",
-    "PANW": "Information Technology", "SNPS": "Information Technology",
-    "CDNS": "Information Technology", "MRVL": "Information Technology",
-    # Health Care
-    "UNH": "Health Care", "JNJ": "Health Care",
-    "LLY": "Health Care", "ABBV": "Health Care",
-    "MRK": "Health Care", "PFE": "Health Care",
-    "TMO": "Health Care", "ABT": "Health Care",
-    "DHR": "Health Care", "ISRG": "Health Care",
-    "AMGN": "Health Care", "GILD": "Health Care",
-    "SYK": "Health Care", "HCA": "Health Care",
-    "BDX": "Health Care", "ZTS": "Health Care",
-    "CI": "Health Care", "BMY": "Health Care",
-    # Financials
-    "JPM": "Financials", "V": "Financials",
-    "MA": "Financials", "BRK-B": "Financials",
-    "GS": "Financials", "MS": "Financials",
-    "BLK": "Financials", "AXP": "Financials",
-    "CME": "Financials", "CB": "Financials",
-    "SPGI": "Financials", "COF": "Financials",
-    "USB": "Financials", "TFC": "Financials",
-    "PNC": "Financials",
-    # Consumer Discretionary
-    "AMZN": "Consumer Discretionary", "TSLA": "Consumer Discretionary",
-    "HD": "Consumer Discretionary", "MCD": "Consumer Discretionary",
-    "NKE": "Consumer Discretionary", "LOW": "Consumer Discretionary",
-    "BKNG": "Consumer Discretionary", "SBUX": "Consumer Discretionary",
-    "TGT": "Consumer Discretionary", "LULU": "Consumer Discretionary",
-    "F": "Consumer Discretionary", "GM": "Consumer Discretionary",
-    "DG": "Consumer Discretionary",
-    # Communication Services
-    "GOOGL": "Communication Services", "META": "Communication Services",
-    "NFLX": "Communication Services", "CMCSA": "Communication Services",
-    "VZ": "Communication Services", "DIS": "Communication Services",
-    "T": "Communication Services", "TMUS": "Communication Services",
-    # Industrials
-    "BA": "Industrials", "LMT": "Industrials",
-    "CAT": "Industrials", "DE": "Industrials",
-    "RTX": "Industrials", "GE": "Industrials",
-    "UPS": "Industrials", "FDX": "Industrials",
-    "NSC": "Industrials", "EMR": "Industrials",
-    "ADP": "Industrials", "MMM": "Industrials",
-    # Consumer Staples
-    "PG": "Consumer Staples", "KO": "Consumer Staples",
-    "PEP": "Consumer Staples", "COST": "Consumer Staples",
-    "WMT": "Consumer Staples", "PM": "Consumer Staples",
-    "MO": "Consumer Staples", "CL": "Consumer Staples",
-    "MDLZ": "Consumer Staples", "STZ": "Consumer Staples",
-    # Energy
-    "XOM": "Energy", "CVX": "Energy",
-    "SLB": "Energy", "COP": "Energy",
-    "EOG": "Energy", "MPC": "Energy",
-    "PSX": "Energy", "VLO": "Energy",
-    "OXY": "Energy", "HAL": "Energy",
-    # Utilities
-    "NEE": "Utilities", "DUK": "Utilities",
-    "SO": "Utilities", "AEP": "Utilities",
-    "D": "Utilities", "SRE": "Utilities",
-    "EXC": "Utilities", "XEL": "Utilities",
-    # Real Estate
-    "PLD": "Real Estate", "SPG": "Real Estate",
-    "O": "Real Estate", "AMT": "Real Estate",
-    "CCI": "Real Estate", "EQIX": "Real Estate",
-    "PSA": "Real Estate", "DLR": "Real Estate",
-    # Materials
-    "LIN": "Materials", "APD": "Materials",
-    "SHW": "Materials", "FCX": "Materials",
-    "NEM": "Materials", "ECL": "Materials",
-    "DD": "Materials",
-}
-
-# GICS Tier 2/3/4 classification for key names
-KNOWN_INDUSTRY_GROUPS = {
-    "AAPL": ("Technology Hardware & Equipment", "Technology Hardware, Storage & Peripherals", "Technology Hardware, Storage & Peripherals"),
-    "MSFT": ("Software & Services", "Systems Software", "Systems Software"),
-    "NVDA": ("Semiconductors & Semiconductor Equipment", "Semiconductors", "Semiconductors"),
-    "GOOGL": ("Media & Entertainment", "Interactive Media & Services", "Interactive Media & Services"),
-    "META": ("Media & Entertainment", "Interactive Media & Services", "Interactive Media & Services"),
-    "AMZN": ("Retailing", "Broadline Retail", "Broadline Retail"),
-    "JPM": ("Banks", "Diversified Banks", "Diversified Banks"),
-    "UNH": ("Health Care Equipment & Services", "Managed Health Care", "Managed Health Care"),
-    "XOM": ("Oil, Gas & Consumable Fuels", "Integrated Oil & Gas", "Integrated Oil & Gas"),
-    "PG": ("Household & Personal Products", "Household Products", "Household Products"),
-    "NEE": ("Utilities", "Electric Utilities", "Electric Utilities"),
-    "PLD": ("Equity Real Estate Investment Trusts (REITs)", "Industrial REITs", "Industrial REITs"),
-    "LIN": ("Chemicals", "Industrial Gases", "Industrial Gases"),
-}
+# Unified sector + industry maps from cross_asset_universe
+KNOWN_SECTORS = SECTOR_MAP
+KNOWN_INDUSTRY_GROUPS = INDUSTRY_GROUP_MAP
 
 # RV pair mapping for quick lookup
 RV_PAIR_MAP = {
@@ -817,12 +700,32 @@ class UniverseEngine:
             self.load_universe()
 
     def load_universe(self) -> int:
-        tickers = list(set(SP500_TOP_HOLDINGS))
-        for ticker in tickers:
-            sector = KNOWN_SECTORS.get(ticker, "")
+        """Load the full cross-asset universe.
+
+        Strategy:
+        1. Try dynamic loading via OpenBB index.constituents() for live data
+        2. Fall back to comprehensive static universe (~2,500+ tickers from
+           SP500 + SP400 + SP600 + extra names)
+        3. Enrich each ticker with GICS sector/industry classification
+        """
+        # Step 1: Try dynamic OpenBB loading
+        dynamic_tickers = self._try_openbb_constituents()
+
+        # Step 2: Merge with static universe (static is the floor)
+        static_tickers = get_all_static_tickers()
+        all_tickers = sorted(set(dynamic_tickers) | set(static_tickers))
+
+        logger.info(
+            "Universe loading: %d dynamic + %d static → %d unique tickers",
+            len(dynamic_tickers), len(static_tickers), len(all_tickers),
+        )
+
+        # Step 3: Build Security objects
+        for ticker in all_tickers:
+            sector = get_sector_for_ticker(ticker)
             sector_etf = SECTOR_ETFS.get(sector, "")
             rv_pair = RV_PAIR_MAP.get(ticker, "")
-            ig = KNOWN_INDUSTRY_GROUPS.get(ticker, ("", "", ""))
+            ig = get_industry_group_for_ticker(ticker)
             sec = Security(
                 ticker=ticker, name=ticker,
                 security_type=SecurityType.EQUITY.value,
@@ -835,7 +738,106 @@ class UniverseEngine:
             )
             self._equities.append(sec)
         self._loaded = True
+        logger.info(
+            "Universe loaded: %d equities across %d sectors",
+            len(self._equities), len(self.get_sector_counts()),
+        )
         return len(self._equities)
+
+    def _try_openbb_constituents(self) -> list[str]:
+        """Try to fetch index constituents from OpenBB.
+
+        Attempts SP500, SP400, SP600 via obb.index.constituents().
+        Returns empty list if OpenBB is unavailable or API keys missing.
+        """
+        try:
+            from .openbb_data import _obb, _openbb_available
+            if not _openbb_available or _obb is None:
+                return []
+        except ImportError:
+            return []
+
+        tickers = set()
+        # Try each major index
+        for index_name, symbol in [
+            ("S&P 500", "^GSPC"),
+            ("S&P MidCap 400", "^MID"),
+            ("S&P SmallCap 600", "^SML"),
+        ]:
+            try:
+                result = _obb.index.constituents(symbol, provider="fmp")
+                df = result.to_dataframe()
+                if df is not None and not df.empty:
+                    # Constituents typically have a 'symbol' column
+                    sym_col = None
+                    for col in ["symbol", "Symbol", "ticker", "Ticker"]:
+                        if col in df.columns:
+                            sym_col = col
+                            break
+                    if sym_col:
+                        idx_tickers = df[sym_col].dropna().astype(str).tolist()
+                        tickers.update(t.strip() for t in idx_tickers if t.strip())
+                        logger.info(
+                            "OpenBB %s: fetched %d constituents",
+                            index_name, len(idx_tickers),
+                        )
+            except Exception as e:
+                logger.debug("OpenBB %s constituents unavailable: %s", index_name, e)
+                continue
+
+        if tickers:
+            logger.info("OpenBB dynamic universe: %d unique tickers", len(tickers))
+        return sorted(tickers)
+
+    def enrich_sectors_from_openbb(self, batch_size: int = 50):
+        """Enrich unclassified tickers with GICS sector from OpenBB equity.profile().
+
+        Only fetches for tickers that have no sector assigned from the static map.
+        Batches requests to avoid rate limits.
+        """
+        unclassified = [s for s in self._equities if not s.sector]
+        if not unclassified:
+            return
+
+        try:
+            from .openbb_data import _obb, _openbb_available
+            if not _openbb_available or _obb is None:
+                logger.debug("OpenBB unavailable, skipping sector enrichment for %d tickers", len(unclassified))
+                return
+        except ImportError:
+            return
+
+        enriched = 0
+        for i in range(0, len(unclassified), batch_size):
+            batch = unclassified[i:i + batch_size]
+            batch_tickers = [s.ticker for s in batch]
+            try:
+                result = _obb.equity.profile(batch_tickers, provider="fmp")
+                df = result.to_dataframe()
+                if df is None or df.empty:
+                    continue
+                # Build lookup from result
+                for _, row in df.iterrows():
+                    ticker = str(row.get("symbol", ""))
+                    sector = str(row.get("sector", "") or "")
+                    industry = str(row.get("industry", "") or "")
+                    if not ticker or not sector:
+                        continue
+                    for sec in batch:
+                        if sec.ticker == ticker:
+                            sec.sector = sector
+                            sec.gics_sector = sector
+                            sec.sector_etf = SECTOR_ETFS.get(sector, "")
+                            if industry:
+                                sec.industry = industry
+                            enriched += 1
+                            break
+            except Exception as e:
+                logger.debug("OpenBB profile batch failed: %s", e)
+                continue
+
+        if enriched:
+            logger.info("Enriched %d/%d unclassified tickers with sector data", enriched, len(unclassified))
 
     def load_fundamentals(self):
         tickers = [s.ticker for s in self._equities]
