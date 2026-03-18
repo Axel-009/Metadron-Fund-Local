@@ -38,7 +38,10 @@ from dataclasses import dataclass, field
 from typing import Optional
 from datetime import datetime
 
-from ..data.universe_engine import UniverseEngine, get_engine, SECTOR_ETFS
+from ..data.universe_engine import (
+    UniverseEngine, get_engine, SECTOR_ETFS,
+    MACRO_ONLY_TICKERS, TRADEABLE_ETFS, AssetClass,
+)
 from ..data.yahoo_data import get_returns, get_adj_close, get_market_stats
 from ..signals.macro_engine import MacroEngine, MacroSnapshot, MarketRegime
 from ..signals.metadron_cube import MetadronCube, CubeOutput
@@ -70,6 +73,9 @@ from ..signals.security_analysis_engine import SecurityAnalysisEngine
 
 # L2 Pattern Discovery (MiroFish + AI-Newton)
 from ..signals.pattern_discovery_engine import PatternDiscoveryEngine
+
+# Learning loop — closed-loop feedback across all engines
+from ..monitoring.learning_loop import LearningLoop, SignalOutcome, RegimeFeedback
 
 logger = logging.getLogger(__name__)
 
@@ -1101,6 +1107,42 @@ class ExecutionEngine:
         except Exception as e:
             logger.warning(f"QuantStrategyExecutor init failed: {e}")
 
+        # Learning loop — closed-loop feedback across all engines
+        self.learning = LearningLoop()
+        try:
+            loaded = self.learning.load_outcomes()
+            if loaded:
+                logger.info(f"Learning loop loaded {loaded} historical outcomes")
+        except Exception as e:
+            logger.warning(f"Learning loop history load failed: {e}")
+
+    # --- Asset class gate ---------------------------------------------------
+
+    @staticmethod
+    def _filter_tradeable(tickers: list[str], universe: UniverseEngine) -> list[str]:
+        """Filter tickers to only tradeable instruments (stocks, equity ETFs).
+
+        Bonds, commodities, and volatility ETFs are stripped out here —
+        they feed macro analysis and sector allocation via GICS but
+        NEVER flow through allocator → alpha → beta → decision matrix → execution.
+        """
+        tradeable = []
+        removed = []
+        for ticker in tickers:
+            if ticker in MACRO_ONLY_TICKERS:
+                removed.append(ticker)
+            elif universe.is_ticker_tradeable(ticker):
+                tradeable.append(ticker)
+            else:
+                removed.append(ticker)
+
+        if removed:
+            logger.info(
+                "Asset class gate: %d tradeable, %d macro-only removed: %s",
+                len(tradeable), len(removed), ", ".join(removed[:10]),
+            )
+        return tradeable
+
     def run_pipeline(self) -> dict:
         """Execute the full signal pipeline.
 
@@ -1423,13 +1465,25 @@ class ExecutionEngine:
         if not selected_tickers:
             selected_tickers = ["SPY", "QQQ", "IWM", "XLK", "XLF"]
 
+        # ── Asset class gate ──────────────────────────────────────────
+        # Only tradeable instruments (stocks, equity ETFs) pass through
+        # to allocator → alpha → beta → decision matrix → execution.
+        # Bonds, commodities, volatility ETFs are macro-analysis only —
+        # they feed MacroEngine, CrossAssetMonitor, GICS sector allocation
+        # but NEVER hit the execution pipeline.
+        pre_filter_count = len(selected_tickers)
+        selected_tickers = self._filter_tradeable(selected_tickers, self.universe)
+
         result["stages"]["selection"] = {
             "leader_sectors": leader_sectors,
-            "selected_tickers": selected_tickers[:30],  # Cap at 30
+            "selected_tickers": selected_tickers[:30],
+            "pre_filter_count": pre_filter_count,
+            "post_filter_count": len(selected_tickers),
+            "macro_only_excluded": pre_filter_count - len(selected_tickers),
         }
         self.tracker.record_stage("selection", (datetime.now() - t0).total_seconds() * 1000, result["stages"]["selection"])
 
-        # Stage 5: Alpha optimisation
+        # Stage 5: Alpha optimisation (tradeable instruments only)
         t0 = datetime.now()
         alpha_out = self.alpha.optimize(selected_tickers[:20])
         alpha_map = {s.ticker: s for s in alpha_out.signals}
@@ -1709,6 +1763,95 @@ class ExecutionEngine:
             "risk_profile": risk_profile,
         })
 
+        # ── Learning loop feedback ────────────────────────────────────
+        # Feed execution outcomes back into all engines for continuous
+        # improvement: signal accuracy, regime calibration, tier weights.
+        t0 = datetime.now()
+        learning_data = {}
+        try:
+            # Record signal outcomes for each executed trade
+            for trade in trades:
+                outcome = SignalOutcome(
+                    ticker=trade["ticker"],
+                    signal_engine=self._signal_type_to_engine(trade.get("signal", "")),
+                    signal_type=trade.get("signal", ""),
+                    signal_timestamp=result["timestamp"],
+                    execution_timestamp=datetime.now().isoformat(),
+                    side=trade.get("side", ""),
+                    quantity=trade.get("qty", 0),
+                    entry_price=trade.get("price", 0),
+                    vote_score=trade.get("vote_score", 0),
+                    confidence=trade.get("confidence", 0),
+                    regime_at_entry=cube_out.regime.value,
+                    alpha_pred_at_entry=alpha_map.get(
+                        trade["ticker"], AlphaSignal(ticker=trade["ticker"])
+                    ).alpha_pred,
+                )
+                self.learning.record_signal_outcome(outcome)
+
+            # Record regime feedback
+            realized_1d = macro_snap.spy_return_1m / 21 if macro_snap.spy_return_1m else 0
+            regime_fb = RegimeFeedback(
+                predicted_regime=cube_out.regime.value,
+                realized_return_1d=realized_1d,
+                realized_vol_5d=macro_snap.vix / 100 if macro_snap.vix else 0,
+                timestamp=datetime.now().isoformat(),
+            )
+            # Classify actual behavior
+            if realized_1d > 0.005:
+                regime_fb.actual_market_behavior = "BULL"
+            elif realized_1d < -0.005:
+                regime_fb.actual_market_behavior = "BEAR"
+            else:
+                regime_fb.actual_market_behavior = "RANGE"
+            regime_fb.regime_correct = (
+                (regime_fb.actual_market_behavior == "BULL" and cube_out.regime.value == "TRENDING") or
+                (regime_fb.actual_market_behavior == "BEAR" and cube_out.regime.value in ("STRESS", "CRASH")) or
+                (regime_fb.actual_market_behavior == "RANGE" and cube_out.regime.value == "RANGE")
+            )
+            self.learning.record_regime_feedback(regime_fb)
+
+            # Record sector allocation feedback for GICS tracking
+            for sector in leader_sectors:
+                etf = SECTOR_ETFS.get(sector)
+                if etf:
+                    try:
+                        sector_rets = get_returns(etf, start=(
+                            pd.Timestamp.now() - pd.Timedelta(days=30)
+                        ).strftime("%Y-%m-%d"))
+                        if isinstance(sector_rets, pd.DataFrame) and not sector_rets.empty:
+                            recent_ret = float(sector_rets.iloc[-5:].sum().iloc[0])
+                            self.learning.record_sector_feedback(
+                                sector, "OVERWEIGHT", recent_ret
+                            )
+                    except Exception:
+                        pass
+
+            # Apply learned tier weights to ensemble (continuous adaptation)
+            weight_changes = self.learning.apply_to_ensemble(self.ensemble)
+
+            # Generate learning snapshot
+            snap = self.learning.get_snapshot()
+            learning_data = {
+                "total_events": snap.total_learning_events,
+                "regime_accuracy": snap.regime_accuracy,
+                "alpha_decay_rate": snap.alpha_decay_rate,
+                "risk_calibration": snap.risk_calibration_score,
+                "weight_adjustments": len(weight_changes),
+                "best_engines": snap.best_engines[:3],
+                "worst_engines": snap.worst_engines[:3],
+            }
+
+            # Persist learning state
+            self.learning.persist_snapshot()
+
+        except Exception as e:
+            learning_data = {"error": str(e)}
+            logger.warning(f"Learning loop feedback failed: {e}")
+
+        result["stages"]["learning_loop"] = learning_data
+        self.tracker.record_stage("learning_loop", (datetime.now() - t0).total_seconds() * 1000, learning_data)
+
         # Pipeline summary
         result["pipeline"] = self.tracker.get_summary()
         if self.risk_gates:
@@ -1716,6 +1859,28 @@ class ExecutionEngine:
 
         self._last_run = result
         return result
+
+    @staticmethod
+    def _signal_type_to_engine(signal_type: str) -> str:
+        """Map a signal type string to its originating engine name."""
+        mapping = {
+            "ML_AGENT_BUY": "ml_ensemble", "ML_AGENT_SELL": "ml_ensemble",
+            "QUALITY_BUY": "alpha_optimizer", "QUALITY_SELL": "alpha_optimizer",
+            "MICRO_PRICE_BUY": "hft_technical", "MICRO_PRICE_SELL": "hft_technical",
+            "SOCIAL_BULLISH": "social", "SOCIAL_BEARISH": "social",
+            "SOCIAL_MOMENTUM": "social", "SOCIAL_REVERSAL": "social",
+            "DISTRESS_FALLEN_ANGEL": "distress", "DISTRESS_RECOVERY": "distress",
+            "DISTRESS_AVOID": "distress",
+            "CVR_BUY": "cvr", "CVR_SELL": "cvr",
+            "EVENT_MERGER_ARB": "event_driven", "EVENT_PEAD_LONG": "event_driven",
+            "EVENT_PEAD_SHORT": "event_driven", "EVENT_CATALYST": "event_driven",
+            "RV_LONG": "alpha_optimizer", "RV_SHORT": "alpha_optimizer",
+            "FALLEN_ANGEL_BUY": "distress",
+            "DRL_AGENT_BUY": "ml_ensemble", "DRL_AGENT_SELL": "ml_ensemble",
+            "TFT_BUY": "ml_ensemble", "TFT_SELL": "ml_ensemble",
+            "MC_BUY": "ml_ensemble", "MC_SELL": "ml_ensemble",
+        }
+        return mapping.get(signal_type, "unknown")
 
     def get_portfolio_summary(self) -> dict:
         return self.broker.get_portfolio_summary()
@@ -1737,6 +1902,22 @@ class ExecutionEngine:
 
     def get_pipeline_timing(self) -> dict:
         return self.tracker.get_summary()
+
+    def get_learning_report(self) -> str:
+        """Generate learning loop feedback report."""
+        return self.learning.format_learning_report()
+
+    def get_learning_snapshot(self) -> dict:
+        """Get current learning loop state."""
+        snap = self.learning.get_snapshot()
+        return {
+            "total_events": snap.total_learning_events,
+            "regime_accuracy": snap.regime_accuracy,
+            "engine_accuracies": snap.engine_accuracies,
+            "tier_weights": snap.suggested_weight_adjustments,
+            "best_engines": snap.best_engines,
+            "worst_engines": snap.worst_engines,
+        }
 
     def format_execution_report(self) -> str:
         """Generate ASCII execution report from last run."""
@@ -1854,11 +2035,35 @@ class ExecutionEngine:
             f"  Gross Exp: {port.get('gross_exposure', 0):.1%}  |  Net Exp: {port.get('net_exposure', 0):.1%}",
         ])
 
+        # Asset class gate
+        selection = r["stages"].get("selection", {})
+        if selection.get("macro_only_excluded", 0) > 0:
+            lines.append(f"\nASSET CLASS GATE:")
+            lines.append(f"  Pre-filter: {selection.get('pre_filter_count', 0)} tickers")
+            lines.append(f"  Tradeable:  {selection.get('post_filter_count', 0)} tickers")
+            lines.append(f"  Macro-only: {selection.get('macro_only_excluded', 0)} excluded "
+                          f"(bonds/commodities/vol ETFs → macro analysis only)")
+
+        # Learning loop feedback
+        learning = r["stages"].get("learning_loop", {})
+        if learning.get("total_events", 0) > 0:
+            lines.append(f"\nLEARNING LOOP:")
+            lines.append(f"  Total Events: {learning.get('total_events', 0)}")
+            lines.append(f"  Regime Accuracy: {learning.get('regime_accuracy', 0):.1%}")
+            lines.append(f"  Alpha Decay: {learning.get('alpha_decay_rate', 0):.2f} days")
+            lines.append(f"  Risk Calibration: {learning.get('risk_calibration', 0):.1%}")
+            lines.append(f"  Weight Adjustments: {learning.get('weight_adjustments', 0)}")
+            best = learning.get("best_engines", [])
+            if best:
+                lines.append(f"  Best Engines: " + ", ".join(
+                    f"{e.get('engine', '?')}({e.get('accuracy', 0):.0%})" for e in best[:3]
+                ))
+
         # Pipeline timing
         pipeline = r.get("pipeline", {})
         lines.append(f"\nPIPELINE: {pipeline.get('total_duration_ms', 0):.0f}ms total")
         for stage in pipeline.get("stages", []):
-            lines.append(f"  {stage['name']:<15} {stage['duration_ms']:>8.1f}ms")
+            lines.append(f"  {stage['name']:<20} {stage['duration_ms']:>8.1f}ms")
 
         lines.append("=" * 70)
         return "\n".join(lines)

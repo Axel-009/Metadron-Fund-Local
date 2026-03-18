@@ -1,12 +1,13 @@
 """Tests for Metadron Capital investment engine.
 
-Tests all 6 layers:
-    L1 Data (UniverseEngine, OpenBB data)
+Tests all 6 layers + learning loop + asset class routing:
+    L1 Data (UniverseEngine, OpenBB data, asset class filtering)
     L2 Signals (MacroEngine, MetadronCube, GMTF)
     L3 ML (AlphaOptimizer)
     L4 Portfolio (BetaCorridor)
-    L5 Execution (PaperBroker, ExecutionEngine)
+    L5 Execution (PaperBroker, TradierBroker, ExecutionEngine)
     L6 Agents (SectorBots, Scorecard)
+    Learning Loop (signal accuracy, regime feedback, tier weights)
 """
 
 import sys
@@ -622,6 +623,216 @@ class TestEventDrivenEngine:
         assert "EVENT-DRIVEN ENGINE" in report
         assert "MERGER ARBITRAGE DETAIL" in report
         assert "PEAD SIGNALS" in report
+
+
+# ===========================================================================
+# Tradier Broker
+# ===========================================================================
+# ===========================================================================
+# Asset Class Routing
+# ===========================================================================
+class TestAssetClassRouting:
+    """Test asset class classification and tradeable vs macro-only filtering."""
+
+    def test_asset_class_enum(self):
+        from engine.data.universe_engine import AssetClass
+        assert AssetClass.TRADEABLE.value == "TRADEABLE"
+        assert AssetClass.MACRO_ONLY.value == "MACRO_ONLY"
+
+    def test_macro_only_tickers(self):
+        from engine.data.universe_engine import MACRO_ONLY_TICKERS
+        # Fixed income, commodity, volatility ETFs are macro-only
+        assert "TLT" in MACRO_ONLY_TICKERS   # Treasury 20Y+
+        assert "GLD" in MACRO_ONLY_TICKERS   # Gold
+        assert "VXX" in MACRO_ONLY_TICKERS   # VIX
+        assert "HYG" in MACRO_ONLY_TICKERS   # High Yield
+        assert "USO" in MACRO_ONLY_TICKERS   # Oil
+        # Sector ETFs are NOT macro-only
+        assert "XLK" not in MACRO_ONLY_TICKERS
+        assert "SPY" not in MACRO_ONLY_TICKERS
+
+    def test_tradeable_etfs(self):
+        from engine.data.universe_engine import TRADEABLE_ETFS
+        # Sector, index, factor, thematic ETFs are tradeable
+        assert "XLK" in TRADEABLE_ETFS
+        assert "SPY" in TRADEABLE_ETFS
+        assert "QQQ" in TRADEABLE_ETFS
+        assert "MTUM" in TRADEABLE_ETFS
+        assert "SMH" in TRADEABLE_ETFS
+        # Commodity/bond ETFs are NOT tradeable
+        assert "TLT" not in TRADEABLE_ETFS
+        assert "GLD" not in TRADEABLE_ETFS
+        assert "VXX" not in TRADEABLE_ETFS
+
+    def test_security_is_tradeable(self):
+        from engine.data.universe_engine import Security, SecurityType
+        # Equities are tradeable
+        eq = Security(ticker="AAPL", security_type=SecurityType.EQUITY.value)
+        assert eq.is_tradeable
+        assert not eq.is_macro_only
+
+    def test_security_macro_only(self):
+        from engine.data.universe_engine import Security
+        # TLT is a known macro-only ticker
+        bond = Security(ticker="TLT", security_type="FIXED_INCOME_ETF")
+        assert bond.is_macro_only
+        assert not bond.is_tradeable
+
+    def test_universe_tradeable_filter(self):
+        from engine.data.universe_engine import UniverseEngine
+        ue = UniverseEngine(load=True)
+        all_secs = ue.get_all()
+        tradeable = ue.get_tradeable()
+        # All equities should be tradeable
+        assert len(tradeable) == len(all_secs)  # Universe is all equities
+        # Specific ticker checks
+        assert ue.is_ticker_tradeable("AAPL")
+        assert ue.is_ticker_tradeable("SPY")
+        assert ue.is_ticker_tradeable("XLK")
+        assert not ue.is_ticker_tradeable("TLT")
+        assert not ue.is_ticker_tradeable("GLD")
+        assert not ue.is_ticker_tradeable("VXX")
+
+    def test_macro_only_list(self):
+        from engine.data.universe_engine import UniverseEngine
+        ue = UniverseEngine(load=True)
+        macro = ue.get_macro_only()
+        assert "TLT" in macro
+        assert "GLD" in macro
+        assert "VXX" in macro
+        assert "AAPL" not in macro
+
+    def test_security_type_mapping(self):
+        from engine.data.universe_engine import (
+            SecurityType, AssetClass, SECURITY_TYPE_ASSET_CLASS,
+        )
+        assert SECURITY_TYPE_ASSET_CLASS[SecurityType.EQUITY] == AssetClass.TRADEABLE
+        assert SECURITY_TYPE_ASSET_CLASS[SecurityType.SECTOR_ETF] == AssetClass.TRADEABLE
+        assert SECURITY_TYPE_ASSET_CLASS[SecurityType.FIXED_INCOME_ETF] == AssetClass.MACRO_ONLY
+        assert SECURITY_TYPE_ASSET_CLASS[SecurityType.COMMODITY_ETF] == AssetClass.MACRO_ONLY
+        assert SECURITY_TYPE_ASSET_CLASS[SecurityType.VOLATILITY_ETF] == AssetClass.MACRO_ONLY
+
+
+# ===========================================================================
+# Learning Loop
+# ===========================================================================
+class TestLearningLoop:
+    """Test the closed-loop feedback system."""
+
+    def test_import(self):
+        from engine.monitoring.learning_loop import (
+            LearningLoop, SignalOutcome, RegimeFeedback,
+            EngineAccuracy, LearningSnapshot,
+        )
+        assert LearningLoop is not None
+
+    def test_init(self):
+        from engine.monitoring.learning_loop import LearningLoop
+        ll = LearningLoop()
+        assert ll._total_events == 0
+        assert len(ll.SIGNAL_ENGINES) >= 10
+
+    def test_record_signal_outcome(self):
+        from engine.monitoring.learning_loop import LearningLoop, SignalOutcome
+        ll = LearningLoop()
+        outcome = SignalOutcome(
+            ticker="AAPL", signal_engine="ml_ensemble",
+            signal_type="ML_AGENT_BUY", side="BUY",
+            entry_price=150.0, realized_pnl=500.0,
+            was_correct=True, vote_score=3.5,
+        )
+        ll.record_signal_outcome(outcome)
+        assert ll._total_events == 1
+        stats = ll.get_engine_stats("ml_ensemble")
+        assert stats.total_signals == 1
+        assert stats.accuracy == 1.0
+        assert stats.total_pnl == 500.0
+
+    def test_multiple_outcomes(self):
+        from engine.monitoring.learning_loop import LearningLoop, SignalOutcome
+        ll = LearningLoop()
+        for i in range(10):
+            ll.record_signal_outcome(SignalOutcome(
+                ticker=f"T{i}", signal_engine="macro",
+                was_correct=(i % 3 != 0),
+                realized_pnl=100 if i % 3 != 0 else -50,
+            ))
+        stats = ll.get_engine_stats("macro")
+        assert stats.total_signals == 10
+        assert 0.5 < stats.accuracy < 0.8
+
+    def test_tier_weight_adjustments(self):
+        from engine.monitoring.learning_loop import LearningLoop, SignalOutcome
+        ll = LearningLoop()
+        # Feed lots of accurate signals to ml_ensemble
+        for i in range(20):
+            ll.record_signal_outcome(SignalOutcome(
+                ticker=f"T{i}", signal_engine="ml_ensemble",
+                was_correct=True, realized_pnl=100,
+            ))
+        adj = ll.compute_tier_weight_adjustments()
+        # T1_neural should get a weight boost
+        assert adj["T1_neural"] >= ll.DEFAULT_TIER_WEIGHTS["T1_neural"]
+
+    def test_regime_feedback(self):
+        from engine.monitoring.learning_loop import LearningLoop, RegimeFeedback
+        ll = LearningLoop()
+        ll.record_regime_feedback(RegimeFeedback(
+            predicted_regime="TRENDING",
+            actual_market_behavior="BULL",
+            regime_correct=True,
+        ))
+        ll.record_regime_feedback(RegimeFeedback(
+            predicted_regime="TRENDING",
+            actual_market_behavior="BEAR",
+            regime_correct=False,
+        ))
+        assert ll.compute_regime_accuracy() == 0.5
+
+    def test_sector_feedback(self):
+        from engine.monitoring.learning_loop import LearningLoop
+        ll = LearningLoop()
+        ll.record_sector_feedback("Information Technology", "OVERWEIGHT", 0.05)
+        ll.record_sector_feedback("Energy", "OVERWEIGHT", -0.03)
+        acc = ll.get_sector_allocation_accuracy()
+        assert acc["Information Technology"] == 1.0
+        assert acc["Energy"] == 0.0
+
+    def test_snapshot(self):
+        from engine.monitoring.learning_loop import LearningLoop, SignalOutcome
+        ll = LearningLoop()
+        ll.record_signal_outcome(SignalOutcome(
+            ticker="AAPL", signal_engine="social",
+            was_correct=True, realized_pnl=200,
+        ))
+        snap = ll.get_snapshot()
+        assert snap.total_learning_events == 1
+        assert "social" in snap.engine_accuracies
+
+    def test_learning_report(self):
+        from engine.monitoring.learning_loop import LearningLoop, SignalOutcome
+        ll = LearningLoop()
+        ll.record_signal_outcome(SignalOutcome(
+            ticker="MSFT", signal_engine="event_driven",
+            was_correct=True, realized_pnl=300,
+        ))
+        report = ll.format_learning_report()
+        assert "LEARNING LOOP" in report
+        assert "event_driven" in report
+
+    def test_execution_engine_has_learning(self):
+        """ExecutionEngine should have learning loop."""
+        from engine.execution.execution_engine import ExecutionEngine
+        import inspect
+        # Verify the learning attribute exists in __init__
+        source = inspect.getsource(ExecutionEngine.__init__)
+        assert "self.learning" in source
+        assert "LearningLoop" in source
+
+    def test_execution_engine_has_asset_gate(self):
+        """ExecutionEngine should have asset class filtering."""
+        from engine.execution.execution_engine import ExecutionEngine
+        assert hasattr(ExecutionEngine, "_filter_tradeable")
 
 
 # ===========================================================================
