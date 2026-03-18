@@ -47,6 +47,7 @@ from ..portfolio.beta_corridor import BetaCorridor, BetaState, BetaAction
 from .paper_broker import (
     PaperBroker, OrderSide, SignalType, Position,
 )
+from .tradier_broker import TradierBroker
 
 # L7 HFT Technical Execution (quant-trading strategies)
 from .quant_strategy_executor import QuantStrategyExecutor
@@ -1021,13 +1022,23 @@ class ExecutionEngine:
         initial_nav: float = 1_000_000.0,
         top_n_per_sector: int = 5,
         enable_risk_gates: bool = True,
+        broker_type: str = "paper",
     ):
         self.universe = get_engine()
         self.macro = MacroEngine()
         self.cube = MetadronCube()
         self.alpha = AlphaOptimizer()
         self.beta = BetaCorridor(nav=initial_nav)
-        self.broker = PaperBroker(initial_cash=initial_nav)
+
+        # Broker selection: "paper" (default) or "tradier"
+        if broker_type == "tradier":
+            self.broker = TradierBroker(initial_cash=initial_nav)
+            logger.info("ExecutionEngine using TradierBroker (%s)",
+                        self.broker.client.environment)
+        else:
+            self.broker = PaperBroker(initial_cash=initial_nav)
+            logger.info("ExecutionEngine using PaperBroker")
+
         self.ensemble = MLVoteEnsemble()
         self.top_n = top_n_per_sector
         self._last_run: Optional[dict] = None
