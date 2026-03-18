@@ -17,6 +17,11 @@ node_modules/
 target/
 *.pkl
 
+# Runtime logs and data directories
+logs/
+data/paul_patterns/
+data/gsd_gradients/
+
 # ── Sub-repo overrides ──────────────────────────────────────
 # Keep build/ ignored globally (including open-bb build configs)
 
