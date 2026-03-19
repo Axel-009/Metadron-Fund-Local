@@ -388,7 +388,7 @@ python3 core/platform.py
 ## Design Rules
 
 1. **All data via OpenBB** (34+ providers: FRED, SEC, CBOE, etc.) — sole data source, no broker dependency
-2. **Paper broker default** — TradierBroker available for live/sandbox execution (set TRADIER_API_KEY, TRADIER_ACCOUNT_ID, TRADIER_ENVIRONMENT in .env)
+2. **Paper broker default** — TradierBroker available for live/sandbox execution (set TRADIER_API_KEY, TRADIER_ACCOUNT_ID, TRADIER_ENVIRONMENT in .env). Switch with `broker_type="tradier"`
 3. **6-layer architecture is immutable** — extend within layers
 4. **Beta managed within 7–12% corridor** — vol-normalised
 5. **Alpha targeted at 95%+** — aggressive multi-sleeve allocation
