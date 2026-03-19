@@ -21,6 +21,7 @@ target/
 logs/
 data/paul_patterns/
 data/gsd_gradients/
+data/gsd_planning/
 
 # ── Sub-repo overrides ──────────────────────────────────────
 # Keep build/ ignored globally (including open-bb build configs)
