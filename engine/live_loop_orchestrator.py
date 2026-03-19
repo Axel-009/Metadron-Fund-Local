@@ -152,6 +152,14 @@ except ImportError:
         GSDPlugin = None
         PaulPlugin = None
 
+try:
+    from intelligence_platform.plugins.gsd_workflow_bridge import GSDWorkflowBridge
+except ImportError:
+    try:
+        from ..intelligence_platform.plugins.gsd_workflow_bridge import GSDWorkflowBridge
+    except ImportError:
+        GSDWorkflowBridge = None
+
 logger = logging.getLogger(__name__)
 
 
@@ -443,6 +451,7 @@ class LiveLoopOrchestrator:
             ("gsd_plugin", lambda: GSDPlugin() if GSDPlugin else None),
             ("paul_plugin", lambda: PaulPlugin() if PaulPlugin else None),
             ("paul_orchestrator", lambda: self._init_paul_orchestrator()),
+            ("gsd_workflow", lambda: GSDWorkflowBridge() if GSDWorkflowBridge else None),
             ("backtest_runner", lambda: QSTraderBacktestRunner() if QSTraderBacktestRunner else None),
         ]
 
@@ -1218,6 +1227,28 @@ class LiveLoopOrchestrator:
             except Exception as exc:
                 pr.data["paul_orchestrator_error"] = str(exc)
                 logger.debug("PaulOrchestrator learning phase error: %s", exc)
+
+        # GSD Workflow Bridge — feed metrics into structured state tracking
+        gsd_wf = self._get("gsd_workflow")
+        if gsd_wf:
+            try:
+                # Feed GSD gradient state
+                gsd = self._get("gsd_plugin")
+                if gsd and hasattr(gsd, "log_gradient_state"):
+                    gsd_state = gsd.log_gradient_state()
+                    gsd_wf.integrate_with_gradient_state(gsd_state)
+
+                # Feed Paul pattern state
+                paul = self._get("paul_plugin")
+                if paul and hasattr(paul, "log_learning_state"):
+                    paul_state = paul.log_learning_state()
+                    gsd_wf.integrate_with_paul_state(paul_state)
+
+                pr.data["gsd_workflow_updated"] = True
+                items += 1
+            except Exception as exc:
+                pr.data["gsd_workflow_error"] = str(exc)
+                logger.debug("GSD Workflow Bridge error: %s", exc)
 
         pr.items_processed = items
         pr.duration_ms = (time.monotonic() - t0) * 1000
