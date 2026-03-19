@@ -1,0 +1,32 @@
+# API keys (NEVER commit)
+configs/api_keys.json
+
+# Model weights and checkpoints (too large for git)
+models/weights/*.bin
+models/weights/*.safetensors
+models/weights/*.pt
+models/checkpoints/**/*.bin
+models/checkpoints/**/*.safetensors
+models/airllm/
+
+# QLIB data cache
+backends/qlib/data/qlib_data_*/
+
+# OpenBB cache
+backends/openbb/cache/
+
+# Python
+__pycache__/
+*.pyc
+*.egg-info/
+.eggs/
+dist/
+build/
+
+# Julia (PySR)
+backends/pysr_newton/julia_project/
+
+# Misc
+.DS_Store
+*.log
+.env

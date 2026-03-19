@@ -85,23 +85,23 @@
     "vitest": "^4.0.16"
   },
   "dependencies": {
-    "@claude-flow/mcp": "file:../mcp",
+    "@claude-flow/mcp": "^3.0.0-alpha.8",
     "@claude-flow/shared": "^3.0.0-alpha.1",
     "@noble/ed25519": "^2.1.0",
     "semver": "^7.6.0"
   },
   "optionalDependencies": {
-    "@claude-flow/aidefence": "file:../aidefence",
+    "@claude-flow/aidefence": "^3.0.2",
     "@claude-flow/codex": "^3.0.0-alpha.8",
-    "@claude-flow/embeddings": "file:../embeddings",
-    "@claude-flow/guidance": "file:../guidance",
-    "@claude-flow/memory": "file:../memory",
+    "@claude-flow/embeddings": "^3.0.0-alpha.12",
+    "@claude-flow/guidance": "^3.0.0-alpha.1",
+    "@claude-flow/memory": "^3.0.0-alpha.11",
     "@claude-flow/plugin-gastown-bridge": "^0.1.3",
+    "agentic-flow": "^3.0.0-alpha.1",
     "@ruvector/attention": "^0.1.4",
     "@ruvector/learning-wasm": "^0.1.29",
     "@ruvector/router": "^0.1.27",
-    "@ruvector/sona": "^0.1.5",
-    "agentic-flow": "^3.0.0-alpha.1"
+    "@ruvector/sona": "^0.1.5"
   },
   "publishConfig": {
     "access": "public",

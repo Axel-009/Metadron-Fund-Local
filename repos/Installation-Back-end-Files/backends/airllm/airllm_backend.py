@@ -46,8 +46,6 @@ try:
 except ImportError:
     _HAS_TRANSFORMERS = False
 
-from backends.transformers_bert.local_finbert import LocalFinBERT
-
 MODELS_DIR = Path(__file__).parent.parent.parent / "models" / "airllm"
 MODELS_DIR.mkdir(parents=True, exist_ok=True)
 
@@ -73,7 +71,6 @@ class AirLLMBackend:
         self._model = None
         self._tokenizer = None
         self._pipeline = None
-        self._sentiment_model = LocalFinBERT()  # always available
 
         self._init_model()
 
@@ -208,26 +205,6 @@ class AirLLMBackend:
                 pass
 
         return result
-
-    def analyze_sentiment(self, text: str) -> dict[str, str | float]:
-        """Analyze financial sentiment of a text string.
-
-        Tries the HuggingFace FinBERT pipeline first (if the ``sentiment``
-        model was loaded), then falls back to LocalFinBERT (always available).
-
-        Returns:
-            {"label": "positive"/"negative"/"neutral", "score": 0.0-1.0}
-        """
-        # Try HF sentiment pipeline if available
-        if self._pipeline is not None and self.model_size == "sentiment":
-            try:
-                result = self._pipeline(text[:512])[0]
-                return {"label": result["label"].lower(), "score": result["score"]}
-            except Exception:
-                pass
-
-        # LocalFinBERT fallback (always works)
-        return self._sentiment_model.predict(text)
 
     def compare_narratives(self, current: str, previous: str,
                             context: str = "earnings_call") -> dict:
