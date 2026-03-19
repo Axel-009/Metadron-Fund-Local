@@ -52,6 +52,7 @@ REPOS = {
     # Layer 6: Agents
     "Ruflo-agents":                {"layer": 6, "role": "Multi-Agent Orchestration"},
     "MiroFish":                    {"layer": 6, "role": "Social Prediction Engine"},
+    "get-shit-done":               {"layer": 6, "role": "GSD Meta-Prompting & Workflow Orchestration"},
 }
 
 

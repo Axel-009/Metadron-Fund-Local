@@ -8,6 +8,7 @@ Provides Python bindings and integration layers for non-Python components:
 - TypeScript/JavaScript (Frontend dashboards, React/Vue apps)
 - GSD Plugin (Gradient Signal Dynamics — agent learning)
 - Paul Plugin (Pattern Awareness & Unified Learning)
+- GSD Workflow Bridge (Get Shit Done — meta-prompting orchestration)
 """
 
 from .rust_plugin import RustIntegration
@@ -23,6 +24,11 @@ except ImportError:
     PaulPlugin = None
     AgentLearningWrapper = None
 
+try:
+    from .gsd_workflow_bridge import GSDWorkflowBridge
+except ImportError:
+    GSDWorkflowBridge = None
+
 __all__ = [
     "RustIntegration",
     "GoIntegration",
@@ -32,4 +38,5 @@ __all__ = [
     "GSDPlugin",
     "PaulPlugin",
     "AgentLearningWrapper",
+    "GSDWorkflowBridge",
 ]
