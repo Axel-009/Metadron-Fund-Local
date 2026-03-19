@@ -442,6 +442,7 @@ class LiveLoopOrchestrator:
             ("portfolio_analytics", lambda: PortfolioAnalytics() if PortfolioAnalytics else None),
             ("gsd_plugin", lambda: GSDPlugin() if GSDPlugin else None),
             ("paul_plugin", lambda: PaulPlugin() if PaulPlugin else None),
+            ("paul_orchestrator", lambda: self._init_paul_orchestrator()),
             ("backtest_runner", lambda: QSTraderBacktestRunner() if QSTraderBacktestRunner else None),
         ]
 
@@ -462,6 +463,34 @@ class LiveLoopOrchestrator:
     def _get(self, name: str) -> Any:
         """Retrieve a component by name, returns None if unavailable."""
         return self._components.get(name)
+
+    def _init_paul_orchestrator(self):
+        """Initialize the PaulOrchestrator with GSD + Paul + Factory + Enforcement.
+
+        Connects the dynamic agent creation and enforcement system to the
+        intelligence platform via the Paul Plugin orchestration layer.
+        """
+        try:
+            from .agents.paul_orchestrator import PaulOrchestrator
+            orch = PaulOrchestrator()
+            init_status = orch.initialize()
+            logger.info("PaulOrchestrator initialized: %s", init_status.get("status"))
+
+            # Attach existing agents if available
+            sector_bots = self._get("sector_bots")
+            scorecard = self._get("agent_scorecard")
+
+            bot_list = []
+            if sector_bots and hasattr(sector_bots, "bots"):
+                bot_list = list(sector_bots.bots.values()) if isinstance(sector_bots.bots, dict) else sector_bots.bots
+
+            orch.attach_all_platform_agents(
+                sector_bots=bot_list if bot_list else None,
+            )
+            return orch
+        except Exception as exc:
+            logger.warning("PaulOrchestrator init failed: %s", exc)
+            return None
 
     # ------------------------------------------------------------------
     # Public API — start / stop / status
@@ -1145,6 +1174,50 @@ class LiveLoopOrchestrator:
             except Exception as exc:
                 pr.data["scorecard_error"] = str(exc)
                 logger.debug("AgentScorecard error: %s", exc)
+
+        # PaulOrchestrator — periodic enforcement + dynamic agent management
+        paul_orch = self._get("paul_orchestrator")
+        if paul_orch:
+            try:
+                # Run periodic enforcement check (herding, concentration, drift)
+                periodic_result = paul_orch.run_periodic_check()
+                pr.data["paul_orchestrator_check"] = True
+                items += 1
+
+                # Get ensemble adjustments for MLVoteEnsemble
+                if self._last_macro_snapshot:
+                    regime_str = ""
+                    if hasattr(self._last_macro_snapshot, "regime"):
+                        regime_str = (
+                            self._last_macro_snapshot.regime.value
+                            if hasattr(self._last_macro_snapshot.regime, "value")
+                            else str(self._last_macro_snapshot.regime)
+                        )
+                    market_state = {"regime": regime_str}
+                    adjustments = paul_orch.get_ensemble_adjustments(market_state)
+                    pr.data["ensemble_adjustments"] = adjustments
+
+                # Process recent trade outcomes through the orchestrator
+                exec_engine = self._get("execution_engine")
+                if exec_engine and hasattr(exec_engine, "_trade_log"):
+                    recent = exec_engine._trade_log[-5:]
+                    outcomes = []
+                    for trade in recent:
+                        outcomes.append({
+                            "ticker": trade.get("ticker", ""),
+                            "signal_engine": trade.get("engine", ""),
+                            "realized_pnl": trade.get("pnl", 0.0),
+                            "was_correct": trade.get("pnl", 0.0) > 0,
+                            "direction": trade.get("side", ""),
+                            "regime": trade.get("regime", ""),
+                        })
+                    if outcomes:
+                        paul_orch.process_outcomes(outcomes)
+                        items += len(outcomes)
+
+            except Exception as exc:
+                pr.data["paul_orchestrator_error"] = str(exc)
+                logger.debug("PaulOrchestrator learning phase error: %s", exc)
 
         pr.items_processed = items
         pr.duration_ms = (time.monotonic() - t0) * 1000
