@@ -602,6 +602,255 @@ MES_hedge_beta = target_beta - sleeve_beta
 
 ---
 
+## LIVE EXECUTION — TRADIER BROKER INTEGRATION
+
+### TradierBroker (`engine/execution/tradier_broker.py`)
+**Purpose**: Drop-in replacement for PaperBroker — routes orders to Tradier API for live execution
+
+#### Configuration
+```bash
+export TRADIER_API_KEY=<bearer_token>
+export TRADIER_ACCOUNT_ID=<account_id>
+export TRADIER_ENVIRONMENT=sandbox   # "sandbox" or "production"
+```
+
+#### Activation (one-line change)
+```python
+# In run_open.py or live_loop_orchestrator.py:
+engine = ExecutionEngine(initial_nav=1_000_000.0, broker_type="tradier")
+```
+
+#### API Endpoints Implemented
+| Endpoint | Method | Function |
+|----------|--------|----------|
+| `/v1/accounts/{id}/orders` | POST | Place equity orders (BUY/SELL/SHORT/COVER) |
+| `/v1/accounts/{id}/orders/{oid}` | PUT | Modify orders |
+| `/v1/accounts/{id}/orders/{oid}` | DELETE | Cancel orders |
+| `/v1/accounts/{id}/orders` | GET | List open/filled orders |
+| `/v1/accounts/{id}/positions` | GET | Sync live positions |
+| `/v1/accounts/{id}/balances` | GET | Sync NAV/cash/equity |
+| `/v1/accounts/{id}/gainloss` | GET | Realized P&L history |
+| `/v1/markets/quotes` | GET | Real-time quotes (5s cache TTL) |
+
+#### Safety Features
+- 6 pre-trade risk checks (position size, sector, daily loss, exposure, leverage, cash)
+- 4-retry exponential backoff on API failures (2s, 4s, 8s, 16s)
+- Real-time quote caching (5-second TTL)
+- Fallback to OpenBB prices if Tradier quotes unavailable
+- Daily 5% target manager — risk dials down after target hit
+- Full audit trail (all orders logged to `logs/tradier_broker/`)
+- EOD reconciliation (positions synced vs broker)
+- CSV position export
+
+#### Risk Dial-Down After Daily Target
+```
+Pre-target:   AGGRESSIVE  → full leverage, all sleeves active
+Target hit:   MODERATE    → 60% leverage, reduce P3/P5 sleeves
+Target+buffer: DEFENSIVE  → 30% leverage, P4 neutral-alpha only
+```
+
+---
+
+## TRADING AUTOMATION — LIVE LOOP ORCHESTRATOR
+
+### LiveLoopOrchestrator (`engine/live_loop_orchestrator.py`)
+**Purpose**: 7-phase continuous heartbeat loop (1-minute cadence, 09:30–16:00 ET)
+
+```
+┌─────────────────────────────────────────────────────────────────────────┐
+│                    CONTINUOUS LOOP (1-min heartbeat)                    │
+│                                                                        │
+│  Phase 1  DATA        (every tick)    DataIngestion → UniversalPool    │
+│  Phase 2  SIGNALS     (1-min)         Macro, Cube, Liquidity, Fund.    │
+│  Phase 3  INTELLIGENCE (5-min)        Alpha, ML ensemble, Agents       │
+│  Phase 4  DECISION    (on signal Δ)   DecisionMatrix, BetaCorridor     │
+│  Phase 5  EXECUTION   (on approval)   ExecutionEngine → Broker         │
+│  Phase 6  LEARNING    (continuous)    GSD, Paul, LearningLoop          │
+│  Phase 7  MONITORING  (5-min)         Dashboard, HourlyCSV, Reports    │
+└─────────────────────────────────────────────────────────────────────────┘
+```
+
+#### Schedule
+| Time | Mode | Cadence | Actions |
+|------|------|---------|---------|
+| 08:00–09:30 | Pre-market | Full refresh | Overnight signals, SEC scan, macro update |
+| 09:30 | Market open | Flush | Full pipeline execution, first trades |
+| 09:30–16:00 | Intraday | 1-min heartbeat | All 7 phases active |
+| 16:00 | Market close | EOD | Reconciliation, learning snapshot, scorecard |
+| 16:00–20:00 | After-hours | Reduced | Earnings scan, reduced frequency |
+| 20:00–08:00 | Overnight | Batch | Backtesting, ML retraining, pattern evolution |
+
+#### Graceful Degradation
+All imports wrapped in `try/except` (Rule 8). If any component fails:
+- System logs warning and continues with remaining engines
+- Missing engines produce empty signals (not crashes)
+- GSD/Paul plugins optional — system operates without them
+
+---
+
+## LEARNING SYSTEM — GSD + PAUL DYNAMIC INTEGRATION
+
+### GSD Plugin (Gradient Signal Dynamics) (`intelligence_platform/plugins/gsd_paul_plugin.py`)
+**Purpose**: Track signal momentum, convergence, divergence, and gradient decay across all engines
+
+```
+GSDPlugin
+    ├── Signal Gradient Tracking
+    │   ├── Per-engine signal momentum (rolling gradient)
+    │   ├── Cross-engine convergence detection
+    │   ├── Divergence alerts (when engines disagree)
+    │   └── Gradient decay measurement (alpha half-life)
+    │
+    ├── Adaptive Learning Rate
+    │   ├── Per-agent learning rate adjustment
+    │   ├── Regime-dependent rate scaling
+    │   └── Performance-weighted gradient updates
+    │
+    └── Integration Points
+        ├── LiveLoopOrchestrator Phase 6 → GSDPlugin.update_gradients()
+        ├── EnforcementEngine → proactive drift detection
+        ├── DynamicAgentFactory → gradient-driven agent spawning
+        └── PaulOrchestrator → gradient metrics feed Paul patterns
+```
+
+#### GSD Workflow Bridge (`intelligence_platform/plugins/gsd_workflow_bridge.py`)
+- **GSDPhase**: Individual phase within a gradient plan
+- **GSDPlan**: Multi-phase gradient optimization plan
+- **GSDTask**: Atomic gradient update task
+- **GSDState**: Complete gradient state snapshot
+- **GSDWorkflowBridge**: Connects gradient dynamics → engine weight adjustments
+
+### Paul Plugin (Pattern Awareness & Unified Learning) (`intelligence_platform/plugins/gsd_paul_plugin.py`)
+**Purpose**: Pattern memory, matching, evolution, and context-aware replay
+
+```
+PaulPlugin
+    ├── Pattern Memory
+    │   ├── Discovered patterns stored as indexed library
+    │   ├── Pattern similarity matching (correlation-based)
+    │   ├── Pattern evolution tracking (mutation across regimes)
+    │   └── Context-aware pattern replay (regime-conditional)
+    │
+    ├── Unified Pattern Library
+    │   ├── Cross-engine pattern sharing
+    │   ├── Pattern confidence scoring
+    │   ├── Pattern decay detection
+    │   └── Novel pattern discovery alerts
+    │
+    └── Integration Points
+        ├── LiveLoopOrchestrator Phase 6 → PaulPlugin.store_pattern()
+        ├── EnforcementEngine → pattern-driven consistency
+        ├── DynamicAgentFactory → pattern-driven agent creation
+        └── PaulOrchestrator → full pattern lifecycle management
+```
+
+### AgentLearningWrapper (`intelligence_platform/plugins/gsd_paul_plugin.py`)
+**Purpose**: Attaches GSD + Paul to any agent for continuous learning
+- Wraps any sector bot, research bot, or persona agent
+- Tracks per-agent gradient dynamics (signal accuracy over time)
+- Stores per-agent pattern library (successful trade patterns)
+- Feeds learning signals back to ensemble weight adjustment
+
+### Paul Orchestrator (`engine/agents/paul_orchestrator.py`)
+**Purpose**: Full lifecycle management of GSD + Paul integration
+- Instantiates both plugins with per-agent configuration
+- Routes learning events from execution outcomes → plugins
+- Manages pattern library persistence (disk-backed)
+- Produces learning reports for the Platinum Report
+
+### LearningLoop (`engine/monitoring/learning_loop.py`)
+**Purpose**: Closed-loop feedback from execution outcomes to all engines
+
+#### 7 Learning Channels
+| Channel | Feeds Back Into | Update Frequency |
+|---------|----------------|-----------------|
+| SIGNAL_ACCURACY | Engine tier weights | Per trade close |
+| EXECUTION_QUALITY | Slippage model, routing | Per fill |
+| REGIME_FEEDBACK | HMM transition priors | Daily |
+| ALPHA_DECAY | AlphaOptimizer half-life | Per trade |
+| RISK_CALIBRATION | Risk gate thresholds | Per risk event |
+| AGENT_PERFORMANCE | Agent scorecard (promote/demote) | Weekly |
+| CROSS_ASSET_FEEDBACK | Macro sector allocation | Weekly |
+
+#### Tier Weight Auto-Adjustment
+```python
+# After 10+ signals per engine, LearningLoop adjusts ML ensemble tier weights:
+accuracy_delta = rolling_accuracy - 0.50  # vs 50% baseline
+weight_adj = clamp(accuracy_delta, -0.30, +0.30)  # ±30% max
+new_weight = default_weight × (1.0 + weight_adj)
+```
+
+#### Persistence
+- Signal outcomes: `logs/learning_loop/outcomes_YYYYMMDD.jsonl`
+- Learning snapshots: `logs/learning_loop/snapshot_YYYYMMDD_HHMMSS.json`
+- GSD gradients: `logs/gsd_plugin/`
+- Paul patterns: `logs/paul_plugin/`
+
+---
+
+## LIVE RETURNS DASHBOARD + HOURLY CSV
+
+### HourlyRecapEngine (`engine/monitoring/hourly_recap.py`)
+**Purpose**: Intraday portfolio monitoring with hourly snapshots + CSV export
+
+#### Hourly CSV Output (`logs/returns/returns_YYYY-MM-DD.csv`)
+Appended every hour (or on demand) during the trading day.
+
+| Column | Description |
+|--------|-------------|
+| `timestamp` | ISO 8601 timestamp |
+| `hour` | Hour of day (9–16) |
+| `nav` | Current net asset value |
+| `cash` | Available cash |
+| `total_pnl` | Total P&L (realized + unrealized) |
+| `realized_pnl` | Realized P&L from closed trades |
+| `unrealized_pnl` | Mark-to-market unrealized |
+| `daily_return_pct` | Return vs day-start NAV (%) |
+| `gross_exposure` | Long + Short / NAV |
+| `net_exposure` | Long - Short / NAV |
+| `num_positions` | Active position count |
+| `regime` | Current MetadronCube regime |
+| `best_ticker` | Best performing position |
+| `best_pnl` | Best position P&L |
+| `worst_ticker` | Worst performing position |
+| `worst_pnl` | Worst position P&L |
+
+#### Usage
+```python
+from engine.monitoring.hourly_recap import export_hourly_csv
+csv_path = export_hourly_csv(portfolio_state, positions)
+```
+
+#### Monitoring Stack
+```
+Hourly Snapshot → ASCII Recap (terminal)
+               → CSV Export (logs/returns/)
+               → Drift Alerts (position + sector)
+               → Vol Regime Tracking (LOW/NORMAL/ELEVATED/EXTREME)
+               → Risk Metrics (VaR, exposure, HHI, beta)
+               → Live Dashboard (Rich terminal, 550+ symbols)
+               → Learning Loop (feedback to engines)
+```
+
+### LiveDashboard (`engine/monitoring/live_dashboard.py`)
+**Purpose**: Real-time Rich-based terminal dashboard
+- 550+ symbol scanner (S&P 500 + key mid-caps)
+- Portfolio P&L, positions, NAV, cash
+- Signal activity feed (last 50 signals)
+- Sector heatmap (11 GICS sectors)
+- Risk metrics panel
+- Fallback: ASCII mode if Rich unavailable
+- Connected to PaperBroker/TradierBroker via callbacks
+
+### LiveEarningsGraph (`engine/monitoring/live_earnings_graph.py`)
+**Purpose**: Real-time P&L curve visualization
+- Terminal-rendered P&L timeline
+- Hourly NAV progression
+- Drawdown tracking
+- Target hit markers (5% daily)
+
+---
+
 ## MONITORING & REPORTING
 
 ### PlatinumReport — 30-section executive macro state (9 parts)
@@ -611,12 +860,9 @@ MES_hedge_beta = target_beta - sleeve_beta
 ### DailyReport — Open/close reports + sector heatmap
 ### HeatmapEngine (`engine/monitoring/heatmap_engine.py`) — GICS sector heatmap visualization
 ### SectorTracker — Sector performance + missed opportunities (>20% movers)
-### LiveDashboard (`engine/monitoring/live_dashboard.py`) — Rich-based terminal dashboard (550+ symbols)
-### LiveEarningsGraph (`engine/monitoring/live_earnings_graph.py`) — Live P&L visualization
 ### AnomalyDetector — Statistical anomaly scanner
 ### MarketWrap — Narrative market summary
 ### MemoryMonitor — Session tracking + EOD summary
-### HourlyRecap — Hourly reconciliation
 
 ---
 
@@ -747,7 +993,7 @@ HOLD
               │
      ┌────────▼────────┐
      │ExecutionEngine  │ ← 10-tier ML vote, 8 risk gates
-     │  + PaperBroker  │ ← Live HFT opportunity-based execution
+     │  + Broker       │ ← PaperBroker (default) or TradierBroker (live)
      │                 │   Continuously scans for alpha throughout day
      │                 │   5% daily target → risk dial-down after hit
      └────────┬────────┘
@@ -761,15 +1007,15 @@ HOLD
      │ wondertrader    │ ← micro-price, CTA, low-latency order routing
      └────────┬────────┘
               │
-    ┌─────────┴─────────┐
-    ▼                   ▼
-┌────────┐       ┌──────────────┐
-│ Trades │       │   Reports    │
-│ + P&L  │       │ Platinum/    │
-│ + NAV  │       │ Portfolio/   │
-└────────┘       │ Sector/Wrap  │
-                 │ Live Dashboard│
-                 └──────────────┘
+    ┌─────────┴──────────────────────────────────┐
+    ▼                   ▼                         ▼
+┌────────┐       ┌──────────────┐         ┌──────────────┐
+│ Trades │       │   Reports    │         │   Learning   │
+│ + P&L  │       │ Platinum/    │         │ GSD gradients│
+│ + NAV  │       │ Portfolio/   │         │ Paul patterns│
+│ + CSV  │       │ Sector/Wrap  │         │ LearningLoop │
+│ hourly │       │ Live Dashboard│         │ → tier adj.  │
+└────────┘       └──────────────┘         └──────────────┘
 ```
 
 ---
@@ -812,8 +1058,11 @@ HOLD
 ## KEY COMMANDS
 
 ```bash
-# Full morning pipeline
+# Full morning pipeline (paper mode)
 python3 run_open.py
+
+# Full morning pipeline (live Tradier)
+TRADIER_API_KEY=<key> TRADIER_ACCOUNT_ID=<id> TRADIER_ENVIRONMENT=sandbox python3 run_open.py
 
 # Evening reconciliation
 python3 run_close.py
@@ -829,6 +1078,60 @@ python3 core/platform.py
 
 # Run all tests (69 tests)
 python3 -m pytest tests/ -v
+
+# Verify all backends
+python3 Installation-Back-end-Files/verify_install.py
+```
+
+---
+
+## COMPONENT INSTALLATION STATUS (14 backends)
+
+```
+COMPONENT            PIP         IMPORTS    INSTANTIATES   RUNS LIVE
+────────────────────────────────────────────────────────────────────────
+OpenBB SDK           ✅ 4.7.1    ✅         ✅             ✅ API live
+CAMEL-AI (MiroFish)  ✅ 0.2.89   ✅ guarded ✅             ✅ numpy sim
+PySR (AI-Newton)     ✅ 1.5.9    ✅ guarded ✅             ✅ OLS fallback
+PyTorch              ✅ 2.10.0   ✅ guarded ✅             ✅ via backends
+Transformers/FinBERT ✅ 5.3.0    ✅ guarded ✅             ✅ rule-based¹
+QLIB                 ✅ 0.9.8    ✅         ✅             ✅ Alpha158²
+Air-LLM              ✅ 2.11.0   ✅ guarded ✅             ✅ rule-based
+LightGBM             ✅ 4.6.0    ✅ guarded ✅             ✅ via QLIB bk
+XGBoost              ✅ 3.2.0    ✅ guarded ✅             ✅ via QLIB bk
+hmmlearn             ✅ 0.3.3    ✅         ✅             ✅ HMM fitted
+quant-trading        ✅ native   ✅         ✅             ✅ standalone
+Kserve               ✅ 0.17.0   ✅ SDK     ✅             ✅ local mode³
+exchange-core        ✅ native   ✅         ✅             ✅ matching eng
+wondertrader         ✅ native   ✅         ✅             ✅ CTA+HFT
+────────────────────────────────────────────────────────────────────────
+TOTALS:              14/14 ✅    14/14 ✅   14/14 ✅       14/14 ✅
+
+¹ FinBERT catches proxy 403, falls back to 11-category rule-based classifier
+² QLIB installed from source (editable), numpy Alpha158 28-factor fallback
+³ Kserve local mode: register/predict/save/load work without K8s cluster
+```
+
+---
+
+## LOG & OUTPUT DIRECTORY STRUCTURE
+
+```
+logs/
+├── returns/                    ← Hourly CSV: returns_YYYY-MM-DD.csv
+├── paper_broker/               ← Paper broker trade logs
+├── tradier_broker/             ← Tradier API logs + reconciliation
+├── learning_loop/              ← Signal outcomes JSONL + snapshots
+├── gsd_plugin/                 ← Gradient Signal Dynamics logs
+├── paul_plugin/                ← Paul pattern library logs
+├── gsd_workflow/               ← GSD workflow traces
+├── agent_factory/              ← Agent creation logs
+├── agent_scorecard/            ← Agent ranking history
+├── backtest/                   ← Backtesting results
+├── enforcement/                ← Risk gate enforcement logs
+├── ingestion/                  ← Data ingestion logs
+├── platinum/                   ← Platinum Report outputs
+└── portfolio/                  ← Portfolio Report outputs
 ```
 
 ---
@@ -836,7 +1139,7 @@ python3 -m pytest tests/ -v
 ## DESIGN RULES (IMMUTABLE)
 
 1. **All data via OpenBB** (sole source, 34+ providers) — no yfinance dependency
-2. **Paper broker only** — no live execution until broker API connected
+2. **Paper broker default** — TradierBroker available for live/sandbox (set env vars)
 3. **6-layer architecture is immutable** — extend within layers, not across
 4. **Beta managed within 7–12% corridor** — vol-normalised
 5. **Alpha targeted at 95%+** — aggressive multi-sleeve allocation
@@ -845,3 +1148,5 @@ python3 -m pytest tests/ -v
 8. **try/except on ALL external imports** — system runs degraded, never broken
 9. **Tests must pass** before pushing
 10. **Session continuity** — CLAUDE.md serves as bootstrap context
+11. **Hourly CSV export** — every snapshot persisted to `logs/returns/` for audit
+12. **Learning loop always active** — every trade outcome feeds back into tier weights

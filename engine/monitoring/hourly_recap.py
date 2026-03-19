@@ -816,3 +816,93 @@ def format_latest_recap() -> str:
     """Convenience: format the latest hourly snapshot."""
     engine = get_hourly_engine()
     return engine.format_snapshot()
+
+
+def export_hourly_csv(
+    portfolio_state: dict,
+    positions: dict[str, dict],
+    output_dir: Optional[str] = None,
+) -> str:
+    """Export hourly returns snapshot to CSV.
+
+    Appends one row per call to a daily CSV file:
+        logs/returns/returns_YYYY-MM-DD.csv
+
+    Columns:
+        timestamp, hour, nav, cash, total_pnl, realized_pnl, unrealized_pnl,
+        daily_return_pct, gross_exposure, net_exposure, num_positions,
+        regime, best_ticker, best_pnl, worst_ticker, worst_pnl
+
+    Returns the path to the CSV file.
+    """
+    import csv
+    from pathlib import Path
+
+    now = datetime.now()
+    log_dir = Path(output_dir) if output_dir else Path("logs/returns")
+    log_dir.mkdir(parents=True, exist_ok=True)
+    csv_path = log_dir / f"returns_{now.strftime('%Y-%m-%d')}.csv"
+
+    nav = portfolio_state.get("nav", 0.0)
+    cash = portfolio_state.get("cash", 0.0)
+    total_pnl = portfolio_state.get("total_pnl", 0.0)
+    realized_pnl = portfolio_state.get("realized_pnl", 0.0)
+    initial_nav = portfolio_state.get("initial_nav", nav)
+
+    # Compute unrealized from positions
+    unrealized = sum(
+        float(p.get("unrealized_pnl", 0.0)) for p in positions.values()
+    )
+
+    # Daily return %
+    daily_return = ((nav - initial_nav) / initial_nav * 100) if initial_nav > 0 else 0.0
+
+    # Exposure
+    long_val = sum(
+        abs(int(p.get("quantity", 0)) * float(p.get("current_price", 0)))
+        for p in positions.values()
+        if int(p.get("quantity", 0)) > 0
+    )
+    short_val = sum(
+        abs(int(p.get("quantity", 0)) * float(p.get("current_price", 0)))
+        for p in positions.values()
+        if int(p.get("quantity", 0)) < 0
+    )
+    gross_exp = (long_val + short_val) / nav if nav > 0 else 0.0
+    net_exp = (long_val - short_val) / nav if nav > 0 else 0.0
+
+    # Best/worst
+    best_ticker, best_pnl = "", 0.0
+    worst_ticker, worst_pnl = "", 0.0
+    for ticker, pos in positions.items():
+        upnl = float(pos.get("unrealized_pnl", 0.0))
+        if upnl > best_pnl:
+            best_ticker, best_pnl = ticker, upnl
+        if upnl < worst_pnl:
+            worst_ticker, worst_pnl = ticker, upnl
+
+    regime = portfolio_state.get("regime", "UNKNOWN")
+
+    headers = [
+        "timestamp", "hour", "nav", "cash", "total_pnl", "realized_pnl",
+        "unrealized_pnl", "daily_return_pct", "gross_exposure", "net_exposure",
+        "num_positions", "regime", "best_ticker", "best_pnl",
+        "worst_ticker", "worst_pnl",
+    ]
+
+    row = [
+        now.isoformat(), now.hour, f"{nav:.2f}", f"{cash:.2f}",
+        f"{total_pnl:.2f}", f"{realized_pnl:.2f}", f"{unrealized:.2f}",
+        f"{daily_return:.4f}", f"{gross_exp:.4f}", f"{net_exp:.4f}",
+        len(positions), regime, best_ticker, f"{best_pnl:.2f}",
+        worst_ticker, f"{worst_pnl:.2f}",
+    ]
+
+    write_header = not csv_path.exists()
+    with open(csv_path, "a", newline="") as f:
+        writer = csv.writer(f)
+        if write_header:
+            writer.writerow(headers)
+        writer.writerow(row)
+
+    return str(csv_path)

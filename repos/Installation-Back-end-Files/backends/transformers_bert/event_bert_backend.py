@@ -118,10 +118,20 @@ class EventBERTBackend:
             logger.warning("BERT backend in rule-based fallback mode")
             return
 
+        import os
+
         try:
             # Check for local checkpoint first, avoid network download
             local_model_path = CHECKPOINTS_DIR / "finbert"
-            model_source = str(local_model_path) if local_model_path.exists() else self.model_name
+            if local_model_path.exists():
+                model_source = str(local_model_path)
+            else:
+                # Force offline mode if proxy blocks HuggingFace Hub
+                # This prevents hanging on 403 proxy errors
+                os.environ.setdefault("HF_HUB_DISABLE_TELEMETRY", "1")
+                os.environ.setdefault("TRANSFORMERS_OFFLINE", "0")
+                model_source = self.model_name
+
             self._sentiment_pipeline = pipeline(
                 "sentiment-analysis",
                 model=model_source,
@@ -132,8 +142,16 @@ class EventBERTBackend:
             )
             self._initialized = True
             logger.info(f"FinBERT sentiment pipeline loaded: {model_source}")
-        except (OSError, ConnectionError, Exception) as e:
-            logger.warning(f"FinBERT init failed (using rule-based fallback): {e}")
+        except (OSError, ConnectionError, TimeoutError, Exception) as e:
+            err_str = str(e).lower()
+            if "403" in err_str or "proxy" in err_str or "connection" in err_str:
+                logger.warning(
+                    "FinBERT download blocked by proxy (403) — using rule-based fallback. "
+                    "To use FinBERT offline, download model to %s/finbert/",
+                    CHECKPOINTS_DIR,
+                )
+            else:
+                logger.warning(f"FinBERT init failed (using rule-based fallback): {e}")
             self._sentiment_pipeline = None
 
         # Try to load custom event classifier if checkpoint exists

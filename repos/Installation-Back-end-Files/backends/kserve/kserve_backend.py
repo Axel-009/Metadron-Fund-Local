@@ -117,12 +117,16 @@ class KServeBackend:
 
     In production: serves models via KServe on Kubernetes.
     In dev/paper mode: serves models locally with the same API.
+    Local mode is fully functional — register, predict, save/load all work
+    without a K8s cluster. Only serve() requires K8s.
     """
 
     def __init__(self):
         self._models: dict[str, MetadronModel] = {}
         self._server = None
-        logger.info(f"KServe backend initialized (kserve available: {_HAS_KSERVE})")
+        self._local_mode = not _HAS_KSERVE
+        mode = "local" if self._local_mode else "kserve"
+        logger.info(f"KServe backend initialized (mode={mode}, kserve_sdk={_HAS_KSERVE})")
 
     def register_model(self, name: str, model: Any,
                         metadata: Optional[ModelMetadata] = None) -> MetadronModel:
