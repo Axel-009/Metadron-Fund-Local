@@ -1,36 +1,40 @@
 """
 LLM客户端封装
-统一使用OpenAI格式调用
+统一使用 Anthropic Claude API
 """
 
 import json
 import re
 from typing import Optional, Dict, Any, List
-from openai import OpenAI
 
 from ..config import Config
 
 
 class LLMClient:
-    """LLM客户端"""
-    
+    """LLM客户端 — Anthropic Claude"""
+
     def __init__(
         self,
         api_key: Optional[str] = None,
-        base_url: Optional[str] = None,
         model: Optional[str] = None
     ):
-        self.api_key = api_key or Config.LLM_API_KEY
-        self.base_url = base_url or Config.LLM_BASE_URL
+        self.api_key = api_key or Config.ANTHROPIC_API_KEY or Config.LLM_API_KEY
         self.model = model or Config.LLM_MODEL_NAME
-        
+
         if not self.api_key:
-            raise ValueError("LLM_API_KEY 未配置")
-        
-        self.client = OpenAI(
-            api_key=self.api_key,
-            base_url=self.base_url
-        )
+            raise ValueError("ANTHROPIC_API_KEY 未配置")
+
+        try:
+            import anthropic
+            self.client = anthropic.Anthropic(api_key=self.api_key)
+            self._use_anthropic = True
+        except ImportError:
+            from openai import OpenAI
+            self.client = OpenAI(
+                api_key=self.api_key,
+                base_url=Config.LLM_BASE_URL
+            )
+            self._use_anthropic = False
     
     def chat(
         self,
@@ -51,19 +55,36 @@ class LLMClient:
         Returns:
             模型响应文本
         """
-        kwargs = {
-            "model": self.model,
-            "messages": messages,
-            "temperature": temperature,
-            "max_tokens": max_tokens,
-        }
-        
-        if response_format:
-            kwargs["response_format"] = response_format
-        
-        response = self.client.chat.completions.create(**kwargs)
-        content = response.choices[0].message.content
-        # 部分模型（如MiniMax M2.5）会在content中包含<think>思考内容，需要移除
+        if self._use_anthropic:
+            system_msg = None
+            user_messages = []
+            for msg in messages:
+                if msg["role"] == "system":
+                    system_msg = msg["content"]
+                else:
+                    user_messages.append(msg)
+            kwargs = {
+                "model": self.model,
+                "messages": user_messages if user_messages else messages,
+                "temperature": temperature,
+                "max_tokens": max_tokens,
+            }
+            if system_msg:
+                kwargs["system"] = system_msg
+            response = self.client.messages.create(**kwargs)
+            content = response.content[0].text
+        else:
+            kwargs = {
+                "model": self.model,
+                "messages": messages,
+                "temperature": temperature,
+                "max_tokens": max_tokens,
+            }
+            if response_format:
+                kwargs["response_format"] = response_format
+            response = self.client.chat.completions.create(**kwargs)
+            content = response.choices[0].message.content
+        # 部分模型会在content中包含<think>思考内容，需要移除
         content = re.sub(r'<think>[\s\S]*?</think>', '', content).strip()
         return content
     
