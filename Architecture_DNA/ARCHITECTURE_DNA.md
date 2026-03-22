@@ -25,8 +25,13 @@ Paper broker mode (OpenBB data). Beta managed within 7–12% corridor.
 │     (L3/3.95)         (L2/4)            (L3)              (L4)            │
 │                                           │                               │
 │                                           ▼                               │
-│  DecisionMatrix ─→ ExecutionEngine ─→ PaperBroker                        │
-│      (L5)             (L5)             (L5)                               │
+│  DecisionMatrix ─→ L7UnifiedExecutionSurface ─→ TradierBroker + PaperLog │
+│      (L5)                    (L7)                    (L7)                │
+│                                │                                         │
+│                   ┌────────────┼────────────┐                           │
+│                   ▼            ▼            ▼                           │
+│            WonderTrader  ExchangeCore  OptionsEngine                    │
+│            (micro-price) (order match) (Greeks/vol)                     │
 │                                        │                                  │
 │                                        ▼                                  │
 │  ContagionEngine   StatArbEngine   OptionsEngine   SectorBots             │
@@ -538,6 +543,88 @@ MES_hedge_beta = target_beta - sleeve_beta
 | CONTROLLED | 90-95% | 1.5× | 1 |
 | AGGRESSIVE | 95-98% | 2.0× | 2 |
 | MAXIMUM | >98% | 2.0×+ | 3 |
+
+---
+
+## LAYER 7: UNIFIED EXECUTION SURFACE
+
+### L7UnifiedExecutionSurface (`engine/execution/l7_unified_execution_surface.py`)
+
+Fuses WonderTrader (micro-price + CTA + routing), ExchangeCore (order matching),
+PaperBroker/TradierBroker (bookkeeping), and OptionsEngine (derivatives) into one
+continuous execution arm.
+
+**ALL tradeable products route through Tradier as execution broker.**
+Paper broker log is ALWAYS maintained in parallel for ML learning / backtesting.
+Fixed income, FX, and liquidity instruments are for research only — never executed.
+
+#### Architecture
+
+```
+L7UnifiedExecutionSurface
+├── Continuous intraday loop (1-min heartbeat from live_loop_orchestrator)
+├── Multi-product router (equities, options, futures)
+│   ├── Equity → WonderTrader micro-price → ExchangeCore → Tradier
+│   ├── Options → OptionsEngine Greeks → vol-adjusted → Tradier
+│   └── Futures → Beta corridor hedge → Tradier
+├── Unified order book (all products, all horizons)
+├── Dual broker: Tradier (primary) + PaperBroker (log)
+├── L7RiskEngine (10 gates, per-execution update)
+├── TransactionCostAnalyzer (per-trade decomposition)
+├── ExecutionLearningLoop (pattern identification)
+└── SlippageModel (pre-trade cost estimation)
+```
+
+#### 10-Step Execution Flow
+
+1. **Research-only guard** — reject FI/FX/credit instruments
+2. **Product classification** — equity, option, or future
+3. **Learning loop suggestion** — optimal routing from pattern library
+4. **Pre-trade risk gates** — 10 gates must all pass
+5. **Slippage estimation** — sqrt market impact model
+6. **Product-specific path** — micro-price, Greeks, beta corridor
+7. **Tradier execution** — primary broker (fallback: paper)
+8. **Post-trade risk update** — risk state refreshed
+9. **TCA analysis** — spread, impact, timing, commission decomposition
+10. **Learning loop recording** — EWMA pattern update
+
+#### Risk Gates (10)
+
+| Gate | Limit | Description |
+|------|-------|-------------|
+| G1 | 10% NAV | Single position limit |
+| G2 | 30% NAV | Sector concentration |
+| G3 | 3% NAV | Daily loss circuit breaker |
+| G4 | 250% | Gross leverage |
+| G5 | 150% | Net leverage |
+| G6 | 100/day | Trade throttle |
+| G7 | 10% | Max drawdown halt |
+| G8 | cash | Cash sufficiency |
+| G9 | 20% NAV | Options delta exposure |
+| G10 | 50% NAV | Futures notional |
+
+#### TCA Decomposition
+
+| Component | Model |
+|-----------|-------|
+| Spread | Half bid-ask spread (calibrated per product) |
+| Market Impact | sqrt(participation) × volatility × coefficient |
+| Timing | Arrival-to-fill price drift |
+| Commission | Tradier schedule ($0 equity, $0.35/option, ~$1.50/future) |
+
+#### Execution Learning Loop
+
+- **Intraday**: EWMA update of slippage/impact per context bucket
+- **Daily**: Re-rank routing strategies
+- **Weekly**: Decay old samples, refresh pattern weights
+- **Monthly**: Prune stale patterns, recalibrate coefficients
+
+Context buckets: ticker × product × signal × regime × time-of-day × volatility × order size
+
+#### Dashboard Panels
+
+- **L7 Risk Panel**: risk level, kill switch, NAV, P&L, leverage, gates, VaR
+- **L7 TCA Panel**: cost decomposition, per-product costs, trend, implementation shortfall
 
 ---
 

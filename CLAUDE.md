@@ -25,8 +25,8 @@ Data sourced via **OpenBB** (34+ providers: FRED, SEC, Polygon, FMP, CBOE, ECB, 
 ## Signal Pipeline
 
 ```
-UniverseEngine → MacroEngine → MetadronCube → SecurityAnalysis → PatternDiscovery → CrossAssetContagion → SocialPrediction → DistressedAssets → CVR → EventDriven → TickerSelection → AlphaOptimizer → BetaCorridor → DecisionMatrix → HFTTechnical → ExecutionEngine
-     (L1)           (L2)          (L2)          (L2/3.1)          (L2/3.2)            (L2/3.5)             (L2/L3)            (L2)          (L2)     (L2)          (L2/4)          (L3)            (L4)           (L5)          (L7/6.5)        (L7)
+UniverseEngine → MacroEngine → MetadronCube → SecurityAnalysis → PatternDiscovery → CrossAssetContagion → SocialPrediction → DistressedAssets → CVR → EventDriven → TickerSelection → AlphaOptimizer → BetaCorridor → DecisionMatrix → L7UnifiedExecutionSurface → TradierBroker + PaperLog
+     (L1)           (L2)          (L2)          (L2/3.1)          (L2/3.2)            (L2/3.5)             (L2/L3)            (L2)          (L2)     (L2)          (L2/4)          (L3)            (L4)           (L5)                    (L7)                       (L7)
 ```
 
 ### Layer Architecture (L1 → L5 → L2 → L3 → L4 → L7)
@@ -137,7 +137,8 @@ Metadron-Capital/                        ← Master monorepo (Layer 0: Hub)
 │   │   ├── options_engine.py           ← Black-Scholes, Greeks, vol surface, θ+Γ optimizer
 │   │   ├── conviction_override.py       ← 3-tier conviction override system
 │   │   ├── exchange_core_engine.py     ← L7 LMAX Disruptor ring buffer order matching (Python)
-│   │   └── wondertrader_engine.py      ← L7 CTA trend-following + HFT micro-price + TWAP/VWAP
+│   │   ├── wondertrader_engine.py      ← L7 CTA trend-following + HFT micro-price + TWAP/VWAP
+│   │   └── l7_unified_execution_surface.py ← L7 fused execution arm (all products → Tradier + paper log)
 │   ├── live_loop_orchestrator.py       ← End-to-end continuous live loop (ingestion → execution → learning)
 │   │   # L7 HFT Execution arm:
 │   │   # quant_strategy_executor.py  → 12 independent technical strategies (Stage 6.5)
@@ -163,7 +164,8 @@ Metadron-Capital/                        ← Master monorepo (Layer 0: Hub)
 │       ├── market_wrap.py              ← Market wrap narrative
 │       ├── anomaly_detector.py          ← Statistical anomaly scanner
 │       ├── memory_monitor.py           ← Session tracking + EOD summary
-│       └── learning_loop.py            ← Closed-loop feedback: signal accuracy → tier weights → regime calibration
+│       ├── learning_loop.py            ← Closed-loop feedback: signal accuracy → tier weights → regime calibration
+│       └── l7_dashboard.py             ← L7 Risk + TCA dashboard panels (Rich + ASCII)
 ├── app/                                 ← Web application (FastAPI)
 │   └── backend/                         ← API server + services
 │       ├── main.py                      ← FastAPI entry point
