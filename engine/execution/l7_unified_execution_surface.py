@@ -390,14 +390,21 @@ class TransactionCostAnalyzer:
 # ---------------------------------------------------------------------------
 
 # Research-only instruments — NEVER executed
+# Only fixed income, FX, and credit are blocked from execution.
+# Commodities (GLD, SLV, USO, etc.) are TRADEABLE — they are used for
+# macro research AND can be traded as ETFs.  Only exotic commodity futures
+# beyond common ETFs are for research/macro purposes only.
 RESEARCH_ONLY_PREFIXES = frozenset({
-    "DX",   # Dollar index
-    "6E", "6J", "6B", "6A", "6C", "6S",  # FX futures
+    "DX",   # Dollar index — FX research only
+    "6E", "6J", "6B", "6A", "6C", "6S",  # FX futures — research only
     "ZN", "ZB", "ZF", "ZT",  # Treasury futures (used for beta corridor calc only)
-    "TLT", "IEF", "SHY", "BND", "AGG",  # Bond ETFs
-    "LQD", "VCIT", "VCSH", "HYG", "JNK",  # Credit
-    "MBB", "VMBS",  # MBS
+    "TLT", "IEF", "SHY", "BND", "AGG",  # Bond ETFs — FI research
+    "LQD", "VCIT", "VCSH", "HYG", "JNK",  # Credit — research only
+    "MBB", "VMBS",  # MBS — research only
 })
+# NOTE: Commodity ETFs (GLD, SLV, USO, UNG, DBA, DBC, COPX, WEAT, CORN)
+# are NOT in this set — they are tradeable via L7 for alpha extraction.
+# Index ETFs (SPY, QQQ, IWM, DIA, VT, EFA, EEM) are also tradeable.
 
 # Futures that ARE tradeable via Tradier (equity index + VIX)
 TRADEABLE_FUTURES = frozenset({"ES", "NQ", "YM", "RTY", "VX"})

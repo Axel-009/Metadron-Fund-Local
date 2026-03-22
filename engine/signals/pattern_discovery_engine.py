@@ -37,10 +37,27 @@ _BACKEND_PATH = Path(__file__).parent.parent.parent.parent / "Installation-Back-
 if _BACKEND_PATH.exists() and str(_BACKEND_PATH) not in sys.path:
     sys.path.insert(0, str(_BACKEND_PATH))
 
-# Import backends via bridges
-from bridges.mirofish_bridge import MiroFishDualSimulation, DiscoveredPattern
-from bridges.newton_bridge import AINewtonEngine, DiscoveredLaw
-from bridges.openbb_bridge import OpenBBBackend
+# Import backends via bridges — guarded per design rule #8
+# try/except on ALL external imports — system runs degraded, never broken
+try:
+    from bridges.mirofish_bridge import MiroFishDualSimulation, DiscoveredPattern
+except ImportError:
+    MiroFishDualSimulation = None  # type: ignore[assignment,misc]
+    DiscoveredPattern = None  # type: ignore[assignment,misc]
+    logger.debug("MiroFish bridge not available — pattern discovery will run degraded")
+
+try:
+    from bridges.newton_bridge import AINewtonEngine, DiscoveredLaw
+except ImportError:
+    AINewtonEngine = None  # type: ignore[assignment,misc]
+    DiscoveredLaw = None  # type: ignore[assignment,misc]
+    logger.debug("AI-Newton bridge not available — symbolic regression disabled")
+
+try:
+    from bridges.openbb_bridge import OpenBBBackend
+except ImportError:
+    OpenBBBackend = None  # type: ignore[assignment,misc]
+    logger.debug("OpenBB bridge not available — using direct OpenBB imports")
 
 
 # ---------------------------------------------------------------------------
