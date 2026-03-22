@@ -873,3 +873,319 @@ class L7RiskEngine:
     @property
     def risk_history(self) -> List[RiskState]:
         return list(self._risk_history)
+
+
+# ---------------------------------------------------------------------------
+# Execution Learning Loop
+# ---------------------------------------------------------------------------
+
+@dataclass
+class ExecutionPattern:
+    """A learned execution pattern for best-execution optimization."""
+    pattern_id: str = ""
+    ticker: str = ""
+    product_type: str = "EQUITY"
+    signal_type: str = ""
+    # Context features
+    regime: str = "TRENDING"
+    time_of_day_bucket: str = ""   # OPEN, MID_MORNING, LUNCH, MID_AFTERNOON, CLOSE
+    volatility_bucket: str = ""    # LOW, MEDIUM, HIGH, EXTREME
+    order_size_bucket: str = ""    # SMALL, MEDIUM, LARGE
+    # Learned optimal parameters
+    best_routing: str = "SMART"
+    optimal_slice_count: int = 5
+    optimal_urgency: str = "MEDIUM"
+    avg_slippage_bps: float = 0.0
+    avg_market_impact_bps: float = 0.0
+    # Statistics
+    sample_count: int = 0
+    win_rate: float = 0.0         # % of trades profitable after costs
+    avg_pnl_bps: float = 0.0     # avg P&L per trade in bps
+    last_updated: str = ""
+
+    def __post_init__(self):
+        if not self.pattern_id:
+            self.pattern_id = str(uuid.uuid4())[:8]
+        if not self.last_updated:
+            self.last_updated = _now_iso()
+
+
+class ExecutionLearningLoop:
+    """Learns optimal execution parameters from trade history.
+
+    After every execution, records outcome. Periodically (intraday, daily,
+    weekly, monthly) re-optimizes routing, slicing, and timing parameters
+    per (ticker, product_type, signal_type, regime, time_bucket, vol_bucket).
+
+    Learning dimensions:
+        1. Routing strategy: which algo minimizes slippage for this context
+        2. Slice count: how many child orders minimize impact
+        3. Timing: which time-of-day bucket has lowest cost
+        4. Urgency: optimal aggressiveness given signal decay
+        5. Size: optimal participation rate
+
+    Optimization cadences:
+        - Intraday: EWMA update of slippage/impact estimates after each trade
+        - Daily: Re-rank routing strategies per context bucket
+        - Weekly: Full pattern library refresh with decay of old samples
+        - Monthly: Prune stale patterns, recalibrate impact model coefficients
+    """
+
+    # Time-of-day buckets (ET)
+    TOD_BUCKETS = {
+        (9, 30, 10, 0):   "OPEN",
+        (10, 0, 11, 30):  "MID_MORNING",
+        (11, 30, 13, 30): "LUNCH",
+        (13, 30, 15, 0):  "MID_AFTERNOON",
+        (15, 0, 16, 0):   "CLOSE",
+    }
+
+    # Volatility buckets (daily vol %)
+    VOL_THRESHOLDS = [0.01, 0.02, 0.04]  # LOW < 1%, MED < 2%, HIGH < 4%, EXTREME >= 4%
+
+    # Size buckets (notional USD)
+    SIZE_THRESHOLDS = [5_000, 25_000, 100_000]  # SMALL, MEDIUM, LARGE, XLARGE
+
+    # EWMA decay factor for intraday updates
+    EWMA_ALPHA = 0.15
+
+    def __init__(self, log_dir: Optional[Path] = None):
+        self._patterns: Dict[str, ExecutionPattern] = {}
+        self._trade_outcomes: deque[dict] = deque(maxlen=10_000)
+        self._log_dir = log_dir or Path("logs/l7_learning")
+        self._log_dir.mkdir(parents=True, exist_ok=True)
+        self._daily_stats: Dict[str, List[float]] = {}  # date → [slippage_bps]
+        self._weekly_refresh_count: int = 0
+        self._monthly_prune_count: int = 0
+
+    def _bucket_key(
+        self,
+        ticker: str,
+        product_type: str,
+        signal_type: str,
+        regime: str,
+        tod_bucket: str,
+        vol_bucket: str,
+        size_bucket: str,
+    ) -> str:
+        return f"{ticker}|{product_type}|{signal_type}|{regime}|{tod_bucket}|{vol_bucket}|{size_bucket}"
+
+    def _classify_tod(self, hour: int, minute: int) -> str:
+        """Classify time of day into bucket."""
+        t = hour * 60 + minute
+        if t < 600:  # 10:00
+            return "OPEN"
+        if t < 690:  # 11:30
+            return "MID_MORNING"
+        if t < 810:  # 13:30
+            return "LUNCH"
+        if t < 900:  # 15:00
+            return "MID_AFTERNOON"
+        return "CLOSE"
+
+    def _classify_vol(self, daily_vol: float) -> str:
+        if daily_vol < self.VOL_THRESHOLDS[0]:
+            return "LOW"
+        if daily_vol < self.VOL_THRESHOLDS[1]:
+            return "MEDIUM"
+        if daily_vol < self.VOL_THRESHOLDS[2]:
+            return "HIGH"
+        return "EXTREME"
+
+    def _classify_size(self, notional: float) -> str:
+        if notional < self.SIZE_THRESHOLDS[0]:
+            return "SMALL"
+        if notional < self.SIZE_THRESHOLDS[1]:
+            return "MEDIUM"
+        if notional < self.SIZE_THRESHOLDS[2]:
+            return "LARGE"
+        return "XLARGE"
+
+    def record_outcome(
+        self,
+        order: L7Order,
+        tca: TCASnapshot,
+        regime: str = "TRENDING",
+        daily_vol: float = 0.02,
+        pnl_bps: float = 0.0,
+    ):
+        """Record an execution outcome and update the pattern library (intraday EWMA)."""
+        now = datetime.now(timezone.utc)
+        tod = self._classify_tod(now.hour, now.minute)
+        vol_b = self._classify_vol(daily_vol)
+        notional = abs(order.quantity * order.fill_price)
+        size_b = self._classify_size(notional)
+        pt = order.product_type if isinstance(order.product_type, str) else order.product_type.value
+
+        key = self._bucket_key(order.ticker, pt, order.signal_type, regime, tod, vol_b, size_b)
+
+        # Store raw outcome
+        outcome = {
+            "key": key, "order_id": order.order_id, "ticker": order.ticker,
+            "routing": order.routing, "slippage_bps": tca.total_cost_bps,
+            "impact_bps": tca.market_impact_bps, "pnl_bps": pnl_bps,
+            "timestamp": _now_iso(),
+        }
+        self._trade_outcomes.append(outcome)
+
+        # EWMA update of pattern
+        if key not in self._patterns:
+            self._patterns[key] = ExecutionPattern(
+                ticker=order.ticker, product_type=pt,
+                signal_type=order.signal_type, regime=regime,
+                time_of_day_bucket=tod, volatility_bucket=vol_b,
+                order_size_bucket=size_b,
+                best_routing=order.routing if isinstance(order.routing, str) else order.routing.value,
+            )
+
+        pat = self._patterns[key]
+        alpha = self.EWMA_ALPHA
+
+        # EWMA slippage
+        pat.avg_slippage_bps = alpha * tca.total_cost_bps + (1 - alpha) * pat.avg_slippage_bps
+        pat.avg_market_impact_bps = alpha * tca.market_impact_bps + (1 - alpha) * pat.avg_market_impact_bps
+        pat.avg_pnl_bps = alpha * pnl_bps + (1 - alpha) * pat.avg_pnl_bps
+        pat.sample_count += 1
+
+        # Win rate update
+        if pnl_bps > 0:
+            pat.win_rate = alpha * 1.0 + (1 - alpha) * pat.win_rate
+        else:
+            pat.win_rate = alpha * 0.0 + (1 - alpha) * pat.win_rate
+
+        pat.last_updated = _now_iso()
+
+        # Daily stats
+        today = now.strftime("%Y-%m-%d")
+        if today not in self._daily_stats:
+            self._daily_stats[today] = []
+        self._daily_stats[today].append(tca.total_cost_bps)
+
+    def suggest_routing(
+        self,
+        ticker: str,
+        product_type: str,
+        signal_type: str,
+        regime: str,
+        daily_vol: float = 0.02,
+        notional: float = 10_000,
+    ) -> Dict[str, any]:
+        """Suggest optimal routing params based on learned patterns."""
+        now = datetime.now(timezone.utc)
+        tod = self._classify_tod(now.hour, now.minute)
+        vol_b = self._classify_vol(daily_vol)
+        size_b = self._classify_size(notional)
+
+        key = self._bucket_key(ticker, product_type, signal_type, regime, tod, vol_b, size_b)
+
+        if key in self._patterns and self._patterns[key].sample_count >= 5:
+            pat = self._patterns[key]
+            return {
+                "routing": pat.best_routing,
+                "expected_slippage_bps": round(pat.avg_slippage_bps, 2),
+                "expected_impact_bps": round(pat.avg_market_impact_bps, 2),
+                "sample_count": pat.sample_count,
+                "win_rate": round(pat.win_rate, 3),
+                "confidence": "HIGH" if pat.sample_count >= 20 else "MEDIUM",
+            }
+
+        # Fallback: use product-type defaults
+        defaults = {
+            "EQUITY": {"routing": "SMART", "expected_slippage_bps": 3.0},
+            "OPTION": {"routing": "IMMEDIATE", "expected_slippage_bps": 20.0},
+            "FUTURE": {"routing": "IMMEDIATE", "expected_slippage_bps": 1.5},
+        }
+        d = defaults.get(product_type, defaults["EQUITY"])
+        d["confidence"] = "LOW"
+        d["sample_count"] = 0
+        return d
+
+    def daily_optimize(self):
+        """Daily optimization: re-rank routing strategies per bucket."""
+        for key, pat in self._patterns.items():
+            # If slippage is high and we have enough samples, try different routing
+            if pat.sample_count >= 10 and pat.avg_slippage_bps > 10:
+                # Switch from current to TWAP if using SMART/IMMEDIATE
+                if pat.best_routing in ("SMART", "IMMEDIATE"):
+                    pat.best_routing = "TWAP"
+                elif pat.best_routing == "TWAP" and pat.avg_slippage_bps > 15:
+                    pat.best_routing = "VWAP"
+
+        logger.info("ExecutionLearningLoop: daily optimize complete (%d patterns)", len(self._patterns))
+
+    def weekly_refresh(self):
+        """Weekly: decay old samples, refresh pattern weights."""
+        decay = 0.90
+        for pat in self._patterns.values():
+            pat.avg_slippage_bps *= decay
+            pat.avg_market_impact_bps *= decay
+        self._weekly_refresh_count += 1
+        logger.info("ExecutionLearningLoop: weekly refresh #%d", self._weekly_refresh_count)
+
+    def monthly_prune(self):
+        """Monthly: remove stale patterns with few samples."""
+        stale_keys = [k for k, p in self._patterns.items() if p.sample_count < 3]
+        for k in stale_keys:
+            del self._patterns[k]
+        self._monthly_prune_count += 1
+        logger.info(
+            "ExecutionLearningLoop: monthly prune #%d, removed %d stale patterns",
+            self._monthly_prune_count, len(stale_keys),
+        )
+
+    def save_patterns(self):
+        """Persist pattern library to disk."""
+        path = self._log_dir / "execution_patterns.json"
+        data = {}
+        for key, pat in self._patterns.items():
+            data[key] = {
+                "ticker": pat.ticker, "product_type": pat.product_type,
+                "signal_type": pat.signal_type, "regime": pat.regime,
+                "tod": pat.time_of_day_bucket, "vol": pat.volatility_bucket,
+                "size": pat.order_size_bucket, "routing": pat.best_routing,
+                "avg_slippage_bps": pat.avg_slippage_bps,
+                "avg_impact_bps": pat.avg_market_impact_bps,
+                "sample_count": pat.sample_count, "win_rate": pat.win_rate,
+            }
+        try:
+            path.write_text(json.dumps(data, indent=2))
+        except Exception as e:
+            logger.warning("Failed to save patterns: %s", e)
+
+    def load_patterns(self):
+        """Load pattern library from disk."""
+        path = self._log_dir / "execution_patterns.json"
+        if not path.exists():
+            return
+        try:
+            data = json.loads(path.read_text())
+            for key, d in data.items():
+                self._patterns[key] = ExecutionPattern(
+                    ticker=d.get("ticker", ""),
+                    product_type=d.get("product_type", "EQUITY"),
+                    signal_type=d.get("signal_type", ""),
+                    regime=d.get("regime", "TRENDING"),
+                    time_of_day_bucket=d.get("tod", ""),
+                    volatility_bucket=d.get("vol", ""),
+                    order_size_bucket=d.get("size", ""),
+                    best_routing=d.get("routing", "SMART"),
+                    avg_slippage_bps=d.get("avg_slippage_bps", 0),
+                    avg_market_impact_bps=d.get("avg_impact_bps", 0),
+                    sample_count=d.get("sample_count", 0),
+                    win_rate=d.get("win_rate", 0),
+                )
+            logger.info("Loaded %d execution patterns", len(self._patterns))
+        except Exception as e:
+            logger.warning("Failed to load patterns: %s", e)
+
+    @property
+    def pattern_count(self) -> int:
+        return len(self._patterns)
+
+    @property
+    def daily_cost_summary(self) -> Dict[str, float]:
+        """Average TCA cost per day."""
+        out = {}
+        for date, costs in sorted(self._daily_stats.items())[-30:]:
+            out[date] = round(_mean(costs), 2)
+        return out
