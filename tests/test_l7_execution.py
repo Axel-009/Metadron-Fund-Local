@@ -93,6 +93,22 @@ class TestMultiProductRouter:
         assert not self.router.is_research_only("AAPL")
         assert not self.router.is_research_only("SPY")
 
+    def test_commodity_etfs_tradeable(self):
+        """Commodity ETFs are for macro research AND tradeable — never blocked."""
+        commodity_etfs = ["GLD", "SLV", "USO", "UNG", "DBA", "DBC", "COPX", "WEAT", "CORN"]
+        for etf in commodity_etfs:
+            assert not self.router.is_research_only(etf), f"{etf} should be tradeable"
+
+    def test_index_etfs_tradeable(self):
+        """Index ETFs are tradeable."""
+        for etf in ["SPY", "QQQ", "IWM", "DIA", "VT", "EFA", "EEM"]:
+            assert not self.router.is_research_only(etf), f"{etf} should be tradeable"
+
+    def test_fx_research_only(self):
+        """FX futures are research-only."""
+        assert self.router.is_research_only("6E")
+        assert self.router.is_research_only("DX")
+
     def test_urgency_kill_switch(self):
         assert self.router.determine_urgency("HOLD", kill_switch=True) == ExecutionUrgency.CRITICAL
 
