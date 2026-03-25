@@ -43,6 +43,17 @@ from typing import Any, Optional
 logger = logging.getLogger(__name__)
 
 
+# --- agent_skills integration -------------------------------------------------
+try:
+    from intelligence_platform.agent_skills import (
+        create_skill, list_custom_skills, test_skill,
+        extract_file_ids, download_file, download_all_files,
+    )
+    AGENT_SKILLS_AVAILABLE = True
+except ImportError:
+    AGENT_SKILLS_AVAILABLE = False
+
+
 class PaulOrchestrator:
     """Master orchestrator connecting Paul + GSD to the entire agent fleet.
 
@@ -580,3 +591,27 @@ class PaulOrchestrator:
             "personas": len(self._personas),
             "dynamic_agents": len(self._dynamic_agents),
         }
+
+    # --- agent_skills bridge --------------------------------------------------
+
+    def dispatch_skill_analysis(
+        self, skill_name: str, parameters: dict,
+    ) -> dict:
+        """Dispatch an analysis task via agent_skills when available.
+
+        Args:
+            skill_name: Name of the skill to run.
+            parameters: Skill-specific parameters dict.
+
+        Returns:
+            Skill execution result or empty dict if unavailable.
+        """
+        if not AGENT_SKILLS_AVAILABLE:
+            logger.debug("agent_skills not available; skipping skill dispatch")
+            return {}
+        try:
+            result = test_skill(skill_name, parameters)
+            return result if isinstance(result, dict) else {"output": result}
+        except Exception as e:
+            logger.warning("Skill dispatch failed for %s: %s", skill_name, e)
+            return {}
