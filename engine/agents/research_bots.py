@@ -59,6 +59,17 @@ except ImportError:
 
 logger = logging.getLogger(__name__)
 
+# --- agent_skills integration -------------------------------------------------
+try:
+    from intelligence_platform.agent_skills import (
+        create_skill, list_custom_skills, test_skill,
+        extract_file_ids, download_file, download_all_files,
+    )
+    AGENT_SKILLS_AVAILABLE = True
+except ImportError:
+    AGENT_SKILLS_AVAILABLE = False
+
+
 
 # ---------------------------------------------------------------------------
 # Research Bot Hierarchy
@@ -670,6 +681,19 @@ class SectorResearchBot:
             if len(x) > 1:
                 slope = np.polyfit(x, recent, 1)[0]
                 self.performance.improvement_trend = float(slope)
+
+    def run_skill_financial_model(self, ticker: str) -> dict:
+        """Run financial modeling skill and download results if available."""
+        if not AGENT_SKILLS_AVAILABLE:
+            return {}
+        try:
+            result = test_skill("creating-financial-models", {"ticker": ticker, "sector": self.sector})
+            file_ids = extract_file_ids(result) if isinstance(result, (dict, str)) else []
+            for fid in file_ids:
+                download_file(fid)
+            return result if isinstance(result, dict) else {"output": result}
+        except Exception:
+            return {}
 
     def get_active_signals(self) -> list[ResearchSignal]:
         return [s for s in self._active_signals if s.direction != "HOLD"]

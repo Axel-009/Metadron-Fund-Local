@@ -51,6 +51,17 @@ from datetime import datetime
 
 logger = logging.getLogger(__name__)
 
+# --- agent_skills integration -------------------------------------------------
+try:
+    from intelligence_platform.agent_skills import (
+        create_skill, list_custom_skills, test_skill,
+        extract_file_ids, download_file, download_all_files,
+    )
+    AGENT_SKILLS_AVAILABLE = True
+except ImportError:
+    AGENT_SKILLS_AVAILABLE = False
+
+
 
 # ---------------------------------------------------------------------------
 # Enums & Constants
@@ -1401,3 +1412,21 @@ class SecurityAnalysisEngine:
             "intrinsic_value": score.intrinsic_value,
             "security_class": score.security_class.value,
         }
+
+    def run_skill_statement_analysis(self, ticker: str, financials: dict) -> dict:
+        """Hook into agent_skills for enhanced financial statement analysis.
+
+        Supplements Graham-Dodd quantitative checks with skill-based analysis
+        when the agent_skills module is available.
+        """
+        if not AGENT_SKILLS_AVAILABLE:
+            return {}
+        try:
+            return test_skill(
+                "analyzing-financial-statements",
+                {"ticker": ticker, "financials": financials},
+            )
+        except Exception as e:
+            logger.debug("Skill statement analysis failed for %s: %s", ticker, e)
+            return {}
+

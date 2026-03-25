@@ -144,6 +144,17 @@ SECTOR_THRESHOLDS = {
     "Real Estate":              {"buy": 6.0, "sell": 3.8},
 }
 
+# --- agent_skills integration -------------------------------------------------
+try:
+    from intelligence_platform.agent_skills import (
+        create_skill, list_custom_skills, test_skill,
+        extract_file_ids, download_file, download_all_files,
+    )
+    AGENT_SKILLS_AVAILABLE = True
+except ImportError:
+    AGENT_SKILLS_AVAILABLE = False
+
+
 
 # ═══════════════════════════════════════════════════════════════════════════
 # SectorScoringDimension
@@ -273,6 +284,18 @@ class GICSSectorAgent:
             "dimension_scores": dim_scores,
         }
         return result
+
+    def run_skill_sector_analysis(self, ticker: str, fundamentals: dict) -> dict:
+        """Run sector-specific financial analysis skill if available."""
+        if not AGENT_SKILLS_AVAILABLE:
+            return {}
+        try:
+            return test_skill(
+                "analyzing-financial-statements",
+                {"ticker": ticker, "sector": self.sector_name, "fundamentals": fundamentals},
+            )
+        except Exception:
+            return {}
 
     def rank_sector(
         self,

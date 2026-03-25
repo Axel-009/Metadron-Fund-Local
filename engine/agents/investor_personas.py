@@ -24,6 +24,17 @@ from typing import Any, Callable, Dict, List, Optional, Tuple
 
 logger = logging.getLogger(__name__)
 
+# --- agent_skills integration -------------------------------------------------
+try:
+    from intelligence_platform.agent_skills import (
+        create_skill, list_custom_skills, test_skill,
+        extract_file_ids, download_file, download_all_files,
+    )
+    AGENT_SKILLS_AVAILABLE = True
+except ImportError:
+    AGENT_SKILLS_AVAILABLE = False
+
+
 # ---------------------------------------------------------------------------
 # Metadron SignalType — local fallback so this module never crashes
 # ---------------------------------------------------------------------------
@@ -908,6 +919,22 @@ class InvestorPersonaManager:
         lines.append("")
 
         return "\n".join(lines)
+
+    def run_persona_skill(self, persona_name: str, state: dict) -> dict:
+        """Run an analysis skill scoped to a specific persona if available.
+
+        Falls back to an empty dict when agent_skills is not installed.
+        """
+        if not AGENT_SKILLS_AVAILABLE:
+            return {}
+        try:
+            return test_skill(
+                "analyzing-financial-statements",
+                {"persona": persona_name, "tickers": _get_tickers(state)},
+            )
+        except Exception as exc:
+            logger.debug("Skill run failed for persona %s: %s", persona_name, exc)
+            return {}
 
     # ------------------------------------------------------------------
     # Convenience: full pipeline
