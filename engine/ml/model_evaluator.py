@@ -14,6 +14,17 @@ import numpy as np
 
 logger = logging.getLogger(__name__)
 
+# --- agent_skills integration -------------------------------------------------
+try:
+    from intelligence_platform.agent_skills import (
+        create_skill, list_custom_skills, test_skill,
+        extract_file_ids, download_file, download_all_files,
+    )
+    AGENT_SKILLS_AVAILABLE = True
+except ImportError:
+    AGENT_SKILLS_AVAILABLE = False
+
+
 from sklearn.metrics import (
     balanced_accuracy_score,
     confusion_matrix as sk_confusion_matrix,
@@ -245,3 +256,24 @@ class ModelEvaluator:
 
         lines.append(sep)
         return "\n".join(lines)
+
+    @classmethod
+    def export_evaluation_skill(
+        cls,
+        eval_result: Dict[str, Any],
+        skill_name: str = "model-evaluation-export",
+    ) -> dict:
+        """Export evaluation results via agent_skills and download artifacts.
+
+        Returns skill output dict or empty dict if unavailable.
+        """
+        if not AGENT_SKILLS_AVAILABLE:
+            return {}
+        try:
+            result = test_skill(skill_name, {"evaluation": eval_result})
+            file_ids = extract_file_ids(result) if isinstance(result, (dict, str)) else []
+            downloaded = download_all_files(file_ids) if file_ids else []
+            return {"skill_result": result, "downloaded_files": downloaded}
+        except Exception:
+            logger.debug("Skill export failed")
+            return {}
