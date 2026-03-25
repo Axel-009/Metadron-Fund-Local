@@ -1,7 +1,6 @@
-"""
-Intelligence Platform — Complete Reference Repository Collection
+"""Intelligence Platform -- Complete Reference Repository Collection
 
-28 repositories consolidated into Metadron Capital's unified intelligence platform.
+28 repositories + agent skills consolidated into Metadron Capital's unified intelligence platform.
 All files from every source repo are included (Python, Go, Rust, C++, CUDA, TS, Java).
 
 Layer Architecture:
@@ -11,6 +10,7 @@ Layer Architecture:
     L4 Portfolio:  ai-hedgefund, financial-distressed-repo, sophisticated-distress-analysis, FinancialDistressPrediction
     L5 Infra:      Kserve, nividia-repo, Air-LLM, exchange-core
     L6 Agents:     Ruflo-agents, MiroFish
+    Agent Skills:  Claude Skills API, Files API, agent patterns (from claude-cookbooks)
 """
 
 from pathlib import Path
@@ -55,6 +55,13 @@ REPOS = {
     "get-shit-done":               {"layer": 6, "role": "GSD Meta-Prompting & Workflow Orchestration"},
 }
 
+# Agent Skills integration (Claude Skills API + Files API)
+AGENT_SKILLS = {
+    "skills": ["analyzing-financial-statements", "creating-financial-models"],
+    "agent_patterns": ["orchestrator_workers", "evaluator_optimizer"],
+    "source": "axel-009/claude-cookbooks",
+}
+
 
 def get_repo_path(repo_name: str) -> Path:
     """Get the absolute path to a repo directory."""
@@ -69,3 +76,8 @@ def get_layer_repos(layer: int) -> dict[str, dict]:
 def verify_repos() -> dict[str, bool]:
     """Verify all repos exist on disk."""
     return {name: (PLATFORM_ROOT / name).is_dir() for name in REPOS}
+
+
+def get_agent_skills_path() -> Path:
+    """Get the absolute path to the agent skills integration."""
+    return PLATFORM_ROOT / "agent_skills"
