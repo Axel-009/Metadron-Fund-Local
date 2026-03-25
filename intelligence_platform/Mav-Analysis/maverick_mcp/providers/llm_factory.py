@@ -37,50 +37,23 @@ def get_llm(
         An LLM instance optimized for the task.
 
     Priority order:
-    1. OpenRouter API if OPENROUTER_API_KEY is available (with smart model selection)
-    2. OpenAI ChatOpenAI if OPENAI_API_KEY is available (fallback)
-    3. Anthropic ChatAnthropic if ANTHROPIC_API_KEY is available (fallback)
-    4. FakeListLLM as fallback for testing
+    1. Anthropic ChatAnthropic (primary — unified platform LLM)
+    2. FakeListLLM as fallback for testing
     """
-    # Check for OpenRouter first (preferred)
-    openrouter_api_key = os.getenv("OPENROUTER_API_KEY")
-    if openrouter_api_key:
-        logger.info(
-            f"Using OpenRouter with intelligent model selection for task: {task_type}"
-        )
-        return get_openrouter_llm(
-            api_key=openrouter_api_key,
-            task_type=task_type,
-            prefer_fast=prefer_fast,
-            prefer_cheap=prefer_cheap,
-            prefer_quality=prefer_quality,
-            model_override=model_override,
-        )
-
-    # Fallback to OpenAI
-    openai_api_key = os.getenv("OPENAI_API_KEY")
-    if openai_api_key:
-        logger.info("Falling back to OpenAI API")
-        try:
-            from langchain_openai import ChatOpenAI
-
-            return ChatOpenAI(model="gpt-4o-mini", temperature=0.3, streaming=False)
-        except ImportError:
-            pass
-
-    # Fallback to Anthropic
+    # Primary: Anthropic Claude Opus 4.6
     anthropic_api_key = os.getenv("ANTHROPIC_API_KEY")
     if anthropic_api_key:
-        logger.info("Falling back to Anthropic API")
+        logger.info(f"Using Anthropic Claude Opus 4.6 for task: {task_type}")
         try:
             from langchain_anthropic import ChatAnthropic
 
-            return ChatAnthropic(model="claude-3-sonnet-20240229", temperature=0.3)
+            model = model_override or "claude-opus-4-6"
+            return ChatAnthropic(model=model, temperature=0.3)
         except ImportError:
-            pass
+            logger.warning("langchain_anthropic not installed, falling back")
 
     # Final fallback to fake LLM for testing
-    logger.warning("No LLM API keys found - using FakeListLLM for testing")
+    logger.warning("ANTHROPIC_API_KEY not found - using FakeListLLM for testing")
     return FakeListLLM(
         responses=[
             "Mock analysis response for testing purposes.",

@@ -77,6 +77,12 @@ from ..signals.pattern_discovery_engine import PatternDiscoveryEngine
 # Learning loop — closed-loop feedback across all engines
 from ..monitoring.learning_loop import LearningLoop, SignalOutcome, RegimeFeedback
 
+# L7 Unified Execution Surface
+try:
+    from .l7_unified_execution_surface import L7UnifiedExecutionSurface
+except ImportError:
+    L7UnifiedExecutionSurface = None  # type: ignore[assignment,misc]
+
 logger = logging.getLogger(__name__)
 
 
@@ -1116,6 +1122,18 @@ class ExecutionEngine:
         except Exception as e:
             logger.warning(f"Learning loop history load failed: {e}")
 
+        # L7 Unified Execution Surface — fused continuous execution arm
+        self.l7: Optional[L7UnifiedExecutionSurface] = None
+        if L7UnifiedExecutionSurface is not None:
+            try:
+                self.l7 = L7UnifiedExecutionSurface(
+                    initial_cash=initial_nav,
+                    tradier_environment="sandbox" if broker_type != "tradier" else "production",
+                )
+                logger.info("L7 Unified Execution Surface initialized")
+            except Exception as e:
+                logger.warning(f"L7 init failed (running without L7): {e}")
+
     # --- Asset class gate ---------------------------------------------------
 
     @staticmethod
@@ -1888,6 +1906,64 @@ class ExecutionEngine:
     def get_positions(self) -> dict:
         return {k: {"qty": v.quantity, "price": v.current_price, "pnl": v.unrealized_pnl}
                 for k, v in self.broker.get_all_positions().items()}
+
+    # --- L7 Unified Execution Surface integration ---
+
+    def l7_submit(
+        self,
+        ticker: str,
+        side: str,
+        quantity: int,
+        signal_type: str = "HOLD",
+        regime: str = "TRENDING",
+        product_type: Optional[str] = None,
+        **kwargs,
+    ) -> Optional[dict]:
+        """Route a trade through the L7 Unified Execution Surface.
+
+        Falls back to direct broker execution if L7 is not available.
+        """
+        if self.l7 is not None:
+            order = self.l7.submit_order(
+                ticker=ticker, side=side, quantity=quantity,
+                signal_type=signal_type, regime=regime,
+                product_type=product_type, **kwargs,
+            )
+            return order.to_dict()
+
+        # Fallback: direct broker
+        side_enum = OrderSide(side) if side in [s.value for s in OrderSide] else OrderSide.BUY
+        sig_enum = SignalType.HOLD
+        try:
+            sig_enum = SignalType(signal_type)
+        except (ValueError, KeyError):
+            pass
+        order = self.broker.place_order(
+            ticker=ticker, side=side_enum, quantity=quantity,
+            signal_type=sig_enum,
+        )
+        return order.to_dict()
+
+    def l7_heartbeat(self, regime: str = "TRENDING"):
+        """Forward heartbeat to L7 surface (called every minute)."""
+        if self.l7:
+            self.l7.heartbeat(regime=regime)
+
+    def l7_market_open(self):
+        """Forward market open event to L7."""
+        if self.l7:
+            self.l7.market_open()
+
+    def l7_market_close(self):
+        """Forward market close event to L7."""
+        if self.l7:
+            self.l7.market_close()
+
+    def get_l7_summary(self) -> Optional[dict]:
+        """Get L7 execution summary for dashboard."""
+        if self.l7:
+            return self.l7.get_execution_summary()
+        return None
 
     def get_last_run(self) -> Optional[dict]:
         return self._last_run
