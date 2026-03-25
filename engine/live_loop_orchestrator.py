@@ -1034,43 +1034,85 @@ class LiveLoopOrchestrator:
 
         exec_engine = self._get("execution_engine")
 
+        # Determine current regime for L7 routing
+        regime = "TRENDING"
+        if self._last_macro_snapshot and hasattr(self._last_macro_snapshot, "regime"):
+            regime = str(getattr(self._last_macro_snapshot, "regime", "TRENDING"))
+
         for trade in self._approved_trades:
             trade_type = trade.get("decision", {}).get("type", "equity") if isinstance(
                 trade.get("decision"), dict
             ) else "equity"
 
             try:
-                if trade_type == "options":
-                    # Route to options engine
-                    options = self._get("options_engine")
-                    if options and hasattr(options, "execute"):
-                        options.execute(trade["signal"])
-                        executed += 1
-                    elif options and hasattr(options, "evaluate_strategy"):
-                        options.evaluate_strategy(trade["signal"])
-                        executed += 1
+                # L7 Unified Execution Surface — routes ALL products
+                if exec_engine and hasattr(exec_engine, "l7") and exec_engine.l7 is not None:
+                    ticker = trade.get("ticker", "")
+                    signal = trade.get("signal")
+                    if not ticker:
+                        continue
 
-                elif trade_type == "beta_hedge":
-                    # Route to beta corridor execution
-                    if exec_engine and hasattr(exec_engine, "broker"):
-                        signal = trade["signal"]
+                    # Determine side + quantity from signal
+                    alpha_pred = getattr(signal, "alpha_pred", 0.0)
+                    weight = getattr(signal, "weight", 0.0)
+                    qty = max(1, int(abs(weight) * 100)) if weight != 0 else 1
+
+                    if trade_type == "options":
+                        side = "BUY" if alpha_pred >= 0 else "SELL"
+                        exec_engine.l7_submit(
+                            ticker=ticker, side=side, quantity=qty,
+                            signal_type=getattr(signal, "signal_type", "HOLD"),
+                            regime=regime, product_type="OPTION",
+                        )
+                    elif trade_type == "beta_hedge":
                         action = getattr(signal, "action", "HOLD")
-                        qty = getattr(signal, "quantity", 0)
                         instrument = getattr(signal, "instrument", "SPY")
-                        if action != "HOLD" and qty > 0:
-                            if action == "BUY":
-                                exec_engine.broker.buy(instrument, qty)
-                            elif action == "SELL":
-                                exec_engine.broker.sell(instrument, qty)
+                        hedge_qty = getattr(signal, "quantity", 0)
+                        if action != "HOLD" and hedge_qty > 0:
+                            exec_engine.l7_submit(
+                                ticker=instrument, side=action, quantity=hedge_qty,
+                                signal_type="MICRO_PRICE_BUY" if action == "BUY" else "MICRO_PRICE_SELL",
+                                regime=regime, product_type="FUTURE" if instrument in ("ES", "NQ", "VX") else "EQUITY",
+                            )
+                    else:
+                        side = "BUY" if (alpha_pred > 0 or weight > 0) else "SELL"
+                        if alpha_pred == 0 and weight == 0:
+                            continue
+                        exec_engine.l7_submit(
+                            ticker=ticker, side=side, quantity=qty,
+                            signal_type=getattr(signal, "signal_type", "HOLD"),
+                            regime=regime,
+                        )
+                    executed += 1
+
+                # Fallback: direct broker execution (when L7 not available)
+                elif exec_engine:
+                    if trade_type == "options":
+                        options = self._get("options_engine")
+                        if options and hasattr(options, "execute"):
+                            options.execute(trade["signal"])
+                            executed += 1
+                        elif options and hasattr(options, "evaluate_strategy"):
+                            options.evaluate_strategy(trade["signal"])
                             executed += 1
 
-                else:
-                    # Standard equity execution via execution engine
-                    if exec_engine:
+                    elif trade_type == "beta_hedge":
+                        if hasattr(exec_engine, "broker"):
+                            signal = trade["signal"]
+                            action = getattr(signal, "action", "HOLD")
+                            qty = getattr(signal, "quantity", 0)
+                            instrument = getattr(signal, "instrument", "SPY")
+                            if action != "HOLD" and qty > 0:
+                                if action == "BUY":
+                                    exec_engine.broker.buy(instrument, qty)
+                                elif action == "SELL":
+                                    exec_engine.broker.sell(instrument, qty)
+                                executed += 1
+
+                    else:
                         ticker = trade.get("ticker", "")
                         signal = trade.get("signal")
                         if ticker and hasattr(exec_engine, "broker"):
-                            # Determine side from signal
                             alpha_pred = getattr(signal, "alpha_pred", 0.0)
                             weight = getattr(signal, "weight", 0.0)
                             if alpha_pred > 0 or weight > 0:
@@ -1082,6 +1124,13 @@ class LiveLoopOrchestrator:
             except Exception as exc:
                 pr.errors.append(f"{trade.get('ticker', '?')}: {exc}")
                 logger.warning("Execution failed for %s: %s", trade.get("ticker"), exc)
+
+        # L7 heartbeat (every iteration)
+        if exec_engine and hasattr(exec_engine, "l7_heartbeat"):
+            try:
+                exec_engine.l7_heartbeat(regime=regime)
+            except Exception as exc:
+                logger.debug("L7 heartbeat error: %s", exc)
 
         pr.data["trades_executed"] = executed
         pr.data["trades_attempted"] = len(self._approved_trades)
@@ -1418,6 +1467,14 @@ class LiveLoopOrchestrator:
             except Exception as exc:
                 logger.error("Market open pipeline failed: %s", exc)
 
+        # L7 market open — reset daily counters
+        if exec_engine and hasattr(exec_engine, "l7_market_open"):
+            try:
+                exec_engine.l7_market_open()
+                logger.info("L7 Unified Execution Surface: market open")
+            except Exception as exc:
+                logger.debug("L7 market open failed: %s", exc)
+
         # Force all cadence timers so everything runs on first intraday heartbeat
         self._last_signal_time = None
         self._last_intelligence_time = None
@@ -1442,6 +1499,15 @@ class LiveLoopOrchestrator:
                             getattr(snapshot, "total_signals", 0))
             except Exception as exc:
                 logger.warning("EOD learning snapshot failed: %s", exc)
+
+        # L7 market close — daily learning + pattern persistence
+        exec_engine = self._get("execution_engine")
+        if exec_engine and hasattr(exec_engine, "l7_market_close"):
+            try:
+                exec_engine.l7_market_close()
+                logger.info("L7 Unified Execution Surface: market close")
+            except Exception as exc:
+                logger.debug("L7 market close failed: %s", exc)
 
         # Persist state
         if self._enable_persistence:

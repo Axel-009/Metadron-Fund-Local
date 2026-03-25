@@ -27,10 +27,12 @@ class Config:
     # JSON配置 - 禁用ASCII转义，让中文直接显示（而不是 \uXXXX 格式）
     JSON_AS_ASCII = False
     
-    # LLM配置（统一使用OpenAI格式）
-    LLM_API_KEY = os.environ.get('LLM_API_KEY')
-    LLM_BASE_URL = os.environ.get('LLM_BASE_URL', 'https://api.openai.com/v1')
-    LLM_MODEL_NAME = os.environ.get('LLM_MODEL_NAME', 'gpt-4o-mini')
+    # LLM配置（统一使用 Anthropic Claude Opus 4.6）
+    ANTHROPIC_API_KEY = os.environ.get('ANTHROPIC_API_KEY')
+    LLM_MODEL_NAME = os.environ.get('LLM_MODEL_NAME', 'claude-opus-4-6')
+    # Legacy compat: LLM_API_KEY falls back to ANTHROPIC_API_KEY
+    LLM_API_KEY = os.environ.get('LLM_API_KEY') or ANTHROPIC_API_KEY
+    LLM_BASE_URL = os.environ.get('LLM_BASE_URL', 'https://api.anthropic.com/v1')
     
     # Zep配置
     ZEP_API_KEY = os.environ.get('ZEP_API_KEY')
@@ -67,8 +69,8 @@ class Config:
     def validate(cls):
         """验证必要配置"""
         errors = []
-        if not cls.LLM_API_KEY:
-            errors.append("LLM_API_KEY 未配置")
+        if not cls.ANTHROPIC_API_KEY and not cls.LLM_API_KEY:
+            errors.append("ANTHROPIC_API_KEY 未配置 (set ANTHROPIC_API_KEY in .env)")
         if not cls.ZEP_API_KEY:
             errors.append("ZEP_API_KEY 未配置")
         return errors
