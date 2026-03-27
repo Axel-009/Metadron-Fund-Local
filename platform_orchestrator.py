@@ -32,6 +32,181 @@ import pandas as pd
 
 logger = logging.getLogger(__name__)
 
+# ---------------------------------------------------------------------------
+# Engine module imports — the orchestrator USES engine modules, not re-creates
+# ---------------------------------------------------------------------------
+_ENGINE_AVAILABLE = True
+_ENGINE_IMPORT_ERRORS = []
+
+# L1 Data
+try:
+    from engine.data.universe_engine import UniverseEngine, get_engine, GICS_SECTORS
+except ImportError as e:
+    UniverseEngine = None
+    get_engine = None
+    GICS_SECTORS = {}
+    _ENGINE_IMPORT_ERRORS.append(f"data.universe_engine: {e}")
+
+try:
+    from engine.data.openbb_data import (
+        get_adj_close, get_returns, get_prices, get_fundamentals,
+        get_macro_data, get_market_stats, get_fred_series, get_options_chains,
+    )
+except ImportError as e:
+    _ENGINE_IMPORT_ERRORS.append(f"data.openbb_data: {e}")
+    try:
+        from engine.data.yahoo_data import get_adj_close, get_returns, get_prices
+    except ImportError:
+        pass
+
+# L2 Signal Engines
+try:
+    from engine.signals.macro_engine import MacroEngine, MacroSnapshot, MarketRegime as MacroRegime, CubeRegime
+except ImportError as e:
+    MacroEngine = None
+    MacroSnapshot = None
+    MacroRegime = None
+    CubeRegime = None
+    _ENGINE_IMPORT_ERRORS.append(f"signals.macro_engine: {e}")
+
+try:
+    from engine.signals.metadron_cube import MetadronCube, CubeOutput
+except ImportError as e:
+    MetadronCube = None
+    CubeOutput = None
+    _ENGINE_IMPORT_ERRORS.append(f"signals.metadron_cube: {e}")
+
+try:
+    from engine.signals.security_analysis_engine import SecurityAnalysisEngine
+except ImportError as e:
+    SecurityAnalysisEngine = None
+    _ENGINE_IMPORT_ERRORS.append(f"signals.security_analysis_engine: {e}")
+
+try:
+    from engine.signals.contagion_engine import ContagionEngine
+except ImportError as e:
+    ContagionEngine = None
+    _ENGINE_IMPORT_ERRORS.append(f"signals.contagion_engine: {e}")
+
+try:
+    from engine.signals.stat_arb_engine import StatArbEngine
+except ImportError as e:
+    StatArbEngine = None
+    _ENGINE_IMPORT_ERRORS.append(f"signals.stat_arb_engine: {e}")
+
+try:
+    from engine.signals.social_prediction_engine import SocialPredictionEngine
+except ImportError as e:
+    SocialPredictionEngine = None
+    _ENGINE_IMPORT_ERRORS.append(f"signals.social_prediction_engine: {e}")
+
+try:
+    from engine.signals.distressed_asset_engine import DistressedAssetEngine
+except ImportError as e:
+    DistressedAssetEngine = None
+    _ENGINE_IMPORT_ERRORS.append(f"signals.distressed_asset_engine: {e}")
+
+try:
+    from engine.signals.cvr_engine import CVREngine
+except ImportError as e:
+    CVREngine = None
+    _ENGINE_IMPORT_ERRORS.append(f"signals.cvr_engine: {e}")
+
+try:
+    from engine.signals.event_driven_engine import EventDrivenEngine
+except ImportError as e:
+    EventDrivenEngine = None
+    _ENGINE_IMPORT_ERRORS.append(f"signals.event_driven_engine: {e}")
+
+try:
+    from engine.signals.fed_liquidity_plumbing import FedLiquidityPlumbing
+except ImportError as e:
+    FedLiquidityPlumbing = None
+    _ENGINE_IMPORT_ERRORS.append(f"signals.fed_liquidity_plumbing: {e}")
+
+try:
+    from engine.signals.agent_sim_engine import AgentSimEngine
+except ImportError as e:
+    AgentSimEngine = None
+    _ENGINE_IMPORT_ERRORS.append(f"signals.agent_sim_engine: {e}")
+
+# L3 ML Engines
+try:
+    from engine.ml.alpha_optimizer import AlphaOptimizer, AlphaOutput, AlphaSignal
+except ImportError as e:
+    AlphaOptimizer = None
+    _ENGINE_IMPORT_ERRORS.append(f"ml.alpha_optimizer: {e}")
+
+try:
+    from engine.ml.universe_classifier import UniverseClassifier
+except ImportError as e:
+    UniverseClassifier = None
+    _ENGINE_IMPORT_ERRORS.append(f"ml.universe_classifier: {e}")
+
+try:
+    from engine.ml.pattern_recognition import PatternRecognitionEngine
+except ImportError as e:
+    PatternRecognitionEngine = None
+    _ENGINE_IMPORT_ERRORS.append(f"ml.pattern_recognition: {e}")
+
+try:
+    from engine.ml.deep_learning_engine import DeepLearningEngine
+except ImportError as e:
+    DeepLearningEngine = None
+    _ENGINE_IMPORT_ERRORS.append(f"ml.deep_learning_engine: {e}")
+
+try:
+    from engine.ml.model_evaluator import ModelEvaluator
+except ImportError as e:
+    ModelEvaluator = None
+    _ENGINE_IMPORT_ERRORS.append(f"ml.model_evaluator: {e}")
+
+try:
+    from engine.ml.model_store import ModelStore
+except ImportError as e:
+    ModelStore = None
+    _ENGINE_IMPORT_ERRORS.append(f"ml.model_store: {e}")
+
+# L4 Portfolio
+try:
+    from engine.portfolio.beta_corridor import BetaCorridor, BetaState, BetaAction
+except ImportError as e:
+    BetaCorridor = None
+    _ENGINE_IMPORT_ERRORS.append(f"portfolio.beta_corridor: {e}")
+
+# L5 Execution
+try:
+    from engine.execution.execution_engine import ExecutionEngine
+except ImportError as e:
+    ExecutionEngine = None
+    _ENGINE_IMPORT_ERRORS.append(f"execution.execution_engine: {e}")
+
+try:
+    from engine.execution.options_engine import OptionsEngine, BlackScholesModel
+except ImportError as e:
+    OptionsEngine = None
+    BlackScholesModel = None
+    _ENGINE_IMPORT_ERRORS.append(f"execution.options_engine: {e}")
+
+# L4 Risk
+try:
+    from engine.risk.monte_carlo_risk import MonteCarloRiskEngine
+except ImportError as e:
+    MonteCarloRiskEngine = None
+    _ENGINE_IMPORT_ERRORS.append(f"risk.monte_carlo_risk: {e}")
+
+# Monitoring
+try:
+    from engine.monitoring.learning_loop import LearningLoop
+except ImportError as e:
+    LearningLoop = None
+    _ENGINE_IMPORT_ERRORS.append(f"monitoring.learning_loop: {e}")
+
+if _ENGINE_IMPORT_ERRORS:
+    logger.warning("Engine import warnings: %s", "; ".join(_ENGINE_IMPORT_ERRORS))
+else:
+    logger.info("All engine modules loaded successfully")
+
 
 # ---------------------------------------------------------------------------
 # Enumerations and configuration
@@ -1043,15 +1218,50 @@ class InvestmentPlatformOrchestrator:
         self.nav = nav
         self.risk_limits = risk_limits or RiskLimits()
 
-        # Subsystems
+        # --- Internal fallback subsystems (used when engine modules unavailable) ---
         self._technical = _TechnicalAnalyzer()
         self._fundamental = _FundamentalAnalyzer()
         self._macro = _MacroAnalyzer()
         self._sentiment = _SentimentAnalyzer()
         self._risk = _RiskManager(self.risk_limits)
         self._cube = _CubeRotation(cube_weights)
-        self._execution = _ExecutionEngine()
+        self._execution_internal = _ExecutionEngine()
         self._ml = _MLLearner()
+
+        # --- Engine modules (institutional-grade, the real pipeline) ---
+        self.macro_engine = MacroEngine() if MacroEngine else None
+        self.metadron_cube = MetadronCube() if MetadronCube else None
+        self.security_analyzer = SecurityAnalysisEngine() if SecurityAnalysisEngine else None
+        self.contagion_engine = ContagionEngine() if ContagionEngine else None
+        self.stat_arb_engine = StatArbEngine() if StatArbEngine else None
+        self.social_engine = SocialPredictionEngine() if SocialPredictionEngine else None
+        self.distress_engine = DistressedAssetEngine() if DistressedAssetEngine else None
+        self.cvr_engine = CVREngine() if CVREngine else None
+        self.event_engine = EventDrivenEngine() if EventDrivenEngine else None
+        self.fed_plumbing = FedLiquidityPlumbing() if FedLiquidityPlumbing else None
+        self.agent_sim = AgentSimEngine() if AgentSimEngine else None
+
+        # ML engines
+        self.alpha_optimizer = AlphaOptimizer() if AlphaOptimizer else None
+        self.universe_classifier = UniverseClassifier() if UniverseClassifier else None
+        self.pattern_engine = PatternRecognitionEngine() if PatternRecognitionEngine else None
+        self.deep_learning = DeepLearningEngine() if DeepLearningEngine else None
+        self.model_evaluator = ModelEvaluator() if ModelEvaluator else None
+        self.model_store = ModelStore() if ModelStore else None
+
+        # Portfolio & Risk
+        self.beta_corridor = BetaCorridor() if BetaCorridor else None
+        self.monte_carlo_risk = MonteCarloRiskEngine() if MonteCarloRiskEngine else None
+
+        # Execution
+        self.execution_engine = ExecutionEngine() if ExecutionEngine else None
+        self.options_engine = OptionsEngine() if OptionsEngine else None
+
+        # Learning
+        self.learning_loop = LearningLoop() if LearningLoop else None
+
+        # Data
+        self.universe_engine = get_engine() if get_engine else None
 
         # State
         self._universe: list = []
@@ -1061,9 +1271,14 @@ class InvestmentPlatformOrchestrator:
         self._current_regime = MarketRegime.RISK_ON
         self._daily_reports: list[DailyReport] = []
 
+        engine_count = sum(1 for x in [
+            self.macro_engine, self.metadron_cube, self.security_analyzer,
+            self.alpha_optimizer, self.execution_engine, self.options_engine,
+            self.monte_carlo_risk, self.learning_loop,
+        ] if x is not None)
         logger.info(
-            "Platform orchestrator initialized: NAV=$%.2fM",
-            nav / 1_000_000,
+            "Platform orchestrator initialized: NAV=$%.2fM, engines=%d/8",
+            nav / 1_000_000, engine_count,
         )
 
     # -------------------------------------------------------------------
@@ -1072,46 +1287,223 @@ class InvestmentPlatformOrchestrator:
 
     def daily_open_routine(self) -> None:
         """
-        Execute the complete daily open routine:
-        1. Pull full universe from OpenBB
-        2. Classify all securities
-        3. Run analysis pipeline
-        4. Generate trades
-        5. Execute HFT trades immediately
+        Execute the complete daily open routine using the full engine pipeline:
 
-        Call this at market open (9:30 AM ET).
+        Pipeline: UniverseEngine → MacroEngine → MetadronCube → SecurityAnalysis
+                  → PatternDiscovery → AlphaOptimizer → BetaCorridor
+                  → DecisionMatrix → ExecutionEngine → AlpacaBroker
+
+        Fallback: Uses internal analyzers if engine modules are unavailable.
         """
         logger.info("=== DAILY OPEN ROUTINE START ===")
         start = time.monotonic()
 
-        # Step 1: Data ingestion
-        logger.info("Step 1: Loading universe...")
-        try:
-            from openbb_universe import get_full_universe
-            snapshot = get_full_universe()
-            self._universe = snapshot.securities
-            logger.info("Universe loaded: %d securities", len(self._universe))
-        except ImportError:
-            logger.warning("openbb_universe not available, using cached universe")
+        # Step 1: Data ingestion — UniverseEngine
+        logger.info("Step 1: Loading universe via UniverseEngine...")
+        if self.universe_engine:
+            try:
+                self._universe = self.universe_engine.get_all_tickers()
+                logger.info("Universe loaded: %d securities via UniverseEngine", len(self._universe))
+            except Exception as e:
+                logger.warning("UniverseEngine failed: %s — falling back", e)
+                self._universe = []
+        if not self._universe:
+            try:
+                from openbb_universe import get_full_universe
+                snapshot = get_full_universe()
+                self._universe = snapshot.securities
+                logger.info("Universe loaded: %d securities via openbb_universe", len(self._universe))
+            except ImportError:
+                logger.warning("No universe source available, using cached")
+                self._universe = []
 
-        # Step 2: Classification (already done in universe module via GICS)
-        logger.info("Step 2: Classification complete (embedded in universe)")
+        # Step 2: Macro regime — MacroEngine
+        logger.info("Step 2: Macro regime analysis via MacroEngine...")
+        macro_snapshot = None
+        if self.macro_engine:
+            try:
+                macro_snapshot = self.macro_engine.classify_regime()
+                regime_map = {
+                    "BULL": MarketRegime.RISK_ON, "BEAR": MarketRegime.RISK_OFF,
+                    "TRANSITION": MarketRegime.TRANSITION, "STRESS": MarketRegime.CRISIS,
+                    "CRASH": MarketRegime.CRISIS,
+                }
+                if hasattr(macro_snapshot, 'regime'):
+                    self._current_regime = regime_map.get(str(macro_snapshot.regime), MarketRegime.TRANSITION)
+                logger.info("Macro regime: %s", self._current_regime)
+            except Exception as e:
+                logger.warning("MacroEngine failed: %s — using fallback", e)
 
-        # Step 3: Analysis pipeline
-        logger.info("Step 3: Running analysis pipeline...")
+        if macro_snapshot is None:
+            # Fallback to internal macro analyzer
+            macro_data = {}
+            self._current_regime = self._macro.detect_regime(macro_data)
+            logger.info("Macro regime (fallback): %s", self._current_regime)
+
+        # Step 3: MetadronCube intelligence tensor
+        cube_output = None
+        if self.metadron_cube and macro_snapshot:
+            try:
+                cube_output = self.metadron_cube.compute(macro_snapshot)
+                logger.info("MetadronCube: regime=%s", getattr(cube_output, 'regime', 'unknown'))
+            except Exception as e:
+                logger.warning("MetadronCube failed: %s", e)
+
+        # Step 4: Security analysis — Graham-Dodd-Klarman
+        security_results = None
+        if self.security_analyzer:
+            try:
+                security_results = self.security_analyzer.analyze(
+                    tickers=self._universe[:50],  # top 50 for speed
+                    macro_snapshot=macro_snapshot,
+                    cube_output=cube_output,
+                )
+                logger.info("SecurityAnalysis: %d results", len(security_results) if security_results else 0)
+            except Exception as e:
+                logger.warning("SecurityAnalysis failed: %s", e)
+
+        # Step 5: Additional signal engines
+        signals = {}
+
+        # Contagion risk
+        if self.contagion_engine:
+            try:
+                contagion_result = self.contagion_engine.run_scenario("CORRELATION_SPIKE")
+                signals['contagion'] = contagion_result
+            except Exception as e:
+                logger.debug("ContagionEngine: %s", e)
+
+        # Stat arb pairs
+        if self.stat_arb_engine:
+            try:
+                stat_arb_signals = self.stat_arb_engine.scan()
+                signals['stat_arb'] = stat_arb_signals
+            except Exception as e:
+                logger.debug("StatArbEngine: %s", e)
+
+        # Social prediction (MiroFish)
+        if self.social_engine:
+            try:
+                social_snap = self.social_engine.analyze()
+                signals['social'] = social_snap
+            except Exception as e:
+                logger.debug("SocialPrediction: %s", e)
+
+        # Distressed assets
+        if self.distress_engine:
+            try:
+                distress_results = self.distress_engine.analyze()
+                signals['distress'] = distress_results
+            except Exception as e:
+                logger.debug("DistressedAsset: %s", e)
+
+        # CVR analysis
+        if self.cvr_engine:
+            try:
+                cvr_results = self.cvr_engine.analyze()
+                signals['cvr'] = cvr_results
+            except Exception as e:
+                logger.debug("CVREngine: %s", e)
+
+        # Event driven
+        if self.event_engine:
+            try:
+                event_signals = self.event_engine.analyze()
+                signals['event'] = event_signals
+            except Exception as e:
+                logger.debug("EventDriven: %s", e)
+
+        # Fed plumbing
+        if self.fed_plumbing:
+            try:
+                fed_state = self.fed_plumbing.compute_plumbing_state()
+                signals['fed_plumbing'] = fed_state
+            except Exception as e:
+                logger.debug("FedPlumbing: %s", e)
+
+        # Agent simulation
+        if self.agent_sim:
+            try:
+                agent_signals = self.agent_sim.simulate(self._universe[:20])
+                signals['agent_sim'] = agent_signals
+            except Exception as e:
+                logger.debug("AgentSim: %s", e)
+
+        # Step 6: ML pattern recognition
+        if self.pattern_engine:
+            try:
+                patterns = self.pattern_engine.scan(self._universe[:30])
+                signals['patterns'] = patterns
+            except Exception as e:
+                logger.debug("PatternEngine: %s", e)
+
+        # Step 7: Alpha optimization
+        alpha_output = None
+        if self.alpha_optimizer:
+            try:
+                alpha_output = self.alpha_optimizer.optimize(
+                    tickers=self._universe,
+                    signals=signals,
+                    macro_snapshot=macro_snapshot,
+                )
+                logger.info("AlphaOptimizer: %d signals generated",
+                           len(alpha_output) if alpha_output else 0)
+            except Exception as e:
+                logger.warning("AlphaOptimizer failed: %s", e)
+
+        # Step 8: Beta corridor management
+        if self.beta_corridor:
+            try:
+                beta_action = self.beta_corridor.rebalance()
+                logger.info("BetaCorridor: action=%s", getattr(beta_action, 'action', 'HOLD'))
+            except Exception as e:
+                logger.debug("BetaCorridor: %s", e)
+
+        # Step 9: Monte Carlo risk check
+        if self.monte_carlo_risk:
+            try:
+                risk_report = self.monte_carlo_risk.simulate_portfolio(
+                    tickers=self._universe[:30],
+                    num_simulations=5000,
+                )
+                logger.info("MonteCarloRisk: completed %d sims", 5000)
+                signals['monte_carlo_risk'] = risk_report
+            except Exception as e:
+                logger.debug("MonteCarloRisk: %s", e)
+
+        # Step 10: Options pricing (if options engine available)
+        if self.options_engine:
+            try:
+                options_signals = self.options_engine.generate_signals()
+                signals['options'] = options_signals
+                logger.info("OptionsEngine: signals generated")
+            except Exception as e:
+                logger.debug("OptionsEngine: %s", e)
+
+        # Step 11: Also run internal analysis pipeline (for trade thesis generation)
+        logger.info("Step 11: Running internal analysis pipeline...")
         analysis = self.run_analysis_pipeline(self._universe)
         self._analysis_results = analysis
 
-        # Step 4: Generate trades
-        logger.info("Step 4: Generating trade theses...")
+        # Step 12: Generate trades
+        logger.info("Step 12: Generating trade theses...")
         trades = self.generate_trades(analysis, self._portfolio)
 
-        # Step 5: Execute HFT trades
+        # Step 13: Execute HFT trades via ExecutionEngine
         hft_trades = [t for t in trades if t.horizon == TradingHorizon.HFT]
         if hft_trades:
-            logger.info("Step 5: Executing %d HFT trades...", len(hft_trades))
-            results = self.execute_hft_trades(hft_trades)
-            self._daily_trades.extend(results)
+            logger.info("Step 13: Executing %d HFT trades...", len(hft_trades))
+            if self.execution_engine:
+                try:
+                    # Use the real execution engine
+                    self.execution_engine.execute_trades(hft_trades)
+                except Exception as e:
+                    logger.warning("ExecutionEngine failed: %s — using internal", e)
+                    results = self.execute_hft_trades(hft_trades)
+                    self._daily_trades.extend(results)
+            else:
+                results = self.execute_hft_trades(hft_trades)
+                self._daily_trades.extend(results)
 
         elapsed = time.monotonic() - start
         logger.info("=== DAILY OPEN ROUTINE COMPLETE (%.1fs) ===", elapsed)
