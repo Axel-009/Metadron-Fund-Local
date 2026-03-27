@@ -1,20 +1,21 @@
 """L7 Unified Execution Surface — Fused continuous execution arm.
 
 Unifies WonderTrader (micro-price + CTA + routing), ExchangeCore (order matching),
-PaperBroker/TradierBroker (bookkeeping), and OptionsEngine (derivatives) into one
-continuous execution arm that routes ALL tradeable products through Tradier.
+PaperBroker/AlpacaBroker/TradierBroker (bookkeeping), and OptionsEngine (derivatives)
+into one continuous execution arm that routes ALL tradeable products through Alpaca
+(primary) or Tradier (legacy fallback).
 
 Pipeline position:
     All 29 signal types → L7UnifiedExecutionSurface
-        ├── Equity orders  → WonderTrader micro-price → ExchangeCore matching → TradierBroker
-        ├── Options orders → OptionsEngine Greeks → vol-adjusted routing → TradierBroker
-        └── Futures orders → Beta corridor hedge → TradierBroker
+        ├── Equity orders  → WonderTrader micro-price → ExchangeCore matching → AlpacaBroker
+        ├── Options orders → OptionsEngine Greeks → vol-adjusted routing → AlpacaBroker
+        └── Futures orders → Beta corridor hedge → AlpacaBroker
     Paper log maintained in parallel for ML learning / backtesting.
 
 Design rules (per CLAUDE.md):
     - try/except on ALL external imports — system runs degraded, never broken
     - Pure-numpy fallbacks — no crashes if optional packages missing
-    - Tradier is PRIMARY execution broker for all products
+    - Alpaca is PRIMARY execution broker for all products (Tradier as legacy fallback)
     - Paper log is ALWAYS maintained for learning loop
     - Fixed income / FX / liquidity are for research only — never executed here
 """
@@ -55,6 +56,11 @@ try:
     from .tradier_broker import TradierBroker
 except ImportError:
     TradierBroker = None  # type: ignore[assignment,misc]
+
+try:
+    from .alpaca_broker import AlpacaBroker
+except ImportError:
+    AlpacaBroker = None  # type: ignore[assignment,misc]
 
 try:
     from .wondertrader_engine import WonderTraderEngine, MicroPriceResult, CTASignal
@@ -236,12 +242,12 @@ class TransactionCostAnalyzer:
         1. Spread cost: half-spread at time of order
         2. Market impact: price movement caused by our order
         3. Timing cost: adverse price movement between decision and fill
-        4. Commission: Tradier commission schedule
+        4. Commission: Alpaca commission schedule (or Tradier legacy)
     """
 
-    # Tradier commission schedule (per contract/share)
-    EQUITY_COMMISSION_PER_SHARE = 0.0       # Tradier: $0 equity commissions
-    OPTION_COMMISSION_PER_CONTRACT = 0.35   # Tradier: $0.35/contract
+    # Commission schedule (Alpaca: $0 everything)
+    EQUITY_COMMISSION_PER_SHARE = 0.0       # Alpaca: $0 equity commissions
+    OPTION_COMMISSION_PER_CONTRACT = 0.0    # Alpaca: $0 option commissions (was $0.35 Tradier)
     FUTURE_COMMISSION_PER_CONTRACT = 1.50   # Estimated
 
     # Market impact model: sqrt(qty / ADV) * volatility * impact_coeff
@@ -406,20 +412,20 @@ RESEARCH_ONLY_PREFIXES = frozenset({
 # are NOT in this set — they are tradeable via L7 for alpha extraction.
 # Index ETFs (SPY, QQQ, IWM, DIA, VT, EFA, EEM) are also tradeable.
 
-# Futures that ARE tradeable via Tradier (equity index + VIX)
+# Futures that ARE tradeable via Alpaca (or Tradier) — equity index + VIX
 TRADEABLE_FUTURES = frozenset({"ES", "NQ", "YM", "RTY", "VX"})
 
 
 class MultiProductRouter:
     """Routes orders by product type through the appropriate execution path.
 
-    All products route to TradierBroker as primary execution broker.
+    All products route to AlpacaBroker (or TradierBroker) as primary execution broker.
     Paper log is always maintained in parallel.
 
     Routing paths:
-        EQUITY:  → WonderTrader micro-price → ExchangeCore matching → Tradier
-        OPTION:  → OptionsEngine Greeks check → vol-adjusted limit → Tradier
-        FUTURE:  → Beta corridor validation → Tradier
+        EQUITY:  → WonderTrader micro-price → ExchangeCore matching → Alpaca (or Tradier)
+        OPTION:  → OptionsEngine Greeks check → vol-adjusted limit → Alpaca (or Tradier)
+        FUTURE:  → Beta corridor validation → Alpaca (or Tradier)
     """
 
     def __init__(self):
@@ -1206,13 +1212,14 @@ class L7UnifiedExecutionSurface:
     """Fused continuous execution arm for Metadron Capital.
 
     Unifies WonderTrader (micro-price + CTA + routing), ExchangeCore (order
-    matching), PaperBroker/TradierBroker (bookkeeping), OptionsEngine
+    matching), PaperBroker/AlpacaBroker/TradierBroker (bookkeeping), OptionsEngine
     (derivatives), and QuantStrategyExecutor (12 technical strategies) into
     one continuous execution surface.
 
-    ALL tradeable products (equities, options, futures) route through Tradier
-    as the execution broker. A paper broker log is ALWAYS maintained in
-    parallel for ML learning, backtesting, and pattern identification.
+    ALL tradeable products (equities, options, futures) route through Alpaca
+    as the primary execution broker (Tradier as legacy fallback). A paper broker
+    log is ALWAYS maintained in parallel for ML learning, backtesting, and
+    pattern identification.
 
     Fixed income, FX, and liquidity instruments are for sector allocation /
     macro research only — never executed here.
@@ -1221,11 +1228,11 @@ class L7UnifiedExecutionSurface:
         L7UnifiedExecutionSurface
         ├── Continuous intraday loop (1-min heartbeat from live_loop_orchestrator)
         ├── Multi-product router (equities, options, futures)
-        │   ├── Equity → WonderTrader micro-price → ExchangeCore → Tradier
-        │   ├── Options → OptionsEngine Greeks → vol-adjusted → Tradier
-        │   └── Futures → Beta corridor hedge → Tradier
+        │   ├── Equity → WonderTrader micro-price → ExchangeCore → Alpaca (or Tradier)
+        │   ├── Options → OptionsEngine Greeks → vol-adjusted → Alpaca (or Tradier)
+        │   └── Futures → Beta corridor hedge → Alpaca (or Tradier)
         ├── Unified order book (all products, all horizons)
-        ├── Dual broker: Tradier (primary) + PaperBroker (log)
+        ├── Dual broker: Alpaca/Tradier (primary) + PaperBroker (log)
         ├── L7RiskEngine (10 gates, per-execution update)
         ├── TransactionCostAnalyzer (per-trade decomposition)
         ├── ExecutionLearningLoop (pattern identification)
@@ -1236,6 +1243,10 @@ class L7UnifiedExecutionSurface:
         self,
         initial_cash: float = 1_000.0,
         log_dir: Optional[str] = None,
+        broker_type: str = "alpaca",  # "alpaca" | "tradier" | "paper"
+        alpaca_api_key: Optional[str] = None,
+        alpaca_secret_key: Optional[str] = None,
+        alpaca_paper: bool = True,
         tradier_api_key: Optional[str] = None,
         tradier_account_id: Optional[str] = None,
         tradier_environment: str = "sandbox",
@@ -1247,11 +1258,26 @@ class L7UnifiedExecutionSurface:
 
         # --- Sub-engines (all guarded) ---
 
-        # Primary broker: Tradier
-        self._tradier: Optional[object] = None
-        if TradierBroker is not None:
+        # Primary broker: Alpaca (preferred) or Tradier (legacy)
+        self._broker: Optional[object] = None
+
+        if broker_type == "alpaca" and AlpacaBroker is not None:
             try:
-                self._tradier = TradierBroker(
+                self._broker = AlpacaBroker(
+                    initial_cash=initial_cash,
+                    log_dir=self._log_dir / "alpaca",
+                    api_key=alpaca_api_key,
+                    secret_key=alpaca_secret_key,
+                    paper=alpaca_paper,
+                    daily_target_pct=daily_target_pct,
+                )
+                logger.info("L7: AlpacaBroker connected (paper=%s)", alpaca_paper)
+            except Exception as e:
+                logger.warning("L7: AlpacaBroker init failed: %s — trying Tradier", e)
+
+        if self._broker is None and broker_type == "tradier" and TradierBroker is not None:
+            try:
+                self._broker = TradierBroker(
                     initial_cash=initial_cash,
                     log_dir=self._log_dir / "tradier",
                     api_key=tradier_api_key,
@@ -1261,7 +1287,10 @@ class L7UnifiedExecutionSurface:
                 )
                 logger.info("L7: TradierBroker connected (%s)", tradier_environment)
             except Exception as e:
-                logger.warning("L7: TradierBroker init failed: %s — paper-only mode", e)
+                logger.warning("L7: TradierBroker init failed: %s", e)
+
+        # Keep self._tradier as alias for backward compat
+        self._tradier = self._broker
 
         # Paper broker log (always on for learning)
         self._paper: Optional[object] = None
@@ -1334,10 +1363,11 @@ class L7UnifiedExecutionSurface:
 
         logger.info(
             "L7UnifiedExecutionSurface initialized: cash=$%.2f, "
-            "tradier=%s, paper_log=%s, wondertrader=%s, exchange_core=%s, "
+            "alpaca=%s, tradier=%s, paper_log=%s, wondertrader=%s, exchange_core=%s, "
             "options=%s, quant=%s, beta_corridor=%s",
             initial_cash,
-            "YES" if self._tradier else "NO",
+            "YES" if self._broker and AlpacaBroker is not None and isinstance(self._broker, AlpacaBroker) else "NO",
+            "YES" if self._broker and TradierBroker is not None and isinstance(self._broker, TradierBroker) else "NO",
             "YES" if self._paper else "NO",
             "YES" if self._wondertrader else "NO",
             "YES" if self._exchange_core else "NO",
@@ -1376,7 +1406,7 @@ class L7UnifiedExecutionSurface:
         4. Pre-trade risk gates (10 checks)
         5. Slippage estimation
         6. Product-specific execution path
-        7. Tradier execution (primary) + paper log
+        7. Alpaca execution (primary) or Tradier (fallback) + paper log
         8. Post-trade risk update
         9. TCA analysis
         10. Learning loop outcome recording
@@ -1488,7 +1518,7 @@ class L7UnifiedExecutionSurface:
     # ------------------------------------------------------------------
 
     def _execute_equity(self, order: L7Order, regime: str, arrival_price: float, daily_vol: float):
-        """Equity path: WonderTrader micro-price → ExchangeCore → Tradier."""
+        """Equity path: WonderTrader micro-price → ExchangeCore → Alpaca (or Tradier)."""
         ticker = order.ticker
         price = arrival_price
 
@@ -1510,11 +1540,11 @@ class L7UnifiedExecutionSurface:
         # Step 3: Compute transaction cost
         order.transaction_cost = abs(order.quantity * fill_price) * (order.slippage_bps / 10_000)
 
-        # Step 4: Route to Tradier
-        self._route_to_tradier(order, fill_price)
+        # Step 4: Route to broker (Alpaca or Tradier)
+        self._route_to_broker(order, fill_price)
 
     def _execute_option(self, order: L7Order, regime: str, arrival_price: float):
-        """Options path: OptionsEngine Greeks → vol-adjusted → Tradier."""
+        """Options path: OptionsEngine Greeks → vol-adjusted → Alpaca (or Tradier)."""
         price = arrival_price
 
         # Options have wider spreads — adjust slippage
@@ -1531,11 +1561,11 @@ class L7UnifiedExecutionSurface:
         fill_price = self._slippage.apply_slippage(price, order.side, order.slippage_bps)
         order.transaction_cost = abs(order.quantity * fill_price) * (order.slippage_bps / 10_000)
 
-        # Route to Tradier with option-specific fields
-        self._route_to_tradier(order, fill_price)
+        # Route to broker (Alpaca or Tradier) with option-specific fields
+        self._route_to_broker(order, fill_price)
 
     def _execute_future(self, order: L7Order, regime: str, arrival_price: float):
-        """Futures path: Beta corridor validation → Tradier."""
+        """Futures path: Beta corridor validation → Alpaca (or Tradier)."""
         price = arrival_price
 
         # Futures are tight — lower slippage
@@ -1552,24 +1582,24 @@ class L7UnifiedExecutionSurface:
         fill_price = self._slippage.apply_slippage(price, order.side, order.slippage_bps)
         order.transaction_cost = abs(order.quantity * fill_price) * (order.slippage_bps / 10_000)
 
-        self._route_to_tradier(order, fill_price)
+        self._route_to_broker(order, fill_price)
 
     # ------------------------------------------------------------------
     # Broker routing
     # ------------------------------------------------------------------
 
-    def _route_to_tradier(self, order: L7Order, fill_price: float):
-        """Route order to Tradier broker. Falls back to paper if Tradier unavailable."""
+    def _route_to_broker(self, order: L7Order, fill_price: float):
+        """Route order to primary broker (Alpaca or Tradier). Falls back to paper if unavailable."""
         # Map L7 side to broker OrderSide
         side_map = {"BUY": "BUY", "SELL": "SELL", "SHORT": "SHORT", "COVER": "COVER"}
         broker_side = side_map.get(order.side, "BUY")
 
         executed = False
 
-        # Primary: Tradier
-        if self._tradier:
+        # Primary: broker (Alpaca or Tradier)
+        if self._broker:
             try:
-                # Convert to Tradier order format
+                # Convert to broker order format
                 from .paper_broker import OrderSide as BrokerSide, SignalType as BrokerSignal
                 t_side = BrokerSide(broker_side)
                 t_signal = BrokerSignal.HOLD
@@ -1578,7 +1608,7 @@ class L7UnifiedExecutionSurface:
                 except (ValueError, KeyError):
                     pass
 
-                result = self._tradier.place_order(
+                result = self._broker.place_order(
                     ticker=order.ticker,
                     side=t_side,
                     quantity=order.quantity,
@@ -1595,9 +1625,9 @@ class L7UnifiedExecutionSurface:
                         order.filled_at = _now_iso()
                         executed = True
                     else:
-                        order.reason = f"Tradier: {getattr(result, 'reason', 'unknown')}"
+                        order.reason = f"Broker: {getattr(result, 'reason', 'unknown')}"
             except Exception as e:
-                logger.warning("Tradier execution failed for %s: %s — falling back to paper", order.ticker, e)
+                logger.warning("Broker execution failed for %s: %s — falling back to paper", order.ticker, e)
 
         # Fallback: paper broker simulation
         if not executed:
@@ -1606,6 +1636,9 @@ class L7UnifiedExecutionSurface:
             order.status = "FILLED"
             order.filled_at = _now_iso()
             order.reason = (order.reason or "") + " [paper-fallback]"
+
+    # Backward-compat alias
+    _route_to_tradier = _route_to_broker
 
     def _log_to_paper(self, order: L7Order):
         """Log the filled order to paper broker for learning/backtesting."""
@@ -1633,10 +1666,10 @@ class L7UnifiedExecutionSurface:
     # ------------------------------------------------------------------
 
     def _get_price(self, ticker: str) -> float:
-        """Get current price from Tradier (primary) or paper broker."""
-        if self._tradier and hasattr(self._tradier, '_get_current_price'):
+        """Get current price from broker (Alpaca or Tradier) or paper broker."""
+        if self._broker and hasattr(self._broker, '_get_current_price'):
             try:
-                p = self._tradier._get_current_price(ticker)
+                p = self._broker._get_current_price(ticker)
                 if p > 0:
                     return p
             except Exception:
@@ -1652,8 +1685,8 @@ class L7UnifiedExecutionSurface:
 
     def _get_portfolio_state(self) -> Tuple[float, float, dict, float, float, float]:
         """Get (nav, cash, positions, daily_pnl, gross_exposure, net_exposure)."""
-        # Prefer Tradier state
-        broker = self._tradier or self._paper
+        # Prefer broker state (Alpaca or Tradier)
+        broker = self._broker or self._paper
         if broker is None:
             return self._initial_cash, self._initial_cash, {}, 0.0, 0.0, 0.0
 
