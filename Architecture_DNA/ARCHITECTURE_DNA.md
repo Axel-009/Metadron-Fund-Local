@@ -1285,3 +1285,83 @@ logs/
 10. **Session continuity** — CLAUDE.md serves as bootstrap context
 11. **Hourly CSV export** — every snapshot persisted to `logs/returns/` for audit
 12. **Learning loop always active** — every trade outcome feeds back into tier weights
+
+---
+
+## FULL SYSTEM INTEGRATION — PLATFORM ORCHESTRATOR
+
+### Pipeline Flow (Complete)
+
+```
+InvestmentPlatformOrchestrator (Master)
+│
+├── Step 1:  UniverseEngine ────────────────── 1,044+ securities (SP500+400+600)
+├── Step 2:  MacroEngine ───────────────────── Regime: BULL/BEAR/TRANSITION/STRESS/CRASH
+├── Step 3:  MetadronCube ──────────────────── Intelligence tensor, sleeve allocation
+├── Step 4:  SecurityAnalysisEngine ────────── Graham-Dodd-Klarman (L2/L2.5)
+├── Step 5:  Signal Engines (parallel)
+│   ├── ContagionEngine ──────────────────── Cross-asset contagion
+│   ├── StatArbEngine ───────────────────── Mean reversion + cointegration
+│   ├── SocialPredictionEngine ──────────── MiroFish agent simulation
+│   ├── DistressedAssetEngine ───────────── 5-model distress ensemble
+│   ├── CVREngine ────────────────────────── Contingent value rights
+│   ├── EventDrivenEngine ───────────────── Merger arb, PEAD, catalysts
+│   ├── FedLiquidityPlumbing ────────────── Fed balance sheet, money velocity
+│   └── AgentSimEngine ──────────────────── MiroFish market microstructure
+├── Step 6:  PatternRecognitionEngine ──────── Chart patterns, ML anomalies
+├── Step 7:  AlphaOptimizer ────────────────── Walk-forward ML + mean-variance
+├── Step 8:  BetaCorridor ──────────────────── Beta management (7-12% corridor)
+├── Step 9:  MonteCarloRiskEngine ──────────── 5,000 sims, VaR, CVaR, stress
+├── Step 10: OptionsEngine + BlackScholes ──── Greeks, IV, mispricing scanner
+├── Step 11: Internal Analysis Pipeline ────── Technical + Fundamental + Macro
+├── Step 12: Trade Thesis Generation ───────── Scored trade ideas
+└── Step 13: ExecutionEngine → AlpacaBroker ── Order routing and execution
+```
+
+### Data Flow
+
+```
+Market Hours (09:30-16:00 ET):
+  Alpaca API (real-time quotes, 2-5s) → Signal Pipeline → AlpacaBroker (execution)
+  Heartbeat: 2-min cadence, open/close bursts at 1-min
+
+After Market Close (16:00-20:00 ET):
+  OpenBB (historical + FRED + macro) → Backtesting → Model Retrain → Pattern Learning
+  30-min cadence for earnings reactions
+
+Overnight:
+  OpenBB continuous backtesting → Model enhancement → Agent skill deployment
+```
+
+### Options Trading Flow
+
+```
+BlackScholesEngine
+├── Theoretical pricing (Call + Put)
+├── Full Greeks (Delta, Gamma, Theta, Vega, Rho)
+├── Implied volatility solver (Brent's method)
+├── Monte Carlo pricing (10,000 GBM paths)
+└── Mispricing scanner (theoretical vs market)
+
+MonteCarloRiskEngine
+├── 1,000 MC paths per ticker (21-day horizon)
+├── VaR 95/99, CVaR 95/99
+├── Stress VaR (2x volatility)
+└── Tail risk scoring
+
+OptionsEngine
+├── Receives BlackScholes theoretical prices
+├── Identifies mispriced options (>10% threshold)
+├── Computes hedge ratios via Greeks
+└── Routes to AlpacaBroker for execution
+```
+
+### Broker Hierarchy
+
+```
+AlpacaBroker    → PRIMARY: Equities + Options (live/paper)
+PaperBroker     → BACKTESTING: Historical simulation + Futures paper (until Rithmic)
+TradierBroker   → LEGACY: Fallback only
+RithmicBroker   → FUTURE: Live futures execution
+```
+
