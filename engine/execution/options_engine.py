@@ -1452,3 +1452,140 @@ class OptionsEngine:
 def create_engine(regime: str = "NORMAL", nav: float = 1_000_000.0) -> OptionsEngine:
     """Factory for quick instantiation."""
     return OptionsEngine(regime=regime, nav=nav)
+
+# ---------------------------------------------------------------------------
+# Additional features merged from engine/options/black_scholes.py
+# ---------------------------------------------------------------------------
+
+@dataclass
+class OptionPriceOutput:
+    """Complete option pricing output with mispricing analysis."""
+    underlying: str
+    strike: float
+    expiry: dt.date
+    option_type: str  # "call" or "put"
+    spot: float
+    theoretical_price: float
+    market_price: Optional[float]
+    implied_vol: Optional[float]
+    delta: float
+    gamma: float
+    theta: float
+    vega: float
+    rho: float
+    moneyness: float
+    intrinsic_value: float
+    extrinsic_value: float
+
+    @property
+    def mispricing(self) -> Optional[float]:
+        if self.market_price is not None:
+            return self.theoretical_price - self.market_price
+        return None
+
+    @property
+    def mispricing_pct(self) -> Optional[float]:
+        if self.mispricing is not None and self.theoretical_price > 0:
+            return self.mispricing / self.theoretical_price
+        return None
+
+
+def monte_carlo_option_price(
+    S: float, K: float, T: float, sigma: float,
+    is_call: bool = True, r: float = 0.05,
+    n_sims: int = 10000, n_steps: int = 252,
+) -> tuple:
+    """
+    Monte Carlo option pricing (handles path-dependent options).
+    
+    Returns (price, std_error).
+    """
+    dt = T / n_steps
+    np.random.seed(42)
+    Z = np.random.standard_normal((n_sims, n_steps))
+    log_returns = (r - 0.5 * sigma**2) * dt + sigma * np.sqrt(dt) * Z
+    S_T = S * np.exp(np.cumsum(log_returns, axis=1)[:, -1])
+    
+    if is_call:
+        payoffs = np.maximum(S_T - K, 0)
+    else:
+        payoffs = np.maximum(K - S_T, 0)
+    
+    price = np.exp(-r * T) * np.mean(payoffs)
+    std_error = np.exp(-r * T) * np.std(payoffs) / np.sqrt(n_sims)
+    return float(price), float(std_error)
+
+
+def scan_option_chain(
+    spot: float,
+    option_chain: list,
+    min_mispricing_pct: float = 0.10,
+    risk_free_rate: float = 0.05,
+) -> list:
+    """
+    Scan an option chain for mispriced options using Black-Scholes.
+    
+    Args:
+        spot: Current spot price
+        option_chain: List of {strike, expiry (date), type (call/put), market_price}
+        min_mispricing_pct: Minimum mispricing % to flag (default 10%)
+    
+    Returns:
+        List of OptionPriceOutput with significant mispricing, sorted by magnitude.
+    """
+    opportunities = []
+    bs = BlackScholesModel()
+    
+    for opt in option_chain:
+        try:
+            strike = opt["strike"]
+            expiry = opt["expiry"] if isinstance(opt["expiry"], dt.date) else dt.date.fromisoformat(opt["expiry"])
+            opt_type = opt.get("type", "call").lower()
+            market_price = opt.get("market_price", opt.get("last_price", 0))
+            
+            if market_price <= 0:
+                continue
+            
+            T = max((expiry - date.today()).days / 365.0, 0.001)
+            is_call = opt_type == "call"
+            
+            # Solve for IV
+            iv = bs.implied_vol(market_price, spot, strike, T, risk_free_rate, is_call)
+            sigma = iv if iv else 0.20
+            
+            # Theoretical price
+            if is_call:
+                theo = bs.call_price(spot, strike, T, risk_free_rate, sigma)
+            else:
+                theo = bs.put_price(spot, strike, T, risk_free_rate, sigma)
+            
+            # Greeks
+            d = bs.delta(spot, strike, T, risk_free_rate, sigma, is_call)
+            g = bs.gamma(spot, strike, T, risk_free_rate, sigma)
+            th = bs.theta(spot, strike, T, risk_free_rate, sigma, is_call)
+            v = bs.vega(spot, strike, T, risk_free_rate, sigma)
+            rh = bs.rho(spot, strike, T, risk_free_rate, sigma, is_call)
+            
+            # Intrinsic
+            intrinsic = max(spot - strike, 0) if is_call else max(strike - spot, 0)
+            
+            result = OptionPriceOutput(
+                underlying=opt.get("underlying", ""),
+                strike=strike, expiry=expiry,
+                option_type=opt_type, spot=spot,
+                theoretical_price=theo, market_price=market_price,
+                implied_vol=iv, delta=d, gamma=g, theta=th, vega=v, rho=rh,
+                moneyness=spot / strike if strike > 0 else 0,
+                intrinsic_value=intrinsic,
+                extrinsic_value=max(theo - intrinsic, 0),
+            )
+            
+            if result.mispricing_pct and abs(result.mispricing_pct) > min_mispricing_pct:
+                opportunities.append(result)
+                
+        except Exception as e:
+            logger.debug("Failed to price option: %s", e)
+            continue
+    
+    opportunities.sort(key=lambda x: abs(x.mispricing_pct or 0), reverse=True)
+    return opportunities
