@@ -317,13 +317,19 @@ _MARKET_OPEN = dt_time(9, 30)
 _MARKET_CLOSE = dt_time(16, 0)
 _AFTER_HOURS_END = dt_time(20, 0)
 
-# Cadence intervals (seconds)
-_HEARTBEAT_INTERVAL = 60          # 1 minute
-_SIGNAL_CADENCE = 60              # 1 minute
-_INTELLIGENCE_CADENCE = 300       # 5 minutes
-_MONITORING_CADENCE = 300         # 5 minutes
-_AFTER_HOURS_INTERVAL = 300       # 5 minutes
-_OVERNIGHT_INTERVAL = 3600        # 1 hour
+# Cadence intervals (seconds) — adaptive for best execution
+_HEARTBEAT_INTERVAL = 120          # Base: 2 minutes (was 60s — too fast for full universe)
+_SIGNAL_CADENCE = 120              # 2 minutes — full signal pipeline
+_INTELLIGENCE_CADENCE = 300        # 5 minutes — alpha optimizer, ML ensemble
+_MONITORING_CADENCE = 300          # 5 minutes — P&L, risk, anomaly
+_AFTER_HOURS_INTERVAL = 1800       # 30 minutes
+_OVERNIGHT_INTERVAL = 3600         # 1 hour
+
+# Burst modes for open/close
+_OPEN_BURST_INTERVAL = 60          # 1-min for first 5 min after open
+_OPEN_BURST_COUNT = 5
+_CLOSE_BURST_INTERVAL = 60         # 1-min for last 15 min
+_CLOSE_BURST_COUNT = 15
 
 # Auto-restart limits
 _MAX_CONSECUTIVE_ERRORS = 10
