@@ -50,7 +50,6 @@ from ..portfolio.beta_corridor import BetaCorridor, BetaState, BetaAction
 from .paper_broker import (
     PaperBroker, OrderSide, SignalType, Position,
 )
-from .tradier_broker import TradierBroker
 
 # Alpaca broker (drop-in replacement for Tradier/Paper)
 try:
@@ -58,30 +57,67 @@ try:
 except ImportError:
     AlpacaBroker = None  # type: ignore[assignment,misc]
 
+# Tradier broker (legacy)
+try:
+    from .tradier_broker import TradierBroker
+except ImportError:
+    TradierBroker = None  # type: ignore[assignment,misc]
+
 # L7 HFT Technical Execution (quant-trading strategies)
-from .quant_strategy_executor import QuantStrategyExecutor
+try:
+    from .quant_strategy_executor import QuantStrategyExecutor
+except ImportError:
+    QuantStrategyExecutor = None  # type: ignore[assignment,misc]
 
 # Social prediction engine (MiroFish integration)
-from ..signals.social_prediction_engine import SocialPredictionEngine, SocialSnapshot
-from ..ml.social_features import SocialFeatureBuilder
+try:
+    from ..signals.social_prediction_engine import SocialPredictionEngine, SocialSnapshot
+except ImportError:
+    SocialPredictionEngine = None  # type: ignore[assignment,misc]
+    SocialSnapshot = None  # type: ignore[assignment,misc]
+
+try:
+    from ..ml.social_features import SocialFeatureBuilder
+except ImportError:
+    SocialFeatureBuilder = None  # type: ignore[assignment,misc]
 
 # Distressed asset engine
-from ..signals.distressed_asset_engine import DistressedAssetEngine
+try:
+    from ..signals.distressed_asset_engine import DistressedAssetEngine
+except ImportError:
+    DistressedAssetEngine = None  # type: ignore[assignment,misc]
 
 # CVR engine
-from ..signals.cvr_engine import CVREngine
+try:
+    from ..signals.cvr_engine import CVREngine
+except ImportError:
+    CVREngine = None  # type: ignore[assignment,misc]
 
 # Event-driven engine
-from ..signals.event_driven_engine import EventDrivenEngine
+try:
+    from ..signals.event_driven_engine import EventDrivenEngine
+except ImportError:
+    EventDrivenEngine = None  # type: ignore[assignment,misc]
 
 # L2/L2.5 Security Analysis (Graham-Dodd-Klarman)
-from ..signals.security_analysis_engine import SecurityAnalysisEngine
+try:
+    from ..signals.security_analysis_engine import SecurityAnalysisEngine
+except ImportError:
+    SecurityAnalysisEngine = None  # type: ignore[assignment,misc]
 
 # L2 Pattern Discovery (MiroFish + AI-Newton)
-from ..signals.pattern_discovery_engine import PatternDiscoveryEngine
+try:
+    from ..signals.pattern_discovery_engine import PatternDiscoveryEngine
+except ImportError:
+    PatternDiscoveryEngine = None  # type: ignore[assignment,misc]
 
 # Learning loop — closed-loop feedback across all engines
-from ..monitoring.learning_loop import LearningLoop, SignalOutcome, RegimeFeedback
+try:
+    from ..monitoring.learning_loop import LearningLoop, SignalOutcome, RegimeFeedback
+except ImportError:
+    LearningLoop = None  # type: ignore[assignment,misc]
+    SignalOutcome = None  # type: ignore[assignment,misc]
+    RegimeFeedback = None  # type: ignore[assignment,misc]
 
 # L7 Unified Execution Surface
 try:
