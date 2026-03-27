@@ -269,7 +269,7 @@ repos:
       - financial_health_scoring
     outputs: [distress_predictions, bankruptcy_probabilities]
 
-  stock_prediction:
+  stock_prediction_technical:
     path: ../Stock-prediction
     role: "Technical Price Prediction"
     layer: 3
