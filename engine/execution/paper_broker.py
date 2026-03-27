@@ -859,6 +859,72 @@ class PaperBroker:
         # Live dashboard state emitter
         self._dashboard = LiveDashboardState()
 
+        # State persistence
+        self._state_file = self.log_dir / "broker_state.json"
+        self._load_state()
+
+    # --- State persistence ---------------------------------------------------
+
+    def _save_state(self):
+        """Persist portfolio state to disk. Called after every state change."""
+        try:
+            from dataclasses import asdict
+            state = {
+                "cash": self.state.cash,
+                "nav": self.state.nav,
+                "total_pnl": self.state.total_pnl,
+                "win_count": self.state.win_count,
+                "loss_count": self.state.loss_count,
+                "positions": {
+                    ticker: {
+                        "ticker": p.ticker,
+                        "quantity": p.quantity,
+                        "avg_cost": p.avg_cost,
+                        "current_price": p.current_price,
+                        "unrealized_pnl": p.unrealized_pnl,
+                        "realized_pnl": p.realized_pnl,
+                        "sector": p.sector,
+                    }
+                    for ticker, p in self.state.positions.items()
+                },
+                "timestamp": datetime.now(timezone.utc).isoformat(),
+                "eod_nav_history": self._eod_nav_history[-252:],  # Keep 1 year
+            }
+            self._state_file.write_text(json.dumps(state, indent=2, default=str))
+        except Exception as e:
+            logger.warning("Failed to save broker state: %s", e)
+
+    def _load_state(self):
+        """Resume from last known state on startup."""
+        if not self._state_file.exists():
+            return
+        try:
+            state = json.loads(self._state_file.read_text())
+            self.state.cash = state.get("cash", self.state.cash)
+            self.state.nav = state.get("nav", self.state.nav)
+            self.state.total_pnl = state.get("total_pnl", 0.0)
+            self.state.win_count = state.get("win_count", 0)
+            self.state.loss_count = state.get("loss_count", 0)
+            self._eod_nav_history = state.get("eod_nav_history", [])
+
+            # Reconstruct positions
+            for ticker, pdata in state.get("positions", {}).items():
+                self.state.positions[ticker] = Position(
+                    ticker=pdata["ticker"],
+                    quantity=pdata["quantity"],
+                    avg_cost=pdata["avg_cost"],
+                    current_price=pdata["current_price"],
+                    unrealized_pnl=pdata.get("unrealized_pnl", 0.0),
+                    realized_pnl=pdata.get("realized_pnl", 0.0),
+                    sector=pdata.get("sector", ""),
+                )
+
+            saved_at = state.get("timestamp", "unknown")
+            logger.info("Broker state restored from %s (NAV=$%.2f, %d positions)",
+                        saved_at, self.state.nav, len(self.state.positions))
+        except Exception as e:
+            logger.warning("Failed to load broker state: %s — starting fresh", e)
+
     # --- Pre-trade risk checks -----------------------------------------------
 
     def _check_risk_limits(self, ticker: str, side: OrderSide,
@@ -1070,6 +1136,9 @@ class PaperBroker:
 
         # Track daily P&L
         self._daily_pnl_today += realized_pnl_this_trade
+
+        # Persist state after every trade
+        self._save_state()
 
     # --- Portfolio state -----------------------------------------------------
 
