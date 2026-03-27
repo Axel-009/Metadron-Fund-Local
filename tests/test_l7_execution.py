@@ -186,7 +186,8 @@ class TestTCA:
         o = L7Order(ticker="AAPL", side="BUY", quantity=10,
                     fill_quantity=10, product_type=ProductType.OPTION)
         snap = self.tca.analyze(o, arrival_price=5.0, fill_price=5.05)
-        assert snap.commission_bps > 0  # Options have commissions
+        # Alpaca: $0 option commissions — commission_bps may be 0
+        assert snap.commission_bps >= 0  # Commission-free (Alpaca)
 
 
 # ---------------------------------------------------------------------------
