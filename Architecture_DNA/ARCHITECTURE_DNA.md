@@ -25,7 +25,7 @@ Paper broker mode (OpenBB data). Beta managed within 7–12% corridor.
 │     (L3/3.95)         (L2/4)            (L3)              (L4)            │
 │                                           │                               │
 │                                           ▼                               │
-│  DecisionMatrix ─→ L7UnifiedExecutionSurface ─→ TradierBroker + PaperLog │
+│  DecisionMatrix ─→ L7UnifiedExecutionSurface ─→ AlpacaBroker + PaperLog │
 │      (L5)                    (L7)                    (L7)                │
 │                                │                                         │
 │                   ┌────────────┼────────────┐                           │
@@ -551,10 +551,10 @@ MES_hedge_beta = target_beta - sleeve_beta
 ### L7UnifiedExecutionSurface (`engine/execution/l7_unified_execution_surface.py`)
 
 Fuses WonderTrader (micro-price + CTA + routing), ExchangeCore (order matching),
-PaperBroker/TradierBroker (bookkeeping), and OptionsEngine (derivatives) into one
+AlpacaBroker (primary) / TradierBroker (legacy) / PaperBroker (log), and OptionsEngine (derivatives) into one
 continuous execution arm.
 
-**ALL tradeable products route through Tradier as execution broker.**
+**ALL tradeable products route through Alpaca as primary execution broker (Tradier as legacy).**
 Paper broker log is ALWAYS maintained in parallel for ML learning / backtesting.
 Fixed income, FX, and liquidity instruments are for research only — never executed.
 
@@ -564,11 +564,11 @@ Fixed income, FX, and liquidity instruments are for research only — never exec
 L7UnifiedExecutionSurface
 ├── Continuous intraday loop (1-min heartbeat from live_loop_orchestrator)
 ├── Multi-product router (equities, options, futures)
-│   ├── Equity → WonderTrader micro-price → ExchangeCore → Tradier
-│   ├── Options → OptionsEngine Greeks → vol-adjusted → Tradier
-│   └── Futures → Beta corridor hedge → Tradier
+│   ├── Equity → WonderTrader micro-price → ExchangeCore → Alpaca
+│   ├── Options → OptionsEngine Greeks → vol-adjusted → Alpaca
+│   └── Futures → Beta corridor hedge → Alpaca
 ├── Unified order book (all products, all horizons)
-├── Dual broker: Tradier (primary) + PaperBroker (log)
+├── Dual broker: Alpaca (primary) + PaperBroker (log)
 ├── L7RiskEngine (10 gates, per-execution update)
 ├── TransactionCostAnalyzer (per-trade decomposition)
 ├── ExecutionLearningLoop (pattern identification)
@@ -689,7 +689,47 @@ Context buckets: ticker × product × signal × regime × time-of-day × volatil
 
 ---
 
-## LIVE EXECUTION — TRADIER BROKER INTEGRATION
+## LIVE EXECUTION — ALPACA BROKER INTEGRATION (PRIMARY)
+
+### AlpacaBroker (`engine/execution/alpaca_broker.py`)
+**Purpose**: Primary execution broker — routes orders to Alpaca API for live/paper execution.
+Drop-in replacement for PaperBroker/TradierBroker. Same interface, zero code changes to swap.
+
+#### Configuration
+```bash
+export ALPACA_API_KEY=<api_key>
+export ALPACA_SECRET_KEY=<secret_key>
+export ALPACA_PAPER_TRADE=True   # True = paper, False = live
+```
+
+#### Activation (one-line change)
+```python
+# In run_open.py or live_loop_orchestrator.py:
+engine = ExecutionEngine(initial_nav=1_000_000.0, broker_type="alpaca")
+```
+
+#### Features
+- **Commission**: $0 stocks, $0 options (Alpaca commission-free)
+- **Paper trading**: Same API as live, just different endpoint
+- **SDK**: alpaca-py (official Alpaca Python SDK)
+- **Market data**: Real-time quotes via Alpaca data API
+- **Positions**: Live position sync from Alpaca account
+- **Orders**: Market, limit, stop, stop-limit supported
+- **Retry logic**: 4 retries with exponential backoff (2s, 4s, 8s, 16s)
+- **Quote cache**: 5-second TTL, OpenBB fallback
+- **Full audit trail**: All orders logged to `logs/alpaca/`
+- **EOD reconciliation**: Positions synced vs broker
+
+#### Account (Paper)
+- Account: PA3LQ5Q0ZNSP
+- Cash: $100,000
+- Buying Power: $200,000
+- Options: Level 3 approved
+- Shorting: Enabled
+
+---
+
+## LIVE EXECUTION — TRADIER BROKER INTEGRATION (LEGACY)
 
 ### TradierBroker (`engine/execution/tradier_broker.py`)
 **Purpose**: Drop-in replacement for PaperBroker — routes orders to Tradier API for live execution
