@@ -980,5 +980,83 @@ class TestTradierBrokerModule:
         assert "broker_type" in sig.parameters
 
 
+# ===========================================================================
+# Alpaca Broker
+# ===========================================================================
+class TestAlpacaBrokerModule:
+    """Unit tests for AlpacaBroker — no live API calls (imports + interface)."""
+
+    def test_import(self):
+        from engine.execution.alpaca_broker import (
+            AlpacaBroker, _ALPACA_BASE_URLS, _ALPACA_STATUS_MAP,
+        )
+        assert True in _ALPACA_BASE_URLS
+        assert False in _ALPACA_BASE_URLS
+        assert _ALPACA_BASE_URLS[True] == "https://paper-api.alpaca.markets"
+        assert _ALPACA_BASE_URLS[False] == "https://api.alpaca.markets"
+
+    def test_status_mapping(self):
+        from engine.execution.alpaca_broker import _ALPACA_STATUS_MAP
+        assert _ALPACA_STATUS_MAP.get("filled") == OrderStatus.FILLED
+        assert _ALPACA_STATUS_MAP.get("new") == OrderStatus.PENDING
+        assert _ALPACA_STATUS_MAP.get("canceled") == OrderStatus.CANCELLED
+        assert _ALPACA_STATUS_MAP.get("rejected") == OrderStatus.REJECTED
+
+    def test_broker_interface_matches_paper(self):
+        """Verify AlpacaBroker has the same public methods as PaperBroker/TradierBroker."""
+        from engine.execution.alpaca_broker import AlpacaBroker
+        required_methods = [
+            "place_order", "compute_nav", "compute_exposures",
+            "get_position", "get_all_positions", "get_portfolio_summary",
+            "refresh_prices", "reconcile", "get_risk_profile",
+            "get_daily_target_state", "reset_daily_target",
+            "get_leverage_multiplier", "emit_dashboard_state",
+            "get_dashboard_snapshot", "get_dashboard_history",
+            "register_dashboard_callback", "get_trade_history",
+            "get_daily_pnl", "get_drawdown", "get_performance_metrics",
+            "export_positions_csv",
+            # Tradier-compatible aliases
+            "get_tradier_orders", "cancel_tradier_order", "get_tradier_gainloss",
+            # Alpaca-specific
+            "get_orders", "cancel_order", "get_gainloss",
+            "preview_order", "get_asset", "get_clock", "get_portfolio_history",
+            "close_position", "close_all_positions",
+        ]
+        for method in required_methods:
+            assert hasattr(AlpacaBroker, method), f"AlpacaBroker missing method: {method}"
+
+    def test_alpaca_broker_init_signatures(self):
+        """Verify __init__ accepts same params as TradierBroker."""
+        from engine.execution.alpaca_broker import AlpacaBroker
+        import inspect
+        sig = inspect.signature(AlpacaBroker.__init__)
+        params = list(sig.parameters.keys())
+        assert "initial_cash" in params
+        assert "log_dir" in params
+        assert "api_key" in params
+        assert "secret_key" in params
+        assert "paper" in params
+
+    def test_execution_engine_accepts_alpaca(self):
+        """ExecutionEngine should accept broker_type='alpaca'."""
+        from engine.execution.execution_engine import ExecutionEngine
+        import inspect
+        sig = inspect.signature(ExecutionEngine.__init__)
+        assert "broker_type" in sig.parameters
+        # Check AlpacaBroker import exists in source
+        source = inspect.getsource(ExecutionEngine)
+        assert "AlpacaBroker" in source
+        assert "alpaca" in source
+
+    def test_alpaca_broker_constants(self):
+        """Verify commission mapping (Alpaca is $0)."""
+        from engine.execution.alpaca_broker import AlpacaBroker
+        # Commission is hardcoded as 0.0 in _log_trade and reconcile
+        import inspect
+        source = inspect.getsource(AlpacaBroker._log_trade)
+        assert "commission" in source
+        assert "0.0" in source
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])

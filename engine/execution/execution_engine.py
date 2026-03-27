@@ -52,6 +52,12 @@ from .paper_broker import (
 )
 from .tradier_broker import TradierBroker
 
+# Alpaca broker (drop-in replacement for Tradier/Paper)
+try:
+    from .alpaca_broker import AlpacaBroker
+except ImportError:
+    AlpacaBroker = None  # type: ignore[assignment,misc]
+
 # L7 HFT Technical Execution (quant-trading strategies)
 from .quant_strategy_executor import QuantStrategyExecutor
 
@@ -1042,8 +1048,17 @@ class ExecutionEngine:
         self.alpha = AlphaOptimizer()
         self.beta = BetaCorridor(nav=initial_nav)
 
-        # Broker selection: "paper" (default) or "tradier"
-        if broker_type == "tradier":
+        # Broker selection: "paper" (default), "tradier", or "alpaca"
+        if broker_type == "alpaca":
+            if AlpacaBroker is None:
+                raise ImportError(
+                    "alpaca-py SDK required for AlpacaBroker. "
+                    "Install with: pip install alpaca-py"
+                )
+            self.broker = AlpacaBroker(initial_cash=initial_nav)
+            logger.info("ExecutionEngine using AlpacaBroker (paper=%s)",
+                        self.broker.paper)
+        elif broker_type == "tradier":
             self.broker = TradierBroker(initial_cash=initial_nav)
             logger.info("ExecutionEngine using TradierBroker (%s)",
                         self.broker.client.environment)
