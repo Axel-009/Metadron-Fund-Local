@@ -773,17 +773,37 @@ class MLVoteEnsemble:
         return result
 
     def _tier1_neural(self, r: np.ndarray) -> int:
-        """Pure-numpy 2-layer net."""
-        np.random.seed(abs(hash(r.tobytes())) % (2**31))
-        x = np.array([r[-5:].mean(), r[-20:].mean(), r.std()])
-        w1 = np.random.randn(3, 4) * 0.1
-        b1 = np.zeros(4)
-        w2 = np.random.randn(4, 1) * 0.1
-        h = np.tanh(x @ w1 + b1)
-        out = float(h @ w2)
-        # Use the actual return momentum as the real signal
-        momentum = r[-5:].mean()
-        combined = out * 0.3 + momentum * 100 * 0.7
+        """Tier 1: Simple trained model (logistic regression on features).
+
+        Uses persisted weights from ModelStore. Falls back to momentum
+        heuristic if no trained model exists.
+        """
+        if len(r) < 20:
+            return 0
+
+        # Features: short momentum, medium momentum, volatility, mean return
+        mom_short = r[-5:].mean()
+        mom_medium = r[-20:].mean()
+        vol = r[-20:].std()
+        mean_ret = r[-20:].mean()
+
+        features = np.array([mom_short, mom_medium, vol, mean_ret])
+
+        # Try to load persisted weights
+        try:
+            from ..ml.model_store import ModelStore
+            store = ModelStore()
+            weights, meta = store.load_numpy("tier1_neural")
+            if weights is not None and len(weights) == len(features):
+                # Linear model: score = sigmoid(X @ w)
+                score = 1 / (1 + np.exp(-features @ weights))
+                return 1 if score > 0.5 else -1
+        except Exception:
+            pass
+
+        # Fallback: momentum-based (not random noise)
+        # Short momentum weighted more than medium
+        combined = mom_short * 2.0 + mom_medium * 1.0
         return 1 if combined > 0 else -1
 
     def _tier2_momentum(self, r: np.ndarray) -> int:
