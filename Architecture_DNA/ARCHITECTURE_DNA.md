@@ -691,6 +691,14 @@ Context buckets: ticker × product × signal × regime × time-of-day × volatil
 
 ## LIVE EXECUTION — ALPACA BROKER INTEGRATION (PRIMARY)
 
+### Broker Hierarchy
+```
+AlpacaBroker    → PRIMARY: Equities + Options (live/paper via ALPACA_PAPER_TRADE)
+PaperBroker     → BACKTESTING: Historical simulation + Futures paper (until Rithmic)
+TradierBroker   → LEGACY: Fallback only
+RithmicBroker   → FUTURE: Live futures execution
+```
+
 ### AlpacaBroker (`engine/execution/alpaca_broker.py`)
 **Purpose**: Primary execution broker — routes orders to Alpaca API for live/paper execution.
 Drop-in replacement for PaperBroker/TradierBroker. Same interface, zero code changes to swap.
