@@ -9,7 +9,7 @@ Based on audit of the codebase:
 | **CPU** | ML training (walk-forward, regime detection), OpenBB data ingestion, signal pipeline |
 | **RAM** | 42K files, pandas/numpy dataframes, model state, universe of 1,000+ securities |
 | **Storage** | Repo (3GB) + market data cache + model artifacts + logs + reports |
-| **Network** | OpenBB API calls, Tradier broker API, FRED, SEC, real-time data feeds |
+| **Network** | OpenBB API calls, Alpaca broker API, FRED, SEC, real-time data feeds |
 | **Uptime** | Must run market hours (9:30 AM – 4 PM ET) + after-hours for reports |
 
 ## Recommended Architecture: 2-Server Split
@@ -85,7 +85,7 @@ Based on audit of the codebase:
 1. Clone Metadron-Capital repo to AX102
 2. Set up Python 3.11 + virtual environment
 3. Install all dependencies (OpenBB, pandas, numpy, scikit-learn, etc.)
-4. Configure `.env` with API keys (OpenBB, Tradier, FRED)
+4. Configure `.env` with API keys (OpenBB, Alpaca, FRED)
 5. Clone intelligence_platform repos to AX42
 6. Set up data pipelines and caching
 
@@ -97,7 +97,7 @@ Based on audit of the codebase:
 5. Stress test with full universe (1,000+ securities)
 
 ### Phase 4: Live Trading (Day 15+)
-1. Switch broker from paper to Tradier
+1. Switch broker from paper to Alpaca
 2. Set up kill switches and circuit breakers
 3. Configure risk limits (max position size, max drawdown)
 4. Start with small capital allocation
