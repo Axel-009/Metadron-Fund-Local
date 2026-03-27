@@ -1,12 +1,15 @@
-"""PaperBroker — Live HFT opportunity-based paper portfolio execution.
+"""PaperBroker — Simulation broker for backtesting and futures paper trading.
 
-Continuously active throughout the trading day, scanning for alpha
-opportunities and executing paper trades. Designed to be observable
-via a live dashboard once connected to internet and OpenBB API.
+PURPOSE:
+    1. Backtesting — historical simulation with synthetic fills
+    2. Futures — paper trading until Rithmic connection is live
+
+NOT for live equity/options trading — use AlpacaBroker.
+NOT for live futures — will use RithmicBroker (future build).
 
 Provides:
     - Order placement (market, limit)
-    - Position tracking
+    - Position tracking with GICS sector classification
     - P&L calculation
     - NAV computation
     - Trade history / audit trail
