@@ -25,7 +25,7 @@ Data sourced via **OpenBB** (34+ providers: FRED, SEC, Polygon, FMP, CBOE, ECB, 
 ## Signal Pipeline
 
 ```
-UniverseEngine → MacroEngine → MetadronCube → SecurityAnalysis → PatternDiscovery → CrossAssetContagion → SocialPrediction → DistressedAssets → CVR → EventDriven → TickerSelection → AlphaOptimizer → BetaCorridor → DecisionMatrix → L7UnifiedExecutionSurface → TradierBroker + PaperLog
+UniverseEngine → MacroEngine → MetadronCube → SecurityAnalysis → PatternDiscovery → CrossAssetContagion → SocialPrediction → DistressedAssets → CVR → EventDriven → TickerSelection → AlphaOptimizer → BetaCorridor → DecisionMatrix → L7UnifiedExecutionSurface → AlpacaBroker + PaperLog
      (L1)           (L2)          (L2)          (L2/3.1)          (L2/3.2)            (L2/3.5)             (L2/L3)            (L2)          (L2)     (L2)          (L2/4)          (L3)            (L4)           (L5)                    (L7)                       (L7)
 ```
 
@@ -82,7 +82,7 @@ AlphaBetaUnleashed (Dataset 1) — 1-min cadence
     ├── Rm_adjusted = Rm_realized + macro.rm_adjustment
     ├── target_beta = corridor_fn(Rm_adjusted) × 4.7 × vol_adj
     ├── MES_hedge_beta = target_beta - sleeve_beta
-    └── execute via PaperBroker or TradierBroker (broker_type="tradier")
+    └── execute via PaperBroker, AlpacaBroker, or TradierBroker (broker_type="alpaca"|"tradier"|"paper")
 ```
 
 ## Architecture
@@ -131,8 +131,9 @@ Metadron-Capital/                        ← Master monorepo (Layer 0: Hub)
 │   │   └── beta_corridor.py            ← Beta corridor 7–12% + vol-normalisation
 │   ├── execution/                       ← L5: Execution + L7 HFT routing
 │   │   ├── paper_broker.py             ← Simulated broker (OpenBB prices)
-│   │   ├── tradier_broker.py           ← Live broker via Tradier API (sandbox/production)
-│   │   ├── execution_engine.py         ← Full pipeline orchestrator + ML vote ensemble (broker_type="paper"|"tradier")
+│   │   ├── alpaca_broker.py            ← Live broker via Alpaca API (paper/production)
+│   │   ├── tradier_broker.py           ← Live broker via Tradier API (legacy, sandbox/production)
+│   │   ├── execution_engine.py         ← Full pipeline orchestrator + ML vote ensemble (broker_type="paper"|"alpaca"|"tradier")
 │   │   ├── decision_matrix.py          ← 6-gate trade approval + Kelly sizing + ABU beta
 │   │   ├── options_engine.py           ← Black-Scholes, Greeks, vol surface, θ+Γ optimizer
 │   │   ├── conviction_override.py       ← 3-tier conviction override system
@@ -390,7 +391,7 @@ python3 core/platform.py
 ## Design Rules
 
 1. **All data via OpenBB** (34+ providers: FRED, SEC, CBOE, etc.) — sole data source, no broker dependency
-2. **Paper broker default** — TradierBroker available for live/sandbox execution (set TRADIER_API_KEY, TRADIER_ACCOUNT_ID, TRADIER_ENVIRONMENT in .env). Switch with `broker_type="tradier"`
+2. **Paper broker default** — AlpacaBroker available for live/paper execution (set ALPACA_API_KEY, ALPACA_SECRET_KEY, ALPACA_PAPER_TRADE in .env). Switch with `broker_type="alpaca"`. Legacy TradierBroker also supported via `broker_type="tradier"`.
 3. **6-layer architecture is immutable** — extend within layers
 4. **Beta managed within 7–12% corridor** — vol-normalised
 5. **Alpha targeted at 95%+** — aggressive multi-sleeve allocation

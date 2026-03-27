@@ -201,7 +201,7 @@ except ImportError as e:
 
 Then in `run_pipeline()`, check `if EngineClass is not None` before using each engine.
 
-**The only imports that should remain non-optional:** numpy, pandas, the core data types (Security, MacroSnapshot, etc.), and the engines that are essential to the pipeline (UniverseEngine, MacroEngine, AlphaOptimizer, PaperBroker/TradierBroker).
+**The only imports that should remain non-optional:** numpy, pandas, the core data types (Security, MacroSnapshot, etc.), and the engines that are essential to the pipeline (UniverseEngine, MacroEngine, AlphaOptimizer, PaperBroker/AlpacaBroker).
 
 **Verification:** Temporarily rename one signal engine file, verify the platform still starts.
 
@@ -677,7 +677,7 @@ echo "=== ALL CHECKS PASSED ==="
 
 - ❌ Frontend/UI development (Phase 5 of the deployment plan)
 - ❌ Pattern/edge identification (separate build)
-- ❌ Live broker integration testing (Tradier sandbox needs API keys)
+- ❌ Live broker integration testing (Alpaca sandbox needs API keys)
 - ❌ Hetzner deployment automation (separate task)
 - ❌ Performance optimization (only after fundamentals are solid)
 - ❌ Adding new trading strategies (only fixing what exists)

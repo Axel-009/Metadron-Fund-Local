@@ -28,6 +28,15 @@ from enum import Enum
 import numpy as np
 import pandas as pd
 
+# Load .env file if present
+try:
+    from dotenv import load_dotenv
+    _env_path = Path(__file__).parent.parent.parent / ".env"
+    if _env_path.exists():
+        load_dotenv(_env_path)
+except ImportError:
+    pass
+
 from .paper_broker import (
     Order, OrderSide, OrderType, OrderStatus, SignalType,
     Position, PortfolioState, RiskLimiter, PerformanceTracker,
@@ -922,7 +931,12 @@ class AlpacaBroker:
         return self.get_portfolio_summary()
 
     def get_positions(self) -> dict:
-        """Get all positions as dict keyed by ticker."""
+        """Get all positions as dict keyed by ticker, including GICS sector."""
+        try:
+            from ..data.cross_asset_universe import SECTOR_MAP
+        except ImportError:
+            SECTOR_MAP = {}
+
         try:
             alpaca_positions = self.trading_client.get_all_positions()
             return {
@@ -935,6 +949,7 @@ class AlpacaBroker:
                     "market_value": float(p.market_value) if p.market_value else 0,
                     "unrealized_pl": float(p.unrealized_pl) if p.unrealized_pl else 0,
                     "unrealized_plpc": float(p.unrealized_plpc) if p.unrealized_plpc else 0,
+                    "sector": SECTOR_MAP.get(p.symbol, "Unknown"),
                 }
                 for p in alpaca_positions
             }

@@ -422,16 +422,38 @@ class RiskGateManager:
     def _compute_sector_exposure(
         self, ticker: str, trade_value: float, broker: PaperBroker,
     ) -> float:
-        """Compute sector exposure including proposed trade."""
+        """Compute sector exposure including proposed trade.
+
+        Uses GICS sector classification from cross_asset_universe.SECTOR_MAP.
+        Groups all positions by their GICS sector and returns the maximum
+        sector weight as a fraction of NAV.
+        """
         nav = broker.state.nav
         if nav <= 0:
             return 0.0
-        # Simplified: treat each position as its own sector for now
-        existing = sum(
-            abs(p.market_value) for p in broker.state.positions.values()
-            if p.sector == ticker  # Will match sector-level ETFs
-        )
-        return (existing + trade_value) / nav
+
+        # Import GICS sector map
+        try:
+            from ..data.cross_asset_universe import SECTOR_MAP
+        except ImportError:
+            # Fallback: no sector map available, use per-ticker
+            existing = sum(
+                abs(p.market_value) for p in broker.state.positions.values()
+                if p.ticker == ticker
+            )
+            return (existing + trade_value) / nav
+
+        # Get sector for the proposed trade
+        trade_sector = SECTOR_MAP.get(ticker, "Unknown")
+
+        # Sum all positions in the same GICS sector
+        sector_total = 0.0
+        for pos_ticker, pos in broker.state.positions.items():
+            pos_sector = SECTOR_MAP.get(pos_ticker, "Unknown")
+            if pos_sector == trade_sector:
+                sector_total += abs(pos.market_value)
+
+        return (sector_total + trade_value) / nav
 
     def get_summary(self) -> dict:
         """Risk gate status summary."""
@@ -1040,7 +1062,7 @@ class ExecutionEngine:
         initial_nav: float = 1_000_000.0,
         top_n_per_sector: int = 5,
         enable_risk_gates: bool = True,
-        broker_type: str = "paper",
+        broker_type: str = "alpaca",
     ):
         self.universe = get_engine()
         self.macro = MacroEngine()
@@ -1048,23 +1070,27 @@ class ExecutionEngine:
         self.alpha = AlphaOptimizer()
         self.beta = BetaCorridor(nav=initial_nav)
 
-        # Broker selection: "paper" (default), "tradier", or "alpaca"
+        # Broker: Alpaca (primary) with PaperBroker fallback
         if broker_type == "alpaca":
-            if AlpacaBroker is None:
-                raise ImportError(
-                    "alpaca-py SDK required for AlpacaBroker. "
-                    "Install with: pip install alpaca-py"
-                )
-            self.broker = AlpacaBroker(initial_cash=initial_nav)
-            logger.info("ExecutionEngine using AlpacaBroker (paper=%s)",
-                        self.broker.paper)
+            if AlpacaBroker is not None:
+                try:
+                    self.broker = AlpacaBroker(initial_cash=initial_nav)
+                    logger.info("ExecutionEngine using AlpacaBroker (paper=%s)",
+                                self.broker.paper)
+                except Exception as e:
+                    logger.warning("AlpacaBroker init failed: %s — falling back to PaperBroker", e)
+                    self.broker = PaperBroker(initial_cash=initial_nav)
+                    logger.info("ExecutionEngine using PaperBroker (fallback)")
+            else:
+                logger.warning("AlpacaBroker unavailable — using PaperBroker")
+                self.broker = PaperBroker(initial_cash=initial_nav)
         elif broker_type == "tradier":
             self.broker = TradierBroker(initial_cash=initial_nav)
-            logger.info("ExecutionEngine using TradierBroker (%s)",
-                        self.broker.client.environment)
+            logger.info("ExecutionEngine using TradierBroker (legacy)")
         else:
+            # Explicit paper mode (no Alpaca)
             self.broker = PaperBroker(initial_cash=initial_nav)
-            logger.info("ExecutionEngine using PaperBroker")
+            logger.info("ExecutionEngine using PaperBroker (explicit)")
 
         self.ensemble = MLVoteEnsemble()
         self.top_n = top_n_per_sector

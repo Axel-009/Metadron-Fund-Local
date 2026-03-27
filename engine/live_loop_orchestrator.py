@@ -364,7 +364,7 @@ class LiveLoopOrchestrator:
     def __init__(
         self,
         initial_nav: float = 1_000_000.0,
-        broker_type: str = "paper",
+        broker_type: str = "alpaca",
         heartbeat_interval: float = _HEARTBEAT_INTERVAL,
         enable_risk_gates: bool = True,
         enable_persistence: bool = True,

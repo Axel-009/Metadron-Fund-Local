@@ -995,7 +995,14 @@ class PaperBroker:
         qty = order.quantity
         price = order.fill_price
 
-        pos = self.state.positions.get(ticker, Position(ticker=ticker))
+        # Import GICS sector map for position classification
+        try:
+            from ..data.cross_asset_universe import SECTOR_MAP
+            sector = SECTOR_MAP.get(ticker, "")
+        except ImportError:
+            sector = ""
+
+        pos = self.state.positions.get(ticker, Position(ticker=ticker, sector=sector))
 
         realized_pnl_this_trade = 0.0
 
