@@ -639,6 +639,29 @@ class WalkForwardOptimizer:
         """Return feature importance history."""
         return self._feature_importances
 
+    def save_model(self, name: str = "alpha_optimizer") -> str:
+        """Save the last trained model and metadata to disk."""
+        try:
+            from .model_store import ModelStore
+            store = ModelStore()
+            metadata = {
+                "oos_sharpe": self.get_oos_sharpe(),
+                "n_windows": len(self._oos_results),
+                "train_window": self.train_window,
+                "test_window": self.test_window,
+                "use_xgboost": self.use_xgboost,
+            }
+            # Save feature importances if available
+            if self._feature_importances is not None:
+                fi_path = store.base_dir / name / "feature_importances.csv"
+                fi_path.parent.mkdir(parents=True, exist_ok=True)
+                self._feature_importances.to_csv(fi_path)
+
+            return store.save_sklearn(name, self._get_model(), metadata)
+        except Exception as e:
+            logger.warning("Failed to save model: %s", e)
+            return ""
+
 
 # ---------------------------------------------------------------------------
 # MeanVarianceOptimizer
