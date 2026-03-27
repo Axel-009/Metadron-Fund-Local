@@ -911,10 +911,49 @@ class AlpacaBroker:
         """Alias for get_gainloss() — maintains TradierBroker interface."""
         return self.get_gainloss()
 
+    # --- Standard interface aliases --------------------------------------------
+
+    def get_nav(self) -> float:
+        """Get current NAV (alias for compute_nav)."""
+        return self.compute_nav()
+
+    def get_account_summary(self) -> dict:
+        """Get account summary (alias for get_portfolio_summary)."""
+        return self.get_portfolio_summary()
+
+    def get_positions(self) -> dict:
+        """Get all positions as dict keyed by ticker."""
+        try:
+            alpaca_positions = self.trading_client.get_all_positions()
+            return {
+                p.symbol: {
+                    "ticker": p.symbol,
+                    "quantity": int(p.qty),
+                    "side": p.side,
+                    "avg_entry_price": float(p.avg_entry_price),
+                    "current_price": float(p.current_price) if p.current_price else 0,
+                    "market_value": float(p.market_value) if p.market_value else 0,
+                    "unrealized_pl": float(p.unrealized_pl) if p.unrealized_pl else 0,
+                    "unrealized_plpc": float(p.unrealized_plpc) if p.unrealized_plpc else 0,
+                }
+                for p in alpaca_positions
+            }
+        except Exception as e:
+            logger.warning("Failed to get positions: %s", e)
+            return {}
+
+    def update_prices(self) -> None:
+        """Refresh position prices (alias for refresh_prices)."""
+        self.refresh_prices()
+
+    def get_order_history(self) -> list:
+        """Get order history (alias for get_trade_history)."""
+        return self.get_trade_history()
+
     def preview_order(
         self,
         ticker: str,
-        side: OrderSide,
+        side,
         quantity: int,
         order_type: OrderType = OrderType.MARKET,
         limit_price: Optional[float] = None,
@@ -924,15 +963,30 @@ class AlpacaBroker:
         Alpaca doesn't have a native preview endpoint like Tradier.
         We simulate by computing estimated costs.
         """
+        # Accept both OrderSide enum and string
+        _SIDE_STR_MAP = {"buy": "BUY", "sell": "SELL", "short": "SHORT", "cover": "COVER"}
+        if isinstance(side, str):
+            side_str = side.upper() if side.upper() in ("BUY", "SELL", "SHORT", "COVER") else _SIDE_STR_MAP.get(side.lower(), "BUY")
+            side = OrderSide(side_str)
+        else:
+            side_str = side.value
+
+        if isinstance(order_type, str):
+            ot_upper = order_type.upper()
+            order_type = OrderType(ot_upper) if ot_upper in ("MARKET", "LIMIT") else OrderType.MARKET
+            order_type_str = order_type.value
+        else:
+            order_type_str = order_type.value
+
         price = self._get_current_price(ticker) or limit_price or 0
         estimated_cost = quantity * price
         commission = 0.0  # Alpaca is commission-free
 
         return {
             "ticker": ticker,
-            "side": side.value,
+            "side": side_str,
             "quantity": quantity,
-            "order_type": order_type.value,
+            "order_type": order_type_str,
             "limit_price": limit_price,
             "estimated_price": price,
             "estimated_cost": estimated_cost,
