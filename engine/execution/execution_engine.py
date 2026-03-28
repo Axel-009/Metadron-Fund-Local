@@ -1127,26 +1127,33 @@ class ExecutionEngine:
         self.beta = BetaCorridor(nav=initial_nav)
 
         # Broker: Alpaca (primary) with PaperBroker fallback
+        self._broker_alert = None  # Alert message if not using Alpaca
         if broker_type == "alpaca":
             if AlpacaBroker is not None:
                 try:
                     self.broker = AlpacaBroker(initial_cash=initial_nav)
                     logger.info("ExecutionEngine using AlpacaBroker (paper=%s)",
                                 self.broker.paper)
+                    self._broker_alert = None  # No alert — Alpaca is active
                 except Exception as e:
-                    logger.warning("AlpacaBroker init failed: %s — falling back to PaperBroker", e)
+                    logger.error("🚨 BROKER ALERT: AlpacaBroker failed: %s — falling back to PaperBroker", e)
+                    logger.error("🚨 TRADES WILL NOT REACH ALPACA DASHBOARD — using simulation only")
                     self.broker = PaperBroker(initial_cash=initial_nav)
-                    logger.info("ExecutionEngine using PaperBroker (fallback)")
+                    self._broker_alert = f"ALERT: PaperBroker fallback — Alpaca unavailable: {e}"
             else:
-                logger.warning("AlpacaBroker unavailable — using PaperBroker")
+                logger.error("🚨 BROKER ALERT: AlpacaBroker module not available — using PaperBroker")
+                logger.error("🚨 TRADES WILL NOT REACH ALPACA DASHBOARD — using simulation only")
                 self.broker = PaperBroker(initial_cash=initial_nav)
+                self._broker_alert = "ALERT: PaperBroker fallback — AlpacaBroker module missing"
         elif broker_type == "tradier":
             self.broker = TradierBroker(initial_cash=initial_nav)
             logger.info("ExecutionEngine using TradierBroker (legacy)")
+            self._broker_alert = "NOTICE: Using TradierBroker (legacy)"
         else:
             # Explicit paper mode (no Alpaca)
             self.broker = PaperBroker(initial_cash=initial_nav)
             logger.info("ExecutionEngine using PaperBroker (explicit)")
+            self._broker_alert = "NOTICE: Using PaperBroker (explicit paper mode)"
 
         self.ensemble = MLVoteEnsemble()
         self.top_n = top_n_per_sector
@@ -1231,6 +1238,115 @@ class ExecutionEngine:
             except Exception as e:
                 logger.warning(f"L7 init failed (running without L7): {e}")
 
+        # --- Broker routing guard -----------------------------------------------
+        self._trade_log = []  # Track which broker each trade went through
+
+    def get_broker_status(self) -> dict:
+        """Get current broker status and any routing alerts."""
+        broker_type = type(self.broker).__name__
+        is_alpaca = broker_type == "AlpacaBroker"
+        return {
+            "broker": broker_type,
+            "is_alpaca": is_alpaca,
+            "is_paper_sim": broker_type == "PaperBroker",
+            "alert": self._broker_alert,
+            "trades_today": len(self._trade_log),
+            "trades_to_alpaca": sum(1 for t in self._trade_log if t.get("broker") == "AlpacaBroker"),
+            "trades_to_paper": sum(1 for t in self._trade_log if t.get("broker") == "PaperBroker"),
+        }
+
+    def _log_trade_broker(self, ticker: str, side: str, quantity: int, broker_name: str):
+        """Track which broker handled each trade."""
+        self._trade_log.append({
+            "ticker": ticker,
+            "side": side,
+            "quantity": quantity,
+            "broker": broker_name,
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+        })
+        if broker_name == "PaperBroker":
+            logger.warning("🚨 TRADE TO PAPER BROKER: %s %s %d — NOT reaching Alpaca dashboard",
+                           side, ticker, quantity)
+
+    def reconcile_positions(self) -> dict:
+        """
+        Square check: ensure engine state matches Alpaca ground truth.
+        
+        Called every heartbeat to prevent portfolio drift.
+        If engine has positions Alpaca doesn't → alert + remove from engine.
+        If Alpaca has positions engine doesn't → sync them in.
+        """
+        result = {
+            "synced": [],
+            "removed": [],
+            "alerts": [],
+            "match": True,
+        }
+        
+        # Get Alpaca ground truth
+        if not hasattr(self.broker, 'get_positions'):
+            return result  # PaperBroker — no external sync needed
+        
+        try:
+            alpaca_positions = self.broker.get_positions()
+        except Exception as e:
+            result["alerts"].append(f"Failed to fetch Alpaca positions: {e}")
+            return result
+        
+        alpaca_tickers = set(alpaca_positions.keys())
+        
+        # Get engine state positions
+        if hasattr(self.broker, 'state'):
+            engine_tickers = set(self.broker.state.positions.keys())
+        else:
+            return result
+        
+        # Engine has positions Alpaca doesn't — DRIFT
+        phantom = engine_tickers - alpaca_tickers
+        for ticker in phantom:
+            pos = self.broker.state.positions[ticker]
+            logger.error(
+                "🚨 POSITION DRIFT: Engine has %s (%d shares) but Alpaca doesn't — removing from engine state",
+                ticker, pos.quantity
+            )
+            result["removed"].append(ticker)
+            result["alerts"].append(f"DRIFT: {ticker} in engine but not Alpaca")
+            result["match"] = False
+            # Remove phantom position
+            del self.broker.state.positions[ticker]
+        
+        # Alpaca has positions engine doesn't — sync them in
+        missing = alpaca_tickers - engine_tickers
+        for ticker in missing:
+            ap = alpaca_positions[ticker]
+            logger.info("Syncing Alpaca position %s (%d shares) into engine state", 
+                        ticker, ap.get("quantity", 0))
+            result["synced"].append(ticker)
+            result["match"] = False
+        
+        # Cross-check quantities for shared positions
+        shared = engine_tickers & alpaca_tickers
+        for ticker in shared:
+            engine_qty = self.broker.state.positions[ticker].quantity
+            alpaca_qty = alpaca_positions[ticker].get("quantity", 0)
+            if engine_qty != alpaca_qty:
+                logger.warning(
+                    "🚨 QUANTITY MISMATCH: %s engine=%d alpaca=%d — syncing to Alpaca",
+                    ticker, engine_qty, alpaca_qty
+                )
+                result["alerts"].append(f"QTY MISMATCH: {ticker} engine={engine_qty} alpaca={alpaca_qty}")
+                result["match"] = False
+                # Update engine to match Alpaca (Alpaca is ground truth)
+                self.broker.state.positions[ticker].quantity = alpaca_qty
+        
+        if result["match"]:
+            logger.debug("Position reconcile: all positions match Alpaca")
+        else:
+            logger.warning("Position reconcile: %d drifts, %d synced, %d alerts",
+                          len(result["removed"]), len(result["synced"]), len(result["alerts"]))
+        
+        return result
+
     # --- Asset class gate ---------------------------------------------------
 
     @staticmethod
@@ -1270,6 +1386,12 @@ class ExecutionEngine:
             "run_number": self._run_count,
             "stages": {},
         }
+
+        # Stage 0: Position reconciliation (square check)
+        recon = self.reconcile_positions()
+        result["stages"]["reconcile"] = recon
+        if recon["alerts"]:
+            logger.warning("Reconcile alerts: %s", recon["alerts"])
 
         # Stage 1: Universe
         t0 = datetime.now()

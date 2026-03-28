@@ -160,6 +160,15 @@ class AlpacaBroker:
         # Resolve credentials
         self.api_key = api_key or os.environ.get("ALPACA_API_KEY", "")
         self.secret_key = secret_key or os.environ.get("ALPACA_SECRET_KEY", "")
+
+        # FAIL FAST — never silently degrade
+        if not self.api_key or not self.secret_key:
+            raise ValueError(
+                "ALPACA_API_KEY and ALPACA_SECRET_KEY required. "
+                "Set in .env or pass directly. "
+                "For paper trading, use PaperBroker explicitly with broker_type='paper'."
+            )
+
         if paper is None:
             paper_str = os.environ.get("ALPACA_PAPER_TRADE", "True")
             self.paper = paper_str.lower() not in ("false", "0", "no", "off")
@@ -178,6 +187,20 @@ class AlpacaBroker:
             api_key=self.api_key,
             secret_key=self.secret_key,
         )
+
+        # Validate credentials with lightweight account call
+        try:
+            _acct = self.trading_client.get_account()
+            self._account_number = _acct.account_number
+            logger.info("Alpaca connected: account %s, equity $%s, paper=%s",
+                        _acct.account_number, _acct.equity, self.paper)
+        except Exception as e:
+            # Sanitize error — never log full exception (may contain auth headers)
+            status = getattr(e, 'status_code', 'unknown')
+            raise ConnectionError(
+                f"Alpaca credential validation failed (status={status}). "
+                "Check your API key and secret key."
+            ) from None
 
         # Portfolio state — synced from Alpaca on each call
         self.state = PortfolioState(cash=initial_cash, nav=initial_cash)
@@ -284,7 +307,7 @@ class AlpacaBroker:
             except AlpacaAPIError as e:
                 status = getattr(e, "status_code", 0)
                 if status and status < 500 and status != 429:
-                    logger.error("Alpaca API error %d: %s", status, e)
+                    logger.error("Alpaca API error: status=%d", status)
                     raise
                 last_exc = e
                 wait = self.BACKOFF_BASE ** (attempt + 1)
@@ -424,7 +447,7 @@ class AlpacaBroker:
         except Exception as e:
             order.status = OrderStatus.REJECTED
             order.reason = f"Alpaca API error: {e}"
-            logger.error("Alpaca place_order failed for %s: %s", ticker, e)
+            logger.error("Alpaca place_order failed for %s: status=%s", ticker, getattr(e, "status_code", "unknown"))
             self._orders.append(order)
             return order
 
@@ -870,7 +893,7 @@ class AlpacaBroker:
                 for o in alpaca_orders
             ]
         except Exception as e:
-            logger.error("Failed to fetch Alpaca orders: %s", e)
+            logger.error("Failed to fetch Alpaca orders: status=%s", getattr(e, "status_code", "unknown"))
             return []
 
     def get_tradier_orders(self) -> list[dict]:
@@ -883,7 +906,7 @@ class AlpacaBroker:
             self._retry_request(self.trading_client.cancel_order_by_id, order_id)
             return {"id": order_id, "status": "canceled"}
         except Exception as e:
-            logger.error("Failed to cancel Alpaca order %s: %s", order_id, e)
+            logger.error("Failed to cancel Alpaca order %s: status=%s", order_id, getattr(e, "status_code", "unknown"))
             return {"id": order_id, "status": "error", "error": str(e)}
 
     def cancel_tradier_order(self, order_id: str) -> dict:
@@ -913,7 +936,7 @@ class AlpacaBroker:
                     entries.append(entry)
             return entries
         except Exception as e:
-            logger.error("Failed to fetch Alpaca gain/loss: %s", e)
+            logger.error("Failed to fetch Alpaca gain/loss: status=%s", getattr(e, "status_code", "unknown"))
             return []
 
     def get_tradier_gainloss(self) -> list[dict]:
