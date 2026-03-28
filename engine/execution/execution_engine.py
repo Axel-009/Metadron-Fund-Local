@@ -1115,50 +1115,56 @@ class ExecutionEngine:
 
     def __init__(
         self,
-        initial_nav: float = 1_000_000.0,
+        initial_nav: Optional[float] = None,
         top_n_per_sector: int = 5,
         enable_risk_gates: bool = True,
         broker_type: str = "alpaca",
     ):
-        self.universe = get_engine()
-        self.macro = MacroEngine()
-        self.cube = MetadronCube()
-        self.alpha = AlphaOptimizer()
-        self.beta = BetaCorridor(nav=initial_nav)
+        # Resolve NAV: use Alpaca account if available, otherwise passed value
+        self._requested_nav = initial_nav
 
         # Broker: Alpaca (primary) with PaperBroker fallback
         self._broker_alert = None  # Alert message if not using Alpaca
         if broker_type == "alpaca":
             if AlpacaBroker is not None:
                 try:
-                    self.broker = AlpacaBroker(initial_cash=initial_nav)
+                    self.broker = AlpacaBroker(initial_cash=initial_nav or 1_000_000.0)
                     logger.info("ExecutionEngine using AlpacaBroker (paper=%s)",
                                 self.broker.paper)
                     self._broker_alert = None  # No alert — Alpaca is active
                 except Exception as e:
                     logger.error("🚨 BROKER ALERT: AlpacaBroker failed: %s — falling back to PaperBroker", e)
                     logger.error("🚨 TRADES WILL NOT REACH ALPACA DASHBOARD — using simulation only")
-                    self.broker = PaperBroker(initial_cash=initial_nav)
+                    self.broker = PaperBroker(initial_cash=initial_nav or 1_000_000.0)
                     self._broker_alert = f"ALERT: PaperBroker fallback — Alpaca unavailable: {e}"
             else:
                 logger.error("🚨 BROKER ALERT: AlpacaBroker module not available — using PaperBroker")
                 logger.error("🚨 TRADES WILL NOT REACH ALPACA DASHBOARD — using simulation only")
-                self.broker = PaperBroker(initial_cash=initial_nav)
+                self.broker = PaperBroker(initial_cash=initial_nav or 1_000_000.0)
                 self._broker_alert = "ALERT: PaperBroker fallback — AlpacaBroker module missing"
         elif broker_type == "tradier":
             if TradierBroker is not None:
-                self.broker = TradierBroker(initial_cash=initial_nav)
+                self.broker = TradierBroker(initial_cash=initial_nav or 1_000_000.0)
                 logger.info("ExecutionEngine using TradierBroker (legacy)")
                 self._broker_alert = "NOTICE: Using TradierBroker (legacy)"
             else:
                 logger.error("🚨 BROKER ALERT: TradierBroker module not available — using PaperBroker")
-                self.broker = PaperBroker(initial_cash=initial_nav)
+                self.broker = PaperBroker(initial_cash=initial_nav or 1_000_000.0)
                 self._broker_alert = "ALERT: PaperBroker fallback — TradierBroker module missing"
         else:
             # Explicit paper mode (no Alpaca)
-            self.broker = PaperBroker(initial_cash=initial_nav)
+            self.broker = PaperBroker(initial_cash=initial_nav or 1_000_000.0)
             logger.info("ExecutionEngine using PaperBroker (explicit)")
             self._broker_alert = "NOTICE: Using PaperBroker (explicit paper mode)"
+
+        # Dynamic NAV: pull from broker if it has live data
+        self._dynamic_nav = self._resolve_nav()
+
+        self.universe = get_engine()
+        self.macro = MacroEngine()
+        self.cube = MetadronCube()
+        self.alpha = AlphaOptimizer()
+        self.beta = BetaCorridor(nav=self._dynamic_nav)
 
         self.ensemble = MLVoteEnsemble()
         self.top_n = top_n_per_sector
@@ -1246,6 +1252,40 @@ class ExecutionEngine:
 
         # --- Broker routing guard -----------------------------------------------
         self._trade_log = []  # Track which broker each trade went through
+
+    def _resolve_nav(self) -> float:
+        """
+        Resolve NAV dynamically from broker.
+        
+        Priority:
+        1. Alpaca account equity (live)
+        2. Broker state NAV (paper)
+        3. Requested NAV (passed in)
+        4. Default $1M
+        """
+        # Try Alpaca live NAV
+        if hasattr(self.broker, 'get_nav'):
+            try:
+                nav = self.broker.get_nav()
+                if nav and nav > 0:
+                    logger.info("NAV resolved from Alpaca: $%,.2f", nav)
+                    return nav
+            except Exception:
+                pass
+        
+        # Try broker state
+        if hasattr(self.broker, 'state') and hasattr(self.broker.state, 'nav'):
+            nav = self.broker.state.nav
+            if nav and nav > 0:
+                return nav
+        
+        # Fallback
+        return self._requested_nav or 1_000_000.0
+
+    def get_nav(self) -> float:
+        """Get current dynamic NAV (refreshes from broker)."""
+        self._dynamic_nav = self._resolve_nav()
+        return self._dynamic_nav
 
     def get_broker_status(self) -> dict:
         """Get current broker status and any routing alerts."""
