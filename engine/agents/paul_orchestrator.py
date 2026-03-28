@@ -524,24 +524,24 @@ class PaulOrchestrator:
         """
         adjustments = {}
 
+        # Per-engine gradients map to ensemble tiers (available regardless of GSD/Paul state)
+        tier_engine_map = {
+            "T1_Neural": "ml_ensemble",
+            "T2_Momentum": "alpha_optimizer",
+            "T3_Vol_Regime": "cube",
+            "T4_Monte_Carlo": "alpha_optimizer",
+            "T5_Quality": "security_analysis",
+            "T6_Social": "social",
+            "T7_Distress": "distress",
+            "T8_Event": "event_driven",
+            "T9_CVR": "cvr",
+            "T10_Credit": "security_analysis",
+        }
+
         if self._gsd is not None:
             # Cross-engine alignment affects overall confidence
             alignment = self._gsd.get_cross_engine_alignment()
             alignment_score = alignment.get("alignment_score", 0.0)
-
-            # Per-engine gradients map to ensemble tiers
-            tier_engine_map = {
-                "T1_Neural": "ml_ensemble",
-                "T2_Momentum": "alpha_optimizer",
-                "T3_Vol_Regime": "cube",
-                "T4_Monte_Carlo": "alpha_optimizer",
-                "T5_Quality": "security_analysis",
-                "T6_Social": "social",
-                "T7_Distress": "distress",
-                "T8_Event": "event_driven",
-                "T9_CVR": "cvr",
-                "T10_Credit": "security_analysis",
-            }
 
             for tier, engine in tier_engine_map.items():
                 grad_info = self._gsd.compute_signal_gradient(engine)

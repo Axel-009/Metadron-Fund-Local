@@ -1003,7 +1003,7 @@ class TestAlpacaBrokerModule:
         assert _ALPACA_STATUS_MAP.get("rejected") == OrderStatus.REJECTED
 
     def test_broker_interface_matches_paper(self):
-        """Verify AlpacaBroker has the same public methods as PaperBroker/TradierBroker."""
+        """Verify AlpacaBroker has the same public methods as PaperBroker."""
         from engine.execution.alpaca_broker import AlpacaBroker
         required_methods = [
             "place_order", "compute_nav", "compute_exposures",
@@ -1015,8 +1015,6 @@ class TestAlpacaBrokerModule:
             "register_dashboard_callback", "get_trade_history",
             "get_daily_pnl", "get_drawdown", "get_performance_metrics",
             "export_positions_csv",
-            # Tradier-compatible aliases
-            "get_tradier_orders", "cancel_tradier_order", "get_tradier_gainloss",
             # Alpaca-specific
             "get_orders", "cancel_order", "get_gainloss",
             "preview_order", "get_asset", "get_clock", "get_portfolio_history",

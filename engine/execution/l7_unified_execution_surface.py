@@ -1,9 +1,9 @@
 """L7 Unified Execution Surface — Fused continuous execution arm.
 
 Unifies WonderTrader (micro-price + CTA + routing), ExchangeCore (order matching),
-PaperBroker/AlpacaBroker/TradierBroker (bookkeeping), and OptionsEngine (derivatives)
+AlpacaBroker/PaperBroker (bookkeeping), and OptionsEngine (derivatives)
 into one continuous execution arm that routes ALL tradeable products through Alpaca
-(primary) or Tradier (legacy fallback).
+.
 
 Pipeline position:
     All 29 signal types → L7UnifiedExecutionSurface
@@ -15,7 +15,7 @@ Pipeline position:
 Design rules (per CLAUDE.md):
     - try/except on ALL external imports — system runs degraded, never broken
     - Pure-numpy fallbacks — no crashes if optional packages missing
-    - Alpaca is PRIMARY execution broker for all products (Tradier as legacy fallback)
+    - Alpaca is PRIMARY execution broker for all products ()
     - Paper log is ALWAYS maintained for learning loop
     - Fixed income / FX / liquidity are for research only — never executed here
 """
@@ -60,11 +60,6 @@ try:
     )
 except ImportError:
     PaperBroker = None  # type: ignore[assignment,misc]
-
-try:
-    from .tradier_broker import TradierBroker
-except ImportError:
-    TradierBroker = None  # type: ignore[assignment,misc]
 
 try:
     from .alpaca_broker import AlpacaBroker
@@ -251,12 +246,12 @@ class TransactionCostAnalyzer:
         1. Spread cost: half-spread at time of order
         2. Market impact: price movement caused by our order
         3. Timing cost: adverse price movement between decision and fill
-        4. Commission: Alpaca commission schedule (or Tradier legacy)
+        4. Commission: Alpaca commission schedule
     """
 
     # Commission schedule (Alpaca: $0 everything)
     EQUITY_COMMISSION_PER_SHARE = 0.0       # Alpaca: $0 equity commissions
-    OPTION_COMMISSION_PER_CONTRACT = 0.0    # Alpaca: $0 option commissions (was $0.35 Tradier)
+    OPTION_COMMISSION_PER_CONTRACT = 0.0    # Alpaca: $0 option commissions ()
     FUTURE_COMMISSION_PER_CONTRACT = 1.50   # Estimated
 
     # Market impact model: sqrt(qty / ADV) * volatility * impact_coeff
@@ -421,20 +416,20 @@ RESEARCH_ONLY_PREFIXES = frozenset({
 # are NOT in this set — they are tradeable via L7 for alpha extraction.
 # Index ETFs (SPY, QQQ, IWM, DIA, VT, EFA, EEM) are also tradeable.
 
-# Futures that ARE tradeable via Alpaca (or Tradier) — equity index + VIX
+# Futures that ARE tradeable via Alpaca — equity index + VIX
 TRADEABLE_FUTURES = frozenset({"ES", "NQ", "YM", "RTY", "VX"})
 
 
 class MultiProductRouter:
     """Routes orders by product type through the appropriate execution path.
 
-    All products route to AlpacaBroker (or TradierBroker) as primary execution broker.
+    All products route to AlpacaBroker as primary execution broker.
     Paper log is always maintained in parallel.
 
     Routing paths:
-        EQUITY:  → WonderTrader micro-price → ExchangeCore matching → Alpaca (or Tradier)
-        OPTION:  → OptionsEngine Greeks check → vol-adjusted limit → Alpaca (or Tradier)
-        FUTURE:  → Beta corridor validation → Alpaca (or Tradier)
+        EQUITY:  → WonderTrader micro-price → ExchangeCore matching → Alpaca
+        OPTION:  → OptionsEngine Greeks check → vol-adjusted limit → Alpaca
+        FUTURE:  → Beta corridor validation → Alpaca
     """
 
     def __init__(self):
@@ -1221,12 +1216,12 @@ class L7UnifiedExecutionSurface:
     """Fused continuous execution arm for Metadron Capital.
 
     Unifies WonderTrader (micro-price + CTA + routing), ExchangeCore (order
-    matching), PaperBroker/AlpacaBroker/TradierBroker (bookkeeping), OptionsEngine
+    matching), AlpacaBroker/PaperBroker (bookkeeping), OptionsEngine
     (derivatives), and QuantStrategyExecutor (12 technical strategies) into
     one continuous execution surface.
 
     ALL tradeable products (equities, options, futures) route through Alpaca
-    as the primary execution broker (Tradier as legacy fallback). A paper broker
+    as the primary execution broker (). A paper broker
     log is ALWAYS maintained in parallel for ML learning, backtesting, and
     pattern identification.
 
@@ -1237,11 +1232,11 @@ class L7UnifiedExecutionSurface:
         L7UnifiedExecutionSurface
         ├── Continuous intraday loop (1-min heartbeat from live_loop_orchestrator)
         ├── Multi-product router (equities, options, futures)
-        │   ├── Equity → WonderTrader micro-price → ExchangeCore → Alpaca (or Tradier)
-        │   ├── Options → OptionsEngine Greeks → vol-adjusted → Alpaca (or Tradier)
-        │   └── Futures → Beta corridor hedge → Alpaca (or Tradier)
+        │   ├── Equity → WonderTrader micro-price → ExchangeCore → Alpaca
+        │   ├── Options → OptionsEngine Greeks → vol-adjusted → Alpaca
+        │   └── Futures → Beta corridor hedge → Alpaca
         ├── Unified order book (all products, all horizons)
-        ├── Dual broker: Alpaca/Tradier (primary) + PaperBroker (log)
+        ├── Dual broker: Alpaca (primary) + PaperBroker (log)
         ├── L7RiskEngine (10 gates, per-execution update)
         ├── TransactionCostAnalyzer (per-trade decomposition)
         ├── ExecutionLearningLoop (pattern identification)
@@ -1252,14 +1247,11 @@ class L7UnifiedExecutionSurface:
         self,
         initial_cash: float = 1_000.0,
         log_dir: Optional[str] = None,
-        broker_type: str = "alpaca",  # "alpaca" | "tradier" | "paper"
+        broker_type: str = "alpaca",  # "alpaca" | "paper"
         alpaca_api_key: Optional[str] = None,
         alpaca_secret_key: Optional[str] = None,
         alpaca_paper: bool = True,
-        tradier_api_key: Optional[str] = None,
-        tradier_account_id: Optional[str] = None,
-        tradier_environment: str = "sandbox",
-        enable_paper_log: bool = True,
+                                enable_paper_log: bool = True,
         daily_target_pct: float = 0.05,
     ):
         self._log_dir = Path(log_dir or "logs/l7_execution")
@@ -1267,7 +1259,7 @@ class L7UnifiedExecutionSurface:
 
         # --- Sub-engines (all guarded) ---
 
-        # Primary broker: Alpaca (preferred) or Tradier (legacy)
+        # Primary broker: Alpaca (preferred) (legacy)
         self._broker: Optional[object] = None
 
         if broker_type == "alpaca" and AlpacaBroker is not None:
@@ -1282,24 +1274,11 @@ class L7UnifiedExecutionSurface:
                 )
                 logger.info("L7: AlpacaBroker connected (paper=%s)", alpaca_paper)
             except Exception as e:
-                logger.warning("L7: AlpacaBroker init failed: %s — trying Tradier", e)
+                logger.warning("L7: AlpacaBroker init failed: %s — paper-only mode", e)
 
-        if self._broker is None and broker_type == "tradier" and TradierBroker is not None:
-            try:
-                self._broker = TradierBroker(
-                    initial_cash=initial_cash,
-                    log_dir=self._log_dir / "tradier",
-                    api_key=tradier_api_key,
-                    account_id=tradier_account_id,
-                    environment=tradier_environment,
-                    daily_target_pct=daily_target_pct,
-                )
-                logger.info("L7: TradierBroker connected (%s)", tradier_environment)
-            except Exception as e:
-                logger.warning("L7: TradierBroker init failed: %s", e)
-
-        # Keep self._tradier as alias for backward compat
-        self._tradier = self._broker
+        
+        
+        
 
         # Paper broker log (always on for learning)
         self._paper: Optional[object] = None
@@ -1372,11 +1351,11 @@ class L7UnifiedExecutionSurface:
 
         logger.info(
             "L7UnifiedExecutionSurface initialized: cash=$%.2f, "
-            "alpaca=%s, tradier=%s, paper_log=%s, wondertrader=%s, exchange_core=%s, "
+            "alpaca=%s, , paper_log=%s, wondertrader=%s, exchange_core=%s, "
             "options=%s, quant=%s, beta_corridor=%s",
             initial_cash,
             "YES" if self._broker and AlpacaBroker is not None and isinstance(self._broker, AlpacaBroker) else "NO",
-            "YES" if self._broker and TradierBroker is not None and isinstance(self._broker, TradierBroker) else "NO",
+            
             "YES" if self._paper else "NO",
             "YES" if self._wondertrader else "NO",
             "YES" if self._exchange_core else "NO",
@@ -1415,7 +1394,7 @@ class L7UnifiedExecutionSurface:
         4. Pre-trade risk gates (10 checks)
         5. Slippage estimation
         6. Product-specific execution path
-        7. Alpaca execution (primary) or Tradier (fallback) + paper log
+        7. Alpaca execution (primary) (fallback) + paper log
         8. Post-trade risk update
         9. TCA analysis
         10. Learning loop outcome recording
@@ -1527,7 +1506,7 @@ class L7UnifiedExecutionSurface:
     # ------------------------------------------------------------------
 
     def _execute_equity(self, order: L7Order, regime: str, arrival_price: float, daily_vol: float):
-        """Equity path: WonderTrader micro-price → ExchangeCore → Alpaca (or Tradier)."""
+        """Equity path: WonderTrader micro-price → ExchangeCore → Alpaca."""
         ticker = order.ticker
         price = arrival_price
 
@@ -1549,11 +1528,11 @@ class L7UnifiedExecutionSurface:
         # Step 3: Compute transaction cost
         order.transaction_cost = abs(order.quantity * fill_price) * (order.slippage_bps / 10_000)
 
-        # Step 4: Route to broker (Alpaca or Tradier)
+        # Step 4: Route to broker (Alpaca)
         self._route_to_broker(order, fill_price)
 
     def _execute_option(self, order: L7Order, regime: str, arrival_price: float):
-        """Options path: OptionsEngine Greeks → vol-adjusted → Alpaca (or Tradier)."""
+        """Options path: OptionsEngine Greeks → vol-adjusted → Alpaca."""
         price = arrival_price
 
         # Options have wider spreads — adjust slippage
@@ -1570,11 +1549,11 @@ class L7UnifiedExecutionSurface:
         fill_price = self._slippage.apply_slippage(price, order.side, order.slippage_bps)
         order.transaction_cost = abs(order.quantity * fill_price) * (order.slippage_bps / 10_000)
 
-        # Route to broker (Alpaca or Tradier) with option-specific fields
+        # Route to broker (Alpaca) with option-specific fields
         self._route_to_broker(order, fill_price)
 
     def _execute_future(self, order: L7Order, regime: str, arrival_price: float):
-        """Futures path: Beta corridor validation → Alpaca (or Tradier)."""
+        """Futures path: Beta corridor validation → Alpaca."""
         price = arrival_price
 
         # Futures are tight — lower slippage
@@ -1598,14 +1577,14 @@ class L7UnifiedExecutionSurface:
     # ------------------------------------------------------------------
 
     def _route_to_broker(self, order: L7Order, fill_price: float):
-        """Route order to primary broker (Alpaca or Tradier). Falls back to paper if unavailable."""
+        """Route order to primary broker (Alpaca). Falls back to paper if unavailable."""
         # Map L7 side to broker OrderSide
         side_map = {"BUY": "BUY", "SELL": "SELL", "SHORT": "SHORT", "COVER": "COVER"}
         broker_side = side_map.get(order.side, "BUY")
 
         executed = False
 
-        # Primary: broker (Alpaca or Tradier)
+        # Primary: broker (Alpaca)
         if self._broker:
             try:
                 # Convert to broker order format
@@ -1652,7 +1631,7 @@ class L7UnifiedExecutionSurface:
             order.reason = (order.reason or "") + " [paper-fallback]"
 
     # Backward-compat alias
-    _route_to_tradier = _route_to_broker
+    
 
     def _log_to_paper(self, order: L7Order):
         """Log the filled order to paper broker for learning/backtesting."""
@@ -1680,7 +1659,7 @@ class L7UnifiedExecutionSurface:
     # ------------------------------------------------------------------
 
     def _get_price(self, ticker: str) -> float:
-        """Get current price from broker (Alpaca or Tradier) or paper broker."""
+        """Get current price from broker (Alpaca) or paper broker."""
         if self._broker and hasattr(self._broker, '_get_current_price'):
             try:
                 p = self._broker._get_current_price(ticker)
@@ -1699,7 +1678,7 @@ class L7UnifiedExecutionSurface:
 
     def _get_portfolio_state(self) -> Tuple[float, float, dict, float, float, float]:
         """Get (nav, cash, positions, daily_pnl, gross_exposure, net_exposure)."""
-        # Prefer broker state (Alpaca or Tradier)
+        # Prefer broker state (Alpaca)
         broker = self._broker or self._paper
         if broker is None:
             return self._initial_cash, self._initial_cash, {}, 0.0, 0.0, 0.0
