@@ -671,7 +671,7 @@ def get_world_news(
 
 
 # ═══════════════════════════════════════════════════════════════════════════
-# OPTIONS — via OpenBB (CBOE, Intrinio, Tradier)
+# OPTIONS — via OpenBB (CBOE, Intrinio)
 # ═══════════════════════════════════════════════════════════════════════════
 
 def get_options_chains(

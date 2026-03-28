@@ -51,17 +51,12 @@ from .paper_broker import (
     PaperBroker, OrderSide, SignalType, Position,
 )
 
-# Alpaca broker (drop-in replacement for Tradier/Paper)
+# Alpaca broker (primary)
 try:
     from .alpaca_broker import AlpacaBroker
 except ImportError:
     AlpacaBroker = None  # type: ignore[assignment,misc]
 
-# Tradier broker (legacy)
-try:
-    from .tradier_broker import TradierBroker
-except ImportError:
-    TradierBroker = None  # type: ignore[assignment,misc]
 
 # L7 HFT Technical Execution (quant-trading strategies)
 try:
@@ -1142,15 +1137,6 @@ class ExecutionEngine:
                 logger.error("🚨 TRADES WILL NOT REACH ALPACA DASHBOARD — using simulation only")
                 self.broker = PaperBroker(initial_cash=initial_nav or 1_000_000.0)
                 self._broker_alert = "ALERT: PaperBroker fallback — AlpacaBroker module missing"
-        elif broker_type == "tradier":
-            if TradierBroker is not None:
-                self.broker = TradierBroker(initial_cash=initial_nav or 1_000_000.0)
-                logger.info("ExecutionEngine using TradierBroker (legacy)")
-                self._broker_alert = "NOTICE: Using TradierBroker (legacy)"
-            else:
-                logger.error("🚨 BROKER ALERT: TradierBroker module not available — using PaperBroker")
-                self.broker = PaperBroker(initial_cash=initial_nav or 1_000_000.0)
-                self._broker_alert = "ALERT: PaperBroker fallback — TradierBroker module missing"
         else:
             # Explicit paper mode (no Alpaca)
             self.broker = PaperBroker(initial_cash=initial_nav or 1_000_000.0)
@@ -1244,7 +1230,7 @@ class ExecutionEngine:
             try:
                 self.l7 = L7UnifiedExecutionSurface(
                     initial_cash=initial_nav,
-                    tradier_environment="sandbox" if broker_type != "tradier" else "production",
+                    alpaca_paper=True,
                 )
                 logger.info("L7 Unified Execution Surface initialized")
             except Exception as e:

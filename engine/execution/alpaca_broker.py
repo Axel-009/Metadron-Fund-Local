@@ -1,7 +1,7 @@
 """AlpacaBroker — Live execution via Alpaca Brokerage API (alpaca-py SDK).
 
-Drop-in replacement for PaperBroker / TradierBroker. Implements the same
-interface so ExecutionEngine can swap between paper, Tradier, and Alpaca
+Drop-in replacement for PaperBroker. Implements the same
+interface so ExecutionEngine can swap between paper and Alpaca
 with a single config toggle.
 
 Environment variables:
@@ -126,12 +126,12 @@ if _ALPACA_AVAILABLE:
 
 
 # ---------------------------------------------------------------------------
-# AlpacaBroker — Drop-in replacement for PaperBroker / TradierBroker
+# AlpacaBroker — Drop-in replacement for PaperBroker
 # ---------------------------------------------------------------------------
 class AlpacaBroker:
     """Live execution broker via Alpaca API.
 
-    Implements the same interface as PaperBroker/TradierBroker so
+    Implements the same interface as PaperBroker so
     ExecutionEngine can swap between paper and live with zero code changes.
 
     Paper mode uses Alpaca's paper trading endpoint. Live mode uses the
@@ -896,8 +896,8 @@ class AlpacaBroker:
             logger.error("Failed to fetch Alpaca orders: status=%s", getattr(e, "status_code", "unknown"))
             return []
 
-    def get_tradier_orders(self) -> list[dict]:
-        """Alias for get_orders() — maintains TradierBroker interface."""
+    def get_orders(self) -> list[dict]:
+        """Alpaca method."""
         return self.get_orders()
 
     def cancel_order(self, order_id: str) -> dict:
@@ -909,14 +909,14 @@ class AlpacaBroker:
             logger.error("Failed to cancel Alpaca order %s: status=%s", order_id, getattr(e, "status_code", "unknown"))
             return {"id": order_id, "status": "error", "error": str(e)}
 
-    def cancel_tradier_order(self, order_id: str) -> dict:
-        """Alias for cancel_order() — maintains TradierBroker interface."""
+    def cancel_order_by_id(self, order_id: str) -> dict:
+        """Alpaca method."""
         return self.cancel_order(order_id)
 
     def get_gainloss(self) -> list[dict]:
         """Fetch realized gain/loss from Alpaca (via activities API).
 
-        Note: Alpaca doesn't have a direct gainloss endpoint like Tradier.
+        Note: Alpaca gainloss.
         We use portfolio history for realized P&L tracking.
         """
         try:
@@ -939,8 +939,8 @@ class AlpacaBroker:
             logger.error("Failed to fetch Alpaca gain/loss: status=%s", getattr(e, "status_code", "unknown"))
             return []
 
-    def get_tradier_gainloss(self) -> list[dict]:
-        """Alias for get_gainloss() — maintains TradierBroker interface."""
+    def get_gainloss_report(self) -> list[dict]:
+        """Alpaca method."""
         return self.get_gainloss()
 
     # --- Standard interface aliases --------------------------------------------
@@ -998,7 +998,7 @@ class AlpacaBroker:
     ) -> dict:
         """Preview an order without executing.
 
-        Alpaca doesn't have a native preview endpoint like Tradier.
+        Alpaca preview.
         We simulate by computing estimated costs.
         """
         # Accept both OrderSide enum and string
