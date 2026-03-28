@@ -30,12 +30,25 @@ def main():
     print("=" * 70)
     print()
 
-    portfolio_summary = {
-        "nav": 1_000_000,
-        "cash": 800_000,
-        "total_pnl": 0,
-        "positions": 0,
-    }
+    # Pull portfolio state from Alpaca (dynamic NAV)
+    try:
+        from engine.execution.alpaca_broker import AlpacaBroker
+        broker = AlpacaBroker(initial_cash=0, paper=True)
+        portfolio_summary = broker.get_portfolio_summary()
+        print(f"Portfolio: NAV=${portfolio_summary.get('nav', 0):,.2f}, "
+              f"Positions={portfolio_summary.get('positions', 0)}")
+    except Exception as e:
+        # Fallback: load from persistent state file
+        import json as _json
+        _state_path = Path("state/portfolio.json")
+        if _state_path.exists():
+            try:
+                portfolio_summary = _json.loads(_state_path.read_text())
+            except Exception:
+                portfolio_summary = {"nav": 0, "cash": 0, "total_pnl": 0, "positions": 0}
+        else:
+            portfolio_summary = {"nav": 0, "cash": 0, "total_pnl": 0, "positions": 0}
+        print(f"Warning: Alpaca unavailable ({e}), using fallback state")
 
     # Heatmap
     print(generate_sector_heatmap())

@@ -1736,7 +1736,7 @@ class InvestmentPlatformOrchestrator:
         """
         results: list[ExecutionResult] = []
         for trade in trades:
-            result = self._execution.execute(trade, ExecutionMethod.ALGORITHMIC)
+            result = self._execution_internal.execute(trade, ExecutionMethod.ALGORITHMIC)
             results.append(result)
 
             # Record for ML
