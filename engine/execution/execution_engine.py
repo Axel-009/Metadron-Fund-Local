@@ -1547,28 +1547,48 @@ class ExecutionEngine:
         result["stages"]["pattern_discovery"] = discovery_data
         self.tracker.record_stage("pattern_discovery", (datetime.now() - t0).total_seconds() * 1000, discovery_data)
 
-        # Stage 3.7: Social prediction (MiroFish agent simulation)
+        # Stage 3.7: Agent-based market simulation
         t0 = datetime.now()
         social_data = {}
         if self.social:
             try:
-                social_snap = self.social.analyze()
-                social_data = self.social.as_dict()
-                # Feed social snapshot to ML ensemble for Tier-6 voting
-                self.ensemble.set_social_snapshot(social_data)
+                # Run agent sim on top tickers from alpha universe
+                sim_tickers = list(result.get("stages", {}).get("universe", {}).get("sectors", {}).values())
+                sim_tickers = [t for sector_list in sim_tickers[:3] for t in (sector_list if isinstance(sector_list, list) else [])][:20] if sim_tickers else []
+                
+                if not sim_tickers:
+                    # Fallback: use a few known tickers
+                    sim_tickers = ["AAPL", "MSFT", "GOOGL", "AMZN", "NVDA"]
+                
+                social_snaps = self.social.analyze(tickers=sim_tickers[:20])
+                
+                # Aggregate into pipeline data
+                social_data = {
+                    "tickers_analyzed": len(social_snaps),
+                    "signals": {t: snap.to_dict() for t, snap in social_snaps.items()},
+                    "buy_signals": sum(1 for s in social_snaps.values() if s.social_signal == "BUY"),
+                    "sell_signals": sum(1 for s in social_snaps.values() if s.social_signal == "SELL"),
+                    "avg_confidence": sum(s.engagement for s in social_snaps.values()) / max(len(social_snaps), 1),
+                }
+                
+                # Feed each snapshot to ML ensemble for Tier-6 voting
+                for ticker, snap in social_snaps.items():
+                    self.ensemble.set_social_snapshot(snap.to_dict())
+                
                 logger.info(
-                    f"Social prediction: signal={social_snap.social_signal} "
-                    f"sentiment={social_snap.overall_sentiment:.3f} "
-                    f"confidence={social_snap.sentiment_confidence:.3f} "
-                    f"agents={social_snap.total_agents}"
+                    "Agent sim: %d tickers, %d buys, %d sells, avg_conf=%.2f",
+                    len(social_snaps),
+                    social_data["buy_signals"],
+                    social_data["sell_signals"],
+                    social_data["avg_confidence"],
                 )
             except Exception as e:
                 social_data = {"error": str(e)}
-                logger.warning(f"Social prediction stage failed: {e}")
+                logger.warning("Agent sim stage failed: %s", e)
         else:
-            social_data = {"status": "mirofish_not_available"}
-        result["stages"]["social_prediction"] = social_data
-        self.tracker.record_stage("social_prediction", (datetime.now() - t0).total_seconds() * 1000, social_data)
+            social_data = {"status": "agent_sim_not_available"}
+        result["stages"]["agent_simulation"] = social_data
+        self.tracker.record_stage("agent_simulation", (datetime.now() - t0).total_seconds() * 1000, social_data)
 
         # Stage 3.8: Distressed asset analysis
         t0 = datetime.now()
@@ -2247,25 +2267,14 @@ class ExecutionEngine:
             for k, v in sleeves.items():
                 lines.append(f"    {k}: {v:.1%}")
 
-        # Social Prediction
-        social = r["stages"].get("social_prediction", {})
-        if social.get("total_agents", 0) > 0:
-            lines.append(f"\nSOCIAL PREDICTION (MiroFish):")
-            lines.append(f"  Signal: {social.get('social_signal', 'N/A')}  |  "
-                          f"Strength: {social.get('signal_strength', 0):.3f}  |  "
-                          f"Vote: {social.get('vote_score', 0):+d}")
-            lines.append(f"  Sentiment: {social.get('overall_sentiment', 0):+.3f}  |  "
-                          f"Confidence: {social.get('sentiment_confidence', 0):.3f}  |  "
-                          f"Trend: {social.get('sentiment_trend', 0):+.3f}")
-            lines.append(f"  Agents: {social.get('total_agents', 0)} "
-                          f"(Bull={social.get('agents_bullish', 0)} / "
-                          f"Bear={social.get('agents_bearish', 0)} / "
-                          f"Neutral={social.get('agents_neutral', 0)})")
-            topics = social.get("top_topics", [])
-            if topics:
-                lines.append(f"  Top Topics:")
-                for t in topics[:5]:
-                    lines.append(f"    {t['topic']}: sentiment={t['sentiment']:+.3f} engagement={t['engagement']}")
+        # Agent Simulation (was Social Prediction)
+        agent_sim = r["stages"].get("agent_simulation", {})
+        if agent_sim.get("tickers_analyzed", 0) > 0:
+            lines.append(f"\nAGENT SIMULATION (Market Microstructure):")
+            lines.append(f"  Tickers: {agent_sim.get('tickers_analyzed', 0)}  |  "
+                          f"Buys: {agent_sim.get('buy_signals', 0)}  |  "
+                          f"Sells: {agent_sim.get('sell_signals', 0)}  |  "
+                          f"Avg Confidence: {agent_sim.get('avg_confidence', 0):.2f}")
 
         # Distressed Assets
         distress = r["stages"].get("distressed_assets", {})
