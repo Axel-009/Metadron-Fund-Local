@@ -657,7 +657,7 @@ class MLVoteEnsemble:
         self._feature_builder = DeepTradingFeatures()
         self._vote_history: dict[str, list] = {}
         self._social_snapshot: Optional[dict] = None
-        self._social_feature_builder = SocialFeatureBuilder()
+        self._social_feature_builder = SocialFeatureBuilder() if SocialFeatureBuilder is not None else None
         self._distress_signals: Optional[dict] = None
         self._event_signals: Optional[dict] = None
         self._cvr_signals: Optional[dict] = None
@@ -1146,9 +1146,14 @@ class ExecutionEngine:
                 self.broker = PaperBroker(initial_cash=initial_nav)
                 self._broker_alert = "ALERT: PaperBroker fallback — AlpacaBroker module missing"
         elif broker_type == "tradier":
-            self.broker = TradierBroker(initial_cash=initial_nav)
-            logger.info("ExecutionEngine using TradierBroker (legacy)")
-            self._broker_alert = "NOTICE: Using TradierBroker (legacy)"
+            if TradierBroker is not None:
+                self.broker = TradierBroker(initial_cash=initial_nav)
+                logger.info("ExecutionEngine using TradierBroker (legacy)")
+                self._broker_alert = "NOTICE: Using TradierBroker (legacy)"
+            else:
+                logger.error("🚨 BROKER ALERT: TradierBroker module not available — using PaperBroker")
+                self.broker = PaperBroker(initial_cash=initial_nav)
+                self._broker_alert = "ALERT: PaperBroker fallback — TradierBroker module missing"
         else:
             # Explicit paper mode (no Alpaca)
             self.broker = PaperBroker(initial_cash=initial_nav)
@@ -1218,13 +1223,14 @@ class ExecutionEngine:
             logger.warning(f"QuantStrategyExecutor init failed: {e}")
 
         # Learning loop — closed-loop feedback across all engines
-        self.learning = LearningLoop()
-        try:
-            loaded = self.learning.load_outcomes()
-            if loaded:
-                logger.info(f"Learning loop loaded {loaded} historical outcomes")
-        except Exception as e:
-            logger.warning(f"Learning loop history load failed: {e}")
+        self.learning = LearningLoop() if LearningLoop is not None else None
+        if self.learning is not None:
+            try:
+                loaded = self.learning.load_outcomes()
+                if loaded:
+                    logger.info(f"Learning loop loaded {loaded} historical outcomes")
+            except Exception as e:
+                logger.warning(f"Learning loop history load failed: {e}")
 
         # L7 Unified Execution Surface — fused continuous execution arm
         self.l7: Optional[L7UnifiedExecutionSurface] = None

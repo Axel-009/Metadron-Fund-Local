@@ -34,7 +34,16 @@ except ImportError:
     joblib = None
 
 # HMAC signing key — from env or default (change in production)
-_SIGNING_KEY = os.environ.get("MODEL_SIGNING_KEY", "metadron-dev-key-change-me").encode()
+# HMAC signing key — MUST set MODEL_SIGNING_KEY in production
+_SIGNING_KEY_ENV = os.environ.get("MODEL_SIGNING_KEY", "")
+if _SIGNING_KEY_ENV:
+    _SIGNING_KEY = _SIGNING_KEY_ENV.encode()
+else:
+    # Generate a random key per process — models won't survive restarts
+    # but at least they can't be tampered with across restarts
+    _SIGNING_KEY = os.urandom(32)
+    logger.warning("MODEL_SIGNING_KEY not set — using random per-process key. "
+                   "Models will not verify across restarts. Set env var for production.")
 
 # Allowed sklearn model classes for safe deserialization
 _SAFE_SKLEARN_CLASSES = {
