@@ -33,9 +33,9 @@ The MiroFish frontend at `mirofish/frontend/` is an empty stub (no package.json,
 
 The Ruvocal Chat UI (`intelligence_platform/Ruflo-agents/ruflo/src/ruvocal/`) will receive its orders from **Openclaw**, the CEO assistant agent. Ruvocal is the chat interface through which Openclaw communicates directives, reviews, and instructions to the system. Configure Ruvocal to accept and display Openclaw command streams.
 
-### 5. AI Hedgefund Frontend — Full Platform Integration
+### 5. AI Hedgefund Frontend — Separate Tab (Tab 9)
 
-The AI Hedgefund frontend (`intelligence_platform/ai-hedgefund/app/frontend/`) must be integrated with the entire intelligence platform and all its systems. This is the most complete React frontend and serves as the base for the consolidated Metadron Fund UI. Wire it to all engine layers (L1-L7), agents (L6), and monitoring systems.
+The AI Hedgefund frontend (`intelligence_platform/ai-hedgefund/app/frontend/`) will be integrated as its own dedicated tab (Tab 9) within the Metadron Fund UI. It connects to the entire intelligence platform and all its systems — all engine layers (L1-L7), agents (L6), and monitoring systems. See Tab 9 specification below.
 
 ### 6. OpenBB Components — Shell Integration
 
@@ -158,3 +158,159 @@ All reports available in **PDF and CSV** export formats.
 | Anomaly Detector | `engine/monitoring/anomaly_detector.py` | Statistical anomaly scanner |
 | Market Wrap | `engine/monitoring/market_wrap.py` | Narrative market summary |
 | Memory Monitor | `engine/monitoring/memory_monitor.py` | Session tracking + EOD summary |
+
+---
+
+### Tab 9 — AI Hedgefund (Strategy Builder)
+
+The AI Hedgefund frontend is a standalone React application integrated as its own tab. It provides the visual strategy building, node-based flow editing, backtesting dashboard, and real-time execution monitoring capabilities.
+
+**Source:** `intelligence_platform/ai-hedgefund/app/frontend/`
+**Tech:** React 18 + TypeScript + Vite 5 + Tailwind + React Flow + Radix UI (shadcn/ui)
+
+| Component | Source | Description |
+|-----------|--------|-------------|
+| Visual Strategy Builder | React Flow | Node-based drag-and-drop strategy construction |
+| Flow Editor | React Flow + custom nodes | Connect signal engines, ML models, and execution targets visually |
+| Backtest Dashboard | QSTrader bridge + backtester | Run and visualize walk-forward backtests from the UI |
+| Execution Monitor | ExecutionEngine + broker feeds | Real-time order flow, fill status, P&L per strategy |
+| Agent Interaction | L6 Agent layer | View agent scores, hierarchy, persona recommendations |
+| Signal Pipeline View | All L2 signal engines | Visual representation of the full signal pipeline (L1→L7) |
+| ML Model Status | ModelStore + AlphaOptimizer | Model versions, training status, feature importance |
+
+This tab connects to the full intelligence platform backend. All engine outputs, agent decisions, and execution results are routed here for visual strategy management.
+
+---
+
+## BUILD & INTEGRATION RECOMMENDATIONS
+
+> These recommendations are designed so that AI assistants (Claude Code, Cursor, Openclaw agents) can build the entire UI from these instructions, or generate the scaffolding files for local Cursor development.
+
+### Recommended Tech Stack (Unified)
+
+| Layer | Choice | Rationale |
+|-------|--------|-----------|
+| Framework | **React 18 + TypeScript** | 3 of 4 existing modules are React. AI Hedgefund (Tab 9) is React. Minimizes framework fragmentation. |
+| Build Tool | **Vite 5** | Already used by all 4 frontend modules. Fast HMR, native ESM. |
+| Styling | **Tailwind CSS 3** | Already used across all modules. Utility-first, consistent theming. |
+| Component Library | **Radix UI + shadcn/ui** | Already in AI Hedgefund. Accessible, composable, unstyled primitives. |
+| Charts | **Plotly.js** (via OpenBB component) | Already built. Financial charting, candlesticks, heatmaps. |
+| Tables | **React Table 8 + React Virtual** (via OpenBB component) | Already built. Virtual scrolling for 1,044+ securities. |
+| State Management | **Zustand** or **React Context** | Lightweight. No Redux overhead. Each tab manages its own state slice. |
+| Data Fetching | **TanStack Query (React Query)** | Cache management, background refetching, SSE/WebSocket support for live data. |
+| Routing | **React Router 6** | Tab-based routing: `/openbb`, `/market-wrap`, `/live`, `/allocation`, etc. |
+| Real-time | **Server-Sent Events (SSE)** + **WebSocket** | SSE for live P&L/prices (one-way). WebSocket for Ruvocal chat (bidirectional). |
+| PDF/CSV Export | **jsPDF + Papa Parse** | Tab 8 report generation client-side. |
+
+### Monorepo Structure
+
+```
+metadron-fund/                              ← New frontend root
+├── package.json                            ← Workspace root (pnpm workspaces)
+├── pnpm-workspace.yaml
+├── vite.config.ts                          ← Shared Vite config
+├── tailwind.config.ts                      ← Shared Tailwind theme (Metadron branding)
+├── tsconfig.json                           ← Shared TypeScript config
+├── apps/
+│   └── metadron-fund/                      ← Main application shell
+│       ├── package.json
+│       ├── src/
+│       │   ├── main.tsx                    ← Entry point
+│       │   ├── App.tsx                     ← Tab router + layout shell
+│       │   ├── tabs/
+│       │   │   ├── Tab1_OpenBB.tsx         ← OpenBB platform shell
+│       │   │   ├── Tab2_MarketWrap.tsx     ← Market wrap & news
+│       │   │   ├── Tab3_LiveDashboard.tsx  ← Live execution P&L
+│       │   │   ├── Tab4_AssetAllocation.tsx ← NAV + basket + movers
+│       │   │   ├── Tab5_RiskPortfolio.tsx  ← Risk & portfolio monitor
+│       │   │   ├── Tab6_MachineLearning.tsx ← ML UI
+│       │   │   ├── Tab7_TechDashboard.tsx  ← Technical dashboard
+│       │   │   ├── Tab8_Reporting.tsx      ← Monitoring & reporting
+│       │   │   └── Tab9_AIHedgefund.tsx    ← AI hedgefund strategy builder
+│       │   ├── components/                 ← Shared UI components
+│       │   │   ├── TabShell.tsx            ← Tab navigation bar
+│       │   │   ├── LiveTicker.tsx          ← Price ticker strip
+│       │   │   └── GICSFilter.tsx          ← GICS sector/industry filter
+│       │   ├── hooks/
+│       │   │   ├── useSSE.ts              ← SSE hook for live data streams
+│       │   │   ├── useWebSocket.ts        ← WebSocket hook for Ruvocal
+│       │   │   └── useEngineStatus.ts     ← Engine health polling
+│       │   ├── api/
+│       │   │   └── client.ts              ← FastAPI client (TanStack Query)
+│       │   └── stores/
+│       │       ├── portfolioStore.ts       ← NAV, positions, P&L state
+│       │       ├── signalStore.ts          ← Live signal feed state
+│       │       └── engineStore.ts          ← Engine health + latency state
+│       └── index.html
+├── packages/
+│   ├── charts/                             ← OpenBB Plotly wrapper (from open-bb/frontend-components/plotly/)
+│   │   ├── package.json
+│   │   └── src/
+│   ├── tables/                             ← OpenBB Tables wrapper (from open-bb/frontend-components/tables/)
+│   │   ├── package.json
+│   │   └── src/
+│   ├── stock-prediction/                   ← Consolidated stock forecasting (deduplicated)
+│   │   ├── package.json
+│   │   └── src/
+│   └── strategy-builder/                   ← AI Hedgefund React Flow (from ai-hedgefund/app/frontend/)
+│       ├── package.json
+│       └── src/
+└── .env.local                              ← API endpoints (VITE_API_URL=http://localhost:8000)
+```
+
+### Backend API Contract
+
+The frontend connects to the existing FastAPI backend (`app/backend/main.py`). The following SSE and REST endpoints are needed:
+
+```
+GET  /api/v1/portfolio/live          → SSE stream: NAV, positions, P&L (Tab 3, 4)
+GET  /api/v1/signals/stream          → SSE stream: live signal feed (Tab 3, 6)
+GET  /api/v1/engines/status          → JSON: all engine health + latency (Tab 7)
+GET  /api/v1/market/wrap             → JSON: market wrap narrative (Tab 2)
+GET  /api/v1/market/heatmap          → JSON: GICS sector heatmap data (Tab 2)
+GET  /api/v1/risk/portfolio          → JSON: VaR, CVaR, Greeks, margin (Tab 5)
+GET  /api/v1/ml/backtest/{id}        → JSON: backtest results (Tab 6)
+GET  /api/v1/ml/anomalies            → JSON: statistical anomalies (Tab 6)
+GET  /api/v1/reports/{type}          → PDF/CSV: report download (Tab 8)
+GET  /api/v1/allocation/basket       → JSON: current basket + GICS filter (Tab 4)
+GET  /api/v1/system/health           → JSON: memory, CPU, disk, VPS health (Tab 7)
+GET  /api/v1/system/errors           → SSE stream: live error log (Tab 7)
+WS   /ws/ruvocal                     → WebSocket: Openclaw ↔ Ruvocal chat (Ruvocal panel)
+POST /api/v1/strategy/backtest       → JSON: trigger backtest from strategy builder (Tab 9)
+GET  /api/v1/strategy/flow           → JSON: saved strategy flows (Tab 9)
+POST /api/v1/strategy/flow           → JSON: save strategy flow (Tab 9)
+```
+
+### Build Order (Recommended Sequence)
+
+| Phase | Task | Deliverable | Est. |
+|-------|------|-------------|------|
+| **Phase 1** | Scaffold monorepo + tab shell + routing | Empty tabs with navigation, Tailwind theme, Vite builds | 2-3 hrs |
+| **Phase 2** | Migrate OpenBB Plotly + Tables into `packages/` | Reusable `@metadron/charts` and `@metadron/tables` packages | 1-2 hrs |
+| **Phase 3** | Build Tab 7 (Technical Dashboard) | Engine status, memory, latency — validates API contract | 2-3 hrs |
+| **Phase 4** | Build Tab 3 (Live Dashboard) + Tab 4 (Asset Allocation) | SSE live data, P&L display, GICS filter | 3-4 hrs |
+| **Phase 5** | Build Tab 2 (Market Wrap) + Tab 5 (Risk) | Heatmap, CVR calendar, Greeks, portfolio risk | 3-4 hrs |
+| **Phase 6** | Build Tab 6 (ML UI) + Tab 8 (Reporting) | Backtest viz, anomalies, PDF/CSV export | 3-4 hrs |
+| **Phase 7** | Migrate AI Hedgefund into Tab 9 | Strategy builder, React Flow, backtest trigger | 2-3 hrs |
+| **Phase 8** | Integrate Ruvocal as slide-out panel | WebSocket chat, Openclaw command stream | 2-3 hrs |
+| **Phase 9** | Tab 1 (OpenBB shell) + stock prediction integration | Full OpenBB embed, LSTM prediction widget | 2-3 hrs |
+| **Phase 10** | Polish, theming, responsive layout, error boundaries | Production-ready UI | 2-3 hrs |
+
+### Key Files for Cursor Local Build
+
+To enable an AI assistant or Cursor to build this locally, generate these files first:
+
+```
+1. metadron-fund/package.json              ← pnpm workspace root with scripts
+2. metadron-fund/pnpm-workspace.yaml       ← workspace: ["apps/*", "packages/*"]
+3. metadron-fund/vite.config.ts            ← shared config with proxy to FastAPI :8000
+4. metadron-fund/tailwind.config.ts        ← Metadron brand colors + dark mode
+5. metadron-fund/tsconfig.json             ← paths aliases (@metadron/charts, etc.)
+6. metadron-fund/apps/metadron-fund/src/App.tsx  ← Tab router shell
+7. metadron-fund/apps/metadron-fund/src/main.tsx ← Entry point
+8. metadron-fund/apps/metadron-fund/src/tabs/    ← One file per tab (9 files)
+9. metadron-fund/apps/metadron-fund/src/api/client.ts ← API client with TanStack Query
+10. metadron-fund/.env.local               ← VITE_API_URL + VITE_WS_URL
+```
+
+These 10 scaffolding files are sufficient for any AI assistant to begin building each tab incrementally. Each tab is self-contained — they can be built and tested independently against the FastAPI backend.
