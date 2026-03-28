@@ -181,6 +181,11 @@ class LearningLoop:
 
         # Session counter
         self._total_events = 0
+        self._retrain_check_interval = 10  # Check retraining every 10 outcomes
+
+        # Reference to alpha optimizer (set externally)
+        self._alpha_optimizer = None
+        self._alpha_retrain_needed = False
 
     # --- Tier weight persistence -------------------------------------------
 
@@ -218,6 +223,20 @@ class LearningLoop:
 
     # --- Record outcomes ----------------------------------------------------
 
+    def _check_alpha_retrain(self):
+        """Check if alpha optimizer needs retraining and trigger if needed."""
+        if self._alpha_optimizer is None:
+            return
+        try:
+            if hasattr(self._alpha_optimizer, 'should_retrain') and self._alpha_optimizer.should_retrain():
+                logger.info("Alpha optimizer retraining threshold reached — triggering retrain")
+                # Retraining requires X, y data which comes from the pipeline
+                # The actual retrain is triggered in the pipeline's alpha stage
+                # Here we just set a flag
+                self._alpha_retrain_needed = True
+        except Exception as e:
+            logger.debug("Alpha retrain check failed: %s", e)
+
     def record_signal_outcome(self, outcome: SignalOutcome):
         """Record the outcome of a signal → execution cycle.
 
@@ -231,6 +250,10 @@ class LearningLoop:
 
         self._outcomes[engine].append(outcome)
         self._total_events += 1
+
+        # Trigger alpha optimizer retraining if threshold reached
+        if self._total_events % self._retrain_check_interval == 0:
+            self._check_alpha_retrain()
 
         # Update engine stats
         stats = self._engine_stats[engine]
@@ -357,6 +380,44 @@ class LearningLoop:
         recent = list(self._regime_history)[-self.ROLLING_WINDOW:]
         correct = sum(1 for r in recent if r.regime_correct)
         return correct / len(recent)
+
+    def get_regime_calibration_bias(self) -> dict:
+        """
+        Check regime accuracy and return calibration recommendation.
+        
+        If accuracy < 60% over 20+ samples, recommend conservative bias.
+        This feeds into MetadronCube to reduce risk when regime detection
+        is unreliable.
+        """
+        accuracy = self.compute_regime_accuracy()
+        n_samples = len(self._regime_history)
+        
+        result = {
+            "accuracy": accuracy,
+            "n_samples": n_samples,
+            "bias": "NORMAL",
+            "recommendation": None,
+        }
+        
+        if n_samples < 20:
+            return result  # Not enough data
+        
+        if accuracy < 0.50:
+            result["bias"] = "DEFENSIVE"
+            result["recommendation"] = (
+                f"Regime accuracy {accuracy:.1%} (<50%) — bias Cube toward "
+                "DEFENSIVE regime. Reduce leverage, prioritize capital preservation."
+            )
+            logger.warning("🚨 REGIME CALIBRATION: accuracy %.1%% — biasing DEFENSIVE", accuracy * 100)
+        elif accuracy < 0.60:
+            result["bias"] = "CONSERVATIVE"
+            result["recommendation"] = (
+                f"Regime accuracy {accuracy:.1%} (<60%) — bias Cube toward "
+                "CONSERVATIVE. Reduce position sizes, widen stop losses."
+            )
+            logger.warning("REGIME CALIBRATION: accuracy %.1%% — biasing CONSERVATIVE", accuracy * 100)
+        
+        return result
 
     def compute_alpha_decay_rate(self) -> float:
         """Estimate how quickly alpha signals decay after generation.
