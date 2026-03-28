@@ -28,6 +28,7 @@ from collections import deque
 from dataclasses import dataclass, field
 from typing import Optional, Dict, List, Tuple
 
+from datetime import datetime
 import numpy as np
 import pandas as pd
 from scipy.optimize import minimize
@@ -541,6 +542,11 @@ class WalkForwardOptimizer:
         self._oos_results: List[Dict] = []
         self._feature_importances: Optional[pd.DataFrame] = None
 
+        # Retraining trigger
+        self._outcomes_since_training = 0
+        self._retrain_threshold = 50  # Retrain after 50 new outcomes
+        self._last_training_date: Optional[str] = None
+
     def _get_model(self):
         """Select best available model."""
         if self.use_xgboost:
@@ -661,6 +667,42 @@ class WalkForwardOptimizer:
         except Exception as e:
             logger.warning("Failed to save model: %s", e)
             return ""
+
+    def record_outcome(self):
+        """Record a new outcome. Triggers retraining if threshold reached."""
+        self._outcomes_since_training += 1
+
+    def should_retrain(self) -> bool:
+        """Check if enough new outcomes to justify retraining."""
+        return self._outcomes_since_training >= self._retrain_threshold
+
+    def retrain_if_needed(self, X: pd.DataFrame, y: pd.Series) -> Optional[list]:
+        """
+        Retrain model if enough new outcomes have accumulated.
+        
+        Returns walk-forward results if retrained, None otherwise.
+        Saves model to ModelStore after retraining.
+        """
+        if not self.should_retrain():
+            return None
+
+        logger.info("Alpha optimizer retraining triggered (%d outcomes since last training)",
+                    self._outcomes_since_training)
+
+        # Run walk-forward
+        results = self.walk_forward(X, y)
+
+        # Save model
+        self.save_model()
+
+        # Reset counter
+        self._outcomes_since_training = 0
+        self._last_training_date = datetime.now().isoformat()
+
+        oos_sharpe = self.get_oos_sharpe()
+        logger.info("Retraining complete: OOS Sharpe=%.3f, model saved", oos_sharpe)
+
+        return results
 
 
 # ---------------------------------------------------------------------------
