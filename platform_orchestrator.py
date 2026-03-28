@@ -1211,10 +1211,25 @@ class InvestmentPlatformOrchestrator:
 
     def __init__(
         self,
-        nav: float = 100_000_000.0,
+        nav: Optional[float] = None,
         risk_limits: Optional[RiskLimits] = None,
         cube_weights: Optional[dict[SignalType, float]] = None,
     ) -> None:
+        # Dynamic NAV: pull from Alpaca if available
+        if nav is None:
+            try:
+                from engine.execution.alpaca_broker import AlpacaBroker
+                import os
+                api_key = os.environ.get("ALPACA_API_KEY", "")
+                secret_key = os.environ.get("ALPACA_SECRET_KEY", "")
+                if api_key and secret_key:
+                    broker = AlpacaBroker(initial_cash=0, api_key=api_key, secret_key=secret_key, paper=True)
+                    nav = broker.get_nav()
+                    logger.info("Orchestrator NAV from Alpaca: $%,.2f", nav)
+                else:
+                    nav = 1_000_000.0
+            except Exception:
+                nav = 1_000_000.0
         self.nav = nav
         self.risk_limits = risk_limits or RiskLimits()
 

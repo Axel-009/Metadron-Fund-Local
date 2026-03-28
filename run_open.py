@@ -30,9 +30,9 @@ def main():
     print("=" * 70)
     print()
 
-    # Initialize engine
+    # Initialize engine (NAV resolved dynamically from Alpaca)
     print("Initializing execution engine...")
-    engine = ExecutionEngine(initial_nav=1_000_000.0)
+    engine = ExecutionEngine()  # NAV auto-resolved from broker
 
     # Run full pipeline
     print("Running signal pipeline: Universe → Macro → Cube → Alpha → Execute")
