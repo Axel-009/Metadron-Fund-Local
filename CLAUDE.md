@@ -41,7 +41,7 @@ L4 Portfolio      hedgefund-tracker, open-bb,           → Institutional tracke
                   financial-distressed-repo,
                   sophisticated-distress-analysis
 L5 Infrastructure Kserve, nividia-repo, Air-LLM        → ML serving + GPU inference
-L6 Agents         Ruflo-agents, MiroFish                → Multi-agent orchestration + social prediction
+L6 Agents         Ruflo-agents, MiroFish (AgentSim) → Market microstructure simulation
 L7 HFT/Execution quant-trading, wondertrader,           → 12 technical strategies + micro-price + order matching
                   exchange-core, Quant-Dev-Resources
 ```
@@ -53,7 +53,7 @@ L7 HFT/Execution quant-trading, wondertrader,           → 12 technical strateg
 | Data | FRB (avelkoski) | **DEPRECATED** — FRED data now via OpenBB `openbb-fred` provider |
 | HFT/Execution | wondertrader (C++→Python) | L7 — CTA trend-following, HFT micro-price, TWAP/VWAP routing, multi-timeframe |
 | HFT/Execution | exchange-core v2 (Java→Python) | L7 — Ultra-low-latency order matching engine (LMAX Disruptor ring buffer, Python wrapper) |
-| Prediction | MiroFish (666ghj) | Agent-based social simulation → SocialPredictionEngine |
+| Prediction | MiroFish (666ghj) | Agent-based market microstructure → SocialPredictionEngine |
 | Reference | Quant-Developers-Resources | Quant research catalog (11 categories) |
 | Backend | Installation-Back-end-Files | ML backends: OpenBB SDK, CAMEL-AI/OASIS, PySR, QLIB, FinBERT, Air-LLM |
 | Monitoring | worldmonitor (koala73) | L2 — Global real-time event monitoring (30+ categories) → EventDrivenEngine + MacroEngine |
@@ -104,7 +104,7 @@ Metadron-Capital/                        ← Master monorepo (Layer 0: Hub)
 │   │   ├── contagion_engine.py         ← L3 graph topology, 21 nodes, 7 shock scenarios
 │   │   ├── stat_arb_engine.py          ← Medallion mean reversion + cointegration pairs
 │   │   ├── pattern_discovery_engine.py ← L2 Pattern Discovery (MiroFish + AI-Newton → PatternDiscoveryBus)
-│   │   ├── social_prediction_engine.py ← MiroFish bridge → social sentiment signals
+│   │   ├── social_prediction_engine.py ← AgentSim market microstructure signals
 │   │   ├── distressed_asset_engine.py  ← 5-model distress + Graham-Mielle (fulcrum/liquidation/Marks)
 │   │   ├── cvr_engine.py              ← CVR valuation (5 models, 4 instruments)
 │   │   ├── event_driven_engine.py      ← 12-category event-driven (M&A arb, PEAD, etc.)
@@ -114,7 +114,7 @@ Metadron-Capital/                        ← Master monorepo (Layer 0: Hub)
 │   │   ├── backtester.py               ← Walk-forward, Monte Carlo, scenario engine
 │   │   ├── qstrader_backtest_bridge.py ← QSTrader institutional backtesting integration
 │   │   ├── pattern_recognition.py       ← Candlestick, chart patterns, anomalies
-│   │   ├── social_features.py          ← MiroFish social feature engineering for ML
+│   │   ├── social_features.py          ← Agent sim feature engineering for ML
 │   │   ├── universe_classifier.py       ← XGBoost 4-model ensemble, quality tiers A-G
 │   │   ├── model_evaluator.py           ← Per-class P/R/F1, tier-aware distance weighting
 │   │   ├── deep_learning_engine.py      ← Pure-numpy PPO agent, 50-feature state vector
@@ -181,7 +181,7 @@ Metadron-Capital/                        ← Master monorepo (Layer 0: Hub)
 ├── tests/
 │   ├── test_platform.py                 ← 11 core tests
 │   └── test_engine.py                  ← 58 engine tests (69 total)
-├── mirofish/                            ← MiroFish social prediction engine
+├── mirofish/                            ← MiroFish agent-based market simulation
 │   ├── backend/                         ← Flask API + OASIS simulation
 │   │   ├── app/services/                ← Graph builder, simulation runner, report agent
 │   │   ├── app/api/                     ← REST endpoints (graph, simulation, report)
@@ -199,7 +199,7 @@ Metadron-Capital/                        ← Master monorepo (Layer 0: Hub)
 │   ├── Kserve/                         ← ML model serving (Python SDK)
 │   ├── ML-Macro-Market/                ← Macro ML models
 │   ├── Mav-Analysis/                   ← Portfolio analytics
-│   ├── MiroFish/                       ← Social prediction (ref for SocialEngine)
+│   ├── MiroFish/                       ← Market microstructure simulation
 │   ├── QLIB/                           ← Microsoft QLIB framework
 │   ├── Ruflo-agents/                   ← Agent orchestration (Python only)
 │   ├── Stock-techincal-prediction-model/ ← Technical analysis
@@ -334,7 +334,7 @@ HY OAS +35bp & VIX term flat/inverted & breadth <50% → auto β ≤ 0.35
 ### New Engines
 
 - **SecurityAnalysisEngine**: L2/L2.5 Graham-Dodd-Klarman framework (Stage 3.1) — top-down (CAPE, ERP, speculative component, max investment P/E) + bottom-up (Graham Number, NCAV, MoS ≥33%, normalized EPS, ROIC-WACC, DuPont ROE, owner earnings, 8-test investment grading, 5-method IV estimation). Feeds Tier-5 of MLVoteEnsemble. Outputs 12 alpha features for ML walk-forward
-- **PatternDiscoveryEngine**: L2 MiroFish dual simulation (CAMEL-AI) + AI-Newton symbolic regression (PySR) → PatternDiscoveryBus → enrichment features for AlphaOptimizer
+- **PatternDiscoveryEngine**: L2 Agent-based market simulation + AI-Newton symbolic regression (PySR) → PatternDiscoveryBus → enrichment features for AlphaOptimizer
 - **ContagionEngine**: L3 graph topology, 21 nodes, 7 shock scenarios, multi-step propagation
 - **StatArbEngine**: Medallion mean reversion + cointegration pairs + factor residuals (Σβ≈0)
 - **OptionsEngine**: Black-Scholes Greeks, θ+Γ optimizer, vol surface, P4 sleeve allocation
@@ -355,7 +355,7 @@ HY OAS +35bp & VIX term flat/inverted & breadth <50% → auto β ≤ 0.35
 | T3 | Vol Regime | 0.8 | Volatility regime |
 | T4 | Monte Carlo | 0.9 | MC simulation |
 | T5 | Quality | 1.1 | Quality ranker |
-| T6 | Social | 1.0 | MiroFish sentiment |
+| T6 | Social | 1.0 | Agent sim consensus |
 | T7 | Distress | 0.9 | Distressed asset engine |
 | T8 | Event | 1.0 | Event-driven engine |
 | T9 | CVR | 0.7 | CVR engine |

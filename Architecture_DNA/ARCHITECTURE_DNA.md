@@ -215,9 +215,9 @@ entry_scores, kill_switch_active, crash_floor
 
 ## LAYER 2: ADDITIONAL SIGNAL ENGINES
 
-### SocialPredictionEngine (`engine/signals/social_prediction_engine.py`)
-**Reference**: MiroFish repo — OASIS social simulation
-- Parses `actions.jsonl` from MiroFish simulation (12 action types per agent per round)
+### SocialPredictionEngine (engine/signals/social_prediction_engine.py)
+**Source**: AgentSimEngine (market microstructure simulation)
+- Runs agent-based market simulation (Kyle Lambda, HAM, order book dynamics)
 - Builds agent behavioral profiles
 - Computes topic-level sentiment (BULLISH/BEARISH/MOMENTUM/REVERSAL)
 - Maps topics → tickers via `TOPIC_TICKER_MAP`
@@ -473,7 +473,7 @@ MES_hedge_beta = target_beta - sleeve_beta
 | 3 | Volatility regime | 0.8 | Vol_21d < Vol_63d → +1 (vol compression = bullish) |
 | 4 | Monte Carlo | 0.9 | ARIMA-like drift + noise → direction vote |
 | 5 | Quality tier | 1.1 | SecurityAnalysis grade (STRONG_INVESTMENT/INVESTMENT → +1) + alpha quality fallback |
-| 6 | Social sentiment | 1.0 | MiroFish ticker sentiment → ±1 |
+| 6 | MiroFish agent sim (market microstructure) | 1.0 | Agent consensus (Kyle Lambda, HAM) → ±1 |
 | 7 | Distress | 0.9 | DistressedAssetEngine signals → ±1 |
 | 8 | Event-driven | 1.0 | EventDrivenEngine signals → ±1 |
 | 9 | CVR | 0.7 | CVREngine valuation signals → ±1 |
@@ -1113,7 +1113,7 @@ HOLD
      └────────┬────────┘
               │ investment grades + MoS weights
      ┌────────▼────────┐
-     │ L2 Discovery   │ ← MiroFish: dual sim (CAMEL-AI + OASIS)
+     │ L2 Discovery   │ ← AgentSim: market microstructure simulation
      │ Stage 3.2       │   Mode A: Synthetic Market (clustering, herding, regime)
      │                 │   Mode B: Contagion Network (correlations, divergence)
      │                 │ ← AI-Newton: symbolic regression (PySR)
@@ -1302,12 +1302,12 @@ InvestmentPlatformOrchestrator (Master)
 ├── Step 5:  Signal Engines (parallel)
 │   ├── ContagionEngine ──────────────────── Cross-asset contagion
 │   ├── StatArbEngine ───────────────────── Mean reversion + cointegration
-│   ├── SocialPredictionEngine ──────────── MiroFish agent simulation
+│   ├── SocialPredictionEngine ──────────── AgentSim market microstructure
 │   ├── DistressedAssetEngine ───────────── 5-model distress ensemble
 │   ├── CVREngine ────────────────────────── Contingent value rights
 │   ├── EventDrivenEngine ───────────────── Merger arb, PEAD, catalysts
 │   ├── FedLiquidityPlumbing ────────────── Fed balance sheet, money velocity
-│   └── AgentSimEngine ──────────────────── MiroFish market microstructure
+│   └── AgentSimEngine ──────────────────── AgentSim market microstructure
 ├── Step 6:  PatternRecognitionEngine ──────── Chart patterns, ML anomalies
 ├── Step 7:  AlphaOptimizer ────────────────── Walk-forward ML + mean-variance
 ├── Step 8:  BetaCorridor ──────────────────── Beta management (7-12% corridor)

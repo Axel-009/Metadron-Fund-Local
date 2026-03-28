@@ -56,7 +56,7 @@ Two duplicate stock prediction directories exist:
 
 The MiroFish frontend at `mirofish/frontend/` is an empty stub (no package.json, just an empty `src/assets/` directory). It will not be part of the Metadron Fund UI.
 
-**Action:** Delete the `mirofish/frontend/` directory entirely. MiroFish social prediction data will be consumed via backend APIs through the integrated system, not through a standalone frontend.
+**Action:** Delete the `mirofish/frontend/` directory entirely. MiroFish agent-based market simulation data will be consumed via backend APIs through the integrated system, not through a standalone frontend.
 
 ### 4. Ruvocal Chat — Openclaw Integration
 
