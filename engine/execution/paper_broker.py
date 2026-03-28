@@ -866,9 +866,9 @@ class PaperBroker:
     # --- State persistence ---------------------------------------------------
 
     def _save_state(self):
-        """Persist portfolio state to disk. Called after every state change."""
+        """Persist portfolio state to disk with atomic write (crash-safe)."""
         try:
-            from dataclasses import asdict
+            import math
             state = {
                 "cash": self.state.cash,
                 "nav": self.state.nav,
@@ -886,44 +886,75 @@ class PaperBroker:
                         "sector": p.sector,
                     }
                     for ticker, p in self.state.positions.items()
+                    if p.quantity != 0  # Don't persist closed positions
                 },
                 "timestamp": datetime.now(timezone.utc).isoformat(),
                 "eod_nav_history": self._eod_nav_history[-252:],  # Keep 1 year
             }
-            self._state_file.write_text(json.dumps(state, indent=2, default=str))
+            # Atomic write: write to .tmp, then rename (POSIX atomic)
+            tmp_file = self._state_file.with_suffix('.tmp')
+            tmp_file.write_text(json.dumps(state, indent=2, default=str))
+            tmp_file.rename(self._state_file)
         except Exception as e:
             logger.warning("Failed to save broker state: %s", e)
 
     def _load_state(self):
-        """Resume from last known state on startup."""
+        """Resume from last known state on startup with validation."""
+        import math
         if not self._state_file.exists():
             return
         try:
             state = json.loads(self._state_file.read_text())
-            self.state.cash = state.get("cash", self.state.cash)
-            self.state.nav = state.get("nav", self.state.nav)
-            self.state.total_pnl = state.get("total_pnl", 0.0)
-            self.state.win_count = state.get("win_count", 0)
-            self.state.loss_count = state.get("loss_count", 0)
+
+            # Validate scalars — reject corrupt state
+            cash = float(state.get("cash", self._initial_cash))
+            if cash < 0 or math.isnan(cash) or math.isinf(cash):
+                logger.error("Corrupt state: cash=%s — resetting to initial", cash)
+                return
+
+            nav = float(state.get("nav", cash))
+            if nav < 0 or math.isnan(nav) or math.isinf(nav):
+                logger.error("Corrupt state: nav=%s — resetting to initial", nav)
+                return
+
+            self.state.cash = cash
+            self.state.nav = nav
+            self.state.total_pnl = float(state.get("total_pnl", 0.0))
+            self.state.win_count = int(state.get("win_count", 0))
+            self.state.loss_count = int(state.get("loss_count", 0))
             self._eod_nav_history = state.get("eod_nav_history", [])
 
-            # Reconstruct positions
+            # Validate and reconstruct positions
             for ticker, pdata in state.get("positions", {}).items():
-                self.state.positions[ticker] = Position(
-                    ticker=pdata["ticker"],
-                    quantity=pdata["quantity"],
-                    avg_cost=pdata["avg_cost"],
-                    current_price=pdata["current_price"],
-                    unrealized_pnl=pdata.get("unrealized_pnl", 0.0),
-                    realized_pnl=pdata.get("realized_pnl", 0.0),
-                    sector=pdata.get("sector", ""),
-                )
+                try:
+                    qty = int(pdata.get("quantity", 0))
+                    if qty <= 0:
+                        continue  # Skip invalid positions
+                    avg_cost = float(pdata.get("avg_cost", 0))
+                    if avg_cost <= 0 or math.isnan(avg_cost):
+                        continue
+                    current_price = float(pdata.get("current_price", avg_cost))
+                    if current_price <= 0 or math.isnan(current_price):
+                        current_price = avg_cost
+
+                    self.state.positions[ticker] = Position(
+                        ticker=ticker,
+                        quantity=qty,
+                        avg_cost=avg_cost,
+                        current_price=current_price,
+                        unrealized_pnl=float(pdata.get("unrealized_pnl", 0.0)),
+                        realized_pnl=float(pdata.get("realized_pnl", 0.0)),
+                        sector=pdata.get("sector", ""),
+                    )
+                except (ValueError, TypeError, KeyError) as e:
+                    logger.warning("Skipping corrupt position %s: %s", ticker, e)
+                    continue
 
             saved_at = state.get("timestamp", "unknown")
             logger.info("Broker state restored from %s (NAV=$%.2f, %d positions)",
                         saved_at, self.state.nav, len(self.state.positions))
-        except Exception as e:
-            logger.warning("Failed to load broker state: %s — starting fresh", e)
+        except (json.JSONDecodeError, ValueError, KeyError) as e:
+            logger.error("Corrupt broker state file — starting fresh: %s", e)
 
     # --- Pre-trade risk checks -----------------------------------------------
 

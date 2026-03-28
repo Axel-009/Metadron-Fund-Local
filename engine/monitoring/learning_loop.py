@@ -28,7 +28,7 @@ import logging
 import time
 from collections import defaultdict, deque
 from dataclasses import dataclass, field, asdict
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
 
@@ -170,6 +170,8 @@ class LearningLoop:
 
         # Learned tier weight adjustments
         self._tier_weights: dict[str, float] = dict(self.DEFAULT_TIER_WEIGHTS)
+        self._weights_file = self.log_dir / "tier_weights.json"
+        self._load_tier_weights()  # Restore from last session
 
         # Risk calibration events
         self._risk_events: deque = deque(maxlen=200)
@@ -179,6 +181,40 @@ class LearningLoop:
 
         # Session counter
         self._total_events = 0
+
+    # --- Tier weight persistence -------------------------------------------
+
+    def _save_tier_weights(self):
+        """Persist learned tier weights to disk."""
+        try:
+            data = {
+                "weights": self._tier_weights,
+                "timestamp": datetime.now(timezone.utc).isoformat(),
+                "total_events": self._total_events,
+            }
+            tmp = self._weights_file.with_suffix('.tmp')
+            tmp.write_text(json.dumps(data, indent=2))
+            tmp.rename(self._weights_file)
+        except Exception as e:
+            logger.warning("Failed to save tier weights: %s", e)
+
+    def _load_tier_weights(self):
+        """Load learned tier weights from previous session."""
+        if not self._weights_file.exists():
+            return
+        try:
+            data = json.loads(self._weights_file.read_text())
+            saved_weights = data.get("weights", {})
+            # Validate: all values should be positive floats
+            for tier, weight in saved_weights.items():
+                if isinstance(weight, (int, float)) and weight > 0:
+                    self._tier_weights[tier] = float(weight)
+            saved_at = data.get("timestamp", "unknown")
+            events = data.get("total_events", 0)
+            logger.info("Loaded tier weights from %s (%d events, %d tiers)",
+                        saved_at, events, len(saved_weights))
+        except Exception as e:
+            logger.warning("Failed to load tier weights: %s — using defaults", e)
 
     # --- Record outcomes ----------------------------------------------------
 
@@ -293,6 +329,7 @@ class LearningLoop:
                 adjustments[tier] = base * (1.0 + weight_adj)
 
         self._tier_weights = adjustments
+        self._save_tier_weights()  # Persist learned weights
         return adjustments
 
     def get_best_engines(self, n: int = 3) -> list[tuple[str, float]]:
