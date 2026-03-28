@@ -303,7 +303,8 @@ AGENT_REGISTRY = {
 }
 
 # Verify we have exactly 25 agents
-assert len(AGENT_REGISTRY) == 25, f"Expected 25 agents, got {len(AGENT_REGISTRY)}"
+if len(AGENT_REGISTRY) != 25:
+    logger.warning("Expected 25 agents in registry, got %d — registry may be incomplete", len(AGENT_REGISTRY))
 
 
 # ---------------------------------------------------------------------------

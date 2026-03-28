@@ -208,6 +208,11 @@ class InvestmentModelServer:
     ) -> ABTestResult:
         """
         Run A/B test between two model versions.
+        
+        WARNING: This implementation uses simulated metrics (random numbers).
+        Replace with actual model evaluation before production use.
+        """
+        logger.warning("⚠️ Kserve ab_test_model() using SIMULATED metrics — not real model evaluation")
 
         Promote B if: IC_B - IC_A > ic_threshold over min_days
         Rollback B if: IC_B < IC_A - 0.01 for 2 consecutive days
@@ -258,6 +263,11 @@ class InvestmentModelServer:
     def batch_predict(self, symbols: list, model_type: ModelType) -> pd.DataFrame:
         """
         Batch prediction for multiple symbols.
+
+        WARNING: This implementation uses simulated predictions (random numbers).
+        Replace with actual model inference before production use.
+        """
+        logger.warning("⚠️ Kserve batch_predict() using SIMULATED predictions — not real model inference")
 
         Routes to appropriate model endpoint based on model_type.
         Returns DataFrame with predictions and confidence intervals.

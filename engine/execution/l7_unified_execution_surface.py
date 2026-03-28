@@ -1640,6 +1640,11 @@ class L7UnifiedExecutionSurface:
 
         # Fallback: paper broker simulation
         if not executed:
+            logger.error(
+                "🚨 PAPER FALLBACK: %s %s %d @ $%.2f — NO BROKER CONNECTION. "
+                "Order filled in simulation only, NOT reaching any market.",
+                order.side, order.ticker, order.quantity, fill_price
+            )
             order.fill_price = fill_price
             order.fill_quantity = order.quantity
             order.status = "FILLED"

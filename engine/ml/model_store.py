@@ -266,10 +266,15 @@ class ModelStore:
         if not model_dir.exists():
             return
 
+        # Collect full timestamps (YYYYMMDD_HHMMSS) not just dates
         timestamps = set()
         for f in model_dir.iterdir():
+            # Pattern: YYYYMMDD_HHMMSS_type.ext
             parts = f.name.split("_")
-            if len(parts) >= 2:
+            if len(parts) >= 3:
+                # Full timestamp: date_time
+                timestamps.add(f"{parts[0]}_{parts[1]}")
+            elif len(parts) >= 2:
                 timestamps.add(parts[0])
 
         sorted_ts = sorted(timestamps)
