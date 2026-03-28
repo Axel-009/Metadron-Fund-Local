@@ -140,15 +140,13 @@ class MonteCarloRiskEngine:
         n_simulations: int = 1000,
         simulation_horizon: int = 21,  # ~1 month
         lookback_days: int = 252,  # ~1 year
-        confidence_levels: List[float] = field(default_factory=lambda: [0.95, 0.99]),
+        confidence_levels: Optional[List[float]] = None,
     ):
-        if MarketSimulator is None:
-            raise ImportError("MiroFish integration module not available")
-
         self.n_simulations = n_simulations
         self.simulation_horizon = simulation_horizon
         self.lookback_days = lookback_days
-        self.confidence_levels = confidence_levels
+        self.confidence_levels = confidence_levels or [0.95, 0.99]
+        self._available = MarketSimulator is not None
 
     def compute_ticker_risk(
         self, ticker: str, position_value: float = 10000.0
@@ -164,6 +162,9 @@ class MonteCarloRiskEngine:
             TickerRisk with VaR, CVaR, stress metrics.
         """
         now = datetime.now()
+
+        if not self._available:
+            return self._default_risk(ticker, now)
 
         # Fetch data
         if get_adj_close is not None:

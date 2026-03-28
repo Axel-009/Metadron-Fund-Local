@@ -20,8 +20,8 @@ import pandas as pd
 
 from ..data.yahoo_data import get_adj_close, get_returns
 from ..data.universe_engine import (
-    SECTOR_ETFS, FACTOR_ETFS, FI_ETFS, COMMODITY_ETFS,
-    INTL_ETFS, VOL_ETFS,
+    SECTOR_ETFS, FACTOR_ETFS, FIXED_INCOME_ETFS, COMMODITY_ETFS,
+    INTERNATIONAL_ETFS, VOLATILITY_ETFS,
 )
 
 
