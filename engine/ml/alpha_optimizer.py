@@ -647,6 +647,9 @@ class WalkForwardOptimizer:
 
     def save_model(self, name: str = "alpha_optimizer") -> str:
         """Save the last trained model and metadata to disk."""
+        if self._last_fitted_model is None:
+            warnings.warn("No fitted model to save — walk_forward() has not been run yet.")
+            return ""
         try:
             from .model_store import ModelStore
             store = ModelStore()
@@ -663,7 +666,7 @@ class WalkForwardOptimizer:
                 fi_path.parent.mkdir(parents=True, exist_ok=True)
                 self._feature_importances.to_csv(fi_path)
 
-            return store.save_sklearn(name, self._get_model(), metadata)
+            return store.save_sklearn(name, self._last_fitted_model, metadata)
         except Exception as e:
             logger.warning("Failed to save model: %s", e)
             return ""
