@@ -56,16 +56,12 @@ def _is_market_hours() -> bool:
 def get_active_data_source() -> str:
     """Return the currently active data source label for dashboard display.
 
-    Two data paths operate simultaneously:
-      Execution prices: always Alpaca real-time (via AlpacaBroker)
-      Signal/OHLCV data: OpenBB with provider switching (polygon during market, fmp after)
+    Alpaca is the primary real-time data source for equity prices (always on).
+    OpenBB provides macro, fundamentals, options, SEC, and other analytics.
     """
-    if _DATA_SOURCE_MODE == "alpaca":
-        return "LIVE:Alpaca+Polygon"
-    elif _DATA_SOURCE_MODE == "openbb":
-        return "EOD:OpenBB/FMP"
-    else:  # auto
-        return "LIVE:Alpaca+Polygon" if _is_market_hours() else "EOD:OpenBB/FMP"
+    if _ALPACA_DATA_AVAILABLE and _DATA_SOURCE_MODE != "openbb":
+        return "LIVE:Alpaca"
+    return "EOD:OpenBB/FMP"
 
 
 def set_data_source_mode(mode: str):
@@ -82,30 +78,124 @@ def set_data_source_mode(mode: str):
         logger.warning("Invalid data source mode: %s (must be auto/alpaca/openbb)", mode)
 
 
-def _get_equity_provider(override: Optional[str] = None) -> str:
-    """Resolve the equity data provider based on mode and market hours.
+# ---------------------------------------------------------------------------
+# Alpaca Data API — direct client for real-time equity prices during market hours
+# ---------------------------------------------------------------------------
+_alpaca_data_client = None
+_ALPACA_DATA_AVAILABLE = False
 
-    During market hours (auto mode): prefers polygon (lower latency, near-real-time
-    with paid tier) over fmp. For truly real-time price data during execution,
-    AlpacaBroker._get_current_price() is used directly at the broker level.
+try:
+    import os
+    from pathlib import Path as _Path
+    try:
+        from dotenv import load_dotenv as _load_dotenv
+        _env_path = _Path(__file__).parent.parent.parent / ".env"
+        if _env_path.exists():
+            _load_dotenv(_env_path)
+    except ImportError:
+        pass
 
-    Provider latency estimates:
-        polygon:  ~200-800ms  (real-time with paid tier, 15-min free)
-        tiingo:   ~300-1000ms (IEX real-time paid, 15-min free)
-        fmp:      ~500-2000ms (15-min delayed free tier)
-        intrinio: ~200-600ms  (real-time paid, no free tier)
+    _alpaca_key = os.environ.get("ALPACA_API_KEY", "")
+    _alpaca_secret = os.environ.get("ALPACA_SECRET_KEY", "")
+    if _alpaca_key and _alpaca_secret:
+        from alpaca.data.historical.stock import StockHistoricalDataClient
+        from alpaca.data.requests import StockBarsRequest, StockLatestTradeRequest
+        from alpaca.data.timeframe import TimeFrame
+        _alpaca_data_client = StockHistoricalDataClient(_alpaca_key, _alpaca_secret)
+        _ALPACA_DATA_AVAILABLE = True
+        logger.info("Alpaca Data API available — real-time equity prices during market hours")
+except ImportError:
+    logger.debug("alpaca-py not installed — Alpaca data path disabled")
+except Exception as e:
+    logger.debug("Alpaca data client init failed: %s", e)
 
-    NOTE: There is no openbb-alpaca provider. Real-time Alpaca data is accessed
-    directly via alpaca_broker._get_current_price() at the execution layer.
-    The OpenBB layer provides OHLCV history, macro, fundamentals, and analytics.
+
+def _fetch_alpaca_bars(tickers: list[str], start: str, end: Optional[str],
+                       interval: str) -> pd.DataFrame:
+    """Fetch OHLCV bars directly from Alpaca Data API.
+
+    Returns DataFrame in the same format as OpenBB for seamless substitution.
     """
-    if override:
-        return override
-    if _DATA_SOURCE_MODE == "alpaca" or (_DATA_SOURCE_MODE == "auto" and _is_market_hours()):
-        # During market hours: use polygon (lower latency) for historical/OHLCV signals
-        # Actual execution prices come from Alpaca broker directly, not this path
-        return "polygon"
-    return DEFAULT_EQUITY_PROVIDER
+    if not _ALPACA_DATA_AVAILABLE or not _alpaca_data_client:
+        return pd.DataFrame()
+
+    try:
+        # Map interval string to Alpaca TimeFrame
+        tf_map = {
+            "1d": TimeFrame.Day, "1D": TimeFrame.Day,
+            "1h": TimeFrame.Hour, "1H": TimeFrame.Hour,
+            "1min": TimeFrame.Minute, "1m": TimeFrame.Minute,
+        }
+        timeframe = tf_map.get(interval, TimeFrame.Day)
+
+        request = StockBarsRequest(
+            symbol_or_symbols=tickers,
+            start=pd.Timestamp(start).to_pydatetime(),
+            end=pd.Timestamp(end).to_pydatetime() if end else None,
+            timeframe=timeframe,
+        )
+        bars = _alpaca_data_client.get_stock_bars(request)
+        df = bars.df if hasattr(bars, "df") else pd.DataFrame()
+        if df.empty:
+            return pd.DataFrame()
+
+        # Normalize Alpaca output to match OpenBB schema
+        # Alpaca returns MultiIndex (symbol, timestamp) with columns: open, high, low, close, volume, ...
+        if isinstance(df.index, pd.MultiIndex):
+            # Multi-ticker: pivot to flat format per ticker
+            frames = {}
+            for ticker in tickers:
+                try:
+                    tdf = df.xs(ticker, level="symbol") if "symbol" in df.index.names else df
+                    tdf = tdf[["open", "high", "low", "close", "volume"]].copy()
+                    tdf.columns = ["Open", "High", "Low", "Close", "Volume"]
+                    tdf["Adj Close"] = tdf["Close"]
+                    frames[ticker] = tdf
+                except (KeyError, Exception):
+                    continue
+
+            if not frames:
+                return pd.DataFrame()
+
+            if len(frames) == 1:
+                result = list(frames.values())[0]
+                result.columns = pd.MultiIndex.from_tuples(
+                    [(c, tickers[0]) for c in result.columns]
+                )
+                return result
+
+            parts = []
+            for ticker, tdf in frames.items():
+                tdf.columns = pd.MultiIndex.from_tuples([(c, ticker) for c in tdf.columns])
+                parts.append(tdf)
+            return pd.concat(parts, axis=1)
+        else:
+            # Single ticker flat
+            df = df[["open", "high", "low", "close", "volume"]].copy()
+            df.columns = ["Open", "High", "Low", "Close", "Volume"]
+            df["Adj Close"] = df["Close"]
+            ticker = tickers[0]
+            df.columns = pd.MultiIndex.from_tuples([(c, ticker) for c in df.columns])
+            return df
+
+    except Exception as e:
+        logger.warning("Alpaca bars fetch failed: %s", e)
+        return pd.DataFrame()
+
+
+def _use_alpaca_for_prices() -> bool:
+    """Check if we should route equity prices through Alpaca.
+
+    Alpaca is the primary real-time data source — always preferred when available.
+    Only falls back to OpenBB/FMP when:
+      - alpaca-py not installed or credentials missing
+      - data source mode explicitly set to "openbb"
+    """
+    if not _ALPACA_DATA_AVAILABLE:
+        return False
+    if _DATA_SOURCE_MODE == "openbb":
+        return False
+    return True
 
 
 # Default provider for equity data (FMP has a free tier; alternatives: intrinio, polygon, tiingo)
@@ -164,7 +254,11 @@ def get_prices(
     interval: str = "1d",
     provider: Optional[str] = None,
 ) -> pd.DataFrame:
-    """Fetch OHLCV price data via OpenBB.
+    """Fetch OHLCV price data — Alpaca primary, OpenBB fallback.
+
+    Routing:
+      Alpaca available + mode != "openbb"  →  Alpaca Data API (real-time)
+      Alpaca unavailable or forced openbb  →  OpenBB (fmp/tiingo/polygon)
 
     Returns DataFrame with MultiIndex columns (field, ticker) for compatibility
     with existing engine code.
@@ -174,9 +268,15 @@ def get_prices(
     if end is None:
         end = datetime.now().strftime("%Y-%m-%d")
 
-    prov = _get_equity_provider(provider)
+    # --- Alpaca path (primary — real-time) ---
+    if provider is None and _use_alpaca_for_prices():
+        df = _fetch_alpaca_bars(tickers, start, end, interval)
+        if not df.empty:
+            return df
+        logger.debug("Alpaca bars empty for %s — falling back to OpenBB", tickers[:3])
 
-    # --- OpenBB path ---
+    # --- OpenBB path (fallback / forced / non-equity) ---
+    prov = provider or DEFAULT_EQUITY_PROVIDER
     if _openbb_available:
         try:
             symbol_str = ",".join(tickers)
@@ -845,8 +945,11 @@ def get_data_source_status() -> dict:
     """Return status of all data source backends."""
     status = {
         "openbb_available": _openbb_available,
-        "primary_source": "openbb",
-        "equity_provider": DEFAULT_EQUITY_PROVIDER,
+        "alpaca_data_available": _ALPACA_DATA_AVAILABLE,
+        "primary_equity_source": "alpaca" if _use_alpaca_for_prices() else DEFAULT_EQUITY_PROVIDER,
+        "active_data_source": get_active_data_source(),
+        "data_source_mode": _DATA_SOURCE_MODE,
+        "equity_fallback_provider": DEFAULT_EQUITY_PROVIDER,
         "macro_provider": DEFAULT_MACRO_PROVIDER if _openbb_available else "etf_proxy",
         "fundamental_provider": DEFAULT_FUNDAMENTAL_PROVIDER,
     }
