@@ -54,12 +54,8 @@ def _is_market_hours() -> bool:
 
 
 def get_active_data_source() -> str:
-    """Return the currently active data source label for dashboard display.
-
-    Alpaca is the primary real-time data source for equity prices (always on).
-    OpenBB provides macro, fundamentals, options, SEC, and other analytics.
-    """
-    if _ALPACA_DATA_AVAILABLE and _DATA_SOURCE_MODE != "openbb":
+    """Return the currently active data source label for dashboard display."""
+    if _use_alpaca_for_prices():
         return "LIVE:Alpaca"
     return "EOD:OpenBB/FMP"
 
@@ -186,16 +182,22 @@ def _fetch_alpaca_bars(tickers: list[str], start: str, end: Optional[str],
 def _use_alpaca_for_prices() -> bool:
     """Check if we should route equity prices through Alpaca.
 
-    Alpaca is the primary real-time data source — always preferred when available.
-    Only falls back to OpenBB/FMP when:
-      - alpaca-py not installed or credentials missing
-      - data source mode explicitly set to "openbb"
+    Alpaca replaces polygon during market hours for real-time data.
+    After hours / backtesting falls back to OpenBB/FMP (default).
+
+    Mode behavior:
+      "auto":    Alpaca during market hours, FMP after hours
+      "alpaca":  Force Alpaca always (even after hours)
+      "openbb":  Force FMP always (backtesting mode)
     """
     if not _ALPACA_DATA_AVAILABLE:
         return False
     if _DATA_SOURCE_MODE == "openbb":
         return False
-    return True
+    if _DATA_SOURCE_MODE == "alpaca":
+        return True
+    # auto: Alpaca during market hours only
+    return _is_market_hours()
 
 
 # Default provider for equity data (FMP has a free tier; alternatives: intrinio, polygon, tiingo)
@@ -254,11 +256,14 @@ def get_prices(
     interval: str = "1d",
     provider: Optional[str] = None,
 ) -> pd.DataFrame:
-    """Fetch OHLCV price data — Alpaca primary, OpenBB fallback.
+    """Fetch OHLCV price data.
 
-    Routing:
-      Alpaca available + mode != "openbb"  →  Alpaca Data API (real-time)
-      Alpaca unavailable or forced openbb  →  OpenBB (fmp/tiingo/polygon)
+    Routing (when provider=None):
+      Market hours:  Alpaca real-time → fallback OpenBB/FMP
+      After hours:   OpenBB/FMP (default)
+      mode="openbb": OpenBB/FMP only (for backtesting)
+
+    When provider is explicitly passed, OpenBB uses that provider directly.
 
     Returns DataFrame with MultiIndex columns (field, ticker) for compatibility
     with existing engine code.
@@ -268,15 +273,15 @@ def get_prices(
     if end is None:
         end = datetime.now().strftime("%Y-%m-%d")
 
-    # --- Alpaca path (primary — real-time) ---
+    # --- Alpaca path (market hours — replaces polygon for real-time) ---
     if provider is None and _use_alpaca_for_prices():
         df = _fetch_alpaca_bars(tickers, start, end, interval)
         if not df.empty:
             return df
-        logger.debug("Alpaca bars empty for %s — falling back to OpenBB", tickers[:3])
+        logger.debug("Alpaca bars empty for %s — falling back to OpenBB/FMP", tickers[:3])
 
-    # --- OpenBB path (fallback / forced / non-equity) ---
-    prov = provider or DEFAULT_EQUITY_PROVIDER
+    # --- OpenBB path (FMP default — always available fallback) ---
+    prov = provider or DEFAULT_EQUITY_PROVIDER  # "fmp"
     if _openbb_available:
         try:
             symbol_str = ",".join(tickers)
