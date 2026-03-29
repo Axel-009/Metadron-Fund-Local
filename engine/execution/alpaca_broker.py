@@ -338,10 +338,14 @@ class AlpacaBroker:
         signal_type: SignalType = SignalType.HOLD,
         limit_price: Optional[float] = None,
         reason: str = "",
+        stop_loss: Optional[float] = None,
+        take_profit: Optional[float] = None,
     ) -> Order:
         """Place a live order via Alpaca API.
 
         Maintains the same signature as PaperBroker.place_order().
+        When stop_loss/take_profit are provided, submits a bracket order
+        (entry + stop + take-profit as a single atomic OCO group).
         """
         local_id = str(uuid.uuid4())[:8]
         order = Order(
@@ -354,6 +358,8 @@ class AlpacaBroker:
             signal_type=signal_type,
             timestamp=datetime.now(timezone.utc).isoformat(),
             reason=reason,
+            stop_loss=stop_loss,
+            take_profit=take_profit,
         )
 
         # Get current price for risk checks
@@ -397,6 +403,20 @@ class AlpacaBroker:
         try:
             alpaca_side = _SIDE_TO_ALPACA[side]
 
+            # Build bracket order kwargs if stop/take-profit provided
+            bracket_kwargs = {}
+            if stop_loss and stop_loss > 0:
+                bracket_kwargs["stop_loss"] = {"stop_price": round(stop_loss, 2)}
+            if take_profit and take_profit > 0:
+                bracket_kwargs["take_profit"] = {"limit_price": round(take_profit, 2)}
+            # Bracket requires class=bracket with both legs, or OTO with one
+            order_class_str = None
+            if bracket_kwargs:
+                if "stop_loss" in bracket_kwargs and "take_profit" in bracket_kwargs:
+                    order_class_str = "bracket"
+                else:
+                    order_class_str = "oto"
+
             if limit_price:
                 req = LimitOrderRequest(
                     symbol=ticker,
@@ -404,6 +424,7 @@ class AlpacaBroker:
                     side=alpaca_side,
                     time_in_force=TimeInForce.DAY,
                     limit_price=limit_price,
+                    **({"order_class": order_class_str, **bracket_kwargs} if order_class_str else {}),
                 )
             else:
                 req = MarketOrderRequest(
@@ -411,6 +432,7 @@ class AlpacaBroker:
                     qty=quantity,
                     side=alpaca_side,
                     time_in_force=TimeInForce.DAY,
+                    **({"order_class": order_class_str, **bracket_kwargs} if order_class_str else {}),
                 )
 
             result = self._retry_request(self.trading_client.submit_order, req)
