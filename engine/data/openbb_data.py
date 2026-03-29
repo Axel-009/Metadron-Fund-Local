@@ -32,7 +32,65 @@ try:
 except ImportError:
     logger.warning("OpenBB SDK not available — data fetching will return empty frames")
 
-# Default provider for equity data (FMP has a free tier; alternatives: intrinio, polygon)
+# ---------------------------------------------------------------------------
+# Data source mode — Alpaca real-time during market hours, OpenBB EOD after
+# ---------------------------------------------------------------------------
+_DATA_SOURCE_MODE = "auto"  # "auto" | "alpaca" | "openbb"
+
+def _is_market_hours() -> bool:
+    """Check if US market is currently open (09:30-16:00 ET, Mon-Fri)."""
+    try:
+        from datetime import timezone
+        import zoneinfo
+        et = zoneinfo.ZoneInfo("America/New_York")
+        now = datetime.now(et)
+        if now.weekday() >= 5:  # Saturday/Sunday
+            return False
+        market_open = now.replace(hour=9, minute=30, second=0, microsecond=0)
+        market_close = now.replace(hour=16, minute=0, second=0, microsecond=0)
+        return market_open <= now <= market_close
+    except Exception:
+        return False
+
+
+def get_active_data_source() -> str:
+    """Return the currently active data source label for dashboard display."""
+    if _DATA_SOURCE_MODE == "alpaca":
+        return "LIVE:Alpaca"
+    elif _DATA_SOURCE_MODE == "openbb":
+        return "EOD:OpenBB"
+    else:  # auto
+        return "LIVE:Alpaca" if _is_market_hours() else "EOD:OpenBB"
+
+
+def set_data_source_mode(mode: str):
+    """Switch data source mode. Called by dashboard or config.
+
+    Args:
+        mode: "auto" (market-hours aware), "alpaca" (force real-time), "openbb" (force historical)
+    """
+    global _DATA_SOURCE_MODE
+    if mode in ("auto", "alpaca", "openbb"):
+        _DATA_SOURCE_MODE = mode
+        logger.info("Data source mode set to: %s (active: %s)", mode, get_active_data_source())
+    else:
+        logger.warning("Invalid data source mode: %s (must be auto/alpaca/openbb)", mode)
+
+
+def _get_equity_provider(override: Optional[str] = None) -> str:
+    """Resolve the equity data provider based on mode and market hours.
+
+    During market hours (auto mode): prefers 'alpaca' if available, falls back to DEFAULT.
+    After hours / forced openbb: uses DEFAULT_EQUITY_PROVIDER (fmp/tiingo/polygon).
+    """
+    if override:
+        return override
+    if _DATA_SOURCE_MODE == "alpaca" or (_DATA_SOURCE_MODE == "auto" and _is_market_hours()):
+        return "alpaca"
+    return DEFAULT_EQUITY_PROVIDER
+
+
+# Default provider for equity data (FMP has a free tier; alternatives: intrinio, polygon, alpaca)
 DEFAULT_EQUITY_PROVIDER = "fmp"
 # Provider for macro/economic data
 DEFAULT_MACRO_PROVIDER = "fred"
@@ -98,7 +156,7 @@ def get_prices(
     if end is None:
         end = datetime.now().strftime("%Y-%m-%d")
 
-    prov = provider or DEFAULT_EQUITY_PROVIDER
+    prov = _get_equity_provider(provider)
 
     # --- OpenBB path ---
     if _openbb_available:

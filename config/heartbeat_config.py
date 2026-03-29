@@ -6,9 +6,9 @@
 # │                                                             │
 # │  08:00  Pre-market    30-min scans (earnings, news gaps)   │
 # │  09:30  Market Open   1-min burst × 5 (catch the open)     │
-# │  09:35  Active Scan   2-min cadence (full universe)        │
+# │  09:35  Active Scan   3-min cadence (full universe)        │
 # │  11:30  Midday        5-min cadence (lower vol)            │
-# │  14:00  Afternoon     2-min cadence (closing positioning)  │
+# │  14:00  Afternoon     3-min cadence (closing positioning)  │
 # │  15:45  Power Hour    1-min burst × 15 (closing auction)   │
 # │  16:00  Market Close  5-min scans (rebalancing)            │
 # │  16:30  After Hours   30-min scans (earnings reactions)    │
@@ -16,8 +16,8 @@
 # └─────────────────────────────────────────────────────────────┘
 
 # Phase cadences (seconds)
-HEARTBEAT_INTERVAL = 120           # Base: 2 minutes during active hours
-SIGNAL_CADENCE = 120               # Full signal pipeline every 2 min
+HEARTBEAT_INTERVAL = 180           # Base: 3 minutes during active hours
+SIGNAL_CADENCE = 180               # Full signal pipeline every 3 min
 INTELLIGENCE_CADENCE = 300         # Alpha optimizer, ML ensemble every 5 min
 MONITORING_CADENCE = 300           # P&L, risk, anomaly every 5 min
 
@@ -53,6 +53,6 @@ QUOTE_CACHE_TTL = 5                # Seconds before re-fetching quotes
 # - Scan frequency should exceed average holding period / 10
 # - If avg hold = 30 min, scan every 3 min minimum
 # - If avg hold = 2 hours, scan every 12 min minimum
-# - Current target: intraday (avg hold 30-120 min) → 2-5 min cadence
+# - Current target: intraday (avg hold 30-120 min) → 3-5 min cadence
 MIN_SCAN_INTERVAL = 60             # Never scan more than 1/min (API limits)
 MAX_SCAN_INTERVAL = 900            # Never scan less than 15/min (missed opps)
