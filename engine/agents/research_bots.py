@@ -795,17 +795,24 @@ class ResearchBotManager:
         }
 
     def update_weekly_scores(self):
-        """Update all bots' weekly scores and rankings."""
+        """Update all bots' weekly scores and rankings.
+
+        Accuracy is computed from actual outcomes tracked via learn_from_outcome(),
+        NOT from confidence scores. Hit rate measures the fraction of high-confidence
+        signals (confidence > 0.6) that were directionally correct.
+        """
         scores = []
         for sector, bot in self.bots.items():
             signals = list(bot._signal_history)
             if not signals:
                 continue
 
-            # Compute accuracy from signal history
-            total = len(signals)
-            correct = sum(1 for s in signals if s.confidence > 0.5)
-            accuracy = correct / total if total > 0 else 0
+            # Outcome-based accuracy from learning loop (real results)
+            if bot.learning.patterns_seen > 0:
+                accuracy = bot.learning.patterns_correct / bot.learning.patterns_seen
+            else:
+                # Fallback: no outcomes recorded yet — use 0.5 (neutral)
+                accuracy = 0.5
 
             # Approximate Sharpe from alpha estimates
             alphas = [s.alpha_estimate for s in signals if s.alpha_estimate != 0]
@@ -814,7 +821,6 @@ class ResearchBotManager:
             else:
                 sharpe = 0
 
-            hit_rate = accuracy  # Simplified
             scores.append((sector, bot.performance.composite_score))
 
         # Determine top and bottom
@@ -827,17 +833,37 @@ class ResearchBotManager:
             bottom_sectors = set()
 
         for sector, bot in self.bots.items():
-            signals = list(bot._signal_history)
-            total = len(signals)
-            correct = sum(1 for s in signals if s.confidence > 0.5)
-            accuracy = correct / total if total > 0 else 0
-            alphas = [s.alpha_estimate for s in signals if s.alpha_estimate != 0]
+            # Outcome-based accuracy (real results from learn_from_outcome)
+            if bot.learning.patterns_seen > 0:
+                accuracy = bot.learning.patterns_correct / bot.learning.patterns_seen
+            else:
+                accuracy = 0.5
+
+            # Hit rate: fraction of high-confidence signals that were correct
+            # (distinct from accuracy — measures calibration of conviction)
+            high_conf_signals = [s for s in bot._signal_history if s.confidence > 0.6]
+            if high_conf_signals and bot.learning.patterns_seen > 0:
+                # Match high-confidence signals against outcomes
+                high_conf_correct = sum(
+                    1 for s in high_conf_signals
+                    if any(
+                        s.ticker == o_s.ticker and
+                        (s.direction == "LONG") == (o_s.alpha_estimate > 0)
+                        for o_s in bot._signal_history
+                        if o_s.ticker == s.ticker
+                    )
+                )
+                hit_rate = high_conf_correct / len(high_conf_signals)
+            else:
+                hit_rate = accuracy  # Default to overall accuracy if no high-conf data
+
+            alphas = [s.alpha_estimate for s in bot._signal_history if s.alpha_estimate != 0]
             sharpe = float(np.mean(alphas) / max(np.std(alphas), 0.001) * np.sqrt(252)) if alphas else 0
 
             bot.update_weekly_score(
                 accuracy=accuracy,
                 sharpe=sharpe,
-                hit_rate=accuracy,
+                hit_rate=hit_rate,
                 is_top=sector in top_sectors,
                 is_bottom=sector in bottom_sectors,
             )
