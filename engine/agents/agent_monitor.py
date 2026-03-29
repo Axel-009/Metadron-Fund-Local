@@ -325,18 +325,26 @@ class AgentMonitor:
     @staticmethod
     def _composite_score(rec: AgentPerformanceRecord) -> float:
         """
-        40% accuracy + 30% Sharpe + 20% hit_rate + 10% consistency_bonus.
-        hit_rate is accuracy/100 (normalised).
-        consistency_bonus = consecutive_wins / 20 (capped at 1.0).
+        40% accuracy + 30% Sharpe + 20% profitability + 10% consistency_bonus.
+
+        accuracy_norm:  correct_signals / total_signals (0-1)
+        sharpe_norm:    Sharpe ratio normalised to [0,1] (cap at 3.0)
+        profitability:  avg_pnl_per_signal normalised — measures whether
+                        correct calls are actually profitable (dynamic metric
+                        distinct from raw accuracy).
+        consistency:    consecutive_wins / 20 (capped at 1.0)
         """
         accuracy_norm = min(rec.accuracy / 100.0, 1.0)
         sharpe_norm = min(max(rec.sharpe_ratio / 3.0, 0.0), 1.0)
-        hit_rate = accuracy_norm
+        # Profitability: sigmoid-map avg_pnl_per_signal into [0, 1]
+        # Positive avg PnL → >0.5, negative → <0.5
+        avg_pnl = rec.avg_pnl_per_signal
+        profitability = 1.0 / (1.0 + math.exp(-avg_pnl * 10.0)) if avg_pnl != 0 else 0.5
         consistency_bonus = min(rec.consecutive_wins / 20.0, 1.0)
         return (
             0.40 * accuracy_norm
             + 0.30 * sharpe_norm
-            + 0.20 * hit_rate
+            + 0.20 * profitability
             + 0.10 * consistency_bonus
         )
 
