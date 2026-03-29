@@ -60,9 +60,10 @@ except ImportError:
     def get_bulk_fundamentals(*a, **kw): return {}
 
 try:
-    from .openbb_data import get_macro_data
+    from .openbb_data import get_macro_data, get_fred_series
 except ImportError:
     def get_macro_data(*a, **kw): return pd.DataFrame()
+    def get_fred_series(*a, **kw): return pd.DataFrame()
 
 try:
     from .cross_asset_universe import (
@@ -696,7 +697,7 @@ class UniversalDataPool:
         frames = {}
         for series_id, description in FRED_SERIES.items():
             try:
-                df = get_macro_data(series_id)
+                df = get_fred_series(series_id)
                 if isinstance(df, pd.DataFrame) and not df.empty:
                     # Use the first numeric column as the series value
                     numeric_cols = df.select_dtypes(include=[np.number]).columns
