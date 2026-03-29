@@ -54,13 +54,18 @@ def _is_market_hours() -> bool:
 
 
 def get_active_data_source() -> str:
-    """Return the currently active data source label for dashboard display."""
+    """Return the currently active data source label for dashboard display.
+
+    Two data paths operate simultaneously:
+      Execution prices: always Alpaca real-time (via AlpacaBroker)
+      Signal/OHLCV data: OpenBB with provider switching (polygon during market, fmp after)
+    """
     if _DATA_SOURCE_MODE == "alpaca":
-        return "LIVE:Alpaca"
+        return "LIVE:Alpaca+Polygon"
     elif _DATA_SOURCE_MODE == "openbb":
-        return "EOD:OpenBB"
+        return "EOD:OpenBB/FMP"
     else:  # auto
-        return "LIVE:Alpaca" if _is_market_hours() else "EOD:OpenBB"
+        return "LIVE:Alpaca+Polygon" if _is_market_hours() else "EOD:OpenBB/FMP"
 
 
 def set_data_source_mode(mode: str):
@@ -80,17 +85,30 @@ def set_data_source_mode(mode: str):
 def _get_equity_provider(override: Optional[str] = None) -> str:
     """Resolve the equity data provider based on mode and market hours.
 
-    During market hours (auto mode): prefers 'alpaca' if available, falls back to DEFAULT.
-    After hours / forced openbb: uses DEFAULT_EQUITY_PROVIDER (fmp/tiingo/polygon).
+    During market hours (auto mode): prefers polygon (lower latency, near-real-time
+    with paid tier) over fmp. For truly real-time price data during execution,
+    AlpacaBroker._get_current_price() is used directly at the broker level.
+
+    Provider latency estimates:
+        polygon:  ~200-800ms  (real-time with paid tier, 15-min free)
+        tiingo:   ~300-1000ms (IEX real-time paid, 15-min free)
+        fmp:      ~500-2000ms (15-min delayed free tier)
+        intrinio: ~200-600ms  (real-time paid, no free tier)
+
+    NOTE: There is no openbb-alpaca provider. Real-time Alpaca data is accessed
+    directly via alpaca_broker._get_current_price() at the execution layer.
+    The OpenBB layer provides OHLCV history, macro, fundamentals, and analytics.
     """
     if override:
         return override
     if _DATA_SOURCE_MODE == "alpaca" or (_DATA_SOURCE_MODE == "auto" and _is_market_hours()):
-        return "alpaca"
+        # During market hours: use polygon (lower latency) for historical/OHLCV signals
+        # Actual execution prices come from Alpaca broker directly, not this path
+        return "polygon"
     return DEFAULT_EQUITY_PROVIDER
 
 
-# Default provider for equity data (FMP has a free tier; alternatives: intrinio, polygon, alpaca)
+# Default provider for equity data (FMP has a free tier; alternatives: intrinio, polygon, tiingo)
 DEFAULT_EQUITY_PROVIDER = "fmp"
 # Provider for macro/economic data
 DEFAULT_MACRO_PROVIDER = "fred"
