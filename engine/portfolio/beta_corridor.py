@@ -301,7 +301,8 @@ class BetaCorridor:
         """Return (beta_multiplier, regime_cap) based on vol regime classification."""
         if returns is None:
             try:
-                prices = get_adj_close("^GSPC", period="2y")
+                _2y_ago = (pd.Timestamp.now() - pd.Timedelta(days=730)).strftime("%Y-%m-%d")
+                prices = get_adj_close("^GSPC", start=_2y_ago)
                 if prices is not None and len(prices) > 30:
                     returns = np.diff(np.log(prices.values.flatten()))
                 else:
