@@ -654,6 +654,69 @@ class QuantStrategyExecutor:
         # 0.5x base + up to 0.5x from agreement ratio
         size_multiplier = (0.5 + 0.5 * agreement) * scale
 
+        # --- Composite stop/take-profit from all strategies ---
+        # Collect stop/target levels from every strategy that provides them
+        current_price = float(close.iloc[-1])
+        stop_candidates = []
+        target_candidates = []
+
+        # Bollinger: lower band = stop, upper band = target
+        bb = strategies.get("bollinger_w", {})
+        if bb.get("stop_loss", 0) > 0:
+            stop_candidates.append(("bollinger", bb["stop_loss"]))
+        if bb.get("take_profit", 0) > 0:
+            target_candidates.append(("bollinger", bb["take_profit"]))
+
+        # Parabolic SAR: sar_value = trailing stop (direction-aware)
+        sar = strategies.get("parabolic_sar", {})
+        sar_val = sar.get("sar_value", 0)
+        if sar_val > 0 and sar.get("direction", 0) != 0:
+            if sar.get("direction", 0) > 0:
+                # Long trend: SAR is below price → stop
+                if sar_val < current_price:
+                    stop_candidates.append(("sar", sar_val))
+            else:
+                # Short trend: SAR is above price → stop for shorts
+                if sar_val > current_price:
+                    stop_candidates.append(("sar", sar_val))
+
+        # Dual Thrust: breakout thresholds as support/resistance
+        dt = strategies.get("dual_thrust", {})
+        dt_lower = dt.get("lower_threshold", 0)
+        dt_upper = dt.get("upper_threshold", 0)
+        if dt_lower > 0 and dt_lower < current_price:
+            stop_candidates.append(("dual_thrust", dt_lower))
+        if dt_upper > 0 and dt_upper > current_price:
+            target_candidates.append(("dual_thrust", dt_upper))
+
+        # RSI: compute price-implied stop from oversold/overbought zones
+        rsi_data = strategies.get("rsi", {})
+        rsi_val = rsi_data.get("rsi", 50)
+        if rsi_val < 30 and current_price > 0:
+            # Oversold bounce — stop at 2% below entry
+            stop_candidates.append(("rsi_oversold", current_price * 0.98))
+        elif rsi_val > 70 and current_price > 0:
+            # Overbought — target at current (take profit here)
+            target_candidates.append(("rsi_overbought", current_price * 1.01))
+
+        # Compute best stop: tightest (highest for longs) to protect capital
+        # Compute best target: most conservative (lowest for longs) to lock gains
+        if consensus_direction >= 0:
+            # Long bias: stop = max of candidates (tightest), target = min (nearest)
+            best_stop = max((v for _, v in stop_candidates), default=0.0)
+            best_target = min((v for _, v in target_candidates), default=0.0)
+        else:
+            # Short bias: stop = min of candidates (tightest above), target = max (furthest down)
+            best_stop = min((v for _, v in stop_candidates), default=0.0) if stop_candidates else 0.0
+            best_target = max((v for _, v in target_candidates), default=0.0) if target_candidates else 0.0
+
+        # Sanity: stop must be between price and target
+        if best_stop > 0 and best_target > 0:
+            if consensus_direction >= 0 and best_stop >= current_price:
+                best_stop = current_price * 0.97  # fallback: 3% below
+            elif consensus_direction < 0 and best_stop <= current_price:
+                best_stop = current_price * 1.03  # fallback: 3% above
+
         result = {
             "ticker": ticker,
             "regime": regime,
@@ -667,8 +730,10 @@ class QuantStrategyExecutor:
             "consensus_signal": float(np.clip(consensus_signal, -1, 1)),
             "agreement": agreement,
             "size_multiplier": size_multiplier,
-            "stop_loss": strategies.get("bollinger_w", {}).get("stop_loss", 0.0),
-            "take_profit": strategies.get("bollinger_w", {}).get("take_profit", 0.0),
+            "stop_loss": float(best_stop),
+            "take_profit": float(best_target),
+            "stop_sources": [(name, float(v)) for name, v in stop_candidates],
+            "target_sources": [(name, float(v)) for name, v in target_candidates],
         }
 
         self._execution_log.append(result)

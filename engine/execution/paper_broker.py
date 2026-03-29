@@ -121,6 +121,8 @@ class Order:
     timestamp: str = ""
     fill_timestamp: str = ""
     reason: str = ""
+    stop_loss: Optional[float] = None
+    take_profit: Optional[float] = None
 
     def to_dict(self) -> dict:
         return {k: str(v) if isinstance(v, Enum) else v for k, v in asdict(self).items()}
@@ -135,6 +137,8 @@ class Position:
     unrealized_pnl: float = 0.0
     realized_pnl: float = 0.0
     sector: str = ""
+    stop_loss: Optional[float] = None
+    take_profit: Optional[float] = None
 
     @property
     def market_value(self) -> float:
@@ -1002,6 +1006,8 @@ class PaperBroker:
         signal_type: SignalType = SignalType.HOLD,
         limit_price: Optional[float] = None,
         reason: str = "",
+        stop_loss: Optional[float] = None,
+        take_profit: Optional[float] = None,
     ) -> Order:
         """Place and immediately fill a market order using latest price."""
         order = Order(
@@ -1014,6 +1020,8 @@ class PaperBroker:
             signal_type=signal_type,
             timestamp=datetime.now().isoformat(),
             reason=reason,
+            stop_loss=stop_loss,
+            take_profit=take_profit,
         )
 
         # Get current price
@@ -1157,6 +1165,12 @@ class PaperBroker:
 
         pos.current_price = price
         pos.unrealized_pnl = (price - pos.avg_cost) * pos.quantity
+
+        # Attach stop/take_profit from quant strategy analysis
+        if order.stop_loss is not None and order.stop_loss > 0:
+            pos.stop_loss = order.stop_loss
+        if order.take_profit is not None and order.take_profit > 0:
+            pos.take_profit = order.take_profit
 
         if pos.quantity != 0:
             self.state.positions[ticker] = pos

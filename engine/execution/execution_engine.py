@@ -1844,6 +1844,7 @@ class ExecutionEngine:
         t0 = datetime.now()
         hft_technical = {}
         hft_size_adjustments = {}  # ticker → size_multiplier from technical consensus
+        hft_stop_levels = {}      # ticker → {"stop_loss": float, "take_profit": float}
         if self.quant_hft:
             vix_level = macro_snap.vix if macro_snap else 20.0
             for ticker in list(alpha_out.optimal_weights.keys()):
@@ -1867,6 +1868,12 @@ class ExecutionEngine:
                                 "strategies": list(hft_result.get("active_names", [])),
                             }
                             hft_size_adjustments[ticker] = hft_result.get("size_multiplier", 1.0)
+
+                            # Capture stop/take_profit from quant strategy consensus
+                            sl = hft_result.get("stop_loss", 0.0)
+                            tp = hft_result.get("take_profit", 0.0)
+                            if sl > 0 or tp > 0:
+                                hft_stop_levels[ticker] = {"stop_loss": sl, "take_profit": tp}
 
                             # If kill switch is active, remove ticker from approved set
                             if hft_result.get("kill_switch", False):
@@ -1995,13 +2002,16 @@ class ExecutionEngine:
                     })
                     continue
 
-            # Execute
+            # Execute — with stop/take_profit from quant technical consensus
+            levels = hft_stop_levels.get(ticker, {})
             order = self.broker.place_order(
                 ticker=ticker,
                 side=allocation["side"],
                 quantity=allocation["quantity"],
                 signal_type=vote.signal,
                 reason=f"Vote={vote.score:.1f} Alpha={alpha_map.get(ticker, AlphaSignal(ticker=ticker)).alpha_pred:.4f} Conf={vote.confidence:.2f}",
+                stop_loss=levels.get("stop_loss") or None,
+                take_profit=levels.get("take_profit") or None,
             )
 
             if self.risk_gates:
@@ -2017,6 +2027,8 @@ class ExecutionEngine:
                 "signal": vote.signal.value,
                 "order_id": order.id,
                 "hft_size_mult": hft_size_adjustments.get(ticker, 1.0),
+                "stop_loss": levels.get("stop_loss", 0.0),
+                "take_profit": levels.get("take_profit", 0.0),
                 "hft_consensus": hft_technical.get(ticker, {}).get("consensus", 0),
             }
             trades.append(trade_record)
