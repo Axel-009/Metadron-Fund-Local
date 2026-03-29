@@ -318,8 +318,8 @@ _MARKET_CLOSE = dt_time(16, 0)
 _AFTER_HOURS_END = dt_time(20, 0)
 
 # Cadence intervals (seconds) — adaptive for best execution
-_HEARTBEAT_INTERVAL = 120          # Base: 2 minutes (was 60s — too fast for full universe)
-_SIGNAL_CADENCE = 120              # 2 minutes — full signal pipeline
+_HEARTBEAT_INTERVAL = 180          # Base: 3 minutes (balances load vs responsiveness)
+_SIGNAL_CADENCE = 180              # 3 minutes — full signal pipeline
 _INTELLIGENCE_CADENCE = 300        # 5 minutes — alpha optimizer, ML ensemble
 _MONITORING_CADENCE = 300          # 5 minutes — P&L, risk, anomaly
 _AFTER_HOURS_INTERVAL = 1800       # 30 minutes

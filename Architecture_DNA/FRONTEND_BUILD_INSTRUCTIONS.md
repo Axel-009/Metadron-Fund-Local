@@ -107,6 +107,7 @@ The entire OpenBB package in its entirety, serving as the foundational shell for
 
 | Component | Source | Description |
 |-----------|--------|-------------|
+| **Data Source Indicator** | `openbb_data.py` + `alpaca_broker.py` | **Status badge showing active data source: `[LIVE] Alpaca` or `[EOD] OpenBB`. Must be visible at all times in the dashboard header. Clickable to toggle data source on command (switches provider in `openbb_data.py`).** |
 | Live Execution P&L | ExecutionEngine + PaperBroker/AlpacaBroker | Real-time profit & loss display |
 | TCA | L7 Unified Execution Surface | Transaction Cost Analysis |
 | Slippage | L7 Execution | Slippage tracking per fill |

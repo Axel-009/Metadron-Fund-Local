@@ -61,8 +61,36 @@ Paper broker mode (OpenBB data). Beta managed within 7–12% corridor.
 - **Macro tickers**: SPY, QQQ, IWM, TLT, GLD, USO, UUP, HYG, LQD, VXX
 - Methods: `get_by_sector()`, `get_rv_pairs()`, `get_sectors()`, `get_gsib_basket()`
 
-### OpenBB Data (`engine/data/yahoo_data.py` → re-exports from `openbb_data.py`)
-- **Single data source**: All data via OpenBB (34+ providers) — unified, no broker dependency
+### Data Source Architecture — Dual-Mode (Live + Historical)
+
+```
+MARKET HOURS (09:30-16:00 ET):
+  Price Data:      Alpaca real-time (StockLatestTradeRequest, ~100-500ms latency)
+  Quote Cache:     5-second TTL per ticker
+  Fallback:        OpenBB if Alpaca quote unavailable
+  OHLCV/History:   OpenBB (signals, quant strategies, alpha optimizer)
+  FRED/Macro:      OpenBB (openbb-fred provider)
+  Execution:       Alpaca bracket orders (entry + stop + take-profit)
+
+AFTER HOURS / OVERNIGHT:
+  All Data:        OpenBB (34+ providers) — backtesting, model retraining
+  Historical:      OpenBB for walk-forward validation, Monte Carlo, scenario analysis
+  FRED/SEC/CBOE:   OpenBB econometric providers
+
+DATA SOURCE INDICATOR:
+  The live dashboard and frontend must display the active data source:
+    [LIVE] Alpaca real-time  — during market hours
+    [EOD]  OpenBB historical — after hours / backtesting
+  This should be interchangeable on command via the dashboard or config.
+```
+
+### OpenBB Data (`engine/data/openbb_data.py`, re-exported via `yahoo_data.py`)
+- **Unified data layer**: All data via OpenBB (34+ providers) — single API surface
+- **Provider hierarchy**: Configurable per-function (default varies: fmp, polygon, tiingo, fred)
+- **Alpaca as OpenBB provider**: OpenBB supports `openbb-alpaca` provider package for
+  real-time equity data. When installed, pass `provider="alpaca"` to get_prices/get_adj_close
+  to route through Alpaca's data API instead of Tiingo/FMP. This unifies both data paths
+  through the same OpenBB interface while getting Alpaca-speed latency.
 - `get_adj_close(tickers, start, end)` → Adjusted close prices
 - `get_returns(tickers, start, end)` → Daily log returns
 - `get_prices(tickers, start)` → Full OHLCV data
