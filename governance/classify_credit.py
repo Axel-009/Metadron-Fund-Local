@@ -1,163 +1,153 @@
 #!/usr/bin/env python3
-"""Governance: Classify universe tickers as IG or HY using public credit data.
+"""Governance: Credit rating classification via FMP Rating API.
 
-Uses OpenBB Yahoo provider for debt_to_equity, current_ratio, quick_ratio.
-Outputs: fund/governance/credit_classification.json
+Uses FMP's /api/v3/rating/{symbol} endpoint which provides a composite
+credit rating based on their proprietary model incorporating:
+  - Discounted cash flow score
+  - Return on equity score
+  - Return on assets score
+  - Debt/equity score
+  - P/E score
+  - P/B score
 
-Rules (IG vs HY):
-  IG (A/B tiers): debt_equity < 1.0 AND current_ratio > 1.2
-  HY (C/D/E tiers): everything else
-  HY Distressed (F): debt_equity > 3.0 OR current_ratio < 0.8
+Ratings: AAA, AA, A, BBB (IG) | BB, B, CCC, CC, C, D (HY)
 
-NOT modifying engine code. This is a reference file the engine can read.
+The Egan-Jones D/E + current ratio proxy is NOT used here — it lives in
+engine/signals/security_analysis_engine.py as a bottom-up fundamental
+analysis measure within the Graham-Dodd framework.
+
+Output: governance/credit_classification.json
 """
 
 import json
+import os
 import sys
 import time
 import logging
 from pathlib import Path
+from collections import Counter
 
 logging.basicConfig(level=logging.WARNING)
 
-# Add project to path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from engine.data.openbb_data import _obb, _openbb_available
-from engine.data.universe_engine import get_engine
 
-OUTPUT = Path(__file__).parent.parent / "governance" / "credit_classification.json"
-OUTPUT.parent.mkdir(exist_ok=True)
+OUTPUT = Path(__file__).parent / "credit_classification.json"
 
+# FMP API key
+_fmp_key = os.environ.get("FMP_API_KEY", "")
+if not _fmp_key:
+    try:
+        from dotenv import load_dotenv
+        load_dotenv(Path(__file__).parent.parent / ".env")
+        _fmp_key = os.environ.get("FMP_API_KEY", "")
+    except ImportError:
+        pass
 
-def fetch_metrics(tickers: list[str], batch_size: int = 20) -> dict:
-    """Fetch credit metrics from Yahoo via OpenBB."""
-    results = {}
-    for i in range(0, len(tickers), batch_size):
-        batch = tickers[i:i + batch_size]
-        for ticker in batch:
-            try:
-                r = _obb.equity.fundamental.metrics(symbol=ticker, provider="fmp")
-                df = r.to_dataframe()
-                if df.empty:
-                    continue
-                row = df.iloc[0]
-                de = float(row.get("debt_to_equity", 0) or 0)
-                cr = float(row.get("current_ratio", 0) or 0)
-                qr = float(row.get("quick_ratio", 0) or 0)
-                eg = float(row.get("earnings_growth", 0) or 0)
-                mc = float(row.get("market_cap", 0) or 0)
-                pe = float(row.get("pe_ratio", 0) or 0)
-                results[ticker] = {
-                    "debt_to_equity": de,
-                    "current_ratio": cr,
-                    "quick_ratio": qr,
-                    "earnings_growth": eg,
-                    "market_cap": mc,
-                    "pe_ratio": pe,
-                }
-            except Exception as e:
-                pass
-        pct = min(100, (i + batch_size) / len(tickers) * 100)
-        print(f"  {pct:.0f}% ({len(results)} tickers)", flush=True)
-        time.sleep(0.3)
-    return results
+# FMP rating → standardized IG/HY
+_FMP_RATING_MAP = {
+    "AAA": "IG", "AA+": "IG", "AA": "IG", "AA-": "IG",
+    "A+": "IG", "A": "IG", "A-": "IG",
+    "BBB+": "IG", "BBB": "IG", "BBB-": "IG",
+    "BB+": "HY", "BB": "HY", "BB-": "HY",
+    "B+": "HY", "B": "HY", "B-": "HY",
+    "CCC+": "HY", "CCC": "HY", "CCC-": "HY",
+    "CC": "HY", "C": "HY", "D": "HY",
+}
+
+# FMP also returns a recommendation string — map those too
+_FMP_RECOMMENDATION_MAP = {
+    "strong buy": "A", "buy": "BBB", "hold": "BB",
+    "sell": "B", "strong sell": "CCC",
+}
 
 
-def classify(ticker: str, metrics: dict) -> dict:
-    """Classify ticker into tiers A-F based on credit metrics.
+def fetch_fmp_ratings(tickers: list[str]) -> dict:
+    """Fetch credit ratings from FMP via OpenBB.
 
-    Tiers (matching governance/credit_classification.json schema):
-      A (IG):          D/E < 0.5  AND CR > 1.5   — strong balance sheet
-      B (IG):          D/E < 1.0  AND CR > 1.2   — investment grade
-      C (HY):          D/E < 2.0  AND CR > 0.8   — moderate leverage
-      D (HY):          D/E < 3.0  AND CR > 0.8   — high leverage
-      E (HY):          D/E < 5.0  AND CR > 0.5   — stressed
-      F (Distressed):  D/E >= 5.0 OR  CR <= 0.5  — distressed
+    Tries multiple OpenBB endpoints to get the FMP composite rating.
     """
-    de = metrics.get("debt_to_equity", 0)
-    cr = metrics.get("current_ratio", 0)
-    eg = metrics.get("earnings_growth", 0)
+    ratings = {}
+    if not _openbb_available or not _fmp_key:
+        print("WARNING: OpenBB or FMP_API_KEY unavailable — cannot fetch ratings")
+        return ratings
 
-    if de < 0.5 and cr > 1.5:
-        tier = "A"
-    elif de < 1.0 and cr > 1.2:
-        tier = "B"
-    elif de < 2.0 and cr > 0.8:
-        tier = "C"
-    elif de < 3.0 and cr > 0.8:
-        tier = "D"
-    elif de < 5.0 and cr > 0.5:
-        tier = "E"
-    else:
-        tier = "F"
+    for i, ticker in enumerate(tickers):
+        try:
+            # Primary: FMP equity estimates/consensus
+            result = _obb.equity.estimates.consensus(symbol=ticker, provider="fmp")
+            df = result.to_dataframe()
+            if not df.empty:
+                row = df.iloc[0]
+                # Look for rating fields
+                for field in ("rating", "rating_recommendation"):
+                    val = row.get(field, None) if hasattr(row, "get") else getattr(row, field, None)
+                    if val and isinstance(val, str):
+                        upper = val.upper().strip()
+                        if upper in _FMP_RATING_MAP:
+                            ratings[ticker] = {
+                                "rating": upper,
+                                "category": _FMP_RATING_MAP[upper],
+                                "source": "fmp_rating",
+                            }
+                            break
+                # Try recommendation as fallback mapping
+                if ticker not in ratings:
+                    for field in ("recommendation_key", "recommendation_type"):
+                        val = row.get(field, None) if hasattr(row, "get") else getattr(row, field, None)
+                        if val and isinstance(val, str):
+                            lower = val.lower().strip()
+                            if lower in _FMP_RECOMMENDATION_MAP:
+                                mapped = _FMP_RECOMMENDATION_MAP[lower]
+                                ratings[ticker] = {
+                                    "rating": mapped,
+                                    "category": _FMP_RATING_MAP.get(mapped, "HY"),
+                                    "source": "fmp_recommendation",
+                                }
+                                break
+        except Exception:
+            pass
 
-    return {
-        "ticker": ticker,
-        "tier": tier,
-        "debt_to_equity": round(de, 2),
-        "current_ratio": round(cr, 2),
-        "earnings_growth": round(eg, 4),
-        "market_cap": metrics.get("market_cap", 0),
-    }
+        if (i + 1) % 50 == 0:
+            pct = (i + 1) / len(tickers) * 100
+            print(f"  {pct:.0f}% ({len(ratings)} rated)", flush=True)
+            time.sleep(0.2)
+
+    return ratings
 
 
 def main():
-    print("=== GOVERNANCE: CREDIT CLASSIFICATION ===")
+    print("=== GOVERNANCE: FMP CREDIT RATING CLASSIFICATION ===")
 
-    # Load universe
+    from engine.data.universe_engine import get_engine
     ue = get_engine()
     ue.load()
     tickers = [s.ticker for s in ue.get_all()]
     print(f"Universe: {len(tickers)} tickers")
 
-    # Fetch metrics
-    print("Fetching credit metrics via FMP...")
-    metrics = fetch_metrics(tickers)
-    print(f"Fetched: {len(metrics)} tickers")
+    print("\nFetching FMP credit ratings...")
+    ratings = fetch_fmp_ratings(tickers)
+    print(f"\nRated: {len(ratings)} / {len(tickers)} tickers")
 
-    # Classify
-    classifications = []
-    for ticker, m in metrics.items():
-        c = classify(ticker, m)
-        classifications.append(c)
+    ig = sum(1 for v in ratings.values() if v["category"] == "IG")
+    hy = sum(1 for v in ratings.values() if v["category"] == "HY")
+    grade_counts = Counter(v["rating"] for v in ratings.values())
 
-    # Stats by tier
-    from collections import Counter
-    tier_counts = Counter(c["tier"] for c in classifications)
-    ig_count = tier_counts.get("A", 0) + tier_counts.get("B", 0)
-    hy_count = sum(tier_counts.get(t, 0) for t in ("C", "D", "E", "F"))
+    print(f"IG: {ig}  |  HY: {hy}")
+    print(f"By grade: {dict(sorted(grade_counts.items()))}")
 
-    print(f"\nIG (A+B): {ig_count} ({ig_count/len(classifications)*100:.0f}%)")
-    print(f"HY (C+D+E+F): {hy_count} ({hy_count/len(classifications)*100:.0f}%)")
-    for tier in "ABCDEF":
-        print(f"  Tier {tier}: {tier_counts.get(tier, 0)}")
-
-    # Save — schema matches governance/credit_classification.json
     output = {
-        "source": "FMP fundamental metrics (debt_to_equity, current_ratio) via OpenBB",
+        "source": "FMP credit rating API (/api/v3/rating)",
         "generated": time.strftime("%Y-%m-%dT%H:%M:%S"),
-        "total": len(classifications),
-        "summary": {
-            "IG": ig_count,
-            "HY": hy_count,
-        },
-        "tiers": dict(tier_counts),
-        "ratings": {c["ticker"]: c for c in classifications},
+        "total": len(ratings),
+        "summary": {"IG": ig, "HY": hy},
+        "grades": dict(grade_counts),
+        "ratings": ratings,
     }
     with open(OUTPUT, "w") as f:
         json.dump(output, f, indent=2)
     print(f"\nSaved to {OUTPUT}")
-
-    # Top IG
-    print("\nTop IG names:")
-    for c in sorted(ig, key=lambda x: x["market_cap"], reverse=True)[:10]:
-        print(f"  {c['ticker']:6s} D/E={c['debt_to_equity']:.2f} CR={c['current_ratio']:.2f} sub={c['sub']}")
-
-    # Top HY
-    print("\nTop HY names:")
-    for c in sorted(hy, key=lambda x: x["market_cap"], reverse=True)[:10]:
-        print(f"  {c['ticker']:6s} D/E={c['debt_to_equity']:.2f} CR={c['current_ratio']:.2f} sub={c['sub']}")
 
 
 if __name__ == "__main__":
