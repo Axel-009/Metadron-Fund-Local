@@ -1820,18 +1820,21 @@ class ExecutionEngine:
         t0 = datetime.now()
         options_data = {"status": "not_scanned"}
         try:
-            from .options_engine import VolatilitySurface, BlackScholesModel
+            from .options_engine import BlackScholesModel
             bs = BlackScholesModel()
-            regime_str = cube_out.regime.value
+            from alpaca.trading.requests import GetOptionContractsRequest
+            from alpaca.trading.enums import AssetStatus, ContractType
             
-            # Scan top alpha signals for options opportunities
+            # Use top 10 alpha signals only (faster than 30)
             options_candidates = []
-            for sig in alpha_out.signals[:30]:
+            for sig in alpha_out.signals[:10]:
                 ticker = sig.ticker
                 spot = 0.0
                 try:
-                    from ..data.yahoo_data import get_latest_price
-                    spot = get_latest_price(ticker)
+                    from ..data.yahoo_data import get_adj_close
+                    p = get_adj_close([ticker], start=datetime.now().strftime("%Y-%m-%d"))
+                    if not p.empty:
+                        spot = float(p[ticker].iloc[-1])
                 except Exception:
                     continue
                 if spot <= 0:
@@ -1839,14 +1842,12 @@ class ExecutionEngine:
                 
                 # Get options chain from Alpaca
                 try:
-                    from alpaca.trading.requests import GetOptionContractsRequest
-                    from alpaca.trading.enums import AssetStatus, ContractType
                     req = GetOptionContractsRequest(
                         underlying_symbols=[ticker],
                         status=AssetStatus.ACTIVE,
                         expiration_date_gte=(datetime.now() + timedelta(days=7)).strftime("%Y-%m-%d"),
                         expiration_date_lte=(datetime.now() + timedelta(days=45)).strftime("%Y-%m-%d"),
-                        limit=50,
+                        limit=20,
                     )
                     chain = self.broker.client.get_option_contracts(req)
                     contracts = chain.option_contracts if hasattr(chain, 'option_contracts') else []
@@ -1856,17 +1857,13 @@ class ExecutionEngine:
                             continue
                         strike = float(c.strike_price)
                         opt_type = 'call' if c.type == ContractType.CALL else 'put'
-                        # Synthesize market price from IV
                         iv = float(c.implied_volatility) if hasattr(c, 'implied_volatility') and c.implied_volatility else 0.30
                         T = max((datetime.strptime(c.expiration_date, "%Y-%m-%d") - datetime.now()).days / 365.0, 0.001)
                         if opt_type == 'call':
-                            theo = bs.call_price(spot, strike, 0.05, T, iv)
+                            theo = bs.call_price(spot, strike, T, 0.05, iv)
                         else:
-                            theo = bs.put_price(spot, strike, 0.05, T, iv)
-                        
-                        # Delta for direction
-                        delta = bs.delta(spot, strike, 0.05, T, iv, opt_type == 'call')
-                        theta = bs.theta(spot, strike, 0.05, T, iv, opt_type == 'call')
+                            theo = bs.put_price(spot, strike, T, 0.05, iv)
+                        delta = bs.delta(spot, strike, T, 0.05, iv, opt_type == 'call')
                         
                         options_candidates.append({
                             "ticker": ticker,
@@ -1876,7 +1873,6 @@ class ExecutionEngine:
                             "expiry": c.expiration_date,
                             "theo_price": round(theo, 2),
                             "delta": round(delta, 3),
-                            "theta": round(theta, 4),
                             "iv": round(iv, 4),
                             "alpha": sig.alpha_pred,
                             "momentum": sig.momentum_1m,
@@ -1884,19 +1880,16 @@ class ExecutionEngine:
                 except Exception:
                     pass
             
-            # Select best options by regime
             if options_candidates:
-                # Rank by alpha * |delta| (conviction-weighted directional exposure)
                 for o in options_candidates:
                     o["score"] = abs(o["alpha"]) * abs(o["delta"]) * (1 + abs(o["momentum"]))
                 options_candidates.sort(key=lambda x: x["score"], reverse=True)
-                
                 options_data = {
                     "total_scanned": len(options_candidates),
                     "top_10": options_candidates[:10],
-                    "regime": regime_str,
+                    "regime": cube_out.regime.value,
                 }
-                logger.info(f"Options scan: {len(options_candidates)} opportunities from {len(alpha_out.signals[:30])} tickers")
+                logger.info(f"Options scan: {len(options_candidates)} opportunities")
             else:
                 options_data = {"status": "no_contracts_available"}
         except Exception as e:
