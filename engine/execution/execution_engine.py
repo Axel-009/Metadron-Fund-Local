@@ -1428,6 +1428,16 @@ class ExecutionEngine:
         # Stage 1: Universe
         t0 = datetime.now()
         self.universe.load()
+        # Enrich with returns data (Sharpe, momentum) for quality scoring
+        try:
+            self.universe.enrich_with_returns(lookback_days=365)
+        except Exception as e:
+            logger.warning(f"Returns enrichment failed: {e}")
+        # Load fundamentals (debt_equity, credit_rating) for credit classification
+        try:
+            self.universe.load_fundamentals()
+        except Exception as e:
+            logger.warning(f"Fundamentals load failed: {e}")
         result["stages"]["universe"] = {
             "total_equities": self.universe.size(),
             "sectors": self.universe.get_sectors(),
