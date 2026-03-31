@@ -315,7 +315,7 @@ def get_prices(
             return equity_df
 
     # --- OpenBB path (FMP default — always available fallback) ---
-    prov = provider or DEFAULT_EQUITY_PROVIDER  # "yfinance"
+    prov = provider or DEFAULT_EQUITY_PROVIDER  # "fmp"
 
     if _openbb_available:
         try:
