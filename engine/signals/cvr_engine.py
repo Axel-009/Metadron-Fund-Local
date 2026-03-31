@@ -13,6 +13,12 @@ Instrument types:
     - Restructuring kickers (emergence value triggers)
     - Regulatory approval contingent payments
 
+Dynamic CVR discovery:
+    - Scans SEC 8-K filings for merger/acquisition events
+    - Scans company news for CVR-creating catalysts
+    - Updates underlying prices from live data (Alpaca/FMP)
+    - Refreshes milestone probabilities from news sentiment
+
 Adjustments:
     - Liquidity discount (illiquid OTC instruments)
     - Counterparty credit risk (acquirer default)
@@ -28,12 +34,22 @@ Usage:
 """
 
 import logging
+import re
 import numpy as np
+from datetime import datetime, timedelta
 from enum import Enum
 from dataclasses import dataclass, field
 from typing import Dict, List, Optional, Tuple
 
 logger = logging.getLogger(__name__)
+
+# Data layer imports (guarded)
+try:
+    from ..data.openbb_data import get_company_news, get_company_filings, get_adj_close
+except ImportError:
+    def get_company_news(*a, **kw): return __import__("pandas").DataFrame()
+    def get_company_filings(*a, **kw): return __import__("pandas").DataFrame()
+    def get_adj_close(*a, **kw): return __import__("pandas").DataFrame()
 
 
 # ---------------------------------------------------------------------------
@@ -632,6 +648,238 @@ class CVREngine:
             self.analyze()
         return [v for v in self._results.values()
                 if v.signal in (CVRSignal.STRONG_BUY, CVRSignal.BUY)]
+
+    # -----------------------------------------------------------------------
+    # Dynamic CVR Discovery — SEC filings + news feeds
+    # -----------------------------------------------------------------------
+
+    # Keywords that indicate CVR-creating events in SEC filings and news
+    _MERGER_KEYWORDS = [
+        "contingent value right", "cvr", "earn-out", "earnout", "milestone payment",
+        "contingent consideration", "contingent payment", "merger agreement",
+        "definitive agreement", "acquisition agreement",
+    ]
+    _PHARMA_KEYWORDS = [
+        "fda approval", "nda filing", "phase iii", "phase 3", "pdufa",
+        "breakthrough therapy", "accelerated approval", "priority review",
+    ]
+    _RESTRUCTURING_KEYWORDS = [
+        "restructuring", "chapter 11", "emergence", "plan of reorganization",
+        "debtor in possession", "creditor recovery",
+    ]
+
+    def scan_for_cvr_events(self, tickers: Optional[List[str]] = None) -> List[dict]:
+        """Scan SEC 8-K filings and news for CVR-creating events.
+
+        Checks recent 8-K filings and company news for merger/acquisition
+        language that indicates new CVR instruments.
+
+        Returns list of discovered event dicts with ticker, event_type,
+        headline, date, and confidence score.
+        """
+        if tickers is None:
+            tickers = [inst.ticker.split("_")[0] for inst in self.catalog]
+            # Also scan top M&A targets from universe
+            try:
+                from ..data.universe_engine import get_engine
+                ue = get_engine()
+                # Pharma, financials, and distressed sectors are CVR-heavy
+                for sec in ue.get_all()[:200]:
+                    if sec.ticker not in tickers:
+                        tickers.append(sec.ticker)
+            except Exception:
+                pass
+
+        events = []
+        for ticker in tickers[:100]:  # Cap at 100 to manage API calls
+            try:
+                events.extend(self._scan_filings(ticker))
+            except Exception as e:
+                logger.debug("Filing scan failed for %s: %s", ticker, e)
+            try:
+                events.extend(self._scan_news(ticker))
+            except Exception as e:
+                logger.debug("News scan failed for %s: %s", ticker, e)
+
+        # Deduplicate by ticker + event_type
+        seen = set()
+        unique = []
+        for ev in events:
+            key = (ev["ticker"], ev["event_type"])
+            if key not in seen:
+                seen.add(key)
+                unique.append(ev)
+
+        logger.info("CVR scan: %d events found across %d tickers", len(unique), len(tickers))
+        return unique
+
+    def _scan_filings(self, ticker: str) -> List[dict]:
+        """Scan SEC 8-K filings for CVR-related language."""
+        events = []
+        try:
+            filings = get_company_filings(ticker, filing_type="8-K", limit=10)
+            if filings.empty:
+                return events
+
+            for _, row in filings.iterrows():
+                title = str(row.get("title", "") or row.get("description", "") or "").lower()
+                date = str(row.get("date", "") or row.get("filing_date", "") or "")
+
+                for kw in self._MERGER_KEYWORDS:
+                    if kw in title:
+                        events.append({
+                            "ticker": ticker,
+                            "event_type": "MERGER_CVR",
+                            "headline": str(row.get("title", title)),
+                            "date": date,
+                            "source": "SEC_8K",
+                            "keyword_match": kw,
+                            "confidence": 0.8 if "contingent value" in title else 0.5,
+                        })
+                        break
+
+                for kw in self._PHARMA_KEYWORDS:
+                    if kw in title:
+                        events.append({
+                            "ticker": ticker,
+                            "event_type": "PHARMA_MILESTONE",
+                            "headline": str(row.get("title", title)),
+                            "date": date,
+                            "source": "SEC_8K",
+                            "keyword_match": kw,
+                            "confidence": 0.7,
+                        })
+                        break
+
+                for kw in self._RESTRUCTURING_KEYWORDS:
+                    if kw in title:
+                        events.append({
+                            "ticker": ticker,
+                            "event_type": "RESTRUCTURING",
+                            "headline": str(row.get("title", title)),
+                            "date": date,
+                            "source": "SEC_8K",
+                            "keyword_match": kw,
+                            "confidence": 0.6,
+                        })
+                        break
+        except Exception:
+            pass
+        return events
+
+    def _scan_news(self, ticker: str) -> List[dict]:
+        """Scan company news for CVR-related catalysts."""
+        events = []
+        try:
+            news = get_company_news(ticker, limit=15, provider="fmp")
+            if news.empty:
+                return events
+
+            for _, row in news.iterrows():
+                title = str(row.get("title", "") or "").lower()
+                date = str(row.get("date", "") or row.get("published_utc", "") or "")
+
+                all_keywords = self._MERGER_KEYWORDS + self._PHARMA_KEYWORDS + self._RESTRUCTURING_KEYWORDS
+                for kw in all_keywords:
+                    if kw in title:
+                        if kw in self._PHARMA_KEYWORDS:
+                            etype = "PHARMA_MILESTONE"
+                        elif kw in self._RESTRUCTURING_KEYWORDS:
+                            etype = "RESTRUCTURING"
+                        else:
+                            etype = "MERGER_CVR"
+                        events.append({
+                            "ticker": ticker,
+                            "event_type": etype,
+                            "headline": str(row.get("title", "")),
+                            "date": date,
+                            "source": "NEWS",
+                            "keyword_match": kw,
+                            "confidence": 0.6,
+                        })
+                        break
+        except Exception:
+            pass
+        return events
+
+    def refresh_catalog_prices(self):
+        """Update underlying prices in the catalog from live data."""
+        import pandas as pd
+        for inst in self.catalog:
+            # Extract underlying ticker from CVR ticker (e.g., BIIB_CVR → BIIB)
+            underlying = inst.ticker.split("_")[0]
+            try:
+                start = (pd.Timestamp.now() - pd.Timedelta(days=30)).strftime("%Y-%m-%d")
+                prices = get_adj_close(underlying, start=start)
+                if not prices.empty:
+                    price = float(
+                        prices.iloc[-1].iloc[0]
+                        if hasattr(prices.iloc[-1], "iloc")
+                        else prices.iloc[-1]
+                    )
+                    if price > 0:
+                        old_price = inst.underlying_price
+                        inst.underlying_price = price
+                        # Update vol from recent returns
+                        if len(prices) > 10:
+                            flat = prices.values.flatten() if hasattr(prices, "values") else prices
+                            rets = np.diff(np.log(flat[flat > 0]))
+                            if len(rets) > 5:
+                                inst.underlying_vol = float(np.std(rets) * np.sqrt(252))
+                        logger.debug("%s price updated: $%.2f → $%.2f", underlying, old_price, price)
+            except Exception as e:
+                logger.debug("Price refresh failed for %s: %s", underlying, e)
+
+    def update_milestone_from_news(self, ticker: str, events: List[dict]):
+        """Update milestone completion flags based on discovered news events.
+
+        If news/filings indicate a milestone has been reached (e.g., "FDA approval",
+        "Phase III results positive"), mark the corresponding milestone as completed
+        and adjust the conditional probability upward.
+        """
+        matching = [inst for inst in self.catalog if inst.ticker.startswith(ticker)]
+        if not matching:
+            return
+
+        inst = matching[0]
+        for event in events:
+            headline = event.get("headline", "").lower()
+            for ms in inst.milestones:
+                if ms.completed:
+                    continue
+                ms_name_lower = ms.name.lower()
+                # Check if headline indicates this milestone was reached
+                if any(word in headline for word in ms_name_lower.split()):
+                    if event.get("confidence", 0) >= 0.6:
+                        ms.completed = True
+                        ms.conditional_prob = min(ms.conditional_prob * 1.2, 0.95)
+                        logger.info("CVR milestone updated: %s / %s → COMPLETED (from: %s)",
+                                    ticker, ms.name, event.get("source", ""))
+                        break
+
+    def discover_and_refresh(self):
+        """Full CVR discovery cycle: scan events, refresh prices, update milestones.
+
+        Called by the pipeline at Stage 3.85 before analyze().
+        """
+        # 1. Refresh underlying prices from live data
+        self.refresh_catalog_prices()
+
+        # 2. Scan for new CVR events
+        events = self.scan_for_cvr_events()
+
+        # 3. Update milestones from discovered events
+        for event in events:
+            self.update_milestone_from_news(event["ticker"], [event])
+
+        # 4. Mark as needing re-analysis
+        self._analyzed = False
+
+        return {
+            "events_found": len(events),
+            "catalog_size": len(self.catalog),
+            "prices_refreshed": True,
+        }
 
     # -----------------------------------------------------------------------
     # Report

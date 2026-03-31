@@ -1659,11 +1659,15 @@ class ExecutionEngine:
         result["stages"]["distressed_assets"] = distress_data
         self.tracker.record_stage("distressed_assets", (datetime.now() - t0).total_seconds() * 1000, distress_data)
 
-        # Stage 3.85: CVR analysis
+        # Stage 3.85: CVR analysis (with dynamic discovery)
         t0 = datetime.now()
         cvr_data = {}
         if self.cvr:
             try:
+                # Dynamic discovery: scan news/filings, refresh prices, update milestones
+                discovery = self.cvr.discover_and_refresh()
+                cvr_data["discovery"] = discovery
+                # Then run the 5-model valuation ensemble
                 self.cvr.analyze()
                 cvr_signals = self.cvr.get_trading_signals()
                 self.ensemble.set_cvr_signals(cvr_signals)
