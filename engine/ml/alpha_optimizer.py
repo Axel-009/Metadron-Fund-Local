@@ -55,7 +55,7 @@ QUALITY_TIERS = {
 }
 
 # Alpha target - seeking alpha >= 2%
-ALPHA_TARGET = 0.02
+ALPHA_TARGET = 0.05
 TRANSACTION_COST = 0.001
 MAX_TURNOVER = 0.50
 
@@ -716,7 +716,7 @@ class MeanVarianceOptimizer:
 
     def __init__(
         self,
-        max_position: float = 0.40,
+        max_position: float = 0.50,
         min_position: float = 0.0,
         max_turnover: float = MAX_TURNOVER,
         transaction_cost: float = TRANSACTION_COST,
