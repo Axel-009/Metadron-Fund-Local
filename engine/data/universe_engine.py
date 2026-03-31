@@ -858,27 +858,37 @@ class UniverseEngine:
             logger.warning(f"Failed to load fundamentals: {e}")
 
     def enrich_with_returns(self, lookback_days: int = 365):
+        """Compute Sharpe + momentum from price history.
+        Fetches in batches of 350 to avoid API timeouts."""
         tickers = [s.ticker for s in self._equities]
-        try:
-            start = (pd.Timestamp.now() - pd.Timedelta(days=lookback_days + 30)).strftime("%Y-%m-%d")
-            prices = get_adj_close(tickers, start=start)
-            if prices.empty:
-                return
-            returns = prices.pct_change().dropna()
-            for sec in self._equities:
-                if sec.ticker not in returns.columns:
-                    continue
-                r = returns[sec.ticker].dropna()
-                if len(r) < 60:
-                    continue
-                sec.momentum_3m = float((1 + r.iloc[-63:]).prod() - 1) if len(r) >= 63 else 0
-                sec.momentum_12m = float((1 + r.iloc[-252:]).prod() - 1) if len(r) >= 252 else 0
-                ann_ret = float(r.mean() * 252)
-                ann_vol = float(r.std() * np.sqrt(252))
-                sec.sharpe_12m = ann_ret / ann_vol if ann_vol > 0 else 0
-                sec.last_updated = datetime.now().isoformat()
-        except Exception as e:
-            logger.warning(f"Failed to enrich returns: {e}")
+        start = (pd.Timestamp.now() - pd.Timedelta(days=lookback_days + 30)).strftime("%Y-%m-%d")
+
+        batch_size = 350
+        all_prices = pd.DataFrame()
+        for i in range(0, len(tickers), batch_size):
+            batch = tickers[i:i + batch_size]
+            try:
+                prices = get_adj_close(batch, start=start)
+                if not prices.empty:
+                    all_prices = pd.concat([all_prices, prices], axis=1)
+            except Exception as e:
+                logger.warning(f"Batch {i//batch_size} fetch failed: {e}")
+
+        if all_prices.empty:
+            return
+        returns = all_prices.pct_change().dropna()
+        for sec in self._equities:
+            if sec.ticker not in returns.columns:
+                continue
+            r = returns[sec.ticker].dropna()
+            if len(r) < 60:
+                continue
+            sec.momentum_3m = float((1 + r.iloc[-63:]).prod() - 1) if len(r) >= 63 else 0
+            sec.momentum_12m = float((1 + r.iloc[-252:]).prod() - 1) if len(r) >= 252 else 0
+            ann_ret = float(r.mean() * 252)
+            ann_vol = float(r.std() * np.sqrt(252))
+            sec.sharpe_12m = ann_ret / ann_vol if ann_vol > 0 else 0
+            sec.last_updated = datetime.now().isoformat()
 
     def screen(self, sectors: Optional[list[str]] = None, min_market_cap: Optional[float] = None,
                max_market_cap: Optional[float] = None, quality_tiers: Optional[list[str]] = None,
