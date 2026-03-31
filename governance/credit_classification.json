@@ -1,0 +1,1756 @@
+{
+  "ratings": {
+    "ABT": {
+      "rating": "A+",
+      "date": "2024-01-11"
+    },
+    "ABBV": {
+      "rating": "BBB-",
+      "date": "2024-03-15"
+    },
+    "ADBE": {
+      "rating": "AA-",
+      "date": "2023-09-07"
+    },
+    "AAP": {
+      "rating": "BBB",
+      "date": "2023-10-31"
+    },
+    "AES": {
+      "rating": "BB",
+      "date": "2024-03-14"
+    },
+    "AFL": {
+      "rating": "A+",
+      "date": "2023-09-28"
+    },
+    "AGCO": {
+      "rating": "BBB-",
+      "date": "2017-12-27"
+    },
+    "A": {
+      "rating": "A+",
+      "date": "2024-03-22"
+    },
+    "APD": {
+      "rating": "A+",
+      "date": "2023-11-21"
+    },
+    "ABNB": {
+      "rating": "BB",
+      "date": "2024-02-09"
+    },
+    "AKAM": {
+      "rating": "A-",
+      "date": "2024-02-12"
+    },
+    "ALB": {
+      "rating": "BBB+",
+      "date": "2023-11-16"
+    },
+    "ARE": {
+      "rating": "A",
+      "date": "2023-06-30"
+    },
+    "BABA": {
+      "rating": "AA-",
+      "date": "2023-11-14"
+    },
+    "ATI": {
+      "rating": "B+",
+      "date": "2024-03-08"
+    },
+    "LNT": {
+      "rating": "BBB",
+      "date": "2023-11-27"
+    },
+    "ALL": {
+      "rating": "BBB+",
+      "date": "2024-03-18"
+    },
+    "ALLY": {
+      "rating": "BBB",
+      "date": "2023-09-19"
+    },
+    "MO": {
+      "rating": "BBB+",
+      "date": "2024-03-25"
+    },
+    "AMZN": {
+      "rating": "A+",
+      "date": "2024-01-10"
+    },
+    "AAL": {
+      "rating": "B-",
+      "date": "2023-11-09"
+    },
+    "AEP": {
+      "rating": "BBB+",
+      "date": "2024-01-10"
+    },
+    "AXP": {
+      "rating": "A",
+      "date": "2024-03-21"
+    },
+    "AIG": {
+      "rating": "BBB",
+      "date": "2024-01-10"
+    },
+    "AMT": {
+      "rating": "BBB+",
+      "date": "2024-01-10"
+    },
+    "AWK": {
+      "rating": "BBB+",
+      "date": "2024-02-27"
+    },
+    "ABCB": {
+      "rating": "A-",
+      "date": "2023-10-02"
+    },
+    "AME": {
+      "rating": "A-",
+      "date": "2021-02-17"
+    },
+    "AMGN": {
+      "rating": "BBB+",
+      "date": "2024-01-10"
+    },
+    "ADI": {
+      "rating": "A-",
+      "date": "2024-01-10"
+    },
+    "AON": {
+      "rating": "A-",
+      "date": "2023-10-02"
+    },
+    "APA": {
+      "rating": "BBB-",
+      "date": "2023-12-05"
+    },
+    "AAPL": {
+      "rating": "A+",
+      "date": "2024-03-06"
+    },
+    "AMAT": {
+      "rating": "A+",
+      "date": "2024-03-22"
+    },
+    "ARMK": {
+      "rating": "B",
+      "date": "2024-01-17"
+    },
+    "ADM": {
+      "rating": "A+",
+      "date": "2024-01-24"
+    },
+    "ABG": {
+      "rating": "BBB-",
+      "date": "2023-12-26"
+    },
+    "ASB": {
+      "rating": "BBB+",
+      "date": "2023-09-28"
+    },
+    "AIZ": {
+      "rating": "BBB",
+      "date": "2024-02-26"
+    },
+    "AGO": {
+      "rating": "A-",
+      "date": "2023-09-13"
+    },
+    "ATO": {
+      "rating": "A+",
+      "date": "2024-01-25"
+    },
+    "T": {
+      "rating": "BBB",
+      "date": "2024-03-12"
+    },
+    "ADP": {
+      "rating": "AA",
+      "date": "2023-10-02"
+    },
+    "AZO": {
+      "rating": "BBB+",
+      "date": "2024-01-18"
+    },
+    "AVB": {
+      "rating": "A-",
+      "date": "2023-12-29"
+    },
+    "AVY": {
+      "rating": "BBB+",
+      "date": "2023-09-28"
+    },
+    "AVA": {
+      "rating": "A",
+      "date": "2023-12-01"
+    },
+    "BAC": {
+      "rating": "A-",
+      "date": "2023-09-28"
+    },
+    "BK": {
+      "rating": "A",
+      "date": "2024-01-10"
+    },
+    "OZK": {
+      "rating": "BBB+",
+      "date": "2023-11-29"
+    },
+    "BAX": {
+      "rating": "BBB-",
+      "date": "2024-01-10"
+    },
+    "BDX": {
+      "rating": "BBB-",
+      "date": "2023-07-21"
+    },
+    "BBY": {
+      "rating": "BBB+",
+      "date": "2020-12-17"
+    },
+    "BGS": {
+      "rating": "B",
+      "date": "2024-03-19"
+    },
+    "BIO": {
+      "rating": "A-",
+      "date": "2020-11-12"
+    },
+    "BIIB": {
+      "rating": "A-",
+      "date": "2023-09-27"
+    },
+    "BMRN": {
+      "rating": "BB",
+      "date": "2023-10-23"
+    },
+    "BKH": {
+      "rating": "BBB+",
+      "date": "2023-09-05"
+    },
+    "BLK": {
+      "rating": "AA-",
+      "date": "2023-12-12"
+    },
+    "SQ": {
+      "rating": "BB",
+      "date": "2024-01-12"
+    },
+    "BA": {
+      "rating": "B+",
+      "date": "2024-01-30"
+    },
+    "BCC": {
+      "rating": "BB-",
+      "date": "2020-08-17"
+    },
+    "BWA": {
+      "rating": "A-",
+      "date": "2024-03-04"
+    },
+    "BSX": {
+      "rating": "BBB-",
+      "date": "2024-01-25"
+    },
+    "BYD": {
+      "rating": "BB-",
+      "date": "2023-12-15"
+    },
+    "EAT": {
+      "rating": "B",
+      "date": "2024-02-26"
+    },
+    "BMY": {
+      "rating": "A",
+      "date": "2024-01-10"
+    },
+    "BC": {
+      "rating": "A-",
+      "date": "2024-01-25"
+    },
+    "BG": {
+      "rating": "A-",
+      "date": "2023-07-31"
+    },
+    "BXP": {
+      "rating": "BBB+",
+      "date": "2024-01-10"
+    },
+    "CBT": {
+      "rating": "BBB-",
+      "date": "2024-03-08"
+    },
+    "CADE": {
+      "rating": "A-",
+      "date": "2021-01-07"
+    },
+    "CDNS": {
+      "rating": "AA-",
+      "date": "2023-08-01"
+    },
+    "CZR": {
+      "rating": "B",
+      "date": "2017-11-17"
+    },
+    "CAL": {
+      "rating": "BB",
+      "date": "2019-12-05"
+    },
+    "CPT": {
+      "rating": "A-",
+      "date": "2024-02-27"
+    },
+    "COF": {
+      "rating": "A",
+      "date": "2024-03-25"
+    },
+    "CCL": {
+      "rating": "CCC+",
+      "date": "2024-02-06"
+    },
+    "CAT": {
+      "rating": "A-",
+      "date": "2023-09-28"
+    },
+    "CBL": {
+      "rating": "D",
+      "date": "2020-09-01"
+    },
+    "CE": {
+      "rating": "BBB+",
+      "date": "2023-10-10"
+    },
+    "CNP": {
+      "rating": "BBB",
+      "date": "2024-02-22"
+    },
+    "CENT": {
+      "rating": "BB+",
+      "date": "2017-12-07"
+    },
+    "CF": {
+      "rating": "BB+",
+      "date": "2020-05-28"
+    },
+    "SCHW": {
+      "rating": "A-",
+      "date": "2023-04-26"
+    },
+    "CHTR": {
+      "rating": "BB+",
+      "date": "2021-05-14"
+    },
+    "CAKE": {
+      "rating": "B-",
+      "date": "2024-02-07"
+    },
+    "CC": {
+      "rating": "BB+",
+      "date": "2023-09-29"
+    },
+    "CVX": {
+      "rating": "AA",
+      "date": "2024-03-21"
+    },
+    "CB": {
+      "rating": "A",
+      "date": "2023-12-14"
+    },
+    "CIEN": {
+      "rating": "BBB",
+      "date": "2020-06-11"
+    },
+    "CINF": {
+      "rating": "A-",
+      "date": "2023-09-28"
+    },
+    "CTAS": {
+      "rating": "A+",
+      "date": "2024-02-06"
+    },
+    "CSCO": {
+      "rating": "AA-",
+      "date": "2024-03-01"
+    },
+    "CFG": {
+      "rating": "BBB+",
+      "date": "2024-01-10"
+    },
+    "CLH": {
+      "rating": "BB+",
+      "date": "2023-11-14"
+    },
+    "CLF": {
+      "rating": "BBB",
+      "date": "2024-01-26"
+    },
+    "CLX": {
+      "rating": "BBB",
+      "date": "2024-02-21"
+    },
+    "CMS": {
+      "rating": "BB+",
+      "date": "2024-02-12"
+    },
+    "CNX": {
+      "rating": "CC",
+      "date": "2020-08-11"
+    },
+    "COKE": {
+      "rating": "BBB",
+      "date": "2019-08-12"
+    },
+    "KO": {
+      "rating": "A",
+      "date": "2024-01-10"
+    },
+    "IIVI": {
+      "rating": "BB+",
+      "date": "2022-07-29"
+    },
+    "CL": {
+      "rating": "A",
+      "date": "2024-01-25"
+    },
+    "CMCSA": {
+      "rating": "BBB",
+      "date": "2024-01-10"
+    },
+    "CMC": {
+      "rating": "A-",
+      "date": "2023-01-18"
+    },
+    "CBU": {
+      "rating": "BBB",
+      "date": "2024-01-18"
+    },
+    "CAG": {
+      "rating": "BBB-",
+      "date": "2024-01-10"
+    },
+    "COP": {
+      "rating": "AA-",
+      "date": "2024-03-01"
+    },
+    "ED": {
+      "rating": "BBB",
+      "date": "2024-01-16"
+    },
+    "STZ": {
+      "rating": "BBB-",
+      "date": "2023-09-18"
+    },
+    "COST": {
+      "rating": "AA",
+      "date": "2017-12-19"
+    },
+    "CACC": {
+      "rating": "BB-",
+      "date": "2020-04-23"
+    },
+    "CCI": {
+      "rating": "A-",
+      "date": "2024-03-07"
+    },
+    "CSX": {
+      "rating": "A-",
+      "date": "2024-03-12"
+    },
+    "CUBE": {
+      "rating": "BBB+",
+      "date": "2023-11-20"
+    },
+    "CYT": {
+      "rating": "A-",
+      "date": "2015-10-28"
+    },
+    "DHR": {
+      "rating": "BBB+",
+      "date": "2024-03-11"
+    },
+    "DRI": {
+      "rating": "BBB",
+      "date": "2024-01-30"
+    },
+    "DE": {
+      "rating": "BBB",
+      "date": "2024-02-12"
+    },
+    "DAL": {
+      "rating": "BB",
+      "date": "2024-03-06"
+    },
+    "DVN": {
+      "rating": "BBB+",
+      "date": "2024-02-26"
+    },
+    "DXCM": {
+      "rating": "BBB-",
+      "date": "2024-02-06"
+    },
+    "FANG": {
+      "rating": "BBB",
+      "date": "2024-01-05"
+    },
+    "DLR": {
+      "rating": "BBB",
+      "date": "2023-12-11"
+    },
+    "DFS": {
+      "rating": "BBB",
+      "date": "2024-01-10"
+    },
+    "DG": {
+      "rating": "BBB+",
+      "date": "2024-01-10"
+    },
+    "D": {
+      "rating": "BBB",
+      "date": "2024-03-22"
+    },
+    "DOV": {
+      "rating": "A",
+      "date": "2023-11-08"
+    },
+    "DOW": {
+      "rating": "BBB",
+      "date": "2024-02-22"
+    },
+    "DHI": {
+      "rating": "AA-",
+      "date": "2024-01-03"
+    },
+    "DTE": {
+      "rating": "BBB",
+      "date": "2024-02-22"
+    },
+    "DUK": {
+      "rating": "A",
+      "date": "2024-01-10"
+    },
+    "DD": {
+      "rating": "BBB-",
+      "date": "2020-04-08"
+    },
+    "EMN": {
+      "rating": "BBB",
+      "date": "2024-02-21"
+    },
+    "ETN": {
+      "rating": "A-",
+      "date": "2023-12-13"
+    },
+    "EBAY": {
+      "rating": "BBB+",
+      "date": "2024-03-21"
+    },
+    "ECL": {
+      "rating": "BBB+",
+      "date": "2023-10-19"
+    },
+    "LLY": {
+      "rating": "A",
+      "date": "2024-03-04"
+    },
+    "EMR": {
+      "rating": "A",
+      "date": "2024-02-23"
+    },
+    "ET": {
+      "rating": "BBB-",
+      "date": "2024-02-20"
+    },
+    "NPO": {
+      "rating": "BB-",
+      "date": "2020-05-20"
+    },
+    "EOG": {
+      "rating": "A+",
+      "date": "2023-11-21"
+    },
+    "EQT": {
+      "rating": "BBB-",
+      "date": "2023-11-14"
+    },
+    "EFX": {
+      "rating": "BBB",
+      "date": "2024-01-10"
+    },
+    "EQIX": {
+      "rating": "BB-",
+      "date": "2021-05-10"
+    },
+    "EQR": {
+      "rating": "A-",
+      "date": "2023-08-31"
+    },
+    "ESS": {
+      "rating": "A-",
+      "date": "2023-09-12"
+    },
+    "EL": {
+      "rating": "A",
+      "date": "2024-02-20"
+    },
+    "ETSY": {
+      "rating": "BB+",
+      "date": "2023-11-15"
+    },
+    "RE": {
+      "rating": "BBB+",
+      "date": "2024-01-12"
+    },
+    "ES": {
+      "rating": "A+",
+      "date": "2024-01-10"
+    },
+    "EXAS": {
+      "rating": "CCC+",
+      "date": "2023-09-13"
+    },
+    "EXC": {
+      "rating": "BBB",
+      "date": "2024-01-10"
+    },
+    "EXPE": {
+      "rating": "A-",
+      "date": "2019-09-17"
+    },
+    "XOM": {
+      "rating": "AA-",
+      "date": "2023-12-01"
+    },
+    "FRT": {
+      "rating": "BBB+",
+      "date": "2023-11-21"
+    },
+    "FDX": {
+      "rating": "BBB+",
+      "date": "2019-07-05"
+    },
+    "FIS": {
+      "rating": "BB+",
+      "date": "2024-02-15"
+    },
+    "FITB": {
+      "rating": "BBB+",
+      "date": "2024-01-10"
+    },
+    "FHN": {
+      "rating": "BBB+",
+      "date": "2020-10-28"
+    },
+    "FR": {
+      "rating": "A-",
+      "date": "2023-11-08"
+    },
+    "FE": {
+      "rating": "BB",
+      "date": "2024-02-01"
+    },
+    "FISV": {
+      "rating": "BB+",
+      "date": "2024-02-13"
+    },
+    "FLO": {
+      "rating": "BBB+",
+      "date": "2024-01-10"
+    },
+    "FLR": {
+      "rating": "B",
+      "date": "2023-11-27"
+    },
+    "FMC": {
+      "rating": "BBB+",
+      "date": "2023-11-16"
+    },
+    "FL": {
+      "rating": "BBB-",
+      "date": "2022-01-11"
+    },
+    "F": {
+      "rating": "B+",
+      "date": "2024-01-10"
+    },
+    "FCX": {
+      "rating": "BBB+",
+      "date": "2023-09-25"
+    },
+    "FULT": {
+      "rating": "BB+",
+      "date": "2023-11-15"
+    },
+    "IT": {
+      "rating": "BBB+",
+      "date": "2019-06-27"
+    },
+    "GD": {
+      "rating": "BBB+",
+      "date": "2023-10-02"
+    },
+    "GE": {
+      "rating": "BB+",
+      "date": "2024-02-16"
+    },
+    "GIS": {
+      "rating": "BBB+",
+      "date": "2024-01-05"
+    },
+    "GM": {
+      "rating": "BBB",
+      "date": "2024-01-05"
+    },
+    "GABC": {
+      "rating": "BBB+",
+      "date": "2022-05-05"
+    },
+    "GILD": {
+      "rating": "BBB+",
+      "date": "2020-11-09"
+    },
+    "GL": {
+      "rating": "A",
+      "date": "2023-11-15"
+    },
+    "GS": {
+      "rating": "BBB+",
+      "date": "2023-09-12"
+    },
+    "GPK": {
+      "rating": "BB",
+      "date": "2021-02-12"
+    },
+    "GPRE": {
+      "rating": "B-",
+      "date": "2023-04-12"
+    },
+    "GBX": {
+      "rating": "BB-",
+      "date": "2024-01-26"
+    },
+    "GEF": {
+      "rating": "BB+",
+      "date": "2019-09-06"
+    },
+    "GPOR": {
+      "rating": "D",
+      "date": "2020-11-16"
+    },
+    "HAL": {
+      "rating": "BB+",
+      "date": "2023-09-28"
+    },
+    "HALO": {
+      "rating": "BB+",
+      "date": "2024-02-27"
+    },
+    "THG": {
+      "rating": "BBB",
+      "date": "2023-12-08"
+    },
+    "HAS": {
+      "rating": "BB",
+      "date": "2023-10-02"
+    },
+    "HCA": {
+      "rating": "BB+",
+      "date": "2024-01-30"
+    },
+    "HLX": {
+      "rating": "CCC+",
+      "date": "2023-03-22"
+    },
+    "HLF": {
+      "rating": "BB-",
+      "date": "2023-10-03"
+    },
+    "HSY": {
+      "rating": "A+",
+      "date": "2023-11-07"
+    },
+    "HES": {
+      "rating": "BBB-",
+      "date": "2024-02-01"
+    },
+    "HPE": {
+      "rating": "BBB",
+      "date": "2023-08-25"
+    },
+    "HXL": {
+      "rating": "BB+",
+      "date": "2023-09-21"
+    },
+    "HTH": {
+      "rating": "A",
+      "date": "2022-08-09"
+    },
+    "HLT": {
+      "rating": "BB+",
+      "date": "2017-10-30"
+    },
+    "HOLX": {
+      "rating": "B+",
+      "date": "2020-05-07"
+    },
+    "HD": {
+      "rating": "A",
+      "date": "2024-01-10"
+    },
+    "HON": {
+      "rating": "A-",
+      "date": "2023-12-14"
+    },
+    "HOPE": {
+      "rating": "BBB",
+      "date": "2023-08-17"
+    },
+    "HMN": {
+      "rating": "BBB-",
+      "date": "2024-02-21"
+    },
+    "HRL": {
+      "rating": "A+",
+      "date": "2021-03-12"
+    },
+    "HPQ": {
+      "rating": "BBB+",
+      "date": "2023-05-05"
+    },
+    "HUBB": {
+      "rating": "A",
+      "date": "2024-01-10"
+    },
+    "HUM": {
+      "rating": "A",
+      "date": "2023-11-09"
+    },
+    "HBAN": {
+      "rating": "BBB",
+      "date": "2022-05-04"
+    },
+    "IEX": {
+      "rating": "A",
+      "date": "2020-05-01"
+    },
+    "ITW": {
+      "rating": "A+",
+      "date": "2024-02-21"
+    },
+    "ILMN": {
+      "rating": "BBB+",
+      "date": "2021-05-03"
+    },
+    "IR": {
+      "rating": "BBB-",
+      "date": "2020-05-27"
+    },
+    "INGR": {
+      "rating": "BBB+",
+      "date": "2024-03-14"
+    },
+    "IART": {
+      "rating": "BB",
+      "date": "2024-02-27"
+    },
+    "INTC": {
+      "rating": "A-",
+      "date": "2020-05-08"
+    },
+    "ICE": {
+      "rating": "A-",
+      "date": "2023-11-09"
+    },
+    "IDCC": {
+      "rating": "BB+",
+      "date": "2024-01-16"
+    },
+    "IBM": {
+      "rating": "BBB+",
+      "date": "2024-03-15"
+    },
+    "IFF": {
+      "rating": "BBB-",
+      "date": "2023-04-14"
+    },
+    "IP": {
+      "rating": "BBB",
+      "date": "2024-03-22"
+    },
+    "IPG": {
+      "rating": "BBB",
+      "date": "2024-03-25"
+    },
+    "INTU": {
+      "rating": "A+",
+      "date": "2017-12-21"
+    },
+    "IONS": {
+      "rating": "B",
+      "date": "2023-10-30"
+    },
+    "IRM": {
+      "rating": "BB",
+      "date": "2023-12-04"
+    },
+    "JBHT": {
+      "rating": "AA-",
+      "date": "2018-01-23"
+    },
+    "SJM": {
+      "rating": "BBB+",
+      "date": "2024-02-27"
+    },
+    "JBT": {
+      "rating": "A-",
+      "date": "2023-11-15"
+    },
+    "JNJ": {
+      "rating": "AA",
+      "date": "2023-12-22"
+    },
+    "JPM": {
+      "rating": "A-",
+      "date": "2024-01-24"
+    },
+    "JNPR": {
+      "rating": "BBB",
+      "date": "2023-06-26"
+    },
+    "KMPR": {
+      "rating": "BBB-",
+      "date": "2017-11-22"
+    },
+    "KEY": {
+      "rating": "BB+",
+      "date": "2023-12-13"
+    },
+    "KRC": {
+      "rating": "A-",
+      "date": "2023-09-27"
+    },
+    "KMB": {
+      "rating": "A-",
+      "date": "2023-12-26"
+    },
+    "KIM": {
+      "rating": "BBB",
+      "date": "2023-12-05"
+    },
+    "KMI": {
+      "rating": "A-",
+      "date": "2023-10-03"
+    },
+    "KLAC": {
+      "rating": "BBB+",
+      "date": "2018-02-01"
+    },
+    "KHC": {
+      "rating": "BB+",
+      "date": "2023-08-16"
+    },
+    "KR": {
+      "rating": "A-",
+      "date": "2023-08-21"
+    },
+    "LHX": {
+      "rating": "BBB",
+      "date": "2023-11-08"
+    },
+    "LH": {
+      "rating": "BBB+",
+      "date": "2023-11-07"
+    },
+    "LEA": {
+      "rating": "BBB",
+      "date": "2023-11-08"
+    },
+    "LEG": {
+      "rating": "BBB-",
+      "date": "2024-01-09"
+    },
+    "LEN": {
+      "rating": "A",
+      "date": "2023-09-01"
+    },
+    "LSI": {
+      "rating": "BBB+",
+      "date": "2023-05-16"
+    },
+    "LIN": {
+      "rating": "A-",
+      "date": "2020-07-20"
+    },
+    "LYV": {
+      "rating": "B",
+      "date": "2023-12-07"
+    },
+    "LMT": {
+      "rating": "A+",
+      "date": "2023-11-09"
+    },
+    "L": {
+      "rating": "BBB-",
+      "date": "2023-10-30"
+    },
+    "LOW": {
+      "rating": "BBB+",
+      "date": "2024-02-13"
+    },
+    "MRO": {
+      "rating": "BBB",
+      "date": "2024-02-16"
+    },
+    "MPC": {
+      "rating": "BBB+",
+      "date": "2024-02-14"
+    },
+    "MAR": {
+      "rating": "BB+",
+      "date": "2020-05-29"
+    },
+    "MMC": {
+      "rating": "BBB+",
+      "date": "2023-10-16"
+    },
+    "MLM": {
+      "rating": "BBB+",
+      "date": "2024-03-25"
+    },
+    "MAS": {
+      "rating": "BBB",
+      "date": "2023-06-26"
+    },
+    "MTZ": {
+      "rating": "BB",
+      "date": "2020-08-14"
+    },
+    "MA": {
+      "rating": "AA-",
+      "date": "2024-01-05"
+    },
+    "MKC": {
+      "rating": "BBB+",
+      "date": "2024-03-26"
+    },
+    "MCD": {
+      "rating": "BBB-",
+      "date": "2024-02-13"
+    },
+    "MDT": {
+      "rating": "A-",
+      "date": "2024-02-07"
+    },
+    "MRK": {
+      "rating": "A",
+      "date": "2024-02-01"
+    },
+    "MET": {
+      "rating": "BB+",
+      "date": "2023-10-18"
+    },
+    "MGM": {
+      "rating": "B",
+      "date": "2024-01-02"
+    },
+    "MCHP": {
+      "rating": "BB+",
+      "date": "2023-11-22"
+    },
+    "MSFT": {
+      "rating": "AA",
+      "date": "2023-12-26"
+    },
+    "MAA": {
+      "rating": "A-",
+      "date": "2023-09-13"
+    },
+    "MIDD": {
+      "rating": "A-",
+      "date": "2024-03-15"
+    },
+    "TAP": {
+      "rating": "BBB-",
+      "date": "2024-02-08"
+    },
+    "MDLZ": {
+      "rating": "A",
+      "date": "2024-02-15"
+    },
+    "MCO": {
+      "rating": "BBB+",
+      "date": "2020-07-01"
+    },
+    "MS": {
+      "rating": "BBB+",
+      "date": "2023-08-31"
+    },
+    "MOS": {
+      "rating": "A",
+      "date": "2023-12-05"
+    },
+    "MTB": {
+      "rating": "BBB",
+      "date": "2023-09-15"
+    },
+    "NDAQ": {
+      "rating": "BBB",
+      "date": "2020-05-04"
+    },
+    "NKTR": {
+      "rating": "CCC+",
+      "date": "2024-01-16"
+    },
+    "NFLX": {
+      "rating": "BBB",
+      "date": "2024-02-08"
+    },
+    "NEM": {
+      "rating": "BBB+",
+      "date": "2024-03-25"
+    },
+    "NWS": {
+      "rating": "A-",
+      "date": "2015-01-16"
+    },
+    "NEE": {
+      "rating": "A-",
+      "date": "2024-01-18"
+    },
+    "NKE": {
+      "rating": "A",
+      "date": "2024-02-08"
+    },
+    "NI": {
+      "rating": "BBB-",
+      "date": "2023-11-09"
+    },
+    "NNN": {
+      "rating": "BBB+",
+      "date": "2020-07-01"
+    },
+    "NSC": {
+      "rating": "BBB+",
+      "date": "2023-12-14"
+    },
+    "NTRS": {
+      "rating": "A",
+      "date": "2023-01-24"
+    },
+    "NOC": {
+      "rating": "A-",
+      "date": "2024-02-13"
+    },
+    "NWE": {
+      "rating": "A",
+      "date": "2024-03-28"
+    },
+    "NRG": {
+      "rating": "A-",
+      "date": "2024-02-05"
+    },
+    "NUE": {
+      "rating": "A+",
+      "date": "2024-01-29"
+    },
+    "NVDA": {
+      "rating": "A",
+      "date": "2019-09-18"
+    },
+    "NVR": {
+      "rating": "A",
+      "date": "2023-09-27"
+    },
+    "OI": {
+      "rating": "B+",
+      "date": "2019-08-16"
+    },
+    "OXY": {
+      "rating": "BBB-",
+      "date": "2023-12-12"
+    },
+    "OGE": {
+      "rating": "A-",
+      "date": "2023-08-21"
+    },
+    "ORI": {
+      "rating": "A",
+      "date": "2019-09-23"
+    },
+    "OLN": {
+      "rating": "BBB",
+      "date": "2023-08-10"
+    },
+    "OHI": {
+      "rating": "BBB",
+      "date": "2023-10-02"
+    },
+    "OMC": {
+      "rating": "BBB+",
+      "date": "2024-01-09"
+    },
+    "ON": {
+      "rating": "BBB+",
+      "date": "2023-12-21"
+    },
+    "OKE": {
+      "rating": "BBB-",
+      "date": "2023-11-16"
+    },
+    "ORCL": {
+      "rating": "BBB",
+      "date": "2023-09-01"
+    },
+    "ORLY": {
+      "rating": "A",
+      "date": "2023-10-16"
+    },
+    "OSIS": {
+      "rating": "A-",
+      "date": "2023-02-16"
+    },
+    "OTTR": {
+      "rating": "BBB+",
+      "date": "2021-03-04"
+    },
+    "PCAR": {
+      "rating": "A",
+      "date": "2023-04-03"
+    },
+    "PKG": {
+      "rating": "BBB+",
+      "date": "2023-09-26"
+    },
+    "PACW": {
+      "rating": "BB+",
+      "date": "2023-05-05"
+    },
+    "PANW": {
+      "rating": "BB-",
+      "date": "2023-11-21"
+    },
+    "PH": {
+      "rating": "BBB+",
+      "date": "2024-02-09"
+    },
+    "PATK": {
+      "rating": "BB+",
+      "date": "2023-09-14"
+    },
+    "PEP": {
+      "rating": "A",
+      "date": "2024-01-29"
+    },
+    "PFE": {
+      "rating": "A+",
+      "date": "2023-10-10"
+    },
+    "PM": {
+      "rating": "A",
+      "date": "2023-10-16"
+    },
+    "PSX": {
+      "rating": "BBB+",
+      "date": "2023-12-26"
+    },
+    "PNFP": {
+      "rating": "A-",
+      "date": "2020-05-20"
+    },
+    "PNW": {
+      "rating": "A-",
+      "date": "2024-01-16"
+    },
+    "PNC": {
+      "rating": "A-",
+      "date": "2023-09-15"
+    },
+    "PNM": {
+      "rating": "BBB-",
+      "date": "2024-01-16"
+    },
+    "POST": {
+      "rating": "B",
+      "date": "2024-01-12"
+    },
+    "PPG": {
+      "rating": "BBB+",
+      "date": "2023-09-26"
+    },
+    "PPL": {
+      "rating": "BBB",
+      "date": "2023-11-27"
+    },
+    "PG": {
+      "rating": "AA-",
+      "date": "2024-02-16"
+    },
+    "PRGS": {
+      "rating": "BBB-",
+      "date": "2023-09-15"
+    },
+    "PGR": {
+      "rating": "A",
+      "date": "2023-11-09"
+    },
+    "PLD": {
+      "rating": "A-",
+      "date": "2023-09-29"
+    },
+    "PRU": {
+      "rating": "BB+",
+      "date": "2023-09-18"
+    },
+    "PEG": {
+      "rating": "A-",
+      "date": "2023-12-22"
+    },
+    "PSA": {
+      "rating": "AA-",
+      "date": "2023-12-06"
+    },
+    "PHM": {
+      "rating": "A",
+      "date": "2024-03-01"
+    },
+    "QCOM": {
+      "rating": "A-",
+      "date": "2023-10-10"
+    },
+    "DGX": {
+      "rating": "A+",
+      "date": "2024-01-16"
+    },
+    "RL": {
+      "rating": "BB",
+      "date": "2021-02-17"
+    },
+    "RMBS": {
+      "rating": "B",
+      "date": "2023-05-01"
+    },
+    "RRC": {
+      "rating": "BB",
+      "date": "2023-09-21"
+    },
+    "REG": {
+      "rating": "BBB",
+      "date": "2020-04-22"
+    },
+    "RF": {
+      "rating": "A-",
+      "date": "2024-03-20"
+    },
+    "RS": {
+      "rating": "A",
+      "date": "2024-02-16"
+    },
+    "RNR": {
+      "rating": "BBB",
+      "date": "2023-11-15"
+    },
+    "RSG": {
+      "rating": "BBB",
+      "date": "2023-10-10"
+    },
+    "RFP": {
+      "rating": "B+",
+      "date": "2021-02-18"
+    },
+    "ROK": {
+      "rating": "A-",
+      "date": "2024-01-26"
+    },
+    "ROP": {
+      "rating": "BBB+",
+      "date": "2024-01-05"
+    },
+    "ROST": {
+      "rating": "BBB+",
+      "date": "2023-10-26"
+    },
+    "RCL": {
+      "rating": "B-",
+      "date": "2024-03-07"
+    },
+    "CRM": {
+      "rating": "BB+",
+      "date": "2018-07-09"
+    },
+    "STX": {
+      "rating": "BB",
+      "date": "2023-06-30"
+    },
+    "SEE": {
+      "rating": "BB-",
+      "date": "2023-08-21"
+    },
+    "SIGI": {
+      "rating": "A",
+      "date": "2024-02-28"
+    },
+    "SRE": {
+      "rating": "A-",
+      "date": "2023-10-16"
+    },
+    "SMTC": {
+      "rating": "BBB",
+      "date": "2024-01-02"
+    },
+    "SCI": {
+      "rating": "BBB-",
+      "date": "2024-03-27"
+    },
+    "SHAK": {
+      "rating": "BB-",
+      "date": "2023-10-10"
+    },
+    "SHW": {
+      "rating": "BBB",
+      "date": "2023-10-16"
+    },
+    "SPG": {
+      "rating": "BBB",
+      "date": "2024-02-21"
+    },
+    "SLB": {
+      "rating": "BBB",
+      "date": "2024-02-20"
+    },
+    "SM": {
+      "rating": "BB",
+      "date": "2023-12-01"
+    },
+    "SNA": {
+      "rating": "AA-",
+      "date": "2023-10-02"
+    },
+    "SAH": {
+      "rating": "BB+",
+      "date": "2024-03-11"
+    },
+    "SON": {
+      "rating": "BB+",
+      "date": "2023-12-29"
+    },
+    "SO": {
+      "rating": "BBB",
+      "date": "2023-10-02"
+    },
+    "SCCO": {
+      "rating": "A",
+      "date": "2023-11-07"
+    },
+    "LUV": {
+      "rating": "BBB+",
+      "date": "2024-03-14"
+    },
+    "SWX": {
+      "rating": "BBB-",
+      "date": "2024-02-02"
+    },
+    "SWN": {
+      "rating": "B+",
+      "date": "2023-10-16"
+    },
+    "SE": {
+      "rating": "BBB-",
+      "date": "2017-03-22"
+    },
+    "SRC": {
+      "rating": "BBB+",
+      "date": "2023-09-12"
+    },
+    "SWK": {
+      "rating": "BBB+",
+      "date": "2023-08-11"
+    },
+    "SBUX": {
+      "rating": "BBB+",
+      "date": "2024-01-08"
+    },
+    "STT": {
+      "rating": "A-",
+      "date": "2023-10-16"
+    },
+    "STLD": {
+      "rating": "B+",
+      "date": "2014-05-12"
+    },
+    "SRCL": {
+      "rating": "B+",
+      "date": "2024-02-13"
+    },
+    "SYK": {
+      "rating": "BBB",
+      "date": "2023-11-23"
+    },
+    "SUPN": {
+      "rating": "BBB",
+      "date": "2023-04-17"
+    },
+    "SNV": {
+      "rating": "BB+",
+      "date": "2020-07-23"
+    },
+    "SYY": {
+      "rating": "BB+",
+      "date": "2024-01-30"
+    },
+    "TMUS": {
+      "rating": "BB-",
+      "date": "2024-03-11"
+    },
+    "TALO": {
+      "rating": "BB",
+      "date": "2024-02-16"
+    },
+    "SKT": {
+      "rating": "BBB",
+      "date": "2020-06-15"
+    },
+    "TGT": {
+      "rating": "A+",
+      "date": "2023-11-07"
+    },
+    "TER": {
+      "rating": "A+",
+      "date": "2023-11-20"
+    },
+    "TSLA": {
+      "rating": "A-",
+      "date": "2023-02-22"
+    },
+    "TCBI": {
+      "rating": "BBB-",
+      "date": "2024-02-20"
+    },
+    "TXN": {
+      "rating": "AA-",
+      "date": "2023-09-19"
+    },
+    "TXT": {
+      "rating": "BBB-",
+      "date": "2023-10-06"
+    },
+    "CPB": {
+      "rating": "BBB",
+      "date": "2024-02-29"
+    },
+    "CI": {
+      "rating": "A",
+      "date": "2024-01-10"
+    },
+    "TMO": {
+      "rating": "A",
+      "date": "2024-01-25"
+    },
+    "TJX": {
+      "rating": "A-",
+      "date": "2024-03-08"
+    },
+    "TRV": {
+      "rating": "A+",
+      "date": "2024-02-26"
+    },
+    "THS": {
+      "rating": "B-",
+      "date": "2021-03-04"
+    },
+    "TRMB": {
+      "rating": "BBB+",
+      "date": "2023-09-19"
+    },
+    "TROX": {
+      "rating": "BB+",
+      "date": "2023-05-08"
+    },
+    "TFC": {
+      "rating": "BBB+",
+      "date": "2023-12-05"
+    },
+    "TRMK": {
+      "rating": "BBB+",
+      "date": "2018-01-26"
+    },
+    "TTMI": {
+      "rating": "BB-",
+      "date": "2019-06-06"
+    },
+    "TSN": {
+      "rating": "BBB+",
+      "date": "2024-03-22"
+    },
+    "UDR": {
+      "rating": "BBB",
+      "date": "2024-01-22"
+    },
+    "UNP": {
+      "rating": "A-",
+      "date": "2024-02-13"
+    },
+    "UAL": {
+      "rating": "BB-",
+      "date": "2023-09-18"
+    },
+    "UBSI": {
+      "rating": "A",
+      "date": "2023-12-05"
+    },
+    "UPS": {
+      "rating": "A",
+      "date": "2023-11-30"
+    },
+    "USM": {
+      "rating": "B+",
+      "date": "2024-02-12"
+    },
+    "UNH": {
+      "rating": "A+",
+      "date": "2023-09-13"
+    },
+    "UVV": {
+      "rating": "BBB+",
+      "date": "2017-11-14"
+    },
+    "USB": {
+      "rating": "A-",
+      "date": "2023-09-27"
+    },
+    "VLO": {
+      "rating": "BBB+",
+      "date": "2023-08-03"
+    },
+    "VTR": {
+      "rating": "BBB-",
+      "date": "2024-01-05"
+    },
+    "VRSN": {
+      "rating": "BBB+",
+      "date": "2023-11-15"
+    },
+    "VRSK": {
+      "rating": "BBB",
+      "date": "2023-10-06"
+    },
+    "VZ": {
+      "rating": "BBB+",
+      "date": "2023-10-16"
+    },
+    "VRTX": {
+      "rating": "BBB",
+      "date": "2014-02-10"
+    },
+    "VIAV": {
+      "rating": "BB",
+      "date": "2021-05-10"
+    },
+    "V": {
+      "rating": "AA",
+      "date": "2024-02-08"
+    },
+    "VMC": {
+      "rating": "BBB",
+      "date": "2023-12-14"
+    },
+    "WRB": {
+      "rating": "A-",
+      "date": "2024-03-20"
+    },
+    "WMT": {
+      "rating": "A+",
+      "date": "2023-09-12"
+    },
+    "DIS": {
+      "rating": "BBB+",
+      "date": "2024-03-25"
+    },
+    "WRE": {
+      "rating": "BBB",
+      "date": "2013-08-05"
+    },
+    "WM": {
+      "rating": "BBB",
+      "date": "2023-10-16"
+    },
+    "WBS": {
+      "rating": "A+",
+      "date": "2024-03-28"
+    },
+    "WEC": {
+      "rating": "A",
+      "date": "2024-01-29"
+    },
+    "WFC": {
+      "rating": "BBB",
+      "date": "2023-09-19"
+    },
+    "WSBC": {
+      "rating": "A",
+      "date": "2024-03-25"
+    },
+    "WDC": {
+      "rating": "BB",
+      "date": "2024-01-09"
+    },
+    "WRK": {
+      "rating": "BB+",
+      "date": "2024-03-11"
+    },
+    "WY": {
+      "rating": "BBB",
+      "date": "2023-06-21"
+    },
+    "WMB": {
+      "rating": "BBB-",
+      "date": "2023-11-16"
+    },
+    "K": {
+      "rating": "BBB+",
+      "date": "2023-12-22"
+    },
+    "WWW": {
+      "rating": "B",
+      "date": "2021-09-03"
+    },
+    "WOR": {
+      "rating": "A-",
+      "date": "2023-05-26"
+    },
+    "WSFS": {
+      "rating": "A-",
+      "date": "2021-04-28"
+    },
+    "GWW": {
+      "rating": "A+",
+      "date": "2023-10-27"
+    },
+    "WYNN": {
+      "rating": "CCC+",
+      "date": "2023-01-12"
+    },
+    "XEL": {
+      "rating": "A",
+      "date": "2023-11-09"
+    },
+    "XYL": {
+      "rating": "BBB",
+      "date": "2023-10-09"
+    },
+    "YUM": {
+      "rating": "BB-",
+      "date": "2023-11-22"
+    },
+    "ZION": {
+      "rating": "BB+",
+      "date": "2024-03-25"
+    },
+    "ZTS": {
+      "rating": "BBB+",
+      "date": "2024-01-11"
+    }
+  }
+}
