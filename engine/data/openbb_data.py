@@ -225,7 +225,7 @@ def _use_alpaca_for_prices() -> bool:
 
 
 # Default provider for equity data (FMP has a free tier; alternatives: intrinio, polygon, tiingo)
-DEFAULT_EQUITY_PROVIDER = "fmp"
+DEFAULT_EQUITY_PROVIDER = "yfinance"
 # Provider for macro/economic data
 DEFAULT_MACRO_PROVIDER = "fred"
 # Provider for fundamental data
@@ -315,34 +315,7 @@ def get_prices(
             return equity_df
 
     # --- OpenBB path (FMP default — always available fallback) ---
-    prov = provider or DEFAULT_EQUITY_PROVIDER  # "fmp"
-
-    # --- Direct FMP stable API (bypasses OpenBB legacy v3) ---
-    if _fmp_key and _fmp_key != "PASTE_KEY_HERE":
-        try:
-            import requests as _requests
-            frames = {}
-            for ticker in tickers:
-                url = f"https://financialmodelingprep.com/stable/historical-price-eod/full"
-                resp = _requests.get(url, params={"symbol": ticker, "apikey": _fmp_key}, timeout=10)
-                if resp.status_code == 200:
-                    data = resp.json()
-                    if data:
-                        df = _pd.DataFrame(data)
-                        if "date" in df.columns and "close" in df.columns:
-                            df["date"] = _pd.to_datetime(df["date"])
-                            df = df.set_index("date").sort_index()
-                            if start:
-                                df = df[df.index >= start]
-                            if end:
-                                df = df[df.index <= end]
-                            frames[ticker] = df[["close"]].rename(columns={"close": "Adj Close"})
-            if frames:
-                result = _pd.concat(frames.values(), axis=1)
-                result.columns = list(frames.keys())
-                return result
-        except Exception as e:
-            logger.debug(f"Direct FMP fetch failed: {e}")
+    prov = provider or DEFAULT_EQUITY_PROVIDER  # "yfinance"
 
     if _openbb_available:
         try:
