@@ -355,10 +355,14 @@ class UniverseClassifier:
                            len(X) if X is not None else 0)
             return
 
+        from sklearn.preprocessing import LabelEncoder
+        le = LabelEncoder()
+        y_encoded = le.fit_transform(y)
+
         for name, model in self._models.items():
             try:
-                model.fit(X, y)
-                logger.info("Trained %s on %d samples", name, len(X))
+                model.fit(X, y_encoded)
+                logger.info("Trained %s on %d samples (labels: %s)", name, len(X), le.classes_.tolist())
             except Exception as e:
                 logger.warning("Failed to train %s: %s", name, e)
 
