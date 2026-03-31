@@ -59,7 +59,7 @@ elif not _fmp_key:
 # ---------------------------------------------------------------------------
 # Data source mode — Alpaca real-time during market hours, OpenBB EOD after
 # ---------------------------------------------------------------------------
-_DATA_SOURCE_MODE = "auto"  # "auto" | "alpaca" | "openbb"
+_DATA_SOURCE_MODE = "openbb"  # "auto" | "alpaca" | "openbb" — OpenBB/FMP primary, Alpaca broker only
 
 def _is_market_hours() -> bool:
     """Check if US market is currently open (09:30-16:00 ET, Mon-Fri)."""
@@ -755,12 +755,24 @@ def get_macro_data(
     """Fetch macro proxy data via ETFs/indices (existing interface preserved).
 
     Now also enriches with FRED data when available.
+    Batches requests to stay within FMP free tier limits.
     """
     tickers = list(MACRO_PROXIES.keys())
-    prices = get_adj_close(tickers, start, end)
-    if not prices.empty:
-        prices.columns = [MACRO_PROXIES.get(c, c) for c in prices.columns]
-    return prices
+    # Batch: FMP free tier limits symbols per request
+    batch_size = 10
+    all_prices = pd.DataFrame()
+    for i in range(0, len(tickers), batch_size):
+        batch = tickers[i:i + batch_size]
+        try:
+            prices = get_adj_close(batch, start, end)
+            if not prices.empty:
+                all_prices = pd.concat([all_prices, prices], axis=1)
+        except Exception as e:
+            logger.debug(f"Macro batch {i//batch_size} failed: {e}")
+
+    if not all_prices.empty:
+        all_prices.columns = [MACRO_PROXIES.get(c, c) for c in all_prices.columns]
+    return all_prices
 
 
 def get_macro_data_enriched(
