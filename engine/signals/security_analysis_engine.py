@@ -227,6 +227,9 @@ class BottomUpScore:
     composite_score: float = 0.0          # 0-100 overall Graham-Dodd score
     passes_two_part_test: bool = False    # safety + satisfactory return
     passes_graham_criteria: bool = False  # all 7 Graham criteria
+    # Egan-Jones credit proxy (D/E + CR fundamental analysis)
+    egan_jones_tier: str = ""             # A-F based on D/E + CR thresholds
+    egan_jones_ig: bool = False           # True if IG (tier A or B)
 
 
 @dataclass
@@ -740,6 +743,23 @@ class BottomUpAnalyzer:
         # Debt-to-equity
         if equity > 0:
             score.debt_to_equity = total_debt / equity
+
+        # Egan-Jones credit proxy (fundamental D/E + CR analysis)
+        de = score.debt_to_equity
+        cr = score.current_ratio
+        if de < 0.5 and cr > 1.5:
+            score.egan_jones_tier = "A"
+        elif de < 1.0 and cr > 1.2:
+            score.egan_jones_tier = "B"
+        elif de < 2.0 and cr > 0.8:
+            score.egan_jones_tier = "C"
+        elif de < 3.0 and cr > 0.8:
+            score.egan_jones_tier = "D"
+        elif de < 5.0 and cr > 0.5:
+            score.egan_jones_tier = "E"
+        else:
+            score.egan_jones_tier = "F"
+        score.egan_jones_ig = score.egan_jones_tier in ("A", "B")
 
         # Equity cushion ratio (Stock-Value Ratio)
         # = Market Cap / Face Value of Debt

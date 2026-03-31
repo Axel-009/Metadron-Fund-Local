@@ -390,6 +390,31 @@ annual_volatility, sharpe_ratio, max_drawdown, rebalance_cost, alpha_predictions
   - Fallen angels: fundamental tier better than observable
 - Feeds credit scores into T10 of MLVoteEnsemble
 
+### Credit Rating Architecture (Two-Layer)
+
+```
+Layer 1 — FMP Credit Rating API (governance/classify_credit.py)
+    Source:  FMP /api/v3/rating/{symbol} — composite credit rating
+    Model:   Proprietary (DCF score, ROE score, ROA score, D/E score, P/E, P/B)
+    Output:  governance/credit_classification.json
+    Grades:  AAA, AA, A, BBB (IG) | BB, B, CCC, CC, C, D (HY)
+    Use:     Universe classification, risk tier assignment, portfolio constraints
+
+Layer 2 — Egan-Jones D/E + CR Proxy (engine/signals/security_analysis_engine.py)
+    Source:  Bottom-up fundamental analysis (Graham-Dodd framework)
+    Model:   Debt-to-equity + current ratio thresholds
+    Output:  BottomUpScore.egan_jones_tier (A-F) + egan_jones_ig (bool)
+    Tiers:   A (D/E<0.5, CR>1.5) | B (D/E<1.0, CR>1.2) | C-F (increasing leverage)
+    Use:     Per-security fundamental measure within the 8-test Graham grading system
+             Feeds into investment grade classification alongside interest coverage,
+             equity cushion ratio, and accrual quality checks
+
+These layers are complementary:
+  - FMP ratings are used at the portfolio/universe level (governance)
+  - Egan-Jones proxy is used at the per-security analysis level (bottom-up)
+  - Both feed into the CreditQualityClassifier and T10 of MLVoteEnsemble
+```
+
 ### ModelEvaluator (`engine/ml/model_evaluator.py`)
 - Per-class precision/recall/F1 scoring
 - Confusion matrix with tier-aware distance weighting
