@@ -131,26 +131,45 @@ class FlowState:
 
 @dataclass
 class SleeveAllocation:
-    """Gate-Z 5-sleeve capital allocation.
+    """Portfolio allocation mix — credit-aware sleeve structure.
 
-    P1 Carry:          Quality defensives (Staples/HC) + income overlays; low drift, high hit-rate
-    P2 Rotation:       Factor/sector RV (Fin/Defs over Cyclicals); macro-aware beta spread
-    P3 Trend (LHC):    Durable compounders (MSFT/AVGO/UNH) with collars/LEAPS; VaR-efficient
-    P4 Neutral-Alpha:  Pairs, basis, dispersion (β≈0); designed to lift Sharpe
-    P5 Down-Offense:   SPX put-spreads + VIX calendars; tail spend 0.40–0.55%/wk
+    Allocation (100% of deployable capital):
+      40%  IG Equities       — Investment-grade names, all cap sizes (no mega cap restriction)
+      25%  Options           — 10% IG options, 10% HY options, 5% distressed options
+      10%  Bond/Commodity ETFs — FI + commodity exposure (TLT, GLD, USO, HYG, LQD, etc.)
+      10%  HY Equities       — High-yield names (BB-B rated, leveraged but not distressed)
+      10%  Distressed Equity — Fallen angels, recovery plays, special situations
+       5%  Cash (dry powder) — Buying power reserve, never deployed
+
+    Deployment target: 95% of NAV + leverage. Only 5% remains as dry powder.
     """
-    p1_directional_equity: float = 0.35  # P1 Carry + P3 Trend combined (backward compat)
-    p2_factor_rotation: float = 0.20     # P2 Rotation
-    p3_commodities_macro: float = 0.15   # P3 Trend/LHC overlay
-    p4_options_convexity: float = 0.15   # P4 Neutral-Alpha
-    p5_hedges_volatility: float = 0.15   # P5 Down-Offense
+    # --- Primary allocation mix (sums to 1.0) ---
+    ig_equity: float = 0.40              # IG equities — all caps, no mega cap restriction
+    options: float = 0.25                # Options sleeve (IG + HY + distressed)
+    options_ig: float = 0.10             # Options on IG names
+    options_hy: float = 0.10             # Options on HY names
+    options_distressed: float = 0.05     # Options on distressed names
+    bond_commodity_etf: float = 0.10     # FI + commodity ETFs
+    hy_equity: float = 0.10              # HY equities
+    distressed_equity: float = 0.10      # Distressed / fallen angel equity
+    cash_reserve: float = 0.05           # Dry powder — never deployed
 
-    # Extended sleeve breakdown (new structure)
-    carry: float = 0.20                  # P1 — Quality defensives + income
-    rotation: float = 0.20               # P2 — Factor/sector RV
-    trend_lhc: float = 0.25             # P3 — Durable compounders + collars
-    neutral_alpha: float = 0.20         # P4 — Pairs, basis, dispersion (β≈0)
-    down_offense: float = 0.15          # P5 — Tail protection + vol harvesting
+    # --- Deployment target ---
+    deploy_pct: float = 0.95             # Deploy 95% of NAV + leverage
+
+    # --- Legacy sleeve mapping (backward compat for existing code) ---
+    p1_directional_equity: float = 0.40  # Maps to ig_equity (was 0.35)
+    p2_factor_rotation: float = 0.10     # Maps to hy_equity
+    p3_commodities_macro: float = 0.10   # Maps to bond_commodity_etf
+    p4_options_convexity: float = 0.25   # Maps to options
+    p5_hedges_volatility: float = 0.10   # Maps to distressed_equity
+
+    # Extended sleeve breakdown (deprecated — use primary allocation above)
+    carry: float = 0.40
+    rotation: float = 0.10
+    trend_lhc: float = 0.10
+    neutral_alpha: float = 0.25
+    down_offense: float = 0.10
 
     def as_dict(self) -> dict:
         """Return all sleeve allocations. Legacy keys map to primary 5-sleeve structure."""

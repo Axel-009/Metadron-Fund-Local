@@ -464,8 +464,8 @@ class GICPoolingEngine:
 class FallenAngelDetector:
     CRITERIA = {
         "max_drawdown_from_high": -0.30,
-        "min_market_cap": 5e9,
-        "min_avg_volume": 1e6,
+        "min_market_cap": 300e6,   # No mega cap restriction — include all caps
+        "min_avg_volume": 500_000,
         "max_pe_ratio": 25.0,
         "min_roe": 0.05,
     }
@@ -564,7 +564,7 @@ class QualityScorer:
 
 
 class DailyUniverseScanner:
-    def __init__(self, min_market_cap: float = 1e9, min_avg_volume: float = 500_000, min_price: float = 5.0):
+    def __init__(self, min_market_cap: float = 300e6, min_avg_volume: float = 500_000, min_price: float = 5.0):
         self.min_market_cap = min_market_cap
         self.min_avg_volume = min_avg_volume
         self.min_price = min_price
