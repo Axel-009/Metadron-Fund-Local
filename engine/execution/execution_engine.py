@@ -36,7 +36,7 @@ import pandas as pd
 from collections import deque
 from dataclasses import dataclass, field
 from typing import Optional
-from datetime import datetime
+from datetime import datetime, timezone, timedelta
 
 from ..data.universe_engine import (
     UniverseEngine, get_engine, SECTOR_ETFS,
@@ -1849,7 +1849,7 @@ class ExecutionEngine:
                         expiration_date_lte=(datetime.now() + timedelta(days=45)).strftime("%Y-%m-%d"),
                         limit=20,
                     )
-                    chain = self.broker.client.get_option_contracts(req)
+                    chain = self.broker.trading_client.get_option_contracts(req)
                     contracts = chain.option_contracts if hasattr(chain, 'option_contracts') else []
                     
                     for c in contracts:

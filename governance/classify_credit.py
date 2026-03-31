@@ -65,28 +65,36 @@ def fetch_metrics(tickers: list[str], batch_size: int = 20) -> dict:
 
 
 def classify(ticker: str, metrics: dict) -> dict:
-    """Classify ticker as IG/HY based on credit metrics."""
+    """Classify ticker into tiers A-F based on credit metrics.
+
+    Tiers (matching governance/credit_classification.json schema):
+      A (IG):          D/E < 0.5  AND CR > 1.5   — strong balance sheet
+      B (IG):          D/E < 1.0  AND CR > 1.2   — investment grade
+      C (HY):          D/E < 2.0  AND CR > 0.8   — moderate leverage
+      D (HY):          D/E < 3.0  AND CR > 0.8   — high leverage
+      E (HY):          D/E < 5.0  AND CR > 0.5   — stressed
+      F (Distressed):  D/E >= 5.0 OR  CR <= 0.5  — distressed
+    """
     de = metrics.get("debt_to_equity", 0)
     cr = metrics.get("current_ratio", 0)
     eg = metrics.get("earnings_growth", 0)
 
-    # IG: strong balance sheet
-    if de < 1.0 and cr > 1.2:
-        tier = "IG"
-        sub = "A" if de < 0.5 and cr > 1.5 else "B"
-    # HY: leveraged but not distressed
+    if de < 0.5 and cr > 1.5:
+        tier = "A"
+    elif de < 1.0 and cr > 1.2:
+        tier = "B"
+    elif de < 2.0 and cr > 0.8:
+        tier = "C"
     elif de < 3.0 and cr > 0.8:
-        tier = "HY"
-        sub = "C" if de < 2.0 else "D"
-    # Distressed
+        tier = "D"
+    elif de < 5.0 and cr > 0.5:
+        tier = "E"
     else:
-        tier = "HY_DISTRESSED"
-        sub = "E"
+        tier = "F"
 
     return {
         "ticker": ticker,
         "tier": tier,
-        "sub": sub,
         "debt_to_equity": round(de, 2),
         "current_ratio": round(cr, 2),
         "earnings_growth": round(eg, 4),
@@ -104,7 +112,7 @@ def main():
     print(f"Universe: {len(tickers)} tickers")
 
     # Fetch metrics
-    print("Fetching credit metrics via Yahoo...")
+    print("Fetching credit metrics via FMP...")
     metrics = fetch_metrics(tickers)
     print(f"Fetched: {len(metrics)} tickers")
 
@@ -114,25 +122,28 @@ def main():
         c = classify(ticker, m)
         classifications.append(c)
 
-    # Stats
-    ig = [c for c in classifications if c["tier"] == "IG"]
-    hy = [c for c in classifications if c["tier"] == "HY"]
-    hyd = [c for c in classifications if c["tier"] == "HY_DISTRESSED"]
+    # Stats by tier
+    from collections import Counter
+    tier_counts = Counter(c["tier"] for c in classifications)
+    ig_count = tier_counts.get("A", 0) + tier_counts.get("B", 0)
+    hy_count = sum(tier_counts.get(t, 0) for t in ("C", "D", "E", "F"))
 
-    print(f"\nIG: {len(ig)} ({len(ig)/len(classifications)*100:.0f}%)")
-    print(f"HY: {len(hy)} ({len(hy)/len(classifications)*100:.0f}%)")
-    print(f"HY Distressed: {len(hyd)} ({len(hyd)/len(classifications)*100:.0f}%)")
+    print(f"\nIG (A+B): {ig_count} ({ig_count/len(classifications)*100:.0f}%)")
+    print(f"HY (C+D+E+F): {hy_count} ({hy_count/len(classifications)*100:.0f}%)")
+    for tier in "ABCDEF":
+        print(f"  Tier {tier}: {tier_counts.get(tier, 0)}")
 
-    # Save
+    # Save — schema matches governance/credit_classification.json
     output = {
+        "source": "FMP fundamental metrics (debt_to_equity, current_ratio) via OpenBB",
         "generated": time.strftime("%Y-%m-%dT%H:%M:%S"),
         "total": len(classifications),
         "summary": {
-            "IG": len(ig),
-            "HY": len(hy),
-            "HY_DISTRESSED": len(hyd),
+            "IG": ig_count,
+            "HY": hy_count,
         },
-        "classifications": {c["ticker"]: c for c in classifications},
+        "tiers": dict(tier_counts),
+        "ratings": {c["ticker"]: c for c in classifications},
     }
     with open(OUTPUT, "w") as f:
         json.dump(output, f, indent=2)

@@ -1,5 +1,5 @@
 {
-  "source": "FMP balance-sheet-statement + Egan-Jones",
+  "source": "FMP fundamental metrics (debt_to_equity, current_ratio) via OpenBB",
   "total": 767,
   "summary": {
     "IG": 321,
