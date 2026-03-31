@@ -2056,6 +2056,7 @@ class MacroEngine:
             self._regime_detector.update(snapshot.regime)
 
         except Exception as e:
+            logger.warning(f"MacroEngine analyze failed: {e}")
             snapshot.regime = MarketRegime.TRANSITION
 
         self._snapshot = snapshot

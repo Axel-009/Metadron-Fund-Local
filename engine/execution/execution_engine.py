@@ -1502,7 +1502,7 @@ class ExecutionEngine:
                         "cape": sa_result.top_down.cape_ratio,
                         "equity_risk_premium": sa_result.top_down.equity_risk_premium,
                         "max_investment_pe": sa_result.top_down.max_investment_pe,
-                        "speculative_pct": sa_result.top_down.speculative_component,
+                        "speculative_pct": sa_result.top_down.speculative_pct,
                         "tickers_analyzed": sa_result.tickers_analyzed,
                         "investment_universe": sa_result.investment_universe[:20],
                         "speculative_universe": sa_result.speculative_universe[:10],

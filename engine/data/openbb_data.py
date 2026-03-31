@@ -275,10 +275,20 @@ def get_prices(
 
     # --- Alpaca path (market hours — replaces polygon for real-time) ---
     if provider is None and _use_alpaca_for_prices():
-        df = _fetch_alpaca_bars(tickers, start, end, interval)
-        if not df.empty:
-            return df
-        logger.debug("Alpaca bars empty for %s — falling back to OpenBB/FMP", tickers[:3])
+        # Split tickers: Alpaca handles equities/ETFs but NOT index symbols (^VIX, ^TNX, etc.)
+        equity_tickers = [t for t in tickers if not t.startswith("^")]
+        index_tickers = [t for t in tickers if t.startswith("^")]
+
+        # Fetch equities via Alpaca
+        equity_df = pd.DataFrame()
+        if equity_tickers:
+            equity_df = _fetch_alpaca_bars(equity_tickers, start, end, interval)
+
+        # Index symbols fall through to OpenBB/FMP
+        if equity_df.empty and not index_tickers:
+            logger.debug("Alpaca bars empty for %s — falling back to OpenBB/FMP", tickers[:3])
+        elif not equity_df.empty:
+            return equity_df
 
     # --- OpenBB path (FMP default — always available fallback) ---
     prov = provider or DEFAULT_EQUITY_PROVIDER  # "fmp"
