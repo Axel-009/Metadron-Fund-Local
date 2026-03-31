@@ -1118,25 +1118,22 @@ class ExecutionEngine:
         # Resolve NAV: use Alpaca account if available, otherwise passed value
         self._requested_nav = initial_nav
 
-        # Broker: Alpaca (primary) with PaperBroker fallback
-        self._broker_alert = None  # Alert message if not using Alpaca
+        # Broker: Alpaca (primary) — NO silent fallback
+        self._broker_alert = None
         if broker_type == "alpaca":
             if AlpacaBroker is not None:
                 try:
                     self.broker = AlpacaBroker(initial_cash=initial_nav or 1_000_000.0)
                     logger.info("ExecutionEngine using AlpacaBroker (paper=%s)",
                                 self.broker.paper)
-                    self._broker_alert = None  # No alert — Alpaca is active
+                    self._broker_alert = None
                 except Exception as e:
-                    logger.error("🚨 BROKER ALERT: AlpacaBroker failed: %s — falling back to PaperBroker", e)
-                    logger.error("🚨 TRADES WILL NOT REACH ALPACA DASHBOARD — using simulation only")
-                    self.broker = PaperBroker(initial_cash=initial_nav or 1_000_000.0)
-                    self._broker_alert = f"ALERT: PaperBroker fallback — Alpaca unavailable: {e}"
+                    logger.error("🚨 BROKER ALERT: AlpacaBroker failed: %s", e)
+                    logger.error("🚨 FIX: Set ALPACA_API_KEY and ALPACA_SECRET_KEY in .env")
+                    raise RuntimeError(f"AlpacaBroker initialization failed: {e}")
             else:
-                logger.error("🚨 BROKER ALERT: AlpacaBroker module not available — using PaperBroker")
-                logger.error("🚨 TRADES WILL NOT REACH ALPACA DASHBOARD — using simulation only")
-                self.broker = PaperBroker(initial_cash=initial_nav or 1_000_000.0)
-                self._broker_alert = "ALERT: PaperBroker fallback — AlpacaBroker module missing"
+                logger.error("🚨 BROKER ALERT: AlpacaBroker module not available")
+                raise RuntimeError("AlpacaBroker module not available. Install alpaca-py.")
         else:
             # Explicit paper mode (no Alpaca)
             self.broker = PaperBroker(initial_cash=initial_nav or 1_000_000.0)
@@ -1247,14 +1244,14 @@ class ExecutionEngine:
         1. Alpaca account equity (live)
         2. Broker state NAV (paper)
         3. Requested NAV (passed in)
-        4. Default $1M
+        4. RAISE ERROR — never hardcode NAV
         """
         # Try Alpaca live NAV
         if hasattr(self.broker, 'get_nav'):
             try:
                 nav = self.broker.get_nav()
                 if nav and nav > 0:
-                    logger.info("NAV resolved from Alpaca: $%,.2f", nav)
+                    logger.info("NAV resolved from Alpaca: $%.2f", nav)
                     return nav
             except Exception:
                 pass
@@ -1264,9 +1261,18 @@ class ExecutionEngine:
             nav = self.broker.state.nav
             if nav and nav > 0:
                 return nav
-        
-        # Fallback
-        return self._requested_nav or 1_000_000.0
+
+        # Requested NAV
+        if self._requested_nav and self._requested_nav > 0:
+            return self._requested_nav
+
+        # No hardcoded fallback — flag error
+        logger.error("🚨 NAV RESOLUTION FAILED: No Alpaca connection, no broker state, no requested NAV.")
+        logger.error("🚨 Check ALPACA_API_KEY and ALPACA_SECRET_KEY environment variables.")
+        raise RuntimeError(
+            "NAV resolution failed. Alpaca credentials missing or broker unavailable. "
+            "Set ALPACA_API_KEY and ALPACA_SECRET_KEY in .env or environment."
+        )
 
     def get_nav(self) -> float:
         """Get current dynamic NAV (refreshes from broker)."""
