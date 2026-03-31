@@ -843,8 +843,15 @@ class UniverseEngine:
         tickers = [s.ticker for s in self._equities]
         try:
             data = get_bulk_fundamentals(tickers)
+            if data.empty:
+                return
             for sec in self._equities:
-                info = data.get(sec.ticker, {})
+                if sec.ticker not in data.index:
+                    continue
+                try:
+                    info = data.loc[sec.ticker].to_dict()
+                except Exception:
+                    continue
                 if info:
                     sec.market_cap = info.get("market_cap", 0)
                     sec.pe_ratio = info.get("pe_ratio", 0)
