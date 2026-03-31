@@ -33,6 +33,30 @@ except ImportError:
     logger.warning("OpenBB SDK not available — data fetching will return empty frames")
 
 # ---------------------------------------------------------------------------
+# FMP API Key integration — load from .env or environment
+# ---------------------------------------------------------------------------
+import os as _os
+_fmp_key = _os.environ.get("FMP_API_KEY", "")
+if not _fmp_key:
+    # Try loading from .env file
+    try:
+        from dotenv import load_dotenv
+        _env_path = _os.path.join(_os.path.dirname(__file__), "..", "..", ".env")
+        load_dotenv(_env_path)
+        _fmp_key = _os.environ.get("FMP_API_KEY", "")
+    except Exception:
+        pass
+
+if _fmp_key and _fmp_key != "PASTE_KEY_HERE" and _obb is not None:
+    try:
+        _obb.account.set_credentials(provider="fmp", api_key=_fmp_key)
+        logger.info("FMP API key configured — fundamentals available")
+    except Exception as e:
+        logger.warning(f"FMP credential setup failed: {e}")
+elif not _fmp_key:
+    logger.info("FMP_API_KEY not set — using Alpaca prices only")
+
+# ---------------------------------------------------------------------------
 # Data source mode — Alpaca real-time during market hours, OpenBB EOD after
 # ---------------------------------------------------------------------------
 _DATA_SOURCE_MODE = "auto"  # "auto" | "alpaca" | "openbb"
