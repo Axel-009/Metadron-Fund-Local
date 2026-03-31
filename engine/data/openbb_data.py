@@ -49,7 +49,7 @@ if not _fmp_key:
 
 if _fmp_key and _fmp_key != "PASTE_KEY_HERE" and _obb is not None:
     try:
-        _obb.account.set_credentials(provider="fmp", api_key=_fmp_key)
+        _obb.user.credentials.fmp_api_key = _fmp_key
         logger.info("FMP API key configured — fundamentals available")
     except Exception as e:
         logger.warning(f"FMP credential setup failed: {e}")
