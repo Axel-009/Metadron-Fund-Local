@@ -225,7 +225,7 @@ def _use_alpaca_for_prices() -> bool:
 
 
 # Default provider for equity data (FMP has a free tier; alternatives: intrinio, polygon, tiingo)
-DEFAULT_EQUITY_PROVIDER = "yfinance"
+DEFAULT_EQUITY_PROVIDER = "fmp"
 # Provider for macro/economic data
 DEFAULT_MACRO_PROVIDER = "fred"
 # Provider for fundamental data
