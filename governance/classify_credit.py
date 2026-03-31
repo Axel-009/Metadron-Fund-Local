@@ -37,7 +37,7 @@ def fetch_metrics(tickers: list[str], batch_size: int = 20) -> dict:
         batch = tickers[i:i + batch_size]
         for ticker in batch:
             try:
-                r = _obb.equity.fundamental.metrics(symbol=ticker, provider="yfinance")
+                r = _obb.equity.fundamental.metrics(symbol=ticker, provider="fmp")
                 df = r.to_dataframe()
                 if df.empty:
                     continue
