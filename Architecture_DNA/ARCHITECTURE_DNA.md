@@ -203,15 +203,24 @@ gmtf_score, money_velocity_signal, cube_regime
 | STRESS | 1.5× | 0.15 | 0.20 | 20% | 30% | ≥+25% | 0.05% |
 | CRASH | 0.8× | -0.20 | -0.10 | 5% | 50% | ≥+25% | 0.02% |
 
-#### Gate-Z 5-Sleeve Allocator
+#### Portfolio Allocation Mix (Credit-Aware)
 
-| Sleeve | Purpose | TRENDING | RANGE | STRESS | CRASH |
-|--------|---------|----------|-------|--------|-------|
-| P1 Carry | Quality defensives + income | 25% | 20% | 15% | 5% |
-| P2 Rotation | Factor/sector RV | 25% | 20% | 10% | 5% |
-| P3 Trend/LHC | Durable compounders + collars | 30% | 20% | 10% | 5% |
-| P4 Neutral-Alpha | Pairs, basis, dispersion (β≈0) | 10% | 25% | 25% | 20% |
-| P5 Down-Offense | Put-spreads + VIX calendars | 10% | 15% | 40% | 65% |
+```
+Deployment target: 95% of NAV + leverage (5% dry powder cash reserve)
+No mega cap restrictions — all market caps eligible.
+
+SLEEVE              ALLOCATION    CREDIT TIER         NOTES
+─────────────────────────────────────────────────────────────────
+IG Equities           40%        A/B (IG)            All caps, quality names
+Options               25%        Mixed               10% IG + 10% HY + 5% Distressed
+Bond/Commodity ETFs   10%        —                   TLT, GLD, USO, HYG, LQD, etc.
+HY Equities           10%        C/D (HY)            BB-B rated, leveraged
+Distressed Equity     10%        E/F (Distressed)    Fallen angels, recovery plays
+Cash (Dry Powder)      5%        —                   Never deployed, buying power reserve
+```
+
+Credit routing uses `governance/credit_classification.json` (FMP Rating API)
+with Egan-Jones D/E proxy fallback from `security_analysis_engine.py`.
 
 #### 4-Gate Entry Logic
 

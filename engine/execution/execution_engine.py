@@ -34,6 +34,7 @@ import logging
 import numpy as np
 import pandas as pd
 from collections import deque
+from pathlib import Path
 from dataclasses import dataclass, field
 from typing import Optional
 from datetime import datetime, timezone, timedelta
@@ -2042,7 +2043,44 @@ class ExecutionEngine:
         # Apply daily target leverage multiplier
         leverage_mult = self.broker.get_leverage_multiplier()
         risk_profile = self.broker.get_risk_profile()
-        equity_budget = nav * cube_out.sleeves.p1_directional_equity * leverage_mult
+        deployable = nav * cube_out.sleeves.deploy_pct * leverage_mult  # 95% deployment
+
+        # Credit-aware sleeve budgets (from cube allocation mix)
+        ig_equity_budget = deployable * cube_out.sleeves.ig_equity           # 40%
+        hy_equity_budget = deployable * cube_out.sleeves.hy_equity           # 10%
+        distressed_budget = deployable * cube_out.sleeves.distressed_equity  # 10%
+        bond_commodity_budget = deployable * cube_out.sleeves.bond_commodity_etf  # 10%
+        options_budget = deployable * cube_out.sleeves.options               # 25%
+
+        # Load credit classifications for sleeve routing
+        _credit_map = {}
+        try:
+            import json as _json
+            _credit_path = Path(__file__).parent.parent.parent / "governance" / "credit_classification.json"
+            if _credit_path.exists():
+                with open(_credit_path) as _f:
+                    _credit_data = _json.load(_f)
+                    _credit_map = _credit_data.get("ratings", {})
+        except Exception:
+            pass
+
+        def _get_sleeve_budget(ticker: str) -> float:
+            """Route ticker to its credit-appropriate sleeve budget."""
+            credit = _credit_map.get(ticker, {})
+            category = credit.get("category", "")
+            egan = credit.get("egan_tier", "")
+
+            # Distressed (F tier or HY_DISTRESSED)
+            if egan in ("E", "F") or category == "HY_DISTRESSED":
+                return distressed_budget
+            # HY equity
+            if category == "HY" or egan in ("C", "D"):
+                return hy_equity_budget
+            # IG equity (default — no mega cap restriction)
+            return ig_equity_budget
+
+        # Legacy compat
+        equity_budget = ig_equity_budget  # backward compat for allocator
 
         for ticker, weight in alpha_out.optimal_weights.items():
             if weight < 0.01:
@@ -2072,12 +2110,14 @@ class ExecutionEngine:
             if price <= 0:
                 continue
 
+            # Route to credit-appropriate sleeve budget
+            ticker_budget = _get_sleeve_budget(ticker)
             allocation = self.allocator.allocate(
                 ticker=ticker,
                 weight=weight,
                 vote=vote,
                 nav=nav,
-                equity_budget=equity_budget,
+                equity_budget=ticker_budget,
                 current_position=current_pos,
                 price=price,
             )

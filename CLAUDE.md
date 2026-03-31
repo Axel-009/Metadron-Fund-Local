@@ -308,15 +308,18 @@ AgentLearningWrapper:
 | STRESS | 1.5x | 0.15 | 0.20 | ≥+25% |
 | CRASH | 0.8x | -0.20 | -0.10 | ≥+25% |
 
-### Gate-Z 5-Sleeve Allocator
+### Portfolio Allocation Mix (Credit-Aware)
 
-| Sleeve | TRENDING | RANGE | STRESS | CRASH |
-|--------|----------|-------|--------|-------|
-| P1 Carry | 25% | 20% | 15% | 5% |
-| P2 Rotation | 25% | 20% | 10% | 5% |
-| P3 Trend/LHC | 30% | 20% | 10% | 5% |
-| P4 Neutral-Alpha | 10% | 25% | 25% | 20% |
-| P5 Down-Offense | 10% | 15% | 40% | 65% |
+| Sleeve | Allocation | Credit Tier | Notes |
+|--------|-----------|-------------|-------|
+| IG Equities | 40% | A/B (IG) | All caps — no mega cap restriction |
+| Options | 25% | Mixed | 10% IG + 10% HY + 5% Distressed |
+| Bond/Commodity ETFs | 10% | — | TLT, GLD, USO, HYG, LQD, etc. |
+| HY Equities | 10% | C/D (HY) | BB-B rated, leveraged |
+| Distressed Equity | 10% | E/F | Fallen angels, recovery plays |
+| Cash (Dry Powder) | 5% | — | Never deployed, buying power reserve |
+
+Deploy 95% of NAV + leverage. Only 5% remains as dry powder.
 
 ### 4-Gate Entry Logic
 
