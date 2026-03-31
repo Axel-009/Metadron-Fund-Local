@@ -50,7 +50,7 @@ MAX_SINGLE_POSITION_PCT = 0.20        # 20% max single position
 MAX_SECTOR_PCT = 0.35                 # 35% max sector
 MAX_LEVERAGE = 3.0                    # Regime-dependent cap
 CORRELATION_LIMIT = 0.80              # Reject if corr > 0.80 with existing
-MIN_COMPOSITE_SCORE = 0.55            # Minimum composite to approve
+MIN_COMPOSITE_SCORE = 0.45            # Minimum composite to approve
 ADV_MIN_RATIO = 0.01                  # Trade size < 1% of ADV
 SPREAD_MAX_BPS = 30.0                 # Max acceptable spread
 

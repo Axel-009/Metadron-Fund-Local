@@ -1767,6 +1767,18 @@ class ExecutionEngine:
             if etf and etf not in selected_tickers:
                 selected_tickers.append(etf)
 
+        # Add distressed/fallen angel names (Axel wants more distressed in basket)
+        if self.distress:
+            try:
+                for ds in self.distress.get_fallen_angels():
+                    if ds.ticker and ds.ticker not in selected_tickers:
+                        selected_tickers.append(ds.ticker)
+                for ds in self.distress.get_critical():
+                    if ds.ticker and ds.ticker not in selected_tickers:
+                        selected_tickers.append(ds.ticker)
+            except Exception:
+                pass
+
         if not selected_tickers:
             selected_tickers = ["SPY", "QQQ", "IWM", "XLK", "XLF"]
 
@@ -1803,6 +1815,95 @@ class ExecutionEngine:
             ],
         }
         self.tracker.record_stage("alpha", (datetime.now() - t0).total_seconds() * 1000, result["stages"]["alpha"])
+
+        # Stage 5.25: Options chain scanning (full universe momentum + volatility)
+        t0 = datetime.now()
+        options_data = {"status": "not_scanned"}
+        try:
+            from .options_engine import VolatilitySurface, BlackScholesModel
+            bs = BlackScholesModel()
+            regime_str = cube_out.regime.value
+            
+            # Scan top alpha signals for options opportunities
+            options_candidates = []
+            for sig in alpha_out.signals[:30]:
+                ticker = sig.ticker
+                spot = 0.0
+                try:
+                    from ..data.yahoo_data import get_latest_price
+                    spot = get_latest_price(ticker)
+                except Exception:
+                    continue
+                if spot <= 0:
+                    continue
+                
+                # Get options chain from Alpaca
+                try:
+                    from alpaca.trading.requests import GetOptionContractsRequest
+                    from alpaca.trading.enums import AssetStatus, ContractType
+                    req = GetOptionContractsRequest(
+                        underlying_symbols=[ticker],
+                        status=AssetStatus.ACTIVE,
+                        expiration_date_gte=(datetime.now() + timedelta(days=7)).strftime("%Y-%m-%d"),
+                        expiration_date_lte=(datetime.now() + timedelta(days=45)).strftime("%Y-%m-%d"),
+                        limit=50,
+                    )
+                    chain = self.broker.client.get_option_contracts(req)
+                    contracts = chain.option_contracts if hasattr(chain, 'option_contracts') else []
+                    
+                    for c in contracts:
+                        if not getattr(c, 'tradable', False):
+                            continue
+                        strike = float(c.strike_price)
+                        opt_type = 'call' if c.type == ContractType.CALL else 'put'
+                        # Synthesize market price from IV
+                        iv = float(c.implied_volatility) if hasattr(c, 'implied_volatility') and c.implied_volatility else 0.30
+                        T = max((datetime.strptime(c.expiration_date, "%Y-%m-%d") - datetime.now()).days / 365.0, 0.001)
+                        if opt_type == 'call':
+                            theo = bs.call_price(spot, strike, 0.05, T, iv)
+                        else:
+                            theo = bs.put_price(spot, strike, 0.05, T, iv)
+                        
+                        # Delta for direction
+                        delta = bs.delta(spot, strike, 0.05, T, iv, opt_type == 'call')
+                        theta = bs.theta(spot, strike, 0.05, T, iv, opt_type == 'call')
+                        
+                        options_candidates.append({
+                            "ticker": ticker,
+                            "symbol": c.symbol,
+                            "type": opt_type,
+                            "strike": strike,
+                            "expiry": c.expiration_date,
+                            "theo_price": round(theo, 2),
+                            "delta": round(delta, 3),
+                            "theta": round(theta, 4),
+                            "iv": round(iv, 4),
+                            "alpha": sig.alpha_pred,
+                            "momentum": sig.momentum_1m,
+                        })
+                except Exception:
+                    pass
+            
+            # Select best options by regime
+            if options_candidates:
+                # Rank by alpha * |delta| (conviction-weighted directional exposure)
+                for o in options_candidates:
+                    o["score"] = abs(o["alpha"]) * abs(o["delta"]) * (1 + abs(o["momentum"]))
+                options_candidates.sort(key=lambda x: x["score"], reverse=True)
+                
+                options_data = {
+                    "total_scanned": len(options_candidates),
+                    "top_10": options_candidates[:10],
+                    "regime": regime_str,
+                }
+                logger.info(f"Options scan: {len(options_candidates)} opportunities from {len(alpha_out.signals[:30])} tickers")
+            else:
+                options_data = {"status": "no_contracts_available"}
+        except Exception as e:
+            options_data = {"error": str(e)}
+            logger.warning(f"Options scan failed: {e}")
+        result["stages"]["options"] = options_data
+        self.tracker.record_stage("options", (datetime.now() - t0).total_seconds() * 1000, options_data)
 
         # Stage 5.5: Decision Matrix (evaluate all alpha signals through gates)
         t0 = datetime.now()
