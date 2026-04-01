@@ -1687,11 +1687,18 @@ class ExecutionEngine:
         result["stages"]["cvr"] = cvr_data
         self.tracker.record_stage("cvr", (datetime.now() - t0).total_seconds() * 1000, cvr_data)
 
-        # Stage 3.9: Event-driven analysis
+        # Stage 3.9: Event-driven analysis (with live discovery)
         t0 = datetime.now()
         event_data = {}
         if self.event:
             try:
+                # Scan live SEC filings + news for new events before analysis
+                try:
+                    scan_result = self.event.scan_live_events()
+                    event_data["live_scan"] = len(scan_result)
+                except Exception as e:
+                    logger.debug("Event live scan failed: %s", e)
+
                 # Pass regime multiplier based on cube regime
                 regime_mult = {"TRENDING": 1.0, "RANGE": 0.8, "STRESS": 0.5, "CRASH": 0.3}
                 mult = regime_mult.get(cube_out.regime.value, 0.8)

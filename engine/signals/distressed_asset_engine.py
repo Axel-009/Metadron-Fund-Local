@@ -37,9 +37,11 @@ Usage:
     opps    = dae.get_fallen_angels()
 """
 
+import json
 import logging
 import numpy as np
 from enum import Enum
+from pathlib import Path
 from dataclasses import dataclass, field
 from typing import Dict, List, Optional, Tuple
 
@@ -267,9 +269,46 @@ class DistressedAssetEngine:
     """
 
     def __init__(self, universe: Optional[Dict] = None):
-        self.universe = universe or DISTRESSED_UNIVERSE
+        self.universe = universe or self._load_dynamic_universe()
         self._results: Dict[str, DistressScore] = {}
         self._analyzed = False
+
+    @staticmethod
+    def _load_dynamic_universe() -> Dict:
+        """Load distressed universe from credit classification (E/F tiers) + FMP fundamentals.
+
+        Falls back to static DISTRESSED_UNIVERSE if credit data unavailable.
+        """
+        try:
+            credit_path = Path(__file__).parent.parent.parent / "governance" / "credit_classification.json"
+            if credit_path.exists():
+                with open(credit_path) as f:
+                    data = json.load(f)
+                ratings = data.get("ratings", {})
+                universe = {}
+                for ticker, info in ratings.items():
+                    egan = info.get("egan_tier", "")
+                    tier = info.get("tier", "")
+                    # Include E/F tiers (distressed) and D tier (high leverage)
+                    if egan in ("E", "F") or tier in ("E", "F", "D"):
+                        de = info.get("debt_to_equity", 3.0)
+                        cr = info.get("current_ratio", 0.5)
+                        mc = info.get("market_cap", 0)
+                        universe[ticker] = {
+                            "name": ticker,
+                            "sector": "",
+                            "debt_to_equity": de,
+                            "market_cap_B": mc / 1e9 if mc > 0 else 1.0,
+                            "interest_coverage": info.get("interest_coverage", 1.0),
+                        }
+                if universe:
+                    logger.info("Distressed universe loaded from credit classification: %d tickers", len(universe))
+                    return universe
+        except Exception as e:
+            logger.debug("Credit classification load failed: %s", e)
+
+        logger.info("Using static DISTRESSED_UNIVERSE fallback (%d tickers)", len(DISTRESSED_UNIVERSE))
+        return dict(DISTRESSED_UNIVERSE)
 
     # -----------------------------------------------------------------------
     # Model 1: Altman Z-Score (3 variants)

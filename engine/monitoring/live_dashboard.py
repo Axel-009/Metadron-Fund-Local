@@ -115,6 +115,18 @@ SCANNER_UNIVERSE: List[str] = [
     "IREN", "WULF", "BITF", "CORZ",
 ]
 
+# --- Dynamic universe: pull from UniverseEngine at import time, fallback to static list ---
+try:
+    from ..data.universe_engine import get_engine as _get_ue
+    _ue = _get_ue()
+    _ue.load()
+    _dynamic = [s.ticker for s in _ue.get_all()]
+    if _dynamic:
+        SCANNER_UNIVERSE = _dynamic
+        logger.info("Dashboard scanner universe loaded from UniverseEngine: %d tickers", len(SCANNER_UNIVERSE))
+except Exception:
+    pass  # Keep static fallback
+
 # Deduplicate while preserving order
 _seen = set()
 _unique: List[str] = []
