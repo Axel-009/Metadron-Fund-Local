@@ -703,17 +703,26 @@ class UniverseEngine:
         """Load the full cross-asset universe.
 
         Strategy:
-        1. Try dynamic loading via OpenBB index.constituents() for live data
-        2. Fall back to comprehensive static universe (~2,500+ tickers from
-           SP500 + SP400 + SP600 + extra names)
-        3. Enrich each ticker with GICS sector/industry classification
+        1. Try dynamic loading via OpenBB FMP index.constituents() — PRIMARY
+        2. Merge with static universe as FLOOR (catches any tickers FMP missed)
+        3. Apply EXCLUDE_TICKERS (delisted/failed companies)
+        4. Enrich each ticker with GICS sector/industry classification
+
+        Dynamic constituents come from FMP's live index data. Static fallback
+        ensures the universe is never empty even if FMP is unreachable.
         """
-        # Step 1: Try dynamic OpenBB loading
+        # Step 1: Try dynamic OpenBB loading (primary — live FMP data)
         dynamic_tickers = self._try_openbb_constituents()
 
-        # Step 2: Merge with static universe (static is the floor)
+        # Step 2: Merge with static universe (floor/fallback)
         static_tickers = get_all_static_tickers()
-        all_tickers = sorted(set(dynamic_tickers) | set(static_tickers))
+
+        if dynamic_tickers:
+            # Dynamic is primary — use it, add static as supplementary
+            all_tickers = sorted(set(dynamic_tickers) | set(static_tickers))
+        else:
+            # No dynamic data — use static only
+            all_tickers = sorted(set(static_tickers))
 
         logger.info(
             "Universe loading: %d dynamic + %d static → %d unique tickers",

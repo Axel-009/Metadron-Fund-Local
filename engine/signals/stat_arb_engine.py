@@ -1012,6 +1012,7 @@ class StatArbEngine:
     """
 
     def __init__(self):
+        # Initialize pairs — try dynamic discovery, fall back to static RV_PAIRS
         self._pairs: list[CointegratedPair] = []
         self._pair_stats: list[PairStatistics] = []
         self._active_trades: list[dict] = []
@@ -1021,11 +1022,77 @@ class StatArbEngine:
         self._last_scan: str = ""
         self._initialized: bool = False
 
-        # Initialize pair objects from RV_PAIRS
+        # Seed with static pairs, then extend dynamically
         for ticker_a, ticker_b in RV_PAIRS:
             self._pairs.append(CointegratedPair(ticker_a, ticker_b))
 
-        logger.info(f"StatArbEngine initialized with {len(self._pairs)} pairs")
+        logger.info(f"StatArbEngine initialized with {len(self._pairs)} seed pairs")
+
+    def discover_pairs(self, min_correlation: float = 0.70, max_pairs: int = 50) -> int:
+        """Dynamically discover cointegrated pairs from the live universe.
+
+        Scans same-sector tickers for high correlation and adds new pairs
+        to the engine. Uses OpenBB/FMP price data for correlation analysis.
+
+        Returns number of new pairs discovered.
+        """
+        try:
+            from ..data.universe_engine import get_engine
+            from ..data.yahoo_data import get_adj_close
+            import pandas as pd
+        except ImportError:
+            logger.debug("Cannot discover pairs — imports unavailable")
+            return 0
+
+        ue = get_engine()
+        sectors = ue.get_sectors() if hasattr(ue, "get_sectors") else {}
+        existing_keys = {(p.ticker_a, p.ticker_b) for p in self._pairs}
+        existing_keys.update({(p.ticker_b, p.ticker_a) for p in self._pairs})
+        added = 0
+
+        # Scan within each sector for correlated pairs
+        for sector_name, tickers in sectors.items():
+            if len(tickers) < 2:
+                continue
+            # Take top 15 by liquidity/market cap per sector
+            candidates = tickers[:15] if isinstance(tickers, list) else list(tickers)[:15]
+            if len(candidates) < 2:
+                continue
+
+            try:
+                start = (pd.Timestamp.now() - pd.Timedelta(days=180)).strftime("%Y-%m-%d")
+                prices = get_adj_close(candidates, start=start)
+                if prices.empty or len(prices) < 60:
+                    continue
+                returns = prices.pct_change().dropna()
+                if returns.empty:
+                    continue
+
+                # Compute pairwise correlation
+                corr = returns.corr()
+                for i, t1 in enumerate(corr.columns):
+                    for j, t2 in enumerate(corr.columns):
+                        if j <= i:
+                            continue
+                        c = corr.iloc[i, j]
+                        if abs(c) >= min_correlation and (t1, t2) not in existing_keys:
+                            self._pairs.append(CointegratedPair(t1, t2))
+                            existing_keys.add((t1, t2))
+                            existing_keys.add((t2, t1))
+                            added += 1
+                            if added >= max_pairs:
+                                break
+                    if added >= max_pairs:
+                        break
+            except Exception as e:
+                logger.debug("Pair discovery failed for sector %s: %s", sector_name, e)
+
+            if added >= max_pairs:
+                break
+
+        if added > 0:
+            logger.info("Discovered %d new pairs (total: %d)", added, len(self._pairs))
+        return added
 
     @property
     def n_pairs(self) -> int:

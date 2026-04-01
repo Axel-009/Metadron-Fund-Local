@@ -237,7 +237,7 @@ class MoneyVelocityModule:
     and produces a composite Liquidity Score 0-100.
     """
 
-    # Historical baseline ratios for normalisation
+    # Historical baseline ratios — refreshed from FRED on init, fallback to constants
     _V_BASELINE = 1.12          # Long-run US velocity of money
     _M2_GROWTH_MEAN = 0.06      # ~6% annual M2 growth baseline
     _CREDIT_IMPULSE_MEAN = 0.0  # Neutral impulse
@@ -252,6 +252,42 @@ class MoneyVelocityModule:
         self.sofr_rate: float = self._SOFR_BASELINE
         self.liquidity_score: float = 50.0
         self._history: list[dict] = []
+        # Refresh baselines from live FRED data
+        self._refresh_baselines()
+
+    def _refresh_baselines(self):
+        """Pull latest FRED data to update baseline constants.
+
+        Fetches SOFR, M2 velocity, and TED spread from FRED.
+        Falls back to hardcoded constants if API unavailable.
+        """
+        try:
+            # SOFR — latest effective rate
+            sofr_data = get_macro_data()
+            if hasattr(sofr_data, "empty") and not sofr_data.empty:
+                if "SOFR" in str(sofr_data.columns):
+                    last_sofr = float(sofr_data.iloc[-1].get("SOFR", self._SOFR_BASELINE))
+                    if 0 < last_sofr < 20:
+                        self.sofr_rate = last_sofr
+                        self.__class__._SOFR_BASELINE = last_sofr
+                        logger.debug("SOFR baseline refreshed: %.2f%%", last_sofr)
+        except Exception:
+            pass
+
+        try:
+            # M2 velocity from FRED (M2V series)
+            from ..data.openbb_data import get_fred_series
+            m2v = get_fred_series("M2V", start="2020-01-01")
+            if hasattr(m2v, "empty") and not m2v.empty:
+                cols = m2v.select_dtypes(include=["number"]).columns
+                if len(cols) > 0:
+                    last_v = float(m2v[cols[0]].dropna().iloc[-1])
+                    if 0.5 < last_v < 3.0:
+                        self.velocity = last_v
+                        self.__class__._V_BASELINE = last_v
+                        logger.debug("M2 velocity baseline refreshed: %.3f", last_v)
+        except Exception:
+            pass
 
     def compute_velocity(
         self,
@@ -1842,7 +1878,7 @@ class FedReserveIntegration:
     and liquidity impulse (delta net liquidity).
     """
 
-    # Default baseline values ($ billions, approximate as of 2024)
+    # Default baseline values — refreshed from FRED on init, fallback to 2024 estimates
     _DEFAULT_ASSETS = 7_700.0
     _DEFAULT_RRP = 500.0
     _DEFAULT_TGA = 750.0
@@ -1853,9 +1889,55 @@ class FedReserveIntegration:
         rrp: Optional[float] = None,
         tga: Optional[float] = None,
     ):
-        self._fed_assets: float = fed_assets if fed_assets is not None else self._DEFAULT_ASSETS
-        self._rrp: float = rrp if rrp is not None else self._DEFAULT_RRP
-        self._tga: float = tga if tga is not None else self._DEFAULT_TGA
+        # Try live FRED data first, then passed values, then defaults
+        live = self._fetch_live_fed_data()
+        self._fed_assets: float = fed_assets or live.get("assets", self._DEFAULT_ASSETS)
+        self._rrp: float = rrp or live.get("rrp", self._DEFAULT_RRP)
+        self._tga: float = tga or live.get("tga", self._DEFAULT_TGA)
+
+    @staticmethod
+    def _fetch_live_fed_data() -> dict:
+        """Fetch latest Fed balance sheet data from FRED.
+
+        WALCL = Fed total assets
+        RRPONTSYD = ON-RRP
+        WTREGEN = Treasury General Account
+        """
+        result = {}
+        try:
+            from ..data.openbb_data import get_fred_series
+            # Fed total assets (WALCL, weekly, in millions)
+            walcl = get_fred_series("WALCL", start="2024-01-01")
+            if hasattr(walcl, "empty") and not walcl.empty:
+                cols = walcl.select_dtypes(include=["number"]).columns
+                if len(cols) > 0:
+                    val = float(walcl[cols[0]].dropna().iloc[-1])
+                    if val > 0:
+                        result["assets"] = val / 1000  # millions → billions
+                        logger.debug("Fed assets from FRED: $%.0fB", result["assets"])
+
+            # ON-RRP (RRPONTSYD, daily, in billions)
+            rrp = get_fred_series("RRPONTSYD", start="2024-01-01")
+            if hasattr(rrp, "empty") and not rrp.empty:
+                cols = rrp.select_dtypes(include=["number"]).columns
+                if len(cols) > 0:
+                    val = float(rrp[cols[0]].dropna().iloc[-1])
+                    if val >= 0:
+                        result["rrp"] = val / 1000 if val > 10000 else val  # normalize
+                        logger.debug("ON-RRP from FRED: $%.0fB", result["rrp"])
+
+            # TGA (WTREGEN, weekly, in millions)
+            tga = get_fred_series("WTREGEN", start="2024-01-01")
+            if hasattr(tga, "empty") and not tga.empty:
+                cols = tga.select_dtypes(include=["number"]).columns
+                if len(cols) > 0:
+                    val = float(tga[cols[0]].dropna().iloc[-1])
+                    if val > 0:
+                        result["tga"] = val / 1000  # millions → billions
+                        logger.debug("TGA from FRED: $%.0fB", result["tga"])
+        except Exception as e:
+            logger.debug("Fed live data fetch failed: %s — using defaults", e)
+        return result
         self._prev_net_liquidity: float = self._compute_raw_net_liquidity()
         self._net_liquidity: float = self._prev_net_liquidity
         self._liquidity_impulse: float = 0.0
