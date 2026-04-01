@@ -410,13 +410,13 @@ class TestDistressedAssetEngine:
     def test_init(self):
         from engine.signals.distressed_asset_engine import DistressedAssetEngine
         dae = DistressedAssetEngine()
-        assert len(dae.universe) == 11
+        assert len(dae.universe) >= 11  # Dynamic: credit classification E/F tiers + static fallback
 
     def test_analyze(self):
         from engine.signals.distressed_asset_engine import DistressedAssetEngine, DistressLevel
         dae = DistressedAssetEngine()
         results = dae.analyze()
-        assert len(results) == 11
+        assert len(results) >= 11  # Dynamic universe from credit classification
         for ticker, score in results.items():
             assert score.ticker == ticker
             assert isinstance(score.level, DistressLevel)

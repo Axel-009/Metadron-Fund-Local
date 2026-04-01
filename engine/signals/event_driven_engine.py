@@ -36,6 +36,13 @@ from datetime import datetime, timedelta
 
 logger = logging.getLogger(__name__)
 
+# Data layer imports (guarded)
+try:
+    from ..data.openbb_data import get_company_news, get_company_filings
+except ImportError:
+    def get_company_news(*a, **kw): return __import__("pandas").DataFrame()
+    def get_company_filings(*a, **kw): return __import__("pandas").DataFrame()
+
 
 # ---------------------------------------------------------------------------
 # Enums
@@ -249,10 +256,163 @@ class EventDrivenEngine:
 
     def __init__(self, events: Optional[List[dict]] = None,
                  risk_free: float = 0.045):
-        self.events = events or LIVE_EVENTS
+        self.events = events or list(LIVE_EVENTS)  # Start with seed catalog
         self.risk_free = risk_free
         self._result: Optional[EventAnalysisResult] = None
         self._analyzed = False
+
+    # -----------------------------------------------------------------------
+    # Live Event Discovery — SEC 8-K filings + company news
+    # -----------------------------------------------------------------------
+
+    _MERGER_KEYWORDS = [
+        "merger", "acquisition", "definitive agreement", "tender offer",
+        "buyout", "take-private", "going private", "all-cash",
+    ]
+    _EARNINGS_KEYWORDS = [
+        "beats estimates", "misses estimates", "earnings surprise",
+        "revenue beat", "revenue miss", "raises guidance", "lowers guidance",
+        "profit warning", "upgraded", "downgraded",
+    ]
+    _CATALYST_KEYWORDS = [
+        "fda approval", "drug approval", "phase 3", "phase iii",
+        "spinoff", "spin-off", "activist", "restructuring", "bankruptcy",
+        "share buyback", "special dividend", "rights offering",
+    ]
+
+    def scan_live_events(self, tickers: Optional[List[str]] = None) -> List[dict]:
+        """Scan SEC 8-K filings and news for event-driven opportunities.
+
+        Discovers merger arbs, PEAD signals, spinoffs, activist situations,
+        and other catalysts from live data feeds.
+        """
+        if tickers is None:
+            try:
+                from ..data.universe_engine import get_engine
+                ue = get_engine()
+                tickers = [s.ticker for s in ue.get_all()[:200]]
+            except Exception:
+                tickers = [e["ticker"] for e in self.events if "ticker" in e]
+
+        discovered = []
+        for ticker in tickers[:100]:  # Cap at 100 for API limits
+            try:
+                discovered.extend(self._scan_ticker_news(ticker))
+            except Exception:
+                pass
+            try:
+                discovered.extend(self._scan_ticker_filings(ticker))
+            except Exception:
+                pass
+
+        # Merge discovered events into catalog (avoid duplicates)
+        existing_keys = {(e.get("ticker", ""), e.get("type", "")) for e in self.events}
+        added = 0
+        for ev in discovered:
+            key = (ev.get("ticker", ""), ev.get("type", ""))
+            if key not in existing_keys:
+                self.events.append(ev)
+                existing_keys.add(key)
+                added += 1
+
+        self._analyzed = False  # Force re-analysis
+        logger.info("Event scan: %d discovered, %d new (total catalog: %d)",
+                    len(discovered), added, len(self.events))
+        return discovered
+
+    def _scan_ticker_news(self, ticker: str) -> List[dict]:
+        """Scan company news for event catalysts."""
+        events = []
+        try:
+            news = get_company_news(ticker, limit=10, provider="fmp")
+            if news.empty:
+                return events
+            for _, row in news.iterrows():
+                title = str(row.get("title", "") or "").lower()
+                date = str(row.get("date", "") or "")
+
+                # Check merger keywords
+                if any(kw in title for kw in self._MERGER_KEYWORDS):
+                    events.append({
+                        "type": EventCategory.MERGER_ARB,
+                        "ticker": ticker,
+                        "notes": str(row.get("title", "")),
+                        "deal_price": 0.0,  # Needs manual extraction
+                        "current_price": 0.0,
+                        "days_to_close": 60,
+                        "status": DealStatus.ANNOUNCED,
+                        "_source": "NEWS",
+                        "_date": date,
+                    })
+                    break
+
+                # Check earnings surprise
+                if any(kw in title for kw in self._EARNINGS_KEYWORDS):
+                    direction = 1.0 if any(w in title for w in ["beats", "beat", "raises", "upgraded"]) else -1.0
+                    events.append({
+                        "type": EventCategory.PEAD,
+                        "ticker": ticker,
+                        "sue_zscore": direction * 2.0,
+                        "surprise_pct": direction * 0.10,
+                        "revision_momentum": direction * 0.05,
+                        "days_since": 3,
+                        "notes": str(row.get("title", "")),
+                        "_source": "NEWS",
+                        "_date": date,
+                    })
+                    break
+
+                # Check catalysts
+                if any(kw in title for kw in self._CATALYST_KEYWORDS):
+                    cat = EventCategory.REGULATORY if "fda" in title or "drug" in title else EventCategory.CATALYST
+                    events.append({
+                        "type": cat,
+                        "ticker": ticker,
+                        "notes": str(row.get("title", "")),
+                        "_source": "NEWS",
+                        "_date": date,
+                    })
+                    break
+        except Exception:
+            pass
+        return events
+
+    def _scan_ticker_filings(self, ticker: str) -> List[dict]:
+        """Scan SEC 8-K filings for material events."""
+        events = []
+        try:
+            filings = get_company_filings(ticker, filing_type="8-K", limit=5)
+            if filings.empty:
+                return events
+            for _, row in filings.iterrows():
+                title = str(row.get("title", "") or row.get("description", "") or "").lower()
+                date = str(row.get("date", "") or row.get("filing_date", "") or "")
+
+                if any(kw in title for kw in self._MERGER_KEYWORDS):
+                    events.append({
+                        "type": EventCategory.MERGER_ARB,
+                        "ticker": ticker,
+                        "notes": f"SEC 8-K: {row.get('title', title)}",
+                        "deal_price": 0.0,
+                        "current_price": 0.0,
+                        "days_to_close": 90,
+                        "status": DealStatus.ANNOUNCED,
+                        "_source": "SEC_8K",
+                        "_date": date,
+                    })
+                    break
+                if any(kw in title for kw in ["restructuring", "bankruptcy", "chapter 11"]):
+                    events.append({
+                        "type": EventCategory.DISTRESSED,
+                        "ticker": ticker,
+                        "notes": f"SEC 8-K: {row.get('title', title)}",
+                        "_source": "SEC_8K",
+                        "_date": date,
+                    })
+                    break
+        except Exception:
+            pass
+        return events
 
     # -----------------------------------------------------------------------
     # Model 1: M&A Arbitrage (Mitchell-Pulvino Decomposition)
