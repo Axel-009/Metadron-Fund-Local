@@ -5,6 +5,7 @@ import { ResizableDashboard } from "@/components/resizable-panel";
 import {
   AreaChart, Area, XAxis, YAxis, ResponsiveContainer, LineChart, Line, Tooltip, PieChart, Pie, Cell, BarChart, Bar,
 } from "recharts";
+import { useEngineQuery, type PortfolioLive, type TradeRecord, type RiskPortfolio, type RiskGreeks } from "@/hooks/use-engine-api";
 
 // ═══════════ SIMULATED DATA GENERATORS ═══════════
 
@@ -330,9 +331,41 @@ function NeuralMarketMap() {
 // ═══════════ LIVE TRANSACTIONS COMPONENT ═══════════
 
 function LiveTransactions() {
-  const [txns, setTxns] = useState<LiveTx[]>(() => generateInitialTxs(60));
-  const scrollRef = useRef<HTMLDivElement>(null);
+  const { data: tradesData } = useEngineQuery<{ trades: TradeRecord[] }>("/portfolio/trades?limit=200", { refetchInterval: 3000 });
   const [flashId, setFlashId] = useState<string | null>(null);
+  const scrollRef = useRef<HTMLDivElement>(null);
+  const prevCountRef = useRef(0);
+
+  // Map API trades to LiveTx format
+  const txns: LiveTx[] = useMemo(() => {
+    if (!tradesData?.trades?.length) return [];
+    return tradesData.trades.map((t) => {
+      const side = (t.side?.toUpperCase() || "BUY") as LiveTx["side"];
+      const notional = t.quantity * t.fill_price;
+      return {
+        id: t.id || `TX-${Math.random().toString(36).slice(2, 8).toUpperCase()}`,
+        time: t.timestamp ? new Date(t.timestamp).toLocaleTimeString("en-US", { hour12: false, hour: "2-digit", minute: "2-digit", second: "2-digit" }) : "--:--:--",
+        ticker: t.ticker,
+        side,
+        qty: t.quantity,
+        price: t.fill_price,
+        notional,
+        fillType: "FULL" as const,
+        venue: "ENGINE",
+        signal: t.signal_type || "UNKNOWN",
+        latencyMs: 0,
+      };
+    });
+  }, [tradesData]);
+
+  // Flash new entries
+  useEffect(() => {
+    if (txns.length > prevCountRef.current && txns.length > 0) {
+      setFlashId(txns[0].id);
+      setTimeout(() => setFlashId(null), 800);
+    }
+    prevCountRef.current = txns.length;
+  }, [txns]);
 
   // Running stats
   const filled = txns.filter((t) => t.fillType !== "REJECTED");
@@ -340,16 +373,6 @@ function LiveTransactions() {
   const buys = filled.filter((t) => t.side === "BUY" || t.side === "COVER").length;
   const sells = filled.filter((t) => t.side === "SELL" || t.side === "SHORT").length;
   const avgLatency = filled.length ? filled.reduce((s, t) => s + t.latencyMs, 0) / filled.length : 0;
-
-  useEffect(() => {
-    const iv = setInterval(() => {
-      const newTx = generateLiveTx();
-      setTxns((prev) => [newTx, ...prev].slice(0, 200));
-      setFlashId(newTx.id);
-      setTimeout(() => setFlashId(null), 800);
-    }, 1800);
-    return () => clearInterval(iv);
-  }, []);
 
   // Auto-scroll to top on new tx
   useEffect(() => {
@@ -590,69 +613,82 @@ function DepthChart() {
 // ═══════════ RISK PANEL ═══════════
 
 function RiskPanel() {
+  const { data: riskData } = useEngineQuery<RiskPortfolio>("/risk/portfolio", { refetchInterval: 5000 });
+  const { data: portData } = useEngineQuery<PortfolioLive>("/portfolio/live", { refetchInterval: 5000 });
+
+  const beta = riskData?.current_beta ?? 0;
+  const targetBeta = riskData?.target_beta ?? 0;
+  const corridor = riskData?.corridor_position ?? "--";
+  const pnl = portData?.total_pnl ?? 0;
+  const nav = portData?.nav ?? 0;
+  const exposure = portData?.gross_exposure ?? 0;
+  const wins = portData?.win_count ?? 0;
+  const losses = portData?.loss_count ?? 0;
+  const winRate = (wins + losses) > 0 ? ((wins / (wins + losses)) * 100).toFixed(1) : "0";
+
   return (
     <div className="flex flex-col h-full text-[10px] font-mono tabular-nums p-2 gap-2">
       <div>
         <div className="flex items-baseline gap-2">
-          <span className="text-2xl font-bold text-terminal-text-primary">$45,750</span>
-          <span className="text-terminal-text-muted">(1.22% VaR)</span>
+          <span className="text-2xl font-bold text-terminal-text-primary">${Math.abs(pnl).toLocaleString()}</span>
+          <span className="text-terminal-text-muted">(β {beta.toFixed(2)})</span>
         </div>
         <div className="flex items-center gap-3 mt-1">
-          <span className="text-terminal-text-faint">Calmar Ratio</span>
-          <span className="text-terminal-text-primary">155%</span>
+          <span className="text-terminal-text-faint">Corridor</span>
+          <span className="text-terminal-text-primary">{corridor}</span>
         </div>
       </div>
       <div className="grid grid-cols-2 gap-x-4 gap-y-1">
         <div className="flex justify-between">
-          <span className="text-terminal-text-faint">Max Drawdown</span>
-          <span className="text-terminal-negative">8.78%</span>
+          <span className="text-terminal-text-faint">Target Beta</span>
+          <span className="text-terminal-text-primary">{targetBeta.toFixed(2)}</span>
         </div>
         <div className="flex justify-between">
-          <span className="text-terminal-text-faint">DIAS</span>
-          <span className="text-terminal-text-primary">$175,125</span>
+          <span className="text-terminal-text-faint">NAV</span>
+          <span className="text-terminal-text-primary">${nav >= 1e6 ? (nav / 1e6).toFixed(1) + "M" : nav.toLocaleString()}</span>
         </div>
         <div className="flex justify-between">
           <span className="text-terminal-text-faint">Beta</span>
-          <span className="text-terminal-text-primary">0.92</span>
+          <span className="text-terminal-text-primary">{beta.toFixed(2)}</span>
         </div>
         <div className="flex justify-between">
-          <span className="text-terminal-text-faint">HoriFlows</span>
-          <span className="text-terminal-accent">NASDAQ</span>
+          <span className="text-terminal-text-faint">Exposure</span>
+          <span className="text-terminal-accent">{(exposure * 100).toFixed(1)}%</span>
         </div>
       </div>
 
       <div className="border-t border-terminal-border pt-1.5">
         <div className="grid grid-cols-3 gap-x-3 gap-y-0.5 text-[10px]">
           <div className="flex justify-between">
-            <span className="text-terminal-text-faint">Sector</span>
-            <span>DAM</span>
+            <span className="text-terminal-text-faint">Positions</span>
+            <span>{portData?.positions_count ?? 0}</span>
           </div>
           <div className="flex justify-between">
-            <span className="text-terminal-text-faint">DoI</span>
-            <span>89.6%</span>
+            <span className="text-terminal-text-faint">W/L</span>
+            <span>{wins}/{losses}</span>
           </div>
           <div className="flex justify-between">
-            <span className="text-terminal-text-faint">Risk</span>
-            <span>13.67%</span>
+            <span className="text-terminal-text-faint">Win%</span>
+            <span>{winRate}%</span>
           </div>
           <div className="flex justify-between">
-            <span className="text-terminal-text-faint">Sens</span>
-            <span>18,800</span>
+            <span className="text-terminal-text-faint">Cash</span>
+            <span>${((portData?.cash ?? 0) / 1e3).toFixed(0)}K</span>
           </div>
           <div className="flex justify-between">
-            <span className="text-terminal-text-faint">Bet</span>
-            <span>68.8%</span>
+            <span className="text-terminal-text-faint">Net Exp</span>
+            <span>{((portData?.net_exposure ?? 0) * 100).toFixed(1)}%</span>
           </div>
           <div className="flex justify-between">
-            <span className="text-terminal-text-faint">Ret</span>
-            <span>25.9%</span>
+            <span className="text-terminal-text-faint">P&L</span>
+            <span className={pnl >= 0 ? "text-terminal-positive" : "text-terminal-negative"}>{pnl >= 0 ? "+" : ""}{pnl.toLocaleString()}</span>
           </div>
         </div>
       </div>
 
       <div className="border-t border-terminal-border pt-1.5 flex-1">
         <div className="text-[9px] text-terminal-text-muted font-semibold tracking-wider uppercase mb-1">
-          TOP RISKS <span className="text-terminal-text-faint ml-2">68%</span>
+          TOP RISKS <span className="text-terminal-text-faint ml-2">{corridor}</span>
         </div>
         {TOP_RISKS.map((r, i) => (
           <div key={i} className="flex items-center gap-2 py-0.5">
