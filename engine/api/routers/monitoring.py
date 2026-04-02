@@ -217,6 +217,36 @@ async def learning_loop():
         return {"error": str(e)}
 
 
+# ─── Centralized errors (TECH tab reads this) ─────────────
+
+@router.get("/errors")
+async def engine_errors(limit: int = Query(30, ge=1, le=200)):
+    """All engine errors from the current session. TECH tab primary error source."""
+    try:
+        from engine.ops.error_logger import get_recent_errors, get_error_counts
+        errors = get_recent_errors(limit)
+        counts = get_error_counts()
+        return {"errors": errors, "counts": counts, "timestamp": datetime.utcnow().isoformat()}
+    except Exception as e:
+        logger.error(f"monitoring/errors error: {e}")
+        return {"errors": [], "counts": {}, "error": str(e)}
+
+
+@router.get("/session-close")
+async def trigger_session_close():
+    """Trigger post-session file generation (TX logs, recon, learning, ML, errors).
+
+    Normally called by run_close.py, but available via API for manual trigger.
+    """
+    try:
+        from engine.ops.session_close import generate_session_files
+        files = generate_session_files()
+        return {"files": files, "status": "generated", "timestamp": datetime.utcnow().isoformat()}
+    except Exception as e:
+        logger.error(f"monitoring/session-close error: {e}")
+        return {"error": str(e)}
+
+
 # ─── ARCHIVE tab ───────────────────────────────────────────
 
 @router.get("/archive/files")

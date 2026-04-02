@@ -41,6 +41,7 @@ export default function TechDashboard() {
   const { data: healthApi } = useEngineQuery<{ engines: Array<{ id: string; name: string; level: string; status: string; latency: number; errors: number; error_msg?: string }> }>("/monitoring/engines/health", { refetchInterval: 5000 });
   const { data: vpsApi } = useEngineQuery<{ metrics: Array<{ name: string; cpu: number; memory: number; disk: number; network: string }> }>("/monitoring/vps-metrics", { refetchInterval: 10000 });
   const { data: logsApi } = useEngineQuery<{ messages: Array<{ time: string; level: string; message: string; source: string }> }>("/monitoring/logs", { refetchInterval: 5000 });
+  const { data: errorsApi } = useEngineQuery<{ errors: Array<{ timestamp: string; engine: string; severity: string; message: string }>; counts: { total: number; by_engine: Record<string, number> } }>("/monitoring/errors", { refetchInterval: 5000 });
 
   // Use API engines when available
   const [engines, setEngines] = useState(ENGINES);

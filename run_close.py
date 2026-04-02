@@ -209,6 +209,21 @@ def main():
     report = generate_close_report(portfolio_summary)
     path = save_report(report)
     print(f"\nClose report saved to: {path}")
+
+    # ─── Post-session file generation ──────────────────
+    # Generates dated files for ARCHIVE tab: TX logs, recon, learning, ML, errors
+    print()
+    print("─" * 50)
+    print("POST-SESSION FILE GENERATION")
+    print("─" * 50)
+    try:
+        from engine.ops.session_close import generate_session_files
+        files = generate_session_files()
+        for name, fpath in files.items():
+            print(f"  {name}: {fpath}")
+    except Exception as e:
+        print(f"  Session file generation failed: {e}")
+
     print()
     print("=" * 70)
     print("EVENING CLOSE COMPLETE")
