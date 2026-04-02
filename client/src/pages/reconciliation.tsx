@@ -1,5 +1,6 @@
 import { useState, useMemo } from "react";
 import { DashboardPanel } from "@/components/dashboard-panel";
+import { ResizableDashboard } from "@/components/resizable-panel";
 import {
   LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer,
   ReferenceLine,
@@ -513,14 +514,16 @@ export default function ReconciliationPage() {
         </DashboardPanel>
       </div>
 
-      {/* Bottom row: discrepancies + NAV chart */}
-      <div className="flex-shrink-0 grid grid-cols-[320px_1fr] gap-1 h-52">
-        <DashboardPanel title="DISCREPANCY DETAIL" className="h-full overflow-auto">
-          <DiscrepancyDetail positions={positions} />
-        </DashboardPanel>
-        <DashboardPanel title="30-DAY NAV COMPARISON" className="h-full">
-          <NAVComparisonChart data={navHistory} />
-        </DashboardPanel>
+      {/* Bottom row: discrepancies + NAV chart — resizable */}
+      <div className="flex-shrink-0 h-52">
+        <ResizableDashboard defaultSizes={[35, 65]} minSizes={[20, 35]}>
+          <DashboardPanel title="DISCREPANCY DETAIL" className="h-full overflow-auto">
+            <DiscrepancyDetail positions={positions} />
+          </DashboardPanel>
+          <DashboardPanel title="30-DAY NAV COMPARISON" className="h-full">
+            <NAVComparisonChart data={navHistory} />
+          </DashboardPanel>
+        </ResizableDashboard>
       </div>
     </div>
   );

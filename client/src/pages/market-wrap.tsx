@@ -1,4 +1,5 @@
 import { DashboardPanel } from "@/components/dashboard-panel";
+import { ResizableDashboard } from "@/components/resizable-panel";
 import { useState, useEffect, useRef } from "react";
 
 const SECTORS = [
@@ -377,111 +378,123 @@ function LiveNewsFeed() {
 
 export default function MarketWrap() {
   return (
-    <div className="h-full grid grid-cols-3 grid-rows-[auto_1fr_auto_auto] gap-[2px] p-[2px] overflow-auto" data-testid="market-wrap">
-      {/* Market Direction Narrative */}
-      <DashboardPanel title="MARKET DIRECTION" className="col-span-2">
-        <div className="space-y-2 text-[11px] text-terminal-text-muted leading-relaxed">
-          <p>
-            Markets are in a <span className="text-terminal-accent font-medium">risk-on</span> regime with strong breadth improvement.
-            Tech continues to lead driven by AI infrastructure spending. The S&P 500 made new all-time highs with expanding participation
-            beyond megacap tech. Bond yields remain elevated but stable. VIX at 14.2 suggests complacency — monitor for mean reversion.
-          </p>
-          <p>
-            Key thesis: The <span className="text-terminal-positive">soft landing</span> narrative is gaining credibility as inflation
-            decelerates without meaningful labor market deterioration. Fed messaging has shifted dovish at the margin.
-            <span className="text-terminal-warning"> Energy sector</span> weakness driven by China demand concerns and inventory builds.
-          </p>
-        </div>
-      </DashboardPanel>
+    <div className="h-full flex flex-col gap-[2px] p-[2px] overflow-hidden" data-testid="market-wrap">
 
-      {/* Scenario Thesis */}
-      <DashboardPanel title="SCENARIO THESIS">
-        <div className="space-y-2">
-          {SCENARIOS.map((s) => (
-            <div key={s.label} className="border border-terminal-border rounded p-2">
-              <div className="flex items-center gap-2 mb-1">
-                <span className="text-[10px] font-mono font-bold" style={{ color: s.color }}>{s.label}</span>
-                <span className="text-[9px] text-terminal-text-faint font-mono">{s.prob}</span>
+      {/* ─── Main resizable area: left content | right sidebar ─── */}
+      <div className="flex-1 min-h-0">
+        <ResizableDashboard defaultSizes={[72, 28]} minSizes={[45, 18]}>
+          {/* Left: Market Direction + GICS Heatmap */}
+          <div className="h-full flex flex-col gap-[2px] overflow-hidden">
+            {/* Market Direction Narrative */}
+            <DashboardPanel title="MARKET DIRECTION">
+              <div className="space-y-2 text-[11px] text-terminal-text-muted leading-relaxed">
+                <p>
+                  Markets are in a <span className="text-terminal-accent font-medium">risk-on</span> regime with strong breadth improvement.
+                  Tech continues to lead driven by AI infrastructure spending. The S&P 500 made new all-time highs with expanding participation
+                  beyond megacap tech. Bond yields remain elevated but stable. VIX at 14.2 suggests complacency — monitor for mean reversion.
+                </p>
+                <p>
+                  Key thesis: The <span className="text-terminal-positive">soft landing</span> narrative is gaining credibility as inflation
+                  decelerates without meaningful labor market deterioration. Fed messaging has shifted dovish at the margin.
+                  <span className="text-terminal-warning"> Energy sector</span> weakness driven by China demand concerns and inventory builds.
+                </p>
               </div>
-              <p className="text-[9px] text-terminal-text-muted leading-relaxed">{s.desc}</p>
-            </div>
-          ))}
-        </div>
-      </DashboardPanel>
+            </DashboardPanel>
 
-      {/* GICS Sector Heatmap */}
-      <DashboardPanel title="GICS SECTOR HEATMAP" className="col-span-2">
-        <div className="grid grid-cols-4 gap-1.5">
-          {SECTORS.map((s) => {
-            const intensity = Math.min(Math.abs(s.daily) / 2, 1);
-            const bg = s.daily >= 0
-              ? `rgba(0, 212, 170, ${0.08 + intensity * 0.2})`
-              : `rgba(248, 81, 73, ${0.08 + intensity * 0.2})`;
-            return (
-              <div key={s.name} className="rounded p-2 border border-terminal-border/50" style={{ background: bg }}>
-                <div className="text-[9px] text-terminal-text-muted font-medium truncate">{s.name}</div>
-                <div className="flex items-baseline gap-2 mt-0.5">
-                  <span className={`text-sm font-mono font-bold tabular-nums ${s.daily >= 0 ? "text-terminal-positive" : "text-terminal-negative"}`}>
-                    {s.daily >= 0 ? "+" : ""}{s.daily.toFixed(1)}%
-                  </span>
-                  <span className="text-[8px] text-terminal-text-faint font-mono">
-                    W: {s.weekly >= 0 ? "+" : ""}{s.weekly.toFixed(1)}%
-                  </span>
-                </div>
+            {/* GICS Sector Heatmap */}
+            <DashboardPanel title="GICS SECTOR HEATMAP" className="flex-1">
+              <div className="grid grid-cols-4 gap-1.5">
+                {SECTORS.map((s) => {
+                  const intensity = Math.min(Math.abs(s.daily) / 2, 1);
+                  const bg = s.daily >= 0
+                    ? `rgba(0, 212, 170, ${0.08 + intensity * 0.2})`
+                    : `rgba(248, 81, 73, ${0.08 + intensity * 0.2})`;
+                  return (
+                    <div key={s.name} className="rounded p-2 border border-terminal-border/50" style={{ background: bg }}>
+                      <div className="text-[9px] text-terminal-text-muted font-medium truncate">{s.name}</div>
+                      <div className="flex items-baseline gap-2 mt-0.5">
+                        <span className={`text-sm font-mono font-bold tabular-nums ${s.daily >= 0 ? "text-terminal-positive" : "text-terminal-negative"}`}>
+                          {s.daily >= 0 ? "+" : ""}{s.daily.toFixed(1)}%
+                        </span>
+                        <span className="text-[8px] text-terminal-text-faint font-mono">
+                          W: {s.weekly >= 0 ? "+" : ""}{s.weekly.toFixed(1)}%
+                        </span>
+                      </div>
+                    </div>
+                  );
+                })}
               </div>
-            );
-          })}
-        </div>
-      </DashboardPanel>
-
-      {/* Right column: CVR News + Fed Calendar */}
-      <div className="flex flex-col gap-[2px]">
-        {/* CVR News */}
-        <DashboardPanel title="CVR NEWS" className="flex-1">
-          <div className="space-y-1.5">
-            {NEWS.map((n, i) => (
-              <div key={i} className="flex gap-2 text-[9px]">
-                <span className="text-terminal-text-faint font-mono flex-shrink-0 w-10">{n.time}</span>
-                <span className="text-terminal-text-muted flex-1">{n.headline}</span>
-                <span className="text-terminal-accent text-[8px] flex-shrink-0">{n.source}</span>
-              </div>
-            ))}
+            </DashboardPanel>
           </div>
-        </DashboardPanel>
 
-        {/* Fed Calendar */}
-        <DashboardPanel title="FED CALENDAR" className="flex-1">
-          <div className="space-y-1.5">
-            {FED_EVENTS.map((e, i) => (
-              <div key={i} className="flex gap-2 text-[9px]">
-                <span className="text-terminal-warning font-mono flex-shrink-0 w-12">{e.date}</span>
-                <span className="text-terminal-text-muted">{e.event}</span>
+          {/* Right sidebar: Scenario Thesis + CVR News + Fed Calendar */}
+          <div className="h-full flex flex-col gap-[2px] overflow-hidden">
+            <DashboardPanel title="SCENARIO THESIS">
+              <div className="space-y-2">
+                {SCENARIOS.map((s) => (
+                  <div key={s.label} className="border border-terminal-border rounded p-2">
+                    <div className="flex items-center gap-2 mb-1">
+                      <span className="text-[10px] font-mono font-bold" style={{ color: s.color }}>{s.label}</span>
+                      <span className="text-[9px] text-terminal-text-faint font-mono">{s.prob}</span>
+                    </div>
+                    <p className="text-[9px] text-terminal-text-muted leading-relaxed">{s.desc}</p>
+                  </div>
+                ))}
+              </div>
+            </DashboardPanel>
+
+            {/* CVR News */}
+            <DashboardPanel title="CVR NEWS" className="flex-1">
+              <div className="space-y-1.5">
+                {NEWS.map((n, i) => (
+                  <div key={i} className="flex gap-2 text-[9px]">
+                    <span className="text-terminal-text-faint font-mono flex-shrink-0 w-10">{n.time}</span>
+                    <span className="text-terminal-text-muted flex-1">{n.headline}</span>
+                    <span className="text-terminal-accent text-[8px] flex-shrink-0">{n.source}</span>
+                  </div>
+                ))}
+              </div>
+            </DashboardPanel>
+
+            {/* Fed Calendar */}
+            <DashboardPanel title="FED CALENDAR" className="flex-1">
+              <div className="space-y-1.5">
+                {FED_EVENTS.map((e, i) => (
+                  <div key={i} className="flex gap-2 text-[9px]">
+                    <span className="text-terminal-warning font-mono flex-shrink-0 w-12">{e.date}</span>
+                    <span className="text-terminal-text-muted">{e.event}</span>
+                  </div>
+                ))}
+              </div>
+            </DashboardPanel>
+          </div>
+        </ResizableDashboard>
+      </div>
+
+      {/* ── Live News Feed — full width ── */}
+      <div className="flex-shrink-0">
+        <LiveNewsFeed />
+      </div>
+
+      {/* Bottom: Upcoming Earnings/Dividends */}
+      <div className="flex-shrink-0">
+        <DashboardPanel title="INCOMING EVENTS">
+          <div className="flex gap-3 overflow-x-auto pb-1">
+            {EARNINGS.map((e, i) => (
+              <div key={i} className="flex-shrink-0 border border-terminal-border rounded p-2 min-w-[140px]">
+                <div className="flex items-center gap-2 text-[9px]">
+                  <span className="text-terminal-warning font-mono">{e.date}</span>
+                  <span className={`px-1 py-0.5 rounded text-[7px] font-medium ${
+                    e.type === "Earnings" ? "bg-terminal-accent/10 text-terminal-accent" : "bg-terminal-blue/10 text-terminal-blue"
+                  }`}>{e.type}</span>
+                </div>
+                <div className="text-sm font-mono font-bold text-terminal-text-primary mt-1">{e.ticker}</div>
+                <div className="text-[8px] text-terminal-text-faint font-mono">Est: {e.est}</div>
               </div>
             ))}
           </div>
         </DashboardPanel>
       </div>
-
-      {/* ── UPGRADED: Live News Feed — full width, below GICS sector map ── */}
-      <LiveNewsFeed />
-
-      {/* Bottom: Upcoming Earnings/Dividends */}
-      <DashboardPanel title="INCOMING EVENTS" className="col-span-3">
-        <div className="flex gap-3 overflow-x-auto pb-1">
-          {EARNINGS.map((e, i) => (
-            <div key={i} className="flex-shrink-0 border border-terminal-border rounded p-2 min-w-[140px]">
-              <div className="flex items-center gap-2 text-[9px]">
-                <span className="text-terminal-warning font-mono">{e.date}</span>
-                <span className={`px-1 py-0.5 rounded text-[7px] font-medium ${
-                  e.type === "Earnings" ? "bg-terminal-accent/10 text-terminal-accent" : "bg-terminal-blue/10 text-terminal-blue"
-                }`}>{e.type}</span>
-              </div>
-              <div className="text-sm font-mono font-bold text-terminal-text-primary mt-1">{e.ticker}</div>
-              <div className="text-[8px] text-terminal-text-faint font-mono">Est: {e.est}</div>
-            </div>
-          ))}
-        </div>
-      </DashboardPanel>
     </div>
   );
 }

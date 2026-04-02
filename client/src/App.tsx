@@ -27,6 +27,9 @@ import FixedIncomeDashboard from "@/pages/fixed-income";
 import MacroDashboard from "@/pages/macro";
 import ArbitrageDashboard from "@/pages/arbitrage";
 import MLModelsPage from "@/pages/ml-models";
+import MonteCarloPage from "@/pages/monte-carlo";
+import SimulationsPage from "@/pages/simulations";
+import ArchivePage from "@/pages/archive";
 
 // ═══════════ ALL AVAILABLE TABS ═══════════
 const ALL_TABS = [
@@ -51,6 +54,9 @@ const ALL_TABS = [
   { path: "/macro", label: "MACRO" },
   { path: "/arb", label: "ARB" },
   { path: "/ml-models", label: "ML MODELS" },
+  { path: "/monte-carlo", label: "MC SIM" },
+  { path: "/simulations", label: "SIM" },
+  { path: "/archive", label: "ARCHIVE" },
 ];
 
 const DEFAULT_PINNED = [
@@ -359,6 +365,9 @@ function AppRouter() {
       <Route path="/macro" component={MacroDashboard} />
       <Route path="/arb" component={ArbitrageDashboard} />
       <Route path="/ml-models" component={MLModelsPage} />
+      <Route path="/monte-carlo" component={MonteCarloPage} />
+      <Route path="/simulations" component={SimulationsPage} />
+      <Route path="/archive" component={ArchivePage} />
       <Route component={NotFound} />
     </Switch>
   );

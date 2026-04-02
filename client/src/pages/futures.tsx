@@ -1,5 +1,6 @@
 import { useState, useEffect, useMemo } from "react";
 import { DashboardPanel } from "@/components/dashboard-panel";
+import { ResizableDashboard } from "@/components/resizable-panel";
 import {
   AreaChart, Area, XAxis, YAxis, Tooltip, ResponsiveContainer,
   LineChart, Line, BarChart, Bar, ComposedChart,
@@ -450,41 +451,47 @@ export default function FuturesPage() {
   const activeContract = contracts.find(c => c.symbol === selectedContract) || contracts[0];
 
   return (
-    <div className="h-full grid grid-cols-[1fr_280px] grid-rows-[auto_1fr_auto] gap-1 p-1 overflow-hidden">
-      {/* Top row: Contracts + Contract Detail */}
-      <DashboardPanel title="FUTURES CONTRACTS" className="row-span-1" noPadding>
-        <ContractSpecs contracts={contracts} selected={selectedContract} onSelect={setSelectedContract} />
-      </DashboardPanel>
-
-      <div className="row-span-2 flex flex-col gap-1">
-        <DashboardPanel title={`${activeContract.symbol} SPECS`} className="flex-shrink-0">
-          <ContractDetail contract={activeContract} />
-        </DashboardPanel>
-        <DashboardPanel title="ORDER ENTRY" className="flex-1">
-          <OrderEntry contracts={contracts} selected={selectedContract} />
-        </DashboardPanel>
-        <DashboardPanel title="MARGIN SUMMARY" className="flex-shrink-0">
-          <MarginGauge margin={margin} />
+    <div className="h-full flex flex-col gap-1 p-1 overflow-hidden" data-testid="futures-page">
+      {/* Top: Contracts bar */}
+      <div className="flex-shrink-0">
+        <DashboardPanel title="FUTURES CONTRACTS" noPadding>
+          <ContractSpecs contracts={contracts} selected={selectedContract} onSelect={setSelectedContract} />
         </DashboardPanel>
       </div>
 
-      {/* Middle row: Positions + Orders */}
-      <div className="flex flex-col gap-1 overflow-hidden">
-        <DashboardPanel title="POSITIONS" className="flex-1" noPadding>
-          <PositionsTable positions={positions} />
-        </DashboardPanel>
-        <DashboardPanel title="ORDERS" className="flex-shrink-0 max-h-[180px]" noPadding>
-          <OrderBook orders={orders} />
-        </DashboardPanel>
-      </div>
+      {/* Main resizable area */}
+      <div className="flex-1 min-h-0">
+        <ResizableDashboard defaultSizes={[72, 28]} minSizes={[40, 18]}>
+          {/* Left: Positions + Orders + Term Structure */}
+          <div className="h-full flex flex-col gap-1">
+            <DashboardPanel title="POSITIONS" className="flex-1" noPadding>
+              <PositionsTable positions={positions} />
+            </DashboardPanel>
+            <DashboardPanel title="ORDERS" className="flex-shrink-0 max-h-[180px]" noPadding>
+              <OrderBook orders={orders} />
+            </DashboardPanel>
+            <DashboardPanel title="TERM STRUCTURE" className="flex-shrink-0 h-[160px]">
+              <TermStructureChart data={curveData} />
+            </DashboardPanel>
+          </div>
 
-      {/* Bottom row: Term Structure + Roll Calendar */}
-      <DashboardPanel title="TERM STRUCTURE" className="h-[160px]">
-        <TermStructureChart data={curveData} />
-      </DashboardPanel>
-      <DashboardPanel title="ROLL CALENDAR">
-        <RollCalendar rolls={rolls} />
-      </DashboardPanel>
+          {/* Right sidebar: Specs + Order Entry + Margin + Roll Calendar */}
+          <div className="h-full flex flex-col gap-1">
+            <DashboardPanel title={`${activeContract.symbol} SPECS`} className="flex-shrink-0">
+              <ContractDetail contract={activeContract} />
+            </DashboardPanel>
+            <DashboardPanel title="ORDER ENTRY" className="flex-1">
+              <OrderEntry contracts={contracts} selected={selectedContract} />
+            </DashboardPanel>
+            <DashboardPanel title="MARGIN SUMMARY" className="flex-shrink-0">
+              <MarginGauge margin={margin} />
+            </DashboardPanel>
+            <DashboardPanel title="ROLL CALENDAR" className="flex-shrink-0">
+              <RollCalendar rolls={rolls} />
+            </DashboardPanel>
+          </div>
+        </ResizableDashboard>
+      </div>
     </div>
   );
 }

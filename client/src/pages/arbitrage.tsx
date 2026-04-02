@@ -1,5 +1,6 @@
 import { useState, useMemo } from "react";
 import { DashboardPanel } from "@/components/dashboard-panel";
+import { ResizableDashboard } from "@/components/resizable-panel";
 import {
   LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, ReferenceLine,
   RadarChart, Radar, PolarGrid, PolarAngleAxis, PolarRadiusAxis,
@@ -141,10 +142,10 @@ export default function ArbitrageDashboard() {
   const highConviction= RV_PAIRS.filter(p => Math.abs(p.zscore) >= 3).length;
 
   return (
-    <div className="h-full grid gap-1 p-1 overflow-hidden" style={{ gridTemplateColumns: "1fr 280px", gridTemplateRows: "auto 1fr 180px" }}>
+    <div className="h-full flex flex-col gap-1 p-1 overflow-hidden">
 
       {/* ─── Summary Bar ─── */}
-      <div className="col-span-2 grid gap-1" style={{ gridTemplateColumns: "repeat(5, 1fr)" }}>
+      <div className="flex-shrink-0 grid gap-1" style={{ gridTemplateColumns: "repeat(5, 1fr)" }}>
         {[
           { label:"ACTIVE PAIRS",     value:`${activePairs} / ${RV_PAIRS.length}`,  color:"text-terminal-accent" },
           { label:"HIGH CONVICTION",  value:`${highConviction} pairs`,               color:"text-terminal-warning" },
@@ -159,7 +160,9 @@ export default function ArbitrageDashboard() {
         ))}
       </div>
 
-      {/* ─── Main: RV Pairs Table ─── */}
+      {/* ─── Main: RV Pairs Table + Right — Resizable ─── */}
+      <div className="flex-1 min-h-0">
+        <ResizableDashboard defaultSizes={[65, 35]} minSizes={[35, 20]}>
       <DashboardPanel
         title="ACTIVE RV PAIRS (STAT ARB)"
         noPadding
@@ -228,7 +231,7 @@ export default function ArbitrageDashboard() {
       </DashboardPanel>
 
       {/* ─── Right: Spread Chart + Factor Radar ─── */}
-      <div className="flex flex-col gap-1">
+      <div className="h-full flex flex-col gap-1">
         {/* Z-Score Chart */}
         <DashboardPanel
           title={`Z-SCORE: ${selectedPair.pairA}/${selectedPair.pairB} (60D)`}
@@ -279,8 +282,12 @@ export default function ArbitrageDashboard() {
           </div>
         </DashboardPanel>
       </div>
+        </ResizableDashboard>
+      </div>
 
       {/* ─── Bottom Row: Mispricing + Cross-Asset Arb ─── */}
+      <div className="flex-shrink-0 h-44">
+        <ResizableDashboard defaultSizes={[55, 45]} minSizes={[30, 25]}>
       <DashboardPanel title="MISPRICING OPPORTUNITIES (FACTOR RESIDUALS)" noPadding>
         <div className="overflow-auto h-full">
           <table className="w-full text-[10px] font-mono border-collapse">
@@ -353,6 +360,8 @@ export default function ArbitrageDashboard() {
           </table>
         </div>
       </DashboardPanel>
+        </ResizableDashboard>
+      </div>
     </div>
   );
 }

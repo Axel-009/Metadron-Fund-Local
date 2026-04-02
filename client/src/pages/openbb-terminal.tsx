@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef, useMemo, useCallback } from "react";
 import { DashboardPanel } from "@/components/dashboard-panel";
+import { ResizableDashboard } from "@/components/resizable-panel";
 import {
   AreaChart, Area, XAxis, YAxis, Tooltip, ResponsiveContainer,
   BarChart, Bar, LineChart, Line, ComposedChart,
@@ -80,6 +81,33 @@ const ALL_SECURITIES = [
   { ticker: "PLTR", price: 22.67, chg: 0.45, pct: 2.03, vol: "44.8M", mktCap: "48B", isHolding: false },
   { ticker: "AMD", price: 168.90, chg: 3.12, pct: 1.88, vol: "37.2M", mktCap: "273B", isHolding: false },
 ];
+
+// ═══════════ FMP UNIVERSE ═══════════
+// Mock FMP universe — extended tickers with simulated prices
+
+function randChg(seed: number): { price: number; chg: number; pct: number } {
+  const price = +(20 + Math.abs(seed * 37.3) % 480).toFixed(2);
+  const chg = +((Math.random() - 0.48) * price * 0.025).toFixed(2);
+  const pct = +((chg / price) * 100).toFixed(2);
+  return { price, chg, pct };
+}
+
+const FMP_TICKERS = [
+  "AVGO", "CRM", "NFLX", "COST", "PEP", "KO", "MCD", "WMT", "DIS", "PYPL",
+  "SQ", "SHOP", "ROKU", "SNAP", "UBER", "LYFT", "DASH", "ABNB", "ZM", "DOCU",
+  "CRWD", "ZS", "NET", "DDOG", "SNOW", "MDB", "BILL", "HUBS", "TTD", "U",
+  "RBLX", "PINS", "ETSY", "W", "CHWY", "PTON", "LCID", "RIVN", "NIO", "LI",
+  "XPEV", "SOFI", "HOOD", "UPST", "AFRM", "MARA", "RIOT", "CLSK", "BITF", "WULF",
+];
+
+// Stable mock prices — generated once
+const FMP_UNIVERSE: SecurityItem[] = FMP_TICKERS.map((ticker, i) => {
+  const seed = ticker.charCodeAt(0) * 0.1 + i;
+  const { price, chg, pct } = randChg(seed);
+  const vol = `${(5 + Math.abs(seed * 3.7) % 80).toFixed(1)}M`;
+  const mc = price > 100 ? `${(price * 0.05 + Math.abs(seed * 2)).toFixed(0)}B` : `${(price * 0.02 + Math.abs(seed * 0.5)).toFixed(0)}B`;
+  return { ticker, price, chg, pct, vol, mktCap: mc, isHolding: false };
+});
 
 const SCREENER_RESULTS = [
   { ticker: "SMCI", name: "Super Micro Computer", sector: "Technology", pe: 31.2, eps: 18.45, rsi: 72, signal: "BUY", score: 87 },
@@ -366,6 +394,32 @@ function SecurityRow({
   );
 }
 
+// Source icons
+function BriefcaseIcon() {
+  return (
+    <svg className="w-2.5 h-2.5 text-terminal-accent flex-shrink-0" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.3">
+      <rect x="2" y="5" width="12" height="9" rx="1.5" />
+      <path d="M5 5V4a3 3 0 016 0v1" strokeLinecap="round" />
+    </svg>
+  );
+}
+function EyeIcon() {
+  return (
+    <svg className="w-2.5 h-2.5 flex-shrink-0" viewBox="0 0 16 16" fill="none" stroke="#58a6ff" strokeWidth="1.3">
+      <path d="M1 8s3-5 7-5 7 5 7 5-3 5-7 5-7-5-7-5z" />
+      <circle cx="8" cy="8" r="2" />
+    </svg>
+  );
+}
+function GlobeIcon() {
+  return (
+    <svg className="w-2.5 h-2.5 flex-shrink-0" viewBox="0 0 16 16" fill="none" stroke="#bc8cff" strokeWidth="1.3">
+      <circle cx="8" cy="8" r="6.5" />
+      <path d="M8 1.5c0 0-3 2.5-3 6.5s3 6.5 3 6.5M8 1.5c0 0 3 2.5 3 6.5s-3 6.5-3 6.5M1.5 8h13" />
+    </svg>
+  );
+}
+
 function SecurityListPanel({
   selected,
   onSelect,
@@ -380,12 +434,14 @@ function SecurityListPanel({
   const [search, setSearch] = useState("");
   const [holdingsCollapsed, setHoldingsCollapsed] = useState(false);
   const [watchlistCollapsed, setWatchlistCollapsed] = useState(false);
+  const [fmpCollapsed, setFmpCollapsed] = useState(false);
 
   const holdings = ALL_SECURITIES.filter(s => s.isHolding);
   const watchItems = ALL_SECURITIES.filter(s => !s.isHolding || watchlist.includes(s.ticker));
 
-  // Filter by search
   const searchLower = search.toLowerCase().trim();
+
+  // Filter all sources
   const filteredHoldings = searchLower
     ? holdings.filter(s => s.ticker.toLowerCase().includes(searchLower))
     : holdings;
@@ -393,21 +449,25 @@ function SecurityListPanel({
     ? watchItems.filter(s => s.ticker.toLowerCase().includes(searchLower))
     : watchItems;
 
-  // Search result not in either list
-  const allTickers = ALL_SECURITIES.map(s => s.ticker.toLowerCase());
-  const searchResult = search.trim().toUpperCase();
-  const searchIsNew = searchLower.length >= 1 && !allTickers.includes(searchLower) && !watchlist.includes(searchResult);
-  // Or: ticker exists but not yet in watchlist
-  const matchedSecurity = searchLower.length >= 1
-    ? ALL_SECURITIES.find(s => s.ticker.toLowerCase() === searchLower)
+  // FMP: exclude items already in holdings or watchlist
+  const allKnownTickers = new Set(ALL_SECURITIES.map(s => s.ticker));
+  const filteredFmp = searchLower
+    ? FMP_UNIVERSE.filter(s => s.ticker.toLowerCase().includes(searchLower) && !allKnownTickers.has(s.ticker))
+    : FMP_UNIVERSE.filter(s => !allKnownTickers.has(s.ticker));
+
+  // Show FMP section only when searching
+  const showFmpSection = searchLower.length >= 1;
+
+  // Determine if the searched FMP ticker can be added to watchlist
+  const searchedFmpItem = searchLower.length >= 2
+    ? FMP_UNIVERSE.find(s => s.ticker.toLowerCase() === searchLower)
     : null;
-  const canAddToWatchlist = matchedSecurity && !matchedSecurity.isHolding && !watchlist.includes(matchedSecurity.ticker);
+  const canAddFmpToWatchlist = searchedFmpItem && !watchlist.includes(searchedFmpItem.ticker) && !allKnownTickers.has(searchedFmpItem.ticker);
 
   return (
     <div className="h-full flex flex-col text-[10px] font-mono">
       {/* Search bar */}
       <div className="flex items-center gap-1 px-2 py-1.5 border-b border-terminal-border/50 flex-shrink-0">
-        {/* Magnifying glass icon */}
         <svg className="w-3 h-3 text-terminal-text-faint flex-shrink-0" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5">
           <circle cx="6.5" cy="6.5" r="4.5" />
           <path d="M10.5 10.5L14 14" strokeLinecap="round" />
@@ -416,7 +476,7 @@ function SecurityListPanel({
           type="text"
           value={search}
           onChange={e => setSearch(e.target.value)}
-          placeholder="Search any security..."
+          placeholder="Search holdings, watchlist, FMP universe..."
           data-testid="input-security-search"
           className="flex-1 bg-transparent outline-none text-terminal-text-primary placeholder:text-terminal-text-faint text-[10px]"
         />
@@ -430,22 +490,19 @@ function SecurityListPanel({
         )}
       </div>
 
-      {/* ADD TO WATCHLIST button — shown when searching */}
-      {(canAddToWatchlist || searchIsNew) && search.trim().length >= 1 && (
-        <div className="px-2 py-1 border-b border-terminal-border/30 flex-shrink-0 bg-terminal-accent/5">
+      {/* ADD TO WATCHLIST button for FMP results */}
+      {canAddFmpToWatchlist && (
+        <div className="px-2 py-1 border-b border-terminal-border/30 flex-shrink-0 bg-[#bc8cff]/5">
           <button
             onClick={() => {
-              onAddToWatchlist(search.trim().toUpperCase());
+              onAddToWatchlist(searchedFmpItem!.ticker);
               setSearch("");
             }}
             data-testid="button-add-to-watchlist"
-            className="w-full flex items-center justify-center gap-1.5 py-1 rounded text-[9px] font-semibold transition-colors bg-terminal-accent/15 text-terminal-accent border border-terminal-accent/30 hover:bg-terminal-accent/25"
+            className="w-full flex items-center justify-center gap-1.5 py-1 rounded text-[9px] font-semibold transition-colors bg-[#bc8cff]/15 text-[#bc8cff] border border-[#bc8cff]/30 hover:bg-[#bc8cff]/25"
           >
-            <svg className="w-3 h-3" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5">
-              <circle cx="8" cy="8" r="6.5" />
-              <path d="M8 5v6M5 8h6" strokeLinecap="round" />
-            </svg>
-            ADD "{search.trim().toUpperCase()}" TO WATCHLIST
+            <GlobeIcon />
+            ADD FMP "{searchedFmpItem!.ticker}" TO WATCHLIST
           </button>
         </div>
       )}
@@ -461,24 +518,31 @@ function SecurityListPanel({
       <div className="flex-1 overflow-auto">
         {/* ── HOLDINGS Section ── */}
         <div>
-          {/* Section header */}
           <button
             onClick={() => setHoldingsCollapsed(c => !c)}
             data-testid="button-collapse-holdings"
             className="w-full flex items-center gap-1.5 px-2 py-1 bg-terminal-bg/60 hover:bg-terminal-bg/80 transition-colors border-b border-terminal-border/40 text-[8px] text-terminal-text-faint uppercase tracking-wider select-none"
           >
-            {/* Portfolio icon */}
-            <svg className="w-3 h-3 text-terminal-accent flex-shrink-0" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.3">
-              <rect x="2" y="5" width="12" height="9" rx="1.5" />
-              <path d="M5 5V4a3 3 0 016 0v1" strokeLinecap="round" />
-            </svg>
+            <BriefcaseIcon />
             <span className="text-terminal-accent font-semibold">HOLDINGS</span>
             <span className="text-terminal-text-faint ml-1">({filteredHoldings.length})</span>
             <span className="ml-auto">{holdingsCollapsed ? "▶" : "▼"}</span>
           </button>
-
           {!holdingsCollapsed && filteredHoldings.map(item => (
-            <SecurityRow key={item.ticker} item={item} selected={selected} onSelect={onSelect} />
+            <div key={item.ticker} onClick={() => onSelect(item.ticker)}
+              data-testid={`security-row-${item.ticker}`}
+              className={`flex items-center px-2 py-1 cursor-pointer border-b border-terminal-border/10 hover:bg-white/[0.02] ${
+                item.ticker === selected ? "bg-terminal-accent/5 border-l-2 border-l-terminal-accent" : ""
+              }`}
+            >
+              <BriefcaseIcon />
+              <span className={`w-[50px] ml-1 font-semibold text-[10px] ${item.ticker === selected ? "text-terminal-accent" : "text-terminal-text-primary"}`}>{item.ticker}</span>
+              <span className="flex-1 text-right font-mono text-[10px] tabular-nums">{item.price.toFixed(2)}</span>
+              <span className={`w-[58px] text-right font-mono text-[10px] tabular-nums ${item.chg >= 0 ? "text-terminal-positive" : "text-terminal-negative"}`}>
+                {item.pct >= 0 ? "+" : ""}{item.pct.toFixed(2)}%
+              </span>
+              <span className="w-[52px] text-right font-mono text-[9px] text-terminal-text-faint tabular-nums">{item.vol}</span>
+            </div>
           ))}
           {!holdingsCollapsed && filteredHoldings.length === 0 && (
             <div className="px-2 py-2 text-[9px] text-terminal-text-faint italic">No holdings match "{search}"</div>
@@ -487,29 +551,72 @@ function SecurityListPanel({
 
         {/* ── WATCHLIST Section ── */}
         <div>
-          {/* Section header */}
           <button
             onClick={() => setWatchlistCollapsed(c => !c)}
             data-testid="button-collapse-watchlist"
             className="w-full flex items-center gap-1.5 px-2 py-1 bg-terminal-bg/60 hover:bg-terminal-bg/80 transition-colors border-b border-terminal-border/40 text-[8px] text-terminal-text-faint uppercase tracking-wider select-none"
           >
-            {/* Eye icon */}
-            <svg className="w-3 h-3 text-[#58a6ff] flex-shrink-0" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.3">
-              <path d="M1 8s3-5 7-5 7 5 7 5-3 5-7 5-7-5-7-5z" />
-              <circle cx="8" cy="8" r="2" />
-            </svg>
+            <EyeIcon />
             <span style={{ color: "#58a6ff" }} className="font-semibold">WATCHLIST</span>
             <span className="text-terminal-text-faint ml-1">({filteredWatch.length})</span>
             <span className="ml-auto">{watchlistCollapsed ? "▶" : "▼"}</span>
           </button>
-
           {!watchlistCollapsed && filteredWatch.map(item => (
-            <SecurityRow key={item.ticker} item={item} selected={selected} onSelect={onSelect} />
+            <div key={item.ticker} onClick={() => onSelect(item.ticker)}
+              data-testid={`security-row-${item.ticker}`}
+              className={`flex items-center px-2 py-1 cursor-pointer border-b border-terminal-border/10 hover:bg-white/[0.02] ${
+                item.ticker === selected ? "bg-[#58a6ff]/5 border-l-2 border-l-[#58a6ff]" : ""
+              }`}
+            >
+              <EyeIcon />
+              <span className={`w-[50px] ml-1 font-semibold text-[10px] ${item.ticker === selected ? "text-[#58a6ff]" : "text-terminal-text-primary"}`}>{item.ticker}</span>
+              <span className="flex-1 text-right font-mono text-[10px] tabular-nums">{item.price.toFixed(2)}</span>
+              <span className={`w-[58px] text-right font-mono text-[10px] tabular-nums ${item.chg >= 0 ? "text-terminal-positive" : "text-terminal-negative"}`}>
+                {item.pct >= 0 ? "+" : ""}{item.pct.toFixed(2)}%
+              </span>
+              <span className="w-[52px] text-right font-mono text-[9px] text-terminal-text-faint tabular-nums">{item.vol}</span>
+            </div>
           ))}
           {!watchlistCollapsed && filteredWatch.length === 0 && (
             <div className="px-2 py-2 text-[9px] text-terminal-text-faint italic">No watchlist items match "{search}"</div>
           )}
         </div>
+
+        {/* ── FMP UNIVERSE Section ── (shown when searching) */}
+        {showFmpSection && (
+          <div>
+            <button
+              onClick={() => setFmpCollapsed(c => !c)}
+              data-testid="button-collapse-fmp"
+              className="w-full flex items-center gap-1.5 px-2 py-1 bg-terminal-bg/60 hover:bg-terminal-bg/80 transition-colors border-b border-terminal-border/40 text-[8px] text-terminal-text-faint uppercase tracking-wider select-none"
+            >
+              <GlobeIcon />
+              <span style={{ color: "#bc8cff" }} className="font-semibold">FMP UNIVERSE</span>
+              <span className="ml-1 px-1 py-0.5 rounded text-[6px] font-bold bg-[#bc8cff]/15 text-[#bc8cff] border border-[#bc8cff]/30">FMP</span>
+              <span className="text-terminal-text-faint ml-1">({filteredFmp.length})</span>
+              <span className="ml-auto">{fmpCollapsed ? "▶" : "▼"}</span>
+            </button>
+            {!fmpCollapsed && filteredFmp.length === 0 && (
+              <div className="px-2 py-2 text-[9px] text-terminal-text-faint italic">No FMP results for "{search}"</div>
+            )}
+            {!fmpCollapsed && filteredFmp.slice(0, 20).map(item => (
+              <div key={item.ticker} onClick={() => onSelect(item.ticker)}
+                data-testid={`fmp-row-${item.ticker}`}
+                className={`flex items-center px-2 py-1 cursor-pointer border-b border-terminal-border/10 hover:bg-white/[0.02] ${
+                  item.ticker === selected ? "bg-[#bc8cff]/5 border-l-2 border-l-[#bc8cff]" : ""
+                }`}
+              >
+                <GlobeIcon />
+                <span className={`w-[50px] ml-1 font-semibold text-[10px] ${item.ticker === selected ? "text-[#bc8cff]" : "text-terminal-text-primary"}`}>{item.ticker}</span>
+                <span className="flex-1 text-right font-mono text-[10px] tabular-nums">{item.price.toFixed(2)}</span>
+                <span className={`w-[58px] text-right font-mono text-[10px] tabular-nums ${item.chg >= 0 ? "text-terminal-positive" : "text-terminal-negative"}`}>
+                  {item.pct >= 0 ? "+" : ""}{item.pct.toFixed(2)}%
+                </span>
+                <span className="ml-1 px-0.5 py-0.5 text-[6px] font-bold text-[#bc8cff] bg-[#bc8cff]/10 rounded flex-shrink-0">FMP</span>
+              </div>
+            ))}
+          </div>
+        )}
       </div>
     </div>
   );
@@ -615,20 +722,27 @@ export default function OpenBBTerminal() {
     setExtraWatchlist(prev => prev.includes(ticker) ? prev : [...prev, ticker]);
   }, []);
 
-  // Build the lookup for the asset detail panel
-  const selectedData = ALL_SECURITIES.find(x => x.ticker === selectedTicker) || ALL_SECURITIES[0];
+  // Build the lookup for the asset detail panel — check FMP universe too
+  const selectedData =
+    ALL_SECURITIES.find(x => x.ticker === selectedTicker) ||
+    FMP_UNIVERSE.find(x => x.ticker === selectedTicker) ||
+    ALL_SECURITIES[0];
+  const isFmpResult = !ALL_SECURITIES.find(x => x.ticker === selectedTicker) && !!FMP_UNIVERSE.find(x => x.ticker === selectedTicker);
 
   return (
     <div className="h-full flex flex-col" data-testid="openbb-terminal">
-      {/* Main grid */}
-      <div className="flex-1 grid grid-cols-[240px_1fr_280px] grid-rows-[1fr_200px] gap-[2px] p-[2px] overflow-hidden">
+      {/* Main area: top 3-col + bottom command */}
+      <div className="flex-1 flex flex-col gap-[2px] p-[2px] overflow-hidden">
+        {/* Top 3-column resizable row */}
+        <div className="flex-1 min-h-0">
+          <ResizableDashboard defaultSizes={[20, 55, 25]} minSizes={[12, 35, 15]}>
         {/* Left: Holdings + Watchlist */}
         <DashboardPanel
           title="SECURITIES"
-          className="row-span-2"
+          className="h-full"
           headerRight={
             <span className="text-[8px] text-terminal-text-faint font-mono">
-              {ALL_SECURITIES.length + extraWatchlist.length} symbols
+              {ALL_SECURITIES.length + extraWatchlist.length} + {FMP_UNIVERSE.length} FMP
             </span>
           }
           noPadding
@@ -644,6 +758,7 @@ export default function OpenBBTerminal() {
         {/* Center: Chart */}
         <DashboardPanel
           title={`${selectedTicker} — CHART`}
+          className="h-full"
           headerRight={
             <div className="flex gap-1">
               {["Candle", "Line", "Area"].map((t, i) => (
@@ -661,6 +776,7 @@ export default function OpenBBTerminal() {
         {/* Right: Asset Detail / Screener */}
         <DashboardPanel
           title={rightPanel === "watchlist" ? "ASSET DETAIL" : "SCREENER"}
+          className="h-full"
           headerRight={
             <div className="flex gap-1">
               <button
@@ -689,15 +805,33 @@ export default function OpenBBTerminal() {
                 <div className={`text-xs tabular-nums ${selectedData.chg >= 0 ? "text-terminal-positive" : "text-terminal-negative"}`}>
                   {selectedData.chg >= 0 ? "+" : ""}{selectedData.chg.toFixed(2)} ({selectedData.pct >= 0 ? "+" : ""}{selectedData.pct.toFixed(2)}%)
                 </div>
-                {/* Holding / Watchlist badge */}
-                <div className="mt-1.5 flex items-center justify-center gap-1.5">
+                {/* Holding / Watchlist / FMP badge */}
+                <div className="mt-1.5 flex flex-col items-center gap-1.5">
                   {selectedData.isHolding ? (
                     <span className="px-1.5 py-0.5 rounded text-[7px] font-semibold bg-terminal-accent/15 text-terminal-accent border border-terminal-accent/30">
                       ◆ PORTFOLIO HOLDING
                     </span>
+                  ) : isFmpResult ? (
+                    <span className="px-1.5 py-0.5 rounded text-[7px] font-semibold bg-[#bc8cff]/15 text-[#bc8cff] border border-[#bc8cff]/30">
+                      ○ FMP UNIVERSE
+                    </span>
                   ) : (
                     <span className="px-1.5 py-0.5 rounded text-[7px] font-semibold bg-[#58a6ff]/15 text-[#58a6ff] border border-[#58a6ff]/30">
-                      👁 WATCHLIST
+                      ○ WATCHLIST
+                    </span>
+                  )}
+                  {isFmpResult && !extraWatchlist.includes(selectedTicker) && (
+                    <button
+                      onClick={() => handleAddToWatchlist(selectedTicker)}
+                      data-testid="button-add-fmp-to-watchlist"
+                      className="flex items-center gap-1 px-2 py-0.5 rounded text-[7px] font-semibold bg-[#bc8cff]/10 text-[#bc8cff] border border-[#bc8cff]/30 hover:bg-[#bc8cff]/20 transition-colors"
+                    >
+                      + ADD TO WATCHLIST
+                    </button>
+                  )}
+                  {isFmpResult && extraWatchlist.includes(selectedTicker) && (
+                    <span className="px-1.5 py-0.5 rounded text-[7px] font-semibold bg-terminal-accent/15 text-terminal-accent border border-terminal-accent/30">
+                      ✓ ADDED TO WATCHLIST
                     </span>
                   )}
                 </div>
@@ -717,9 +851,11 @@ export default function OpenBBTerminal() {
             </div>
           )}
         </DashboardPanel>
+          </ResizableDashboard>
+        </div>
 
         {/* Bottom: Command line */}
-        <div className="col-span-2 flex flex-col">
+        <div className="flex-shrink-0" style={{ height: 200 }}>
           <DashboardPanel
             title="OPENBB COMMAND LINE"
             headerRight={
@@ -729,7 +865,7 @@ export default function OpenBBTerminal() {
                 ))}
               </div>
             }
-            className="flex-1"
+            className="h-full"
             noPadding
           >
             <CommandLine />

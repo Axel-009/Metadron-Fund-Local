@@ -1,4 +1,5 @@
 import { DashboardPanel } from "@/components/dashboard-panel";
+import { ResizableDashboard } from "@/components/resizable-panel";
 import { MiniChart } from "@/components/mini-chart";
 import { PieChart, Pie, Cell, ResponsiveContainer } from "recharts";
 import { useState, useEffect } from "react";
@@ -95,128 +96,82 @@ export default function AssetAllocation() {
   const totalPnl = HOLDINGS.reduce((s, h) => s + h.pnl, 0);
 
   return (
-    <div className="h-full grid grid-cols-[1fr_1fr_300px] grid-rows-[auto_auto_1fr] gap-[2px] p-[2px] overflow-auto" data-testid="asset-allocation">
-      {/* NAV Display */}
-      <DashboardPanel title="LIVE NAV" className="col-span-2">
-        <div className="flex items-center gap-6">
-          <div>
-            <div className="text-3xl font-mono font-bold text-terminal-text-primary tabular-nums">
-              ${nav.toLocaleString()}
-            </div>
-            <div className="text-[10px] text-terminal-positive font-mono mt-0.5">+$842,150 (+0.66%) today</div>
-          </div>
-          {/* Indices strip */}
-          <div className="flex gap-4 ml-auto">
-            {INDICES.map((idx) => (
-              <div key={idx.ticker} className="text-center">
-                <div className="text-[9px] text-terminal-text-faint font-mono">{idx.ticker}</div>
-                <div className="text-[11px] text-terminal-text-primary font-mono tabular-nums">{idx.price.toFixed(2)}</div>
-                <div className={`text-[9px] font-mono tabular-nums ${idx.change >= 0 ? "text-terminal-positive" : "text-terminal-negative"}`}>
-                  {idx.change >= 0 ? "+" : ""}{idx.change.toFixed(2)}%
+    <div className="h-full flex flex-col gap-[2px] p-[2px] overflow-hidden" data-testid="asset-allocation">
+      {/* ─── Main resizable: left (NAV + Exposure + Basket) | right (Allocation + Movers) ─── */}
+      <div className="flex-1 min-h-0">
+        <ResizableDashboard defaultSizes={[72, 28]} minSizes={[45, 20]}>
+          {/* Left column: NAV + Exposure + Basket Table */}
+          <div className="h-full flex flex-col gap-[2px] overflow-hidden">
+            {/* NAV Display */}
+            <DashboardPanel title="LIVE NAV">
+              <div className="flex items-center gap-6">
+                <div>
+                  <div className="text-3xl font-mono font-bold text-terminal-text-primary tabular-nums">
+                    ${nav.toLocaleString()}
+                  </div>
+                  <div className="text-[10px] text-terminal-positive font-mono mt-0.5">+$842,150 (+0.66%) today</div>
                 </div>
-                <MiniChart data={idx.data} width={40} height={14} color={idx.change >= 0 ? "#3fb950" : "#f85149"} />
+                {/* Indices strip */}
+                <div className="flex gap-4 ml-auto">
+                  {INDICES.map((idx) => (
+                    <div key={idx.ticker} className="text-center">
+                      <div className="text-[9px] text-terminal-text-faint font-mono">{idx.ticker}</div>
+                      <div className="text-[11px] text-terminal-text-primary font-mono tabular-nums">{idx.price.toFixed(2)}</div>
+                      <div className={`text-[9px] font-mono tabular-nums ${idx.change >= 0 ? "text-terminal-positive" : "text-terminal-negative"}`}>
+                        {idx.change >= 0 ? "+" : ""}{idx.change.toFixed(2)}%
+                      </div>
+                      <MiniChart data={idx.data} width={40} height={14} color={idx.change >= 0 ? "#3fb950" : "#f85149"} />
+                    </div>
+                  ))}
+                </div>
               </div>
-            ))}
-          </div>
-        </div>
-      </DashboardPanel>
+            </DashboardPanel>
 
-      {/* Allocation Pie */}
-      <DashboardPanel title="ALLOCATION" className="row-span-3">
-        <div className="h-[180px]">
-          <ResponsiveContainer width="100%" height="100%">
-            <PieChart>
-              <Pie
-                data={ALLOC_DATA}
-                cx="50%"
-                cy="50%"
-                innerRadius="45%"
-                outerRadius="75%"
-                paddingAngle={2}
-                dataKey="value"
-                stroke="none"
-              >
-                {ALLOC_DATA.map((entry, i) => (
-                  <Cell key={i} fill={entry.color} />
-                ))}
-              </Pie>
-            </PieChart>
-          </ResponsiveContainer>
-        </div>
-        <div className="space-y-1 mt-2">
-          {ALLOC_DATA.map((d, i) => (
-            <div key={i} className="flex items-center gap-2 text-[9px]">
-              <span className="w-2 h-2 rounded-full flex-shrink-0" style={{ backgroundColor: d.color }} />
-              <span className="text-terminal-text-muted flex-1">{d.name}</span>
-              <span className="text-terminal-text-primary font-mono tabular-nums">{d.value}%</span>
-            </div>
-          ))}
-        </div>
-
-        {/* Dynamic Movers */}
-        <div className="mt-4 pt-3 border-t border-terminal-border">
-          <div className="text-[9px] text-terminal-text-faint uppercase tracking-wider font-medium mb-2">Dynamic Movers</div>
-          {MOVERS.map((m, i) => (
-            <div key={i} className="flex items-center gap-2 py-0.5 text-[9px]">
-              <span className="text-terminal-text-primary font-mono w-10">{m.ticker}</span>
-              <span className={`font-mono tabular-nums ${m.change >= 0 ? "text-terminal-positive" : "text-terminal-negative"}`}>
-                {m.change >= 0 ? "+" : ""}{m.change.toFixed(1)}%
-              </span>
-              <span className={`ml-auto text-[8px] px-1 py-0.5 rounded ${
-                m.momentum === "strong" ? "bg-terminal-positive/10 text-terminal-positive" :
-                m.momentum === "weak" ? "bg-terminal-negative/10 text-terminal-negative" :
-                "bg-terminal-warning/10 text-terminal-warning"
-              }`}>{m.momentum}</span>
-            </div>
-          ))}
-        </div>
-      </DashboardPanel>
-
-      {/* Exposure Summary */}
-      <DashboardPanel title="EXPOSURE SUMMARY" className="col-span-2">
-        <div className="flex gap-6">
-          <div className="flex flex-col gap-0.5">
-            <span className="text-[7px] text-terminal-text-faint uppercase tracking-wider">Total Leveraged Exposure</span>
-            <span className="text-[13px] font-mono font-bold text-terminal-warning tabular-nums">
-              ${(totalLeveraged / 1e6).toFixed(2)}M
-            </span>
-          </div>
-          <div className="w-px bg-terminal-border/50" />
-          <div className="flex flex-col gap-0.5">
-            <span className="text-[7px] text-terminal-text-faint uppercase tracking-wider">Avg Margin% (NAV-weighted)</span>
-            <span className="text-[13px] font-mono font-bold text-terminal-accent tabular-nums">{avgMarginPct}%</span>
-          </div>
-          <div className="w-px bg-terminal-border/50" />
-          <div className="flex flex-col gap-0.5">
-            <span className="text-[7px] text-terminal-text-faint uppercase tracking-wider">NAV-Weighted Credit</span>
-            <span className="text-[13px] font-mono font-bold text-terminal-positive tabular-nums">A+</span>
-          </div>
-          <div className="w-px bg-terminal-border/50" />
-          <div className="flex flex-col gap-0.5">
-            <span className="text-[7px] text-terminal-text-faint uppercase tracking-wider">Total Portfolio P&L</span>
-            <span className={`text-[13px] font-mono font-bold tabular-nums ${totalPnl >= 0 ? "text-terminal-positive" : "text-terminal-negative"}`}>
-              {totalPnl >= 0 ? "+$" : "-$"}{Math.abs(totalPnl).toLocaleString()}
-            </span>
-          </div>
-          <div className="w-px bg-terminal-border/50" />
-          {/* Product Type breakdown */}
-          <div className="flex gap-3 ml-auto">
-            {["Equity", "Options", "Futures", "ETF", "Fixed Income", "Cash"].map((pt) => {
-              const count = HOLDINGS.filter((h) => h.productType === pt).length;
-              const color = PRODUCT_COLORS[pt];
-              return (
-                <div key={pt} className="flex flex-col items-center gap-0.5">
-                  <span className="text-[7px] font-mono" style={{ color }}>{pt}</span>
-                  <span className="text-[11px] font-mono font-bold text-terminal-text-primary">{count}</span>
+            {/* Exposure Summary */}
+            <DashboardPanel title="EXPOSURE SUMMARY">
+              <div className="flex gap-6">
+                <div className="flex flex-col gap-0.5">
+                  <span className="text-[7px] text-terminal-text-faint uppercase tracking-wider">Total Leveraged Exposure</span>
+                  <span className="text-[13px] font-mono font-bold text-terminal-warning tabular-nums">
+                    ${(totalLeveraged / 1e6).toFixed(2)}M
+                  </span>
                 </div>
-              );
-            })}
-          </div>
-        </div>
-      </DashboardPanel>
+                <div className="w-px bg-terminal-border/50" />
+                <div className="flex flex-col gap-0.5">
+                  <span className="text-[7px] text-terminal-text-faint uppercase tracking-wider">Avg Margin% (NAV-weighted)</span>
+                  <span className="text-[13px] font-mono font-bold text-terminal-accent tabular-nums">{avgMarginPct}%</span>
+                </div>
+                <div className="w-px bg-terminal-border/50" />
+                <div className="flex flex-col gap-0.5">
+                  <span className="text-[7px] text-terminal-text-faint uppercase tracking-wider">NAV-Weighted Credit</span>
+                  <span className="text-[13px] font-mono font-bold text-terminal-positive tabular-nums">A+</span>
+                </div>
+                <div className="w-px bg-terminal-border/50" />
+                <div className="flex flex-col gap-0.5">
+                  <span className="text-[7px] text-terminal-text-faint uppercase tracking-wider">Total Portfolio P&L</span>
+                  <span className={`text-[13px] font-mono font-bold tabular-nums ${totalPnl >= 0 ? "text-terminal-positive" : "text-terminal-negative"}`}>
+                    {totalPnl >= 0 ? "+$" : "-$"}{Math.abs(totalPnl).toLocaleString()}
+                  </span>
+                </div>
+                <div className="w-px bg-terminal-border/50" />
+                {/* Product Type breakdown */}
+                <div className="flex gap-3 ml-auto">
+                  {["Equity", "Options", "Futures", "ETF", "Fixed Income", "Cash"].map((pt) => {
+                    const count = HOLDINGS.filter((h) => h.productType === pt).length;
+                    const color = PRODUCT_COLORS[pt];
+                    return (
+                      <div key={pt} className="flex flex-col items-center gap-0.5">
+                        <span className="text-[7px] font-mono" style={{ color }}>{pt}</span>
+                        <span className="text-[11px] font-mono font-bold text-terminal-text-primary">{count}</span>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            </DashboardPanel>
 
       {/* Basket Formation Table — enriched */}
-      <DashboardPanel title="BASKET FORMATION — ENHANCED" className="col-span-2" noPadding>
+      <DashboardPanel title="BASKET FORMATION — ENHANCED" className="flex-1" noPadding>
         <div className="overflow-auto h-full">
           <table className="w-full text-[9px] font-mono">
             <thead className="sticky top-0 bg-terminal-surface z-10">
@@ -318,6 +273,60 @@ export default function AssetAllocation() {
           </table>
         </div>
       </DashboardPanel>
+          </div>
+
+          {/* Right column: Allocation Pie + Movers */}
+          <DashboardPanel title="ALLOCATION">
+            <div className="h-[180px]">
+              <ResponsiveContainer width="100%" height="100%">
+                <PieChart>
+                  <Pie
+                    data={ALLOC_DATA}
+                    cx="50%"
+                    cy="50%"
+                    innerRadius="45%"
+                    outerRadius="75%"
+                    paddingAngle={2}
+                    dataKey="value"
+                    stroke="none"
+                  >
+                    {ALLOC_DATA.map((entry, i) => (
+                      <Cell key={i} fill={entry.color} />
+                    ))}
+                  </Pie>
+                </PieChart>
+              </ResponsiveContainer>
+            </div>
+            <div className="space-y-1 mt-2">
+              {ALLOC_DATA.map((d, i) => (
+                <div key={i} className="flex items-center gap-2 text-[9px]">
+                  <span className="w-2 h-2 rounded-full flex-shrink-0" style={{ backgroundColor: d.color }} />
+                  <span className="text-terminal-text-muted flex-1">{d.name}</span>
+                  <span className="text-terminal-text-primary font-mono tabular-nums">{d.value}%</span>
+                </div>
+              ))}
+            </div>
+
+            {/* Dynamic Movers */}
+            <div className="mt-4 pt-3 border-t border-terminal-border">
+              <div className="text-[9px] text-terminal-text-faint uppercase tracking-wider font-medium mb-2">Dynamic Movers</div>
+              {MOVERS.map((m, i) => (
+                <div key={i} className="flex items-center gap-2 py-0.5 text-[9px]">
+                  <span className="text-terminal-text-primary font-mono w-10">{m.ticker}</span>
+                  <span className={`font-mono tabular-nums ${m.change >= 0 ? "text-terminal-positive" : "text-terminal-negative"}`}>
+                    {m.change >= 0 ? "+" : ""}{m.change.toFixed(1)}%
+                  </span>
+                  <span className={`ml-auto text-[8px] px-1 py-0.5 rounded ${
+                    m.momentum === "strong" ? "bg-terminal-positive/10 text-terminal-positive" :
+                    m.momentum === "weak" ? "bg-terminal-negative/10 text-terminal-negative" :
+                    "bg-terminal-warning/10 text-terminal-warning"
+                  }`}>{m.momentum}</span>
+                </div>
+              ))}
+            </div>
+          </DashboardPanel>
+        </ResizableDashboard>
+      </div>
     </div>
   );
 }
