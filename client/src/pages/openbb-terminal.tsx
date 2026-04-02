@@ -5,6 +5,7 @@ import {
   AreaChart, Area, XAxis, YAxis, Tooltip, ResponsiveContainer,
   BarChart, Bar, LineChart, Line, ComposedChart,
 } from "recharts";
+import { useEngineQuery } from "@/hooks/use-engine-api";
 
 // ═══════════ SIMULATED DATA ═══════════
 
@@ -714,6 +715,10 @@ function CommandLine() {
 // ═══════════ MAIN OPENBB TERMINAL ═══════════
 
 export default function OpenBBTerminal() {
+  // ─── Engine API ─────────────────────────────────────
+  const { data: universeData } = useEngineQuery<{ securities: Array<{ ticker: string; name: string; sector: string; market_cap: number; pe_ratio: number; beta: number; quality_tier: string }>; total: number }>("/universe/securities?limit=200", { refetchInterval: 60000 });
+  const { data: sectorData } = useEngineQuery<{ sectors: Array<{ sector: string; count: number; momentum: number }> }>("/universe/sectors", { refetchInterval: 60000 });
+
   const [selectedTicker, setSelectedTicker] = useState("AAPL");
   const [rightPanel, setRightPanel] = useState<"watchlist" | "screener">("watchlist");
   const [extraWatchlist, setExtraWatchlist] = useState<string[]>([]);
