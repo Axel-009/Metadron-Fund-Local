@@ -101,6 +101,9 @@ class EngineErrorHandler(logging.Handler):
     """Python logging handler that captures ERROR+ to the centralized buffer."""
 
     def emit(self, record: logging.LogRecord):
+        # Skip our own logger to prevent recursion
+        if record.name.startswith("metadron.errors"):
+            return
         if record.levelno >= logging.ERROR:
             log_engine_error(
                 engine=record.name,

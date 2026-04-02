@@ -91,7 +91,7 @@ def generate_recon_log() -> Path:
         # Get Paper broker positions
         from engine.execution.paper_broker import PaperBroker
         paper = PaperBroker()
-        paper_positions = paper.get_positions()
+        paper_positions = paper.get_all_positions()
 
         # Get Alpaca positions
         alpaca_positions = {}

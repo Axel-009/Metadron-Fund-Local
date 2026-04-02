@@ -75,7 +75,7 @@ async def reconciliation():
         # Paper broker positions
         from engine.execution.paper_broker import PaperBroker
         paper = PaperBroker()
-        paper_pos = paper.get_positions()
+        paper_pos = paper.get_all_positions()
         paper_nav = paper.compute_nav()
 
         # Alpaca broker positions
@@ -192,7 +192,7 @@ async def tca_metrics():
         eng = _get_exec()
         broker = eng.broker
 
-        trades = broker.get_trades(limit=200)
+        trades = broker.get_trade_history()[-200:]
         if not trades:
             return {"trades": [], "summary": {}, "timestamp": datetime.utcnow().isoformat()}
 
@@ -366,7 +366,7 @@ async def venue_comparison():
     """
     try:
         eng = _get_exec()
-        trades = eng.broker.get_trades(limit=500)
+        trades = eng.broker.get_trade_history()[-500:]
         from collections import defaultdict
         venue_stats: dict[str, dict] = defaultdict(lambda: {"fills": 0, "total_slippage": 0.0, "total_latency": 0.0})
 
@@ -436,7 +436,7 @@ async def algo_comparison():
     """
     try:
         eng = _get_exec()
-        trades = eng.broker.get_trades(limit=500)
+        trades = eng.broker.get_trade_history()[-500:]
         from collections import defaultdict
         algo_stats: dict[str, dict] = defaultdict(lambda: {"trades": 0, "total_slippage": 0.0, "total_pnl": 0.0})
 
@@ -473,7 +473,7 @@ async def nav_history():
     try:
         eng = _get_exec()
         broker = eng.broker
-        trades = broker.get_trades(limit=500)
+        trades = broker.get_trade_history()[-500:]
 
         # Build daily NAV points from trade P&L
         from collections import defaultdict
@@ -486,8 +486,8 @@ async def nav_history():
             pnl = getattr(t, "realized_pnl", 0) or 0
             daily_pnl[day] += pnl
 
-        state = broker.get_portfolio_state()
-        current_nav = state.nav if hasattr(state, "nav") else 0
+        state = broker.get_portfolio_summary()
+        current_nav = state.get("nav", 0) if isinstance(state, dict) else getattr(state, "nav", 0)
 
         # Reconstruct NAV history backwards
         history = []

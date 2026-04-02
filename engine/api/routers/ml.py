@@ -312,8 +312,8 @@ async def strategy_performance():
         from engine.execution.execution_engine import ExecutionEngine
         eng = ExecutionEngine()
         broker = eng.broker
-        trades = broker.get_trades(limit=500)
-        state = broker.get_portfolio_state()
+        trades = broker.get_trade_history()[-500:]
+        state = broker.get_portfolio_summary()
 
         # Attribute trades to signal types as "strategies"
         from collections import defaultdict
@@ -337,10 +337,11 @@ async def strategy_performance():
             })
 
         # Portfolio-level metrics
-        nav = state.nav if hasattr(state, "nav") else 0
-        total_pnl = state.total_pnl if hasattr(state, "total_pnl") else 0
-        wins = state.win_count if hasattr(state, "win_count") else 0
-        losses = state.loss_count if hasattr(state, "loss_count") else 0
+        s = state if isinstance(state, dict) else {}
+        nav = s.get("nav", 0)
+        total_pnl = s.get("total_pnl", 0)
+        wins = s.get("win_count", 0)
+        losses = s.get("loss_count", 0)
         total_trades = wins + losses
 
         perf_cards = [
