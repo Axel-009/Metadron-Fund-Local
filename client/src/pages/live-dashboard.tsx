@@ -8,22 +8,55 @@ import {
 
 // ═══════════ SIMULATED DATA GENERATORS ═══════════
 
-function generateOrderBook() {
-  const mid = 59238.29;
-  const asks: { price: number; size: number; total: number }[] = [];
-  const bids: { price: number; size: number; total: number }[] = [];
-  let askTotal = 0;
-  let bidTotal = 0;
-  for (let i = 0; i < 14; i++) {
-    const askSize = Math.floor(Math.random() * 3000 + 500);
-    askTotal += askSize;
-    asks.push({ price: mid + (14 - i) * (Math.random() * 50 + 20), size: askSize, total: askTotal });
-    const bidSize = Math.floor(Math.random() * 3000 + 500);
-    bidTotal += bidSize;
-    bids.push({ price: mid - (i + 1) * (Math.random() * 50 + 20), size: bidSize, total: bidTotal });
-  }
-  asks.reverse();
-  return { asks, bids, mid };
+interface LiveTx {
+  id: string;
+  time: string;
+  ticker: string;
+  side: "BUY" | "SELL" | "SHORT" | "COVER";
+  qty: number;
+  price: number;
+  notional: number;
+  fillType: "FULL" | "PARTIAL" | "REJECTED";
+  venue: string;
+  signal: string;
+  latencyMs: number;
+}
+
+const TX_TICKERS: Record<string, number> = {
+  AAPL: 189, MSFT: 420, NVDA: 875, AMZN: 185, GOOGL: 155,
+  META: 505, JPM: 198, TSLA: 178, XOM: 115, UNH: 502,
+  V: 282, BAC: 35, GS: 437, LLY: 803, AVGO: 1357,
+};
+const TX_VENUES = ["ARCA", "NYSE", "NASDAQ", "BATS", "IEX", "EDGX", "DARK"];
+const TX_SIGNALS = ["ML_AGENT", "MICRO_PX", "RV_PAIR", "SOCIAL", "CVR", "EVENT", "DRL", "MOM", "TFT"];
+
+let _txSeq = 100000;
+function generateLiveTx(): LiveTx {
+  const tickers = Object.keys(TX_TICKERS);
+  const ticker = tickers[Math.floor(Math.random() * tickers.length)];
+  const base = TX_TICKERS[ticker];
+  const side = (["BUY", "SELL", "SHORT", "COVER"] as const)[Math.floor(Math.random() * 4)];
+  const qty = Math.floor(50 + Math.random() * 950);
+  const price = +(base * (1 + (Math.random() - 0.5) * 0.02)).toFixed(2);
+  const now = new Date();
+  _txSeq++;
+  return {
+    id: `TX-${_txSeq.toString(36).toUpperCase()}`,
+    time: now.toLocaleTimeString("en-US", { hour12: false, hour: "2-digit", minute: "2-digit", second: "2-digit" }) + "." + now.getMilliseconds().toString().padStart(3, "0"),
+    ticker,
+    side,
+    qty,
+    price,
+    notional: +(qty * price),
+    fillType: Math.random() > 0.05 ? (Math.random() > 0.1 ? "FULL" : "PARTIAL") : "REJECTED",
+    venue: TX_VENUES[Math.floor(Math.random() * TX_VENUES.length)],
+    signal: TX_SIGNALS[Math.floor(Math.random() * TX_SIGNALS.length)],
+    latencyMs: +(0.5 + Math.random() * 12).toFixed(1),
+  };
+}
+
+function generateInitialTxs(count: number): LiveTx[] {
+  return Array.from({ length: count }, () => generateLiveTx()).reverse();
 }
 
 function generatePnlData() {
@@ -294,120 +327,145 @@ function NeuralMarketMap() {
   );
 }
 
-// ═══════════ ORDER BOOK COMPONENT ═══════════
+// ═══════════ LIVE TRANSACTIONS COMPONENT ═══════════
 
-function OrderBook() {
-  const [book, setBook] = useState(generateOrderBook);
-  const [midPrice, setMidPrice] = useState(59238.29);
-  const [change, setChange] = useState(0.73);
+function LiveTransactions() {
+  const [txns, setTxns] = useState<LiveTx[]>(() => generateInitialTxs(60));
+  const scrollRef = useRef<HTMLDivElement>(null);
+  const [flashId, setFlashId] = useState<string | null>(null);
+
+  // Running stats
+  const filled = txns.filter((t) => t.fillType !== "REJECTED");
+  const totalNotional = filled.reduce((s, t) => s + t.notional, 0);
+  const buys = filled.filter((t) => t.side === "BUY" || t.side === "COVER").length;
+  const sells = filled.filter((t) => t.side === "SELL" || t.side === "SHORT").length;
+  const avgLatency = filled.length ? filled.reduce((s, t) => s + t.latencyMs, 0) / filled.length : 0;
 
   useEffect(() => {
     const iv = setInterval(() => {
-      setBook(generateOrderBook());
-      setMidPrice((p) => p + (Math.random() - 0.48) * 10);
-      setChange((c) => c + (Math.random() - 0.5) * 0.1);
-    }, 2500);
+      const newTx = generateLiveTx();
+      setTxns((prev) => [newTx, ...prev].slice(0, 200));
+      setFlashId(newTx.id);
+      setTimeout(() => setFlashId(null), 800);
+    }, 1800);
     return () => clearInterval(iv);
   }, []);
 
-  const maxTotal = Math.max(
-    ...book.asks.map((a) => a.total),
-    ...book.bids.map((b) => b.total)
-  );
+  // Auto-scroll to top on new tx
+  useEffect(() => {
+    if (scrollRef.current) {
+      scrollRef.current.scrollTop = 0;
+    }
+  }, [txns.length]);
+
+  const fmtNotional = (n: number) => n >= 1e6 ? `$${(n / 1e6).toFixed(1)}M` : `$${(n / 1e3).toFixed(0)}K`;
 
   return (
     <div className="flex flex-col h-full text-[10px] font-mono tabular-nums">
-      {/* Price header */}
+      {/* Summary header */}
       <div className="px-2 py-1.5 border-b border-terminal-border">
-        <div className="flex items-baseline gap-1.5">
-          <span className="text-[9px] text-terminal-text-faint">$ Price Market</span>
-          <span className="text-[9px] text-terminal-text-faint">● TOTAL</span>
-          <span className="ml-auto text-[9px] text-terminal-text-faint">100%</span>
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-1.5">
+            <span className="w-1.5 h-1.5 rounded-full bg-terminal-positive animate-pulse" />
+            <span className="text-[9px] text-terminal-text-faint uppercase tracking-wider">Live Feed</span>
+          </div>
+          <span className="text-[9px] text-terminal-text-faint">{txns.length} txns</span>
         </div>
-        <div className="flex items-baseline gap-2 mt-0.5">
+        <div className="flex items-baseline gap-2 mt-1">
           <span className="text-lg font-bold text-terminal-text-primary">
-            {midPrice.toFixed(2)}
+            {fmtNotional(totalNotional)}
           </span>
-          <span className={`text-xs ${change >= 0 ? "text-terminal-positive" : "text-terminal-negative"}`}>
-            {change >= 0 ? "+" : ""}{change.toFixed(2)}%
-          </span>
+          <span className="text-[9px] text-terminal-text-faint">volume</span>
+        </div>
+      </div>
+
+      {/* Mini stats row */}
+      <div className="grid grid-cols-3 gap-1 px-2 py-1 border-b border-terminal-border/50 text-[8px]">
+        <div>
+          <div className="text-terminal-text-faint">Fills</div>
+          <div className="text-terminal-text-primary">{filled.length}</div>
+        </div>
+        <div>
+          <div className="text-terminal-text-faint">B / S</div>
+          <div>
+            <span className="text-terminal-positive">{buys}</span>
+            <span className="text-terminal-text-faint"> / </span>
+            <span className="text-terminal-negative">{sells}</span>
+          </div>
+        </div>
+        <div>
+          <div className="text-terminal-text-faint">Avg Lat</div>
+          <div className="text-terminal-text-primary">{avgLatency.toFixed(1)}ms</div>
         </div>
       </div>
 
       {/* Column headers */}
-      <div className="flex items-center px-2 py-1 text-[8px] text-terminal-text-faint uppercase tracking-wider border-b border-terminal-border/50">
-        <span className="w-[60px]">Price</span>
-        <span className="w-[50px] text-right">Size</span>
-        <span className="w-[60px] text-right">Total</span>
-        <span className="flex-1 text-right">Bars</span>
+      <div className="flex items-center px-2 py-1 text-[7px] text-terminal-text-faint uppercase tracking-wider border-b border-terminal-border/50">
+        <span className="w-[52px]">Time</span>
+        <span className="w-[38px]">Ticker</span>
+        <span className="w-[30px]">Side</span>
+        <span className="w-[32px] text-right">Qty</span>
+        <span className="flex-1 text-right">Price</span>
       </div>
 
-      {/* Asks (reversed) */}
-      <div className="flex-1 overflow-auto">
-        {book.asks.map((a, i) => (
-          <div key={`a${i}`} className="flex items-center px-2 py-[2px] relative">
-            <div
-              className="absolute right-0 top-0 bottom-0 bg-terminal-negative/8"
-              style={{ width: `${(a.total / maxTotal) * 100}%` }}
-            />
-            <span className="w-[60px] text-terminal-negative relative z-10">{a.price.toFixed(2)}</span>
-            <span className="w-[50px] text-right text-terminal-text-muted relative z-10">{a.size.toLocaleString()}</span>
-            <span className="w-[60px] text-right text-terminal-text-muted relative z-10">{a.total.toLocaleString()}</span>
-          </div>
-        ))}
-        {/* Spread indicator */}
-        <div className="flex items-center justify-center py-1 border-y border-terminal-border/30">
-          <span className="text-[9px] text-terminal-accent font-medium">
-            SPREAD: {(book.asks[book.asks.length - 1]?.price - book.bids[0]?.price || 0).toFixed(2)}
-          </span>
-        </div>
-        {/* Bids */}
-        {book.bids.map((b, i) => (
-          <div key={`b${i}`} className="flex items-center px-2 py-[2px] relative">
-            <div
-              className="absolute right-0 top-0 bottom-0 bg-terminal-positive/8"
-              style={{ width: `${(b.total / maxTotal) * 100}%` }}
-            />
-            <span className="w-[60px] text-terminal-positive relative z-10">{b.price.toFixed(2)}</span>
-            <span className="w-[50px] text-right text-terminal-text-muted relative z-10">{b.size.toLocaleString()}</span>
-            <span className="w-[60px] text-right text-terminal-text-muted relative z-10">{b.total.toLocaleString()}</span>
+      {/* Scrollable transaction rows */}
+      <div ref={scrollRef} className="flex-1 overflow-auto">
+        {txns.map((tx) => (
+          <div
+            key={tx.id}
+            className={`flex items-center px-2 py-[3px] border-b border-terminal-border/10 transition-colors duration-700 ${
+              tx.fillType === "REJECTED" ? "opacity-40" : ""
+            } ${flashId === tx.id ? "bg-terminal-accent/10" : "hover:bg-white/[0.02]"}`}
+          >
+            <span className="w-[52px] text-terminal-text-faint text-[9px]">{tx.time.slice(0, 8)}</span>
+            <span className="w-[38px] text-terminal-accent font-semibold text-[9px]">{tx.ticker}</span>
+            <span className={`w-[30px] font-semibold text-[8px] ${
+              tx.side === "BUY" || tx.side === "COVER" ? "text-terminal-positive" : "text-terminal-negative"
+            }`}>
+              {tx.side}
+            </span>
+            <span className="w-[32px] text-right text-terminal-text-muted text-[9px]">{tx.qty}</span>
+            <span className="flex-1 text-right text-terminal-text-primary text-[9px]">${tx.price.toFixed(2)}</span>
           </div>
         ))}
       </div>
 
-      {/* Bottom stats */}
-      <div className="px-2 py-1.5 border-t border-terminal-border grid grid-cols-4 gap-1 text-[8px]">
-        <div>
-          <div className="text-terminal-text-faint">Position</div>
-          <div className="text-terminal-text-primary">50296</div>
-        </div>
-        <div>
-          <div className="text-terminal-text-faint">Orders</div>
-          <div className="text-terminal-accent">97203</div>
-        </div>
-        <div>
-          <div className="text-terminal-text-faint">Seconds</div>
-          <div className="text-terminal-text-primary">60057%</div>
-        </div>
-        <div>
-          <div className="text-terminal-text-faint">Positions</div>
-          <div className="text-terminal-negative">6.33%</div>
+      {/* Bottom detail strip */}
+      <div className="px-2 py-1.5 border-t border-terminal-border">
+        <div className="grid grid-cols-3 gap-1 text-[8px]">
+          <div>
+            <div className="text-terminal-text-faint">Venues</div>
+            <div className="text-terminal-text-primary truncate">
+              {Array.from(new Set(txns.slice(0, 20).map(t => t.venue))).slice(0, 3).join(", ")}
+            </div>
+          </div>
+          <div>
+            <div className="text-terminal-text-faint">Signals</div>
+            <div className="text-terminal-accent truncate">
+              {Array.from(new Set(txns.slice(0, 20).map(t => t.signal))).slice(0, 2).join(", ")}
+            </div>
+          </div>
+          <div>
+            <div className="text-terminal-text-faint">Fill Rate</div>
+            <div className="text-terminal-positive">{txns.length ? ((filled.length / txns.length) * 100).toFixed(1) : 0}%</div>
+          </div>
         </div>
       </div>
 
-      {/* Mini volume bars */}
-      <div className="px-2 pb-1.5 h-[40px]">
+      {/* Mini activity spark */}
+      <div className="px-2 pb-1.5 h-[32px]">
         <div className="flex items-end gap-[1px] h-full">
-          {Array.from({ length: 30 }, (_, i) => {
-            const h = Math.random() * 100;
-            const isGreen = Math.random() > 0.4;
+          {txns.slice(0, 40).map((tx, i) => {
+            const maxQ = Math.max(...txns.slice(0, 40).map(t => t.qty), 1);
+            const h = (tx.qty / maxQ) * 100;
+            const isBuy = tx.side === "BUY" || tx.side === "COVER";
             return (
               <div
-                key={i}
+                key={tx.id + i}
                 className="flex-1 rounded-sm"
                 style={{
-                  height: `${h}%`,
-                  backgroundColor: isGreen ? "rgba(63, 185, 80, 0.6)" : "rgba(248, 81, 73, 0.6)",
+                  height: `${Math.max(h, 5)}%`,
+                  backgroundColor: isBuy ? "rgba(63, 185, 80, 0.5)" : "rgba(248, 81, 73, 0.5)",
                 }}
               />
             );
@@ -741,10 +799,10 @@ export default function LiveDashboard() {
           minSizes={[14, 30, 16]}
           className="gap-0"
         >
-          {/* Left column: Order Book */}
+          {/* Left column: Live Transactions */}
           <div className="h-full p-[1px]">
-            <DashboardPanel title="ORDER BOOK" className="h-full" noPadding>
-              <OrderBook />
+            <DashboardPanel title="LIVE TRANSACTIONS" className="h-full" noPadding>
+              <LiveTransactions />
             </DashboardPanel>
           </div>
 
