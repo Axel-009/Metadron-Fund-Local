@@ -321,8 +321,45 @@ class EventDrivenEngine:
         return discovered
 
     def _scan_ticker_news(self, ticker: str) -> List[dict]:
-        """Scan company news for event catalysts."""
+        """Scan company news for event catalysts.
+
+        Sources: OpenBB (FMP/Tiingo) + NewsEngine (newsfilter.io real-time).
+        OpenBB provides structured data, NewsEngine adds real-time stream.
+        """
         events = []
+        # Also check NewsEngine for real-time newsfilter.io data
+        try:
+            from engine.signals.news_engine import NewsEngine
+            ne = NewsEngine()
+            ne_items = ne.get_ticker_news(ticker, limit=5)
+            for item in ne_items:
+                title = item.get("headline", "").lower()
+                if any(kw in title for kw in self._MERGER_KEYWORDS):
+                    events.append({
+                        "type": EventCategory.MERGER_ARB,
+                        "ticker": ticker,
+                        "notes": item.get("headline", ""),
+                        "deal_price": 0.0,
+                        "current_price": 0.0,
+                        "days_to_close": 60,
+                        "status": DealStatus.ANNOUNCED,
+                        "_source": "NEWSFILTER",
+                    })
+                elif any(kw in title for kw in self._EARNINGS_KEYWORDS):
+                    direction = 1.0 if any(w in title for w in ["beats", "beat", "raises"]) else -1.0
+                    events.append({
+                        "type": EventCategory.PEAD,
+                        "ticker": ticker,
+                        "sue_zscore": direction * 2.0,
+                        "surprise_pct": direction * 0.10,
+                        "revision_momentum": direction * 0.05,
+                        "days_since": 1,
+                        "notes": item.get("headline", ""),
+                        "_source": "NEWSFILTER",
+                    })
+        except Exception:
+            pass  # NewsEngine is optional enrichment
+
         try:
             news = get_company_news(ticker, limit=10, provider="fmp")
             if news.empty:
