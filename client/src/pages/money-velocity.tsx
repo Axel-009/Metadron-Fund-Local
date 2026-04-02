@@ -382,7 +382,16 @@ export default function MoneyVelocityPage() {
   const creditImp = useMemo(() => genCreditImpulse(24), [tick]);
   const collateral = useMemo(() => genCollateralChain(), [tick]);
   const ctvPairs = useMemo(() => genCtvPairs(), [tick]);
-  const sectorAbs = useMemo(() => genSectorAbsorption(), [tick]);
+  const sectorAbs = useMemo(() => {
+    if (sectorFlowApi?.sector_scores && Object.keys(sectorFlowApi.sector_scores).length > 0) {
+      return Object.entries(sectorFlowApi.sector_scores).map(([name, score], i) => ({
+        name: name.slice(0, 12),
+        absorption: Number(score) * 100,
+        fill: PIE_COLORS[i % PIE_COLORS.length],
+      }));
+    }
+    return genSectorAbsorption();
+  }, [sectorFlowApi, tick]);
   const flowDist = useMemo(() => genFlowDist(), [tick]);
   const liqComp = useMemo(() => genLiquidityComposite(90), [tick]);
   const changes = useMemo(() => genChanges(), [tick]);

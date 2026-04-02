@@ -94,6 +94,18 @@ const fmtN = (n: number, d = 2) =>
 export default function ETFDashboard() {
   // ─── Engine API ─────────────────────────────────────
   const { data: sectorData } = useEngineQuery<{ sectors: Array<{ sector: string; count: number; momentum: number }> }>("/universe/sectors", { refetchInterval: 30000 });
+  const { data: posData } = useEngineQuery<{ positions: Array<{ ticker: string; quantity: number; avg_cost: number; current_price: number; unrealized_pnl: number; sector: string }> }>("/portfolio/positions", { refetchInterval: 15000 });
+  const { data: indicesApi } = useEngineQuery<{ indices: Array<{ ticker: string; price: number; change: number }> }>("/portfolio/indices", { refetchInterval: 15000 });
+
+  // Wire sector ETFs from indices API
+  const sectorEtfs = useMemo(() => {
+    if (!indicesApi?.indices?.length) return SECTOR_ETFS;
+    const map = new Map(indicesApi.indices.map((i) => [i.ticker, i]));
+    return SECTOR_ETFS.map((s) => {
+      const api = map.get(s.ticker);
+      return api ? { ...s, chg: api.change } : s;
+    });
+  }, [indicesApi]);
 
   const [sortKey, setSortKey] = useState<string>("weight");
   const [sortDir, setSortDir] = useState<1 | -1>(-1);
@@ -243,7 +255,7 @@ export default function ETFDashboard() {
         {/* Sector Heatmap */}
         <DashboardPanel title="SECTOR ETF HEATMAP" noPadding>
           <div className="grid grid-cols-4 gap-0.5 p-1.5 h-full">
-            {SECTOR_ETFS.map(s => {
+            {sectorEtfs.map(s => {
               const intensity = Math.min(Math.abs(s.chg) / 2, 1);
               const bg = s.chg >= 0
                 ? `rgba(63,185,80,${0.10 + intensity * 0.35})`

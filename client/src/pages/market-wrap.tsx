@@ -389,6 +389,50 @@ export default function MarketWrap() {
   // ─── Engine API ─────────────────────────────────────
   const { data: wrapData } = useEngineQuery<MarketWrapData>("/macro/wrap", { refetchInterval: 30000 });
   const { data: macroData } = useEngineQuery<MacroSnapshot>("/macro/snapshot", { refetchInterval: 15000 });
+  const { data: newsApi } = useEngineQuery<{ news: Array<Record<string, string>> }>("/macro/news", { refetchInterval: 60000 });
+  const { data: calApi } = useEngineQuery<{ events: Array<Record<string, string>> }>("/macro/calendar", { refetchInterval: 300000 });
+
+  // Wire NEWS from API
+  const news = useMemo(() => {
+    if (!newsApi?.news?.length) return NEWS;
+    return newsApi.news.slice(0, 6).map((n) => ({
+      time: (n.date || n.published || "").slice(11, 16) || "—",
+      headline: n.title || n.headline || "",
+      source: n.source || n.provider || "OpenBB",
+    }));
+  }, [newsApi]);
+
+  // Wire FED_EVENTS from calendar API (filter for Fed/central bank events)
+  const fedEvents = useMemo(() => {
+    if (!calApi?.events?.length) return FED_EVENTS;
+    return calApi.events
+      .filter((e) => {
+        const ev = (e.event || e.name || "").toLowerCase();
+        return ev.includes("fed") || ev.includes("fomc") || ev.includes("rate") || ev.includes("cpi") || ev.includes("nfp") || ev.includes("gdp");
+      })
+      .slice(0, 5)
+      .map((e) => ({
+        date: (e.date || "").slice(0, 6),
+        event: e.event || e.name || "",
+      }));
+  }, [calApi]);
+
+  // Wire EARNINGS from calendar API
+  const earnings = useMemo(() => {
+    if (!calApi?.events?.length) return EARNINGS;
+    return calApi.events
+      .filter((e) => {
+        const ev = (e.event || e.name || "").toLowerCase();
+        return ev.includes("earning") || ev.includes("ex-div") || ev.includes("dividend");
+      })
+      .slice(0, 5)
+      .map((e) => ({
+        date: (e.date || "").slice(0, 6),
+        ticker: e.symbol || e.ticker || "—",
+        type: (e.event || "").includes("div") ? "Ex-Div" : "Earnings",
+        est: e.consensus || e.forecast || "—",
+      }));
+  }, [calApi]);
 
   // Override sectors from API when available
   const sectors = useMemo(() => {
@@ -475,7 +519,7 @@ export default function MarketWrap() {
             {/* CVR News */}
             <DashboardPanel title="CVR NEWS" className="flex-1">
               <div className="space-y-1.5">
-                {NEWS.map((n, i) => (
+                {news.map((n, i) => (
                   <div key={i} className="flex gap-2 text-[9px]">
                     <span className="text-terminal-text-faint font-mono flex-shrink-0 w-10">{n.time}</span>
                     <span className="text-terminal-text-muted flex-1">{n.headline}</span>
@@ -488,7 +532,7 @@ export default function MarketWrap() {
             {/* Fed Calendar */}
             <DashboardPanel title="FED CALENDAR" className="flex-1">
               <div className="space-y-1.5">
-                {FED_EVENTS.map((e, i) => (
+                {fedEvents.map((e, i) => (
                   <div key={i} className="flex gap-2 text-[9px]">
                     <span className="text-terminal-warning font-mono flex-shrink-0 w-12">{e.date}</span>
                     <span className="text-terminal-text-muted">{e.event}</span>
@@ -509,7 +553,7 @@ export default function MarketWrap() {
       <div className="flex-shrink-0">
         <DashboardPanel title="INCOMING EVENTS">
           <div className="flex gap-3 overflow-x-auto pb-1">
-            {EARNINGS.map((e, i) => (
+            {earnings.map((e, i) => (
               <div key={i} className="flex-shrink-0 border border-terminal-border rounded p-2 min-w-[140px]">
                 <div className="flex items-center gap-2 text-[9px]">
                   <span className="text-terminal-warning font-mono">{e.date}</span>
