@@ -1,6 +1,6 @@
 """
 Universe router — OPENBB, ETF tabs
-Wraps: UniverseEngine, OpenBBData
+Wraps: UniverseEngine, openbb_data functions (direct, no class wrapper)
 """
 from fastapi import APIRouter, Query
 from datetime import datetime
@@ -10,7 +10,6 @@ logger = logging.getLogger("metadron-api.universe")
 router = APIRouter()
 
 _universe = None
-_openbb = None
 
 
 def _get_universe():
@@ -22,12 +21,8 @@ def _get_universe():
     return _universe
 
 
-def _get_openbb():
-    global _openbb
-    if _openbb is None:
-        from engine.data.openbb_data import OpenBBData
-        _openbb = OpenBBData()
-    return _openbb
+
+# OpenBB functions imported directly in each endpoint — no class wrapper
 
 
 # ─── Universe ──────────────────────────────────────────────
@@ -120,20 +115,18 @@ async def universe_morning_scan():
         return {"error": str(e)}
 
 
-# ─── OpenBB data ───────────────────────────────────────────
+# ─── OpenBB data (direct function calls — no class indirection) ────
 
 @router.get("/openbb/search")
 async def openbb_search(query: str = Query(..., min_length=1)):
-    """Search securities via OpenBB."""
+    """Search ALL securities via OpenBB (not just our universe)."""
     try:
-        obb = _get_openbb()
-        if hasattr(obb, "search"):
-            results = obb.search(query)
-        elif hasattr(obb, "search_equity"):
-            results = obb.search_equity(query)
-        else:
-            results = []
-        return {"results": results if isinstance(results, list) else [], "timestamp": datetime.utcnow().isoformat()}
+        from engine.data.openbb_data import search_equities
+        df = search_equities(query=query)
+        if df.empty:
+            return {"results": [], "timestamp": datetime.utcnow().isoformat()}
+        records = df.head(50).to_dict(orient="records")
+        return {"results": records, "timestamp": datetime.utcnow().isoformat()}
     except Exception as e:
         logger.error(f"universe/openbb/search error: {e}")
         return {"results": [], "error": str(e)}
@@ -143,17 +136,36 @@ async def openbb_search(query: str = Query(..., min_length=1)):
 async def openbb_quote(ticker: str = Query(...)):
     """Get live quote via OpenBB."""
     try:
-        obb = _get_openbb()
-        if hasattr(obb, "get_quote"):
-            quote = obb.get_quote(ticker)
-        elif hasattr(obb, "quote"):
-            quote = obb.quote(ticker)
+        from engine.data.openbb_data import get_prices
+        from datetime import timedelta
+        end = datetime.utcnow().strftime("%Y-%m-%d")
+        start = (datetime.utcnow() - timedelta(days=5)).strftime("%Y-%m-%d")
+        df = get_prices(ticker, start=start, end=end)
+        if df.empty:
+            return {"ticker": ticker, "error": "No price data", "timestamp": datetime.utcnow().isoformat()}
+
+        # Extract latest price
+        if hasattr(df.columns, "levels"):  # MultiIndex
+            close_col = "Close" if "Close" in df.columns.get_level_values(0) else "Adj Close"
+            last_row = df[close_col].iloc[-1]
+            price = float(last_row.iloc[0]) if hasattr(last_row, "iloc") else float(last_row)
         else:
-            quote = {}
-        return {**(quote if isinstance(quote, dict) else {"data": str(quote)}), "timestamp": datetime.utcnow().isoformat()}
+            price = float(df.iloc[-1].get("Close", df.iloc[-1].get("close", 0)))
+
+        prev = float(df.iloc[-2].values[0]) if len(df) >= 2 else price
+        change = price - prev
+        change_pct = (change / prev * 100) if prev else 0
+
+        return {
+            "ticker": ticker,
+            "price": round(price, 2),
+            "change": round(change, 2),
+            "change_pct": round(change_pct, 2),
+            "timestamp": datetime.utcnow().isoformat(),
+        }
     except Exception as e:
         logger.error(f"universe/openbb/quote error: {e}")
-        return {"error": str(e)}
+        return {"ticker": ticker, "error": str(e)}
 
 
 @router.get("/openbb/historical")
@@ -163,24 +175,33 @@ async def openbb_historical(
 ):
     """Get historical OHLCV via OpenBB."""
     try:
-        obb = _get_openbb()
-        if hasattr(obb, "get_historical"):
-            data = obb.get_historical(ticker, lookback_days=days)
-        elif hasattr(obb, "historical"):
-            data = obb.historical(ticker, days=days)
+        from engine.data.openbb_data import get_prices
+        from datetime import timedelta
+        end = datetime.utcnow().strftime("%Y-%m-%d")
+        start = (datetime.utcnow() - timedelta(days=days)).strftime("%Y-%m-%d")
+        df = get_prices(ticker, start=start, end=end)
+        if df.empty:
+            return {"data": [], "ticker": ticker, "error": "No data", "timestamp": datetime.utcnow().isoformat()}
+
+        # Flatten to records
+        if hasattr(df.columns, "levels"):  # MultiIndex
+            flat = {}
+            for field in ["Open", "High", "Low", "Close", "Volume", "Adj Close"]:
+                if field in df.columns.get_level_values(0):
+                    flat[field.lower()] = df[field].iloc[:, 0] if df[field].ndim > 1 else df[field]
+            import pandas as pd
+            flat_df = pd.DataFrame(flat, index=df.index)
         else:
-            data = {}
+            flat_df = df
 
-        # Convert DataFrame to records if needed
-        if hasattr(data, "to_dict"):
-            records = data.reset_index().to_dict(orient="records")
-            for r in records:
-                for k, v in r.items():
-                    if hasattr(v, "isoformat"):
-                        r[k] = v.isoformat()
-            return {"data": records, "ticker": ticker, "timestamp": datetime.utcnow().isoformat()}
-
-        return {"data": data if isinstance(data, (list, dict)) else str(data), "ticker": ticker, "timestamp": datetime.utcnow().isoformat()}
+        records = flat_df.reset_index().to_dict(orient="records")
+        for r in records:
+            for k, v in r.items():
+                if hasattr(v, "isoformat"):
+                    r[k] = v.isoformat()
+                elif hasattr(v, "item"):
+                    r[k] = v.item()  # numpy scalar → python
+        return {"data": records, "ticker": ticker, "timestamp": datetime.utcnow().isoformat()}
     except Exception as e:
         logger.error(f"universe/openbb/historical error: {e}")
         return {"data": [], "error": str(e)}
@@ -190,13 +211,20 @@ async def openbb_historical(
 async def openbb_fred(series_id: str = Query(...)):
     """Get FRED economic data series via OpenBB."""
     try:
-        obb = _get_openbb()
-        if hasattr(obb, "get_fred"):
-            data = obb.get_fred(series_id)
-        elif hasattr(obb, "fred"):
-            data = obb.fred(series_id)
-        else:
-            data = {}
+        from engine.data.openbb_data import get_fred_series
+        df = get_fred_series(series_id)
+        if hasattr(df, "empty") and df.empty:
+            return {"data": [], "series_id": series_id, "error": "No data", "timestamp": datetime.utcnow().isoformat()}
+        if hasattr(df, "to_dict"):
+            records = df.reset_index().to_dict(orient="records")
+            for r in records:
+                for k, v in r.items():
+                    if hasattr(v, "isoformat"):
+                        r[k] = v.isoformat()
+                    elif hasattr(v, "item"):
+                        r[k] = v.item()
+            return {"data": records, "series_id": series_id, "timestamp": datetime.utcnow().isoformat()}
+        return {"data": df if isinstance(df, (list, dict)) else str(df), "series_id": series_id, "timestamp": datetime.utcnow().isoformat()}
 
         if hasattr(data, "to_dict"):
             records = data.reset_index().to_dict(orient="records")

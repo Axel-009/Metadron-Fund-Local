@@ -98,6 +98,19 @@ export default function MacroDashboard() {
   const { data: velocityData } = useEngineQuery<{ velocity?: number; credit_impulse?: number; sofr_rate?: number; ted_spread?: number; liquidity_score?: number }>("/macro/velocity", { refetchInterval: 30000 });
   const { data: yieldCurve } = useEngineQuery<Record<string, number>>("/macro/yield-curve", { refetchInterval: 30000 });
   const { data: tensionData } = useEngineQuery<{ tension_score?: number; stance?: string }>("/macro/monetary-tension", { refetchInterval: 60000 });
+  const { data: newsData } = useEngineQuery<{ news: Array<Record<string, string>> }>("/macro/news", { refetchInterval: 60000 });
+  const { data: calendarData } = useEngineQuery<{ events: Array<Record<string, string>> }>("/macro/calendar", { refetchInterval: 300000 });
+
+  // Override news from API when available
+  const macroNews = useMemo(() => {
+    if (!newsData?.news?.length) return MACRO_NEWS;
+    return newsData.news.slice(0, 10).map((n) => ({
+      ts: n.date || n.published || "",
+      src: n.source || n.provider || "OpenBB",
+      headline: n.title || n.headline || "",
+      sentiment: "neutral" as const,
+    }));
+  }, [newsData]);
 
   // Override regime from API
   const apiRegime = macroSnap?.regime?.toUpperCase() || REGIME.label;
@@ -245,7 +258,7 @@ export default function MacroDashboard() {
         <ResizableDashboard defaultSizes={[60, 40]} minSizes={[30, 25]}>
           <DashboardPanel title="MACRO NEWS FEED" noPadding>
             <div className="overflow-auto h-full">
-              {MACRO_NEWS.map((n, i) => (
+              {macroNews.map((n, i) => (
                 <div key={i} className={`px-2 py-1 border-b border-terminal-border flex items-start gap-2 hover:bg-[#161b22] ${i % 2 === 0 ? "" : "bg-[#0d1117]"}`}>
                   <span className="text-[8px] font-mono text-terminal-text-faint w-16 flex-shrink-0">{n.ts}</span>
                   <span className="text-[8px] font-mono text-terminal-text-muted w-14 flex-shrink-0">{n.src}</span>

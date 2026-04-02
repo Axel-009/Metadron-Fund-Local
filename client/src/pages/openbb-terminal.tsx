@@ -232,7 +232,32 @@ function CandlestickCanvas({ data, width, height }: { data: any[]; width: number
 // ═══════════ CHART PANEL ═══════════
 
 function ChartPanel({ ticker }: { ticker: string }) {
-  const data = useMemo(() => generateOHLC(200, ticker === "AAPL" ? 189 : ticker === "NVDA" ? 875 : 150 + Math.random() * 300), [ticker]);
+  // Fetch real OHLCV from OpenBB, fall back to generated data
+  const { data: histData } = useEngineQuery<{ data: Array<Record<string, number | string>> }>(`/universe/openbb/historical?ticker=${ticker}&days=200`, { refetchInterval: 60000 });
+
+  const data = useMemo(() => {
+    if (histData?.data?.length && histData.data.length > 10) {
+      return histData.data.map((r, i, arr) => {
+        const close = Number(r.close || r.Close || 0);
+        const open = Number(r.open || r.Open || close);
+        const high = Number(r.high || r.High || close);
+        const low = Number(r.low || r.Low || close);
+        const volume = Number(r.volume || r.Volume || 0);
+        const date = String(r.date || r.index || r.Date || `Day ${i}`);
+        const shortDate = date.length > 10 ? date.slice(5, 10) : date;
+        // Calculate simple SMAs
+        let sma20 = 0, sma50 = 0;
+        if (i >= 19) {
+          sma20 = arr.slice(i - 19, i + 1).reduce((s, d) => s + Number(d.close || d.Close || 0), 0) / 20;
+        }
+        if (i >= 49) {
+          sma50 = arr.slice(i - 49, i + 1).reduce((s, d) => s + Number(d.close || d.Close || 0), 0) / 50;
+        }
+        return { date: shortDate, open, high, low, close, volume, sma20: +sma20.toFixed(2), sma50: +sma50.toFixed(2), rsi: 50, macd: 0, signal: 0, histogram: 0 };
+      });
+    }
+    return generateOHLC(200, ticker === "AAPL" ? 189 : ticker === "NVDA" ? 875 : 150 + Math.random() * 300);
+  }, [histData, ticker]);
   const containerRef = useRef<HTMLDivElement>(null);
   const [dims, setDims] = useState({ w: 800, h: 400 });
   const [activeIndicators, setActiveIndicators] = useState<Set<string>>(new Set(["SMA 20", "SMA 50", "Volume"]));
@@ -364,6 +389,7 @@ interface SecurityItem {
   vol: string;
   mktCap: string;
   isHolding: boolean;
+  name?: string;
 }
 
 function SecurityRow({
@@ -436,13 +462,65 @@ function SecurityListPanel({
   const [holdingsCollapsed, setHoldingsCollapsed] = useState(false);
   const [watchlistCollapsed, setWatchlistCollapsed] = useState(false);
   const [fmpCollapsed, setFmpCollapsed] = useState(false);
+  const [liveResults, setLiveResults] = useState<SecurityItem[]>([]);
+  const [searching, setSearching] = useState(false);
+  const debounceRef = useRef<ReturnType<typeof setTimeout>>();
 
-  const holdings = ALL_SECURITIES.filter(s => s.isHolding);
+  // Fetch holdings from portfolio API
+  const { data: posData } = useEngineQuery<{ positions: Array<{ ticker: string; current_price: number; unrealized_pnl: number; sector: string }> }>("/portfolio/positions", { refetchInterval: 15000 });
+
+  // Build holdings from API when available, fallback to static
+  const holdings = useMemo(() => {
+    if (posData?.positions?.length) {
+      return posData.positions.map((p) => ({
+        ticker: p.ticker,
+        price: p.current_price,
+        chg: p.unrealized_pnl,
+        pct: p.current_price > 0 ? (p.unrealized_pnl / p.current_price) * 100 : 0,
+        vol: "—",
+        mktCap: "—",
+        isHolding: true,
+      }));
+    }
+    return ALL_SECURITIES.filter(s => s.isHolding);
+  }, [posData]);
+
   const watchItems = ALL_SECURITIES.filter(s => !s.isHolding || watchlist.includes(s.ticker));
 
   const searchLower = search.toLowerCase().trim();
 
-  // Filter all sources
+  // Live search via OpenBB API — searches ALL securities, not just our universe
+  useEffect(() => {
+    if (debounceRef.current) clearTimeout(debounceRef.current);
+    if (searchLower.length < 2) {
+      setLiveResults([]);
+      setSearching(false);
+      return;
+    }
+    setSearching(true);
+    debounceRef.current = setTimeout(async () => {
+      try {
+        const res = await fetch(`/api/engine/universe/openbb/search?query=${encodeURIComponent(searchLower)}`);
+        if (res.ok) {
+          const data = await res.json();
+          const results = (data.results || []).map((r: Record<string, string>) => ({
+            ticker: r.symbol || r.ticker || "",
+            price: 0,
+            chg: 0,
+            pct: 0,
+            vol: "—",
+            mktCap: r.market_cap || "—",
+            isHolding: false,
+            name: r.name || r.security_name || "",
+          }));
+          setLiveResults(results);
+        }
+      } catch { /* errors visible in TECH tab */ }
+      setSearching(false);
+    }, 400);
+  }, [searchLower]);
+
+  // Filter holdings and watchlist locally
   const filteredHoldings = searchLower
     ? holdings.filter(s => s.ticker.toLowerCase().includes(searchLower))
     : holdings;
@@ -450,18 +528,20 @@ function SecurityListPanel({
     ? watchItems.filter(s => s.ticker.toLowerCase().includes(searchLower))
     : watchItems;
 
-  // FMP: exclude items already in holdings or watchlist
-  const allKnownTickers = new Set(ALL_SECURITIES.map(s => s.ticker));
-  const filteredFmp = searchLower
-    ? FMP_UNIVERSE.filter(s => s.ticker.toLowerCase().includes(searchLower) && !allKnownTickers.has(s.ticker))
-    : FMP_UNIVERSE.filter(s => !allKnownTickers.has(s.ticker));
+  // Merge: live OpenBB results + FMP fallback, excluding known tickers
+  const allKnownTickers = new Set([...ALL_SECURITIES.map(s => s.ticker), ...holdings.map(h => h.ticker)]);
+  const filteredFmp = liveResults.length > 0
+    ? liveResults.filter(s => s.ticker && !allKnownTickers.has(s.ticker))
+    : searchLower
+      ? FMP_UNIVERSE.filter(s => s.ticker.toLowerCase().includes(searchLower) && !allKnownTickers.has(s.ticker))
+      : FMP_UNIVERSE.filter(s => !allKnownTickers.has(s.ticker));
 
-  // Show FMP section only when searching
+  // Show search results section when searching
   const showFmpSection = searchLower.length >= 1;
 
-  // Determine if the searched FMP ticker can be added to watchlist
+  // Determine if the searched ticker can be added to watchlist
   const searchedFmpItem = searchLower.length >= 2
-    ? FMP_UNIVERSE.find(s => s.ticker.toLowerCase() === searchLower)
+    ? (liveResults.find(s => s.ticker.toLowerCase() === searchLower) || FMP_UNIVERSE.find(s => s.ticker.toLowerCase() === searchLower))
     : null;
   const canAddFmpToWatchlist = searchedFmpItem && !watchlist.includes(searchedFmpItem.ticker) && !allKnownTickers.has(searchedFmpItem.ticker);
 
@@ -477,7 +557,7 @@ function SecurityListPanel({
           type="text"
           value={search}
           onChange={e => setSearch(e.target.value)}
-          placeholder="Search holdings, watchlist, FMP universe..."
+          placeholder="Search all securities via OpenBB..."
           data-testid="input-security-search"
           className="flex-1 bg-transparent outline-none text-terminal-text-primary placeholder:text-terminal-text-faint text-[10px]"
         />

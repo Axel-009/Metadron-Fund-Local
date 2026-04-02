@@ -127,3 +127,89 @@ async def risk_beta_history():
     except Exception as e:
         logger.error(f"risk/beta/history error: {e}")
         return {"history": [], "error": str(e)}
+
+
+@router.get("/alerts")
+async def risk_alerts():
+    """Top risk alerts derived from current engine state."""
+    try:
+        beta = _get_beta()
+        opt = _get_options()
+
+        alerts = []
+        # Beta corridor alerts
+        history = beta.get_history()
+        if history:
+            latest = history[-1]
+            b = latest.current_beta if hasattr(latest, "current_beta") else 0
+            t = latest.target_beta if hasattr(latest, "target_beta") else 0
+            pos = latest.corridor_position if hasattr(latest, "corridor_position") else "UNKNOWN"
+            if pos == "ABOVE":
+                alerts.append({"name": "Beta Above Corridor", "value": f"β={b:.2f} (target {t:.2f})", "severity": "high"})
+            elif pos == "BELOW":
+                alerts.append({"name": "Beta Below Corridor", "value": f"β={b:.2f} (target {t:.2f})", "severity": "medium"})
+
+        # Options concentration
+        greeks = opt.get_portfolio_greeks()
+        if isinstance(greeks, dict):
+            delta = greeks.get("delta", 0)
+            if abs(delta) > 0.8:
+                alerts.append({"name": "High Delta Exposure", "value": f"Δ={delta:.2f}", "severity": "high"})
+            theta = greeks.get("theta", 0)
+            if theta < -50:
+                alerts.append({"name": "Theta Bleed", "value": f"Θ={theta:.1f}/day", "severity": "medium"})
+
+        # Sector concentration from beta analytics
+        analytics = beta.get_corridor_analytics()
+        if isinstance(analytics, dict):
+            vol_regime = analytics.get("vol_regime", "")
+            if vol_regime == "HIGH":
+                alerts.append({"name": "Elevated Volatility", "value": f"Vol regime: {vol_regime}", "severity": "high"})
+
+        # Pad with default if empty
+        if not alerts:
+            alerts.append({"name": "No Active Alerts", "value": "System nominal", "severity": "low"})
+
+        return {"alerts": alerts, "timestamp": datetime.utcnow().isoformat()}
+    except Exception as e:
+        logger.error(f"risk/alerts error: {e}")
+        return {"alerts": [], "error": str(e)}
+
+
+@router.get("/order-distribution")
+async def order_distribution():
+    """Order type distribution from recent trades."""
+    try:
+        beta = _get_beta()  # Use beta to get broker access
+        # Get trades from the execution engine broker
+        try:
+            from engine.execution.execution_engine import ExecutionEngine
+            eng = ExecutionEngine()
+            trades = eng.broker.get_trades(limit=200)
+        except Exception:
+            trades = []
+
+        if not trades:
+            return {"distribution": [], "timestamp": datetime.utcnow().isoformat()}
+
+        # Count signal types as order distribution
+        type_counts: dict[str, int] = {}
+        for t in trades:
+            sig = t.signal_type.value if hasattr(t.signal_type, "value") else str(getattr(t, "signal_type", "UNKNOWN"))
+            type_counts[sig] = type_counts.get(sig, 0) + 1
+
+        total = sum(type_counts.values()) or 1
+        colors = ["#00d4aa", "#58a6ff", "#f85149", "#bc8cff", "#d29922", "#4ecdc4", "#3fb950"]
+        distribution = []
+        for i, (name, count) in enumerate(sorted(type_counts.items(), key=lambda x: -x[1])):
+            distribution.append({
+                "name": name,
+                "value": round(count / total * 100, 1),
+                "count": count,
+                "color": colors[i % len(colors)],
+            })
+
+        return {"distribution": distribution, "timestamp": datetime.utcnow().isoformat()}
+    except Exception as e:
+        logger.error(f"risk/order-distribution error: {e}")
+        return {"distribution": [], "error": str(e)}
