@@ -1,0 +1,302 @@
+"""Metadron Capital — News Intelligence Engine.
+
+Pulls live market news from OpenBB (Tiingo, Benzinga, FMP providers),
+scores sentiment, categorizes by urgency, and maps to portfolio tickers.
+
+Fits in system architecture:
+    L1 Data (OpenBB news) → L2 NewsEngine (sentiment + categorization)
+    → EventDrivenEngine (catalyst detection)
+    → WRAP tab LiveNewsFeed (real-time display)
+    → MacroEngine (headline sentiment as macro signal)
+
+Usage:
+    from engine.signals.news_engine import NewsEngine
+    engine = NewsEngine()
+    feed = engine.get_live_feed(limit=20)
+    ticker_news = engine.get_ticker_news("AAPL", limit=10)
+"""
+
+import logging
+import re
+import hashlib
+from datetime import datetime, timedelta
+from dataclasses import dataclass, field
+from typing import Optional, List
+from collections import deque
+
+logger = logging.getLogger(__name__)
+
+# ─── Sentiment keywords ────────────────────────────────────
+
+BULLISH_KEYWORDS = {
+    "beats", "surges", "soars", "rally", "record", "upgrade", "raises",
+    "bullish", "outperform", "exceeds", "accelerates", "strong", "boom",
+    "buyback", "dividend", "growth", "momentum", "breakout", "deal",
+    "approval", "launch", "expands", "profit", "gains", "optimism",
+    "dovish", "cut", "easing", "stimulus", "recovery",
+}
+
+BEARISH_KEYWORDS = {
+    "misses", "drops", "plunges", "crash", "warning", "downgrade",
+    "bearish", "underperform", "slows", "declines", "weak", "loss",
+    "lawsuit", "recall", "investigation", "default", "bankruptcy",
+    "layoffs", "recession", "tariff", "sanctions", "hawkish", "hike",
+    "inflation", "overvalued", "sell-off", "selloff", "concern", "risk",
+}
+
+BREAKING_KEYWORDS = {
+    "breaking", "just in", "alert", "urgent", "emergency", "flash",
+    "fed decision", "rate decision", "surprise", "shock", "crash",
+    "halt", "suspended", "war", "invasion",
+}
+
+HOT_KEYWORDS = {
+    "ai", "nvidia", "gpu", "semiconductor", "apple", "microsoft",
+    "earnings", "ipo", "merger", "acquisition", "billion", "trillion",
+    "crypto", "bitcoin", "tesla", "openai", "copilot",
+}
+
+
+@dataclass
+class NewsItem:
+    """A single processed news item."""
+    id: str
+    timestamp: str
+    source: str
+    headline: str
+    tickers: List[str] = field(default_factory=list)
+    sentiment: str = "neutral"  # bullish, bearish, neutral
+    category: str = "top"       # hot, top, breaking
+    sentiment_score: float = 0.0  # -1.0 to +1.0
+    url: str = ""
+    raw_date: str = ""
+
+
+class NewsEngine:
+    """Live news intelligence engine powered by OpenBB.
+
+    Fetches company and world news, scores sentiment, categorizes urgency,
+    and maintains a rolling feed for the WRAP tab.
+    """
+
+    def __init__(self):
+        self._feed: deque[NewsItem] = deque(maxlen=100)
+        self._last_fetch: Optional[datetime] = None
+        self._fetch_interval = timedelta(seconds=60)  # Min 60s between fetches
+        self._seen_ids: set = set()
+
+    def _score_sentiment(self, headline: str) -> tuple[str, float]:
+        """Score headline sentiment using keyword matching.
+
+        Returns (label, score) where score is -1.0 to +1.0.
+        """
+        words = set(re.findall(r'\b\w+\b', headline.lower()))
+        bull = len(words & BULLISH_KEYWORDS)
+        bear = len(words & BEARISH_KEYWORDS)
+
+        total = bull + bear
+        if total == 0:
+            return "neutral", 0.0
+
+        score = (bull - bear) / total
+        if score > 0.2:
+            return "bullish", min(score, 1.0)
+        elif score < -0.2:
+            return "bearish", max(score, -1.0)
+        return "neutral", score
+
+    def _categorize(self, headline: str) -> str:
+        """Categorize headline urgency: breaking > hot > top."""
+        lower = headline.lower()
+        if any(kw in lower for kw in BREAKING_KEYWORDS):
+            return "breaking"
+        if any(kw in lower for kw in HOT_KEYWORDS):
+            return "hot"
+        return "top"
+
+    def _extract_tickers(self, headline: str, symbols: Optional[List[str]] = None) -> List[str]:
+        """Extract ticker symbols from headline text."""
+        tickers = []
+        # Match $TICKER pattern
+        tickers.extend(re.findall(r'\$([A-Z]{1,5})\b', headline))
+        # Match known symbols in uppercase words
+        words = re.findall(r'\b([A-Z]{2,5})\b', headline)
+        known = {"AAPL", "MSFT", "NVDA", "AMZN", "GOOGL", "META", "TSLA", "JPM",
+                 "BAC", "GS", "XOM", "UNH", "V", "SPY", "QQQ", "IWM", "TLT",
+                 "GLD", "VIX", "DIA", "AVGO", "CRM", "NFLX", "AMD", "INTC",
+                 "PFE", "MRK", "JNJ", "KO", "PEP", "WMT", "HD", "BA", "CAT"}
+        for w in words:
+            if w in known and w not in tickers:
+                tickers.append(w)
+        if symbols:
+            for s in symbols:
+                if s.upper() not in tickers:
+                    tickers.append(s.upper())
+        return tickers[:5]
+
+    def _make_id(self, headline: str, source: str) -> str:
+        """Generate deterministic ID for dedup."""
+        return hashlib.md5(f"{headline[:80]}:{source}".encode()).hexdigest()[:12]
+
+    def _fetch_from_openbb(self, limit: int = 30) -> List[NewsItem]:
+        """Fetch fresh news from OpenBB and process into NewsItems."""
+        items = []
+        try:
+            from engine.data.openbb_data import get_world_news, get_company_news
+
+            # World news
+            df = get_world_news(limit=limit)
+            if hasattr(df, "iterrows"):
+                for _, row in df.iterrows():
+                    headline = str(row.get("title", row.get("headline", "")))
+                    if not headline:
+                        continue
+                    source = str(row.get("source", row.get("publisher", "OpenBB")))
+                    date_str = str(row.get("date", row.get("published", "")))
+                    symbols = []
+                    if "symbols" in row and row["symbols"]:
+                        symbols = row["symbols"] if isinstance(row["symbols"], list) else str(row["symbols"]).split(",")
+                    url = str(row.get("url", row.get("link", "")))
+
+                    nid = self._make_id(headline, source)
+                    if nid in self._seen_ids:
+                        continue
+                    self._seen_ids.add(nid)
+
+                    sentiment, score = self._score_sentiment(headline)
+                    category = self._categorize(headline)
+                    tickers = self._extract_tickers(headline, symbols)
+
+                    # Format timestamp
+                    try:
+                        dt = datetime.fromisoformat(date_str.replace("Z", "+00:00")) if date_str else datetime.now()
+                        delta = datetime.now() - dt.replace(tzinfo=None)
+                        if delta.total_seconds() < 60:
+                            ts = "just now"
+                        elif delta.total_seconds() < 3600:
+                            ts = f"{int(delta.total_seconds() / 60)}m ago"
+                        elif delta.total_seconds() < 86400:
+                            ts = f"{int(delta.total_seconds() / 3600)}h ago"
+                        else:
+                            ts = f"{int(delta.days)}d ago"
+                    except Exception:
+                        ts = date_str[:16] if date_str else ""
+
+                    items.append(NewsItem(
+                        id=nid,
+                        timestamp=ts,
+                        source=source,
+                        headline=headline,
+                        tickers=tickers,
+                        sentiment=sentiment,
+                        sentiment_score=score,
+                        category=category,
+                        url=url,
+                        raw_date=date_str,
+                    ))
+
+            # Company news for top portfolio tickers
+            for ticker in ["AAPL", "NVDA", "MSFT", "AMZN", "GOOGL"]:
+                try:
+                    cdf = get_company_news(ticker, limit=3)
+                    if hasattr(cdf, "iterrows"):
+                        for _, row in cdf.iterrows():
+                            headline = str(row.get("title", row.get("headline", "")))
+                            if not headline:
+                                continue
+                            nid = self._make_id(headline, ticker)
+                            if nid in self._seen_ids:
+                                continue
+                            self._seen_ids.add(nid)
+
+                            sentiment, score = self._score_sentiment(headline)
+                            category = self._categorize(headline)
+
+                            items.append(NewsItem(
+                                id=nid,
+                                timestamp="",
+                                source=str(row.get("source", row.get("publisher", ""))),
+                                headline=headline,
+                                tickers=[ticker],
+                                sentiment=sentiment,
+                                sentiment_score=score,
+                                category=category,
+                            ))
+                except Exception:
+                    continue
+
+        except ImportError:
+            logger.warning("OpenBB not available for news fetching")
+        except Exception as e:
+            logger.error(f"News fetch error: {e}")
+
+        return items
+
+    def refresh(self, limit: int = 30) -> int:
+        """Refresh the news feed from OpenBB. Returns count of new items."""
+        now = datetime.now()
+        if self._last_fetch and (now - self._last_fetch) < self._fetch_interval:
+            return 0
+
+        items = self._fetch_from_openbb(limit=limit)
+        new_count = 0
+        for item in items:
+            if item.id not in {i.id for i in self._feed}:
+                self._feed.appendleft(item)
+                new_count += 1
+
+        self._last_fetch = now
+        logger.info(f"News refresh: {new_count} new items ({len(self._feed)} total)")
+        return new_count
+
+    def get_live_feed(self, limit: int = 20) -> List[dict]:
+        """Get the live news feed for the WRAP tab.
+
+        Auto-refreshes from OpenBB if stale. Returns list of dicts
+        matching the frontend LiveNewsItem interface.
+        """
+        self.refresh()
+
+        items = []
+        for item in list(self._feed)[:limit]:
+            items.append({
+                "id": item.id,
+                "timestamp": item.timestamp,
+                "source": item.source,
+                "headline": item.headline,
+                "tickers": item.tickers,
+                "sentiment": item.sentiment,
+                "category": item.category,
+                "sentiment_score": item.sentiment_score,
+            })
+        return items
+
+    def get_ticker_news(self, ticker: str, limit: int = 10) -> List[dict]:
+        """Get news for a specific ticker."""
+        self.refresh()
+        items = [i for i in self._feed if ticker.upper() in i.tickers]
+        return [
+            {
+                "id": i.id, "timestamp": i.timestamp, "source": i.source,
+                "headline": i.headline, "tickers": i.tickers,
+                "sentiment": i.sentiment, "category": i.category,
+            }
+            for i in items[:limit]
+        ]
+
+    def get_sentiment_summary(self) -> dict:
+        """Aggregate sentiment across all recent news."""
+        if not self._feed:
+            return {"bullish": 0, "bearish": 0, "neutral": 0, "avg_score": 0}
+
+        counts = {"bullish": 0, "bearish": 0, "neutral": 0}
+        total_score = 0
+        for item in self._feed:
+            counts[item.sentiment] = counts.get(item.sentiment, 0) + 1
+            total_score += item.sentiment_score
+
+        return {
+            **counts,
+            "total": len(self._feed),
+            "avg_score": round(total_score / len(self._feed), 3),
+        }

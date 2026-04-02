@@ -274,3 +274,57 @@ async def social_signals():
     except Exception as e:
         logger.error(f"signals/social error: {e}")
         return {"error": str(e)}
+
+
+# ─── News Intelligence Engine ──────────────────────────────
+
+_news = None
+
+def _get_news():
+    global _news
+    if _news is None:
+        from engine.signals.news_engine import NewsEngine
+        _news = NewsEngine()
+    return _news
+
+
+@router.get("/news/live")
+async def news_live_feed(limit: int = Query(20, ge=1, le=50)):
+    """Live news feed from OpenBB with sentiment scoring.
+
+    Fits in system: L1 OpenBB News → L2 NewsEngine (sentiment + categorization)
+    → WRAP tab LiveNewsFeed + EventDrivenEngine catalyst detection.
+    """
+    try:
+        engine = _get_news()
+        feed = engine.get_live_feed(limit=limit)
+        summary = engine.get_sentiment_summary()
+        return {"feed": feed, "summary": summary, "timestamp": datetime.utcnow().isoformat()}
+    except Exception as e:
+        logger.error(f"signals/news/live error: {e}")
+        return {"feed": [], "summary": {}, "error": str(e)}
+
+
+@router.get("/news/ticker")
+async def news_ticker(ticker: str = Query(...), limit: int = Query(10, ge=1, le=30)):
+    """News for a specific ticker with sentiment scoring."""
+    try:
+        engine = _get_news()
+        items = engine.get_ticker_news(ticker, limit=limit)
+        return {"ticker": ticker, "news": items, "timestamp": datetime.utcnow().isoformat()}
+    except Exception as e:
+        logger.error(f"signals/news/ticker error: {e}")
+        return {"news": [], "error": str(e)}
+
+
+@router.get("/news/sentiment")
+async def news_sentiment():
+    """Aggregate market sentiment from recent news."""
+    try:
+        engine = _get_news()
+        engine.refresh()
+        summary = engine.get_sentiment_summary()
+        return {**summary, "timestamp": datetime.utcnow().isoformat()}
+    except Exception as e:
+        logger.error(f"signals/news/sentiment error: {e}")
+        return {"error": str(e)}
