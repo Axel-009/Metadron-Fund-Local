@@ -63,14 +63,90 @@ async def pipeline_status():
 
 @router.get("/reconciliation")
 async def reconciliation():
-    """Position reconciliation: engine vs broker ground truth."""
+    """Position reconciliation: Alpaca vs Paper broker.
+
+    Compares all positions between Alpaca (live) and Paper (engine).
+    Only expected difference = futures (no Alpaca futures broker).
+    Feeds RECON tab + daily recon log.
+    """
     try:
-        eng = _get_exec()
-        recon = eng.reconcile_positions()
-        return {**(recon if isinstance(recon, dict) else {"data": str(recon)}), "timestamp": datetime.utcnow().isoformat()}
+        FUTURES_PREFIXES = ("ES", "NQ", "YM", "CL", "GC", "ZB", "ZN", "6E", "RTY", "VX")
+
+        # Paper broker positions
+        from engine.execution.paper_broker import PaperBroker
+        paper = PaperBroker()
+        paper_pos = paper.get_positions()
+        paper_nav = paper.compute_nav()
+
+        # Alpaca broker positions
+        alpaca_pos = {}
+        alpaca_nav = 0
+        try:
+            from engine.execution.alpaca_broker import AlpacaBroker
+            alpaca = AlpacaBroker(initial_cash=0, paper=True)
+            alpaca_pos = alpaca.get_positions()
+            alpaca_nav = alpaca.compute_nav()
+        except Exception:
+            pass
+
+        all_tickers = set(list(paper_pos.keys()) + list(alpaca_pos.keys()))
+        positions = []
+        matched = 0
+        mismatched = 0
+
+        for ticker in sorted(all_tickers):
+            is_futures = any(ticker.startswith(p) for p in FUTURES_PREFIXES)
+            in_paper = ticker in paper_pos
+            in_alpaca = ticker in alpaca_pos
+
+            p_qty = 0
+            a_qty = 0
+            if in_paper:
+                p = paper_pos[ticker]
+                p_qty = getattr(p, "quantity", 0) if hasattr(p, "quantity") else p.get("quantity", 0)
+            if in_alpaca:
+                a = alpaca_pos[ticker]
+                a_qty = a.get("quantity", getattr(a, "quantity", 0)) if isinstance(a, dict) else getattr(a, "quantity", 0)
+
+            if in_paper and in_alpaca and p_qty == a_qty:
+                status = "MATCHED"
+                matched += 1
+            elif is_futures:
+                status = "EXPECTED_DIFF"
+            elif in_paper and not in_alpaca:
+                status = "PAPER_ONLY"
+                mismatched += 1
+            elif in_alpaca and not in_paper:
+                status = "ALPACA_ONLY"
+                mismatched += 1
+            else:
+                status = "MISMATCH"
+                mismatched += 1
+
+            positions.append({
+                "ticker": ticker,
+                "paperQty": p_qty,
+                "alpacaQty": a_qty,
+                "delta": p_qty - a_qty,
+                "isFutures": is_futures,
+                "status": status,
+            })
+
+        return {
+            "positions": positions,
+            "summary": {
+                "total": len(positions),
+                "matched": matched,
+                "mismatched": mismatched,
+                "paperNav": round(paper_nav, 2),
+                "alpacaNav": round(alpaca_nav, 2),
+                "navDelta": round(paper_nav - alpaca_nav, 2),
+            },
+            "timestamp": datetime.utcnow().isoformat(),
+        }
     except Exception as e:
         logger.error(f"execution/reconciliation error: {e}")
-        return {"error": str(e)}
+        return {"positions": [], "summary": {}, "error": str(e)}
 
 
 @router.get("/l7/status")
@@ -283,9 +359,10 @@ async def liquidity_data():
 
 @router.get("/venue-comparison")
 async def venue_comparison():
-    """Execution venue performance comparison from trade history.
+    """Execution venue comparison benchmarked against FMP order book data.
 
-    Fits in system: L7 Execution → trade log analysis by venue.
+    Fits in system: L7 Execution → trade log + FMP bid/ask quotes for
+    execution quality benchmarking per venue.
     """
     try:
         eng = _get_exec()
@@ -293,9 +370,39 @@ async def venue_comparison():
         from collections import defaultdict
         venue_stats: dict[str, dict] = defaultdict(lambda: {"fills": 0, "total_slippage": 0.0, "total_latency": 0.0})
 
+        # Get unique tickers for FMP quote benchmark
+        trade_tickers = list(set(getattr(t, "ticker", "") for t in trades if getattr(t, "ticker", "")))
+
+        # Fetch FMP bid/ask quotes for benchmarking
+        fmp_quotes = {}
+        if trade_tickers:
+            try:
+                from engine.data.openbb_data import get_quote
+                quotes = get_quote(trade_tickers[:20])  # Top 20 tickers
+                for q in quotes:
+                    sym = q.get("symbol", "")
+                    if sym:
+                        fmp_quotes[sym] = {
+                            "bid": q.get("bid", 0) or q.get("bid_price", 0),
+                            "ask": q.get("ask", 0) or q.get("ask_price", 0),
+                            "spread": (q.get("ask", 0) or 0) - (q.get("bid", 0) or 0),
+                        }
+            except Exception:
+                pass
+
         for t in trades:
             venue = getattr(t, "venue", "ENGINE") or "ENGINE"
+            ticker = getattr(t, "ticker", "")
+            fill_price = getattr(t, "fill_price", 0)
+
+            # Calculate slippage vs FMP mid-price
             slippage = abs(getattr(t, "slippage", 0) or 0)
+            if ticker in fmp_quotes and fill_price > 0:
+                fmp = fmp_quotes[ticker]
+                mid = (fmp["bid"] + fmp["ask"]) / 2 if fmp["bid"] and fmp["ask"] else 0
+                if mid > 0:
+                    slippage = abs(fill_price - mid) / mid * 10000  # bps
+
             latency = getattr(t, "latency_ms", 0) or 0
             venue_stats[venue]["fills"] += 1
             venue_stats[venue]["total_slippage"] += slippage
@@ -311,7 +418,11 @@ async def venue_comparison():
                 "avgLatency": round(stats["total_latency"] / n, 1),
             })
 
-        return {"venues": venues, "timestamp": datetime.utcnow().isoformat()}
+        return {
+            "venues": venues,
+            "fmp_quotes_count": len(fmp_quotes),
+            "timestamp": datetime.utcnow().isoformat(),
+        }
     except Exception as e:
         logger.error(f"execution/venue-comparison error: {e}")
         return {"venues": [], "error": str(e)}

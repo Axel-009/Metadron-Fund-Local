@@ -970,6 +970,36 @@ def get_economic_calendar(
 
 
 # ═══════════════════════════════════════════════════════════════════════════
+# EQUITY QUOTE — bid/ask/volume via OpenBB (FMP provider)
+# ═══════════════════════════════════════════════════════════════════════════
+
+def get_quote(tickers: list[str] | str, provider: Optional[str] = None) -> list[dict]:
+    """Get real-time quotes with bid/ask for order book analysis.
+
+    FMP provides: price, bid, ask, volume, open, high, low, previous close.
+    Used by TCA tab for execution quality benchmarking.
+    """
+    if isinstance(tickers, str):
+        tickers = [tickers]
+    prov = provider or DEFAULT_EQUITY_PROVIDER
+
+    if _openbb_available:
+        try:
+            result = _obb.equity.price.quote(
+                symbol=",".join(tickers),
+                provider=prov,
+            )
+            df = _obbject_to_dataframe(result)
+            if not df.empty:
+                records = df.to_dict(orient="records")
+                return records
+        except Exception as e:
+            logger.debug(f"Quote fetch failed: {e}")
+
+    return []
+
+
+# ═══════════════════════════════════════════════════════════════════════════
 # EQUITY SCREENER — via OpenBB
 # ═══════════════════════════════════════════════════════════════════════════
 

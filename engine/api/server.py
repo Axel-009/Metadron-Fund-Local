@@ -34,6 +34,13 @@ from engine.api.routers import (
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [API] %(message)s")
 logger = logging.getLogger("metadron-api")
 
+# Install centralized error handler — captures all engine errors for TECH tab
+try:
+    from engine.ops.error_logger import install_global_handler
+    install_global_handler()
+except Exception:
+    pass
+
 app = FastAPI(
     title="Metadron Capital Engine API",
     version="1.0.0",
