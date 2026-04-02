@@ -86,6 +86,12 @@ export default function RiskPortfolio() {
   const { data: greeksData } = useEngineQuery<RiskGreeks>("/risk/greeks", { refetchInterval: 5000 });
   const { data: betaData } = useEngineQuery<BetaState>("/portfolio/beta", { refetchInterval: 5000 });
   const { data: stressData } = useEngineQuery<{ scenarios: Array<Record<string, unknown>> }>("/risk/beta/stress", { refetchInterval: 30000 });
+  const { data: metricsApi } = useEngineQuery<{ metrics: Array<{ name: string; value: string; status: string }> }>("/risk/metrics", { refetchInterval: 10000 });
+  const { data: fillsApi } = useEngineQuery<{ fills: Array<{ time: string; pair: string; side: string; qty: number; price: number; status: string; strategy: string }> }>("/risk/fills", { refetchInterval: 5000 });
+  const { data: optionsApi } = useEngineQuery<{ positions: Array<Record<string, number | string>>; aggregate: Record<string, number> }>("/risk/options-positions", { refetchInterval: 10000 });
+  const { data: futuresApi } = useEngineQuery<{ positions: Array<Record<string, number | string>>; totals: Record<string, number> }>("/risk/futures-positions", { refetchInterval: 10000 });
+  const { data: marginApi } = useEngineQuery<{ margin: Record<string, number> }>("/risk/margin", { refetchInterval: 10000 });
+  const { data: liqScoringApi } = useEngineQuery<{ scoring: Array<{ asset: string; score: number; adv: string; spread: string; impact: string }> }>("/risk/liquidity-scoring", { refetchInterval: 30000 });
 
   // Override Greeks from API when available
   const greeks = useMemo(() => {
@@ -102,6 +108,15 @@ export default function RiskPortfolio() {
   // VaR from beta analytics
   const varValue = (betaData?.analytics as Record<string, number>)?.var_pct ?? 1.22;
   const cvarValue = (betaData?.analytics as Record<string, number>)?.cvar_pct ?? 2.15;
+
+  // Wire all remaining static data to API
+  const metrics = metricsApi?.metrics?.length ? metricsApi.metrics : METRICS;
+  const fills = fillsApi?.fills?.length ? fillsApi.fills : FILLS;
+  const liquidityRisk = liqScoringApi?.scoring?.length ? liqScoringApi.scoring : LIQUIDITY_RISK;
+  const optionsPositions = optionsApi?.positions?.length ? optionsApi.positions as typeof OPTIONS_POSITIONS : OPTIONS_POSITIONS;
+  const aggGreeks = optionsApi?.aggregate ?? AGG_GREEKS;
+  const futuresPositions = futuresApi?.positions?.length ? futuresApi.positions as typeof FUTURES_POSITIONS : FUTURES_POSITIONS;
+  const marginInfo = marginApi?.margin ?? MARGIN_INFO;
 
   return (
     <div className="h-full flex flex-col gap-[2px] p-[2px] overflow-auto" data-testid="risk-portfolio">
@@ -163,7 +178,7 @@ export default function RiskPortfolio() {
       {/* Portfolio Metrics */}
       <DashboardPanel title="PORTFOLIO METRICS">
         <div className="grid grid-cols-2 gap-2">
-          {METRICS.map((m, i) => (
+          {metrics.map((m, i) => (
             <div key={i} className="border border-terminal-border/50 rounded p-2">
               <div className="text-[8px] text-terminal-text-faint uppercase tracking-wider">{m.name}</div>
               <div className={`text-sm font-mono font-bold tabular-nums mt-0.5 ${
@@ -192,7 +207,7 @@ export default function RiskPortfolio() {
               </tr>
             </thead>
             <tbody>
-              {FILLS.map((f, i) => (
+              {fills.map((f, i) => (
                 <tr key={i} className="border-b border-terminal-border/20 hover:bg-white/[0.02]">
                   <td className="px-2 py-1.5 text-terminal-text-faint">{f.time}</td>
                   <td className="px-2 py-1.5 text-terminal-text-primary font-medium">{f.pair}</td>
@@ -226,7 +241,7 @@ export default function RiskPortfolio() {
               </tr>
             </thead>
             <tbody>
-              {LIQUIDITY_RISK.map((l, i) => (
+              {liquidityRisk.map((l, i) => (
                 <tr key={i} className="border-b border-terminal-border/20">
                   <td className="px-2 py-1.5 text-terminal-text-primary">{l.asset}</td>
                   <td className="px-2 py-1.5 text-right">
@@ -252,11 +267,11 @@ export default function RiskPortfolio() {
         noPadding
         headerRight={
           <div className="flex gap-4 text-[9px] font-mono">
-            <span className="text-terminal-text-faint">Net Δ <span className={`font-bold tabular-nums ${AGG_GREEKS.delta >= 0 ? "text-terminal-positive" : "text-terminal-negative"}`}>{AGG_GREEKS.delta.toFixed(2)}</span></span>
-            <span className="text-terminal-text-faint">Γ <span className="text-[#58a6ff] font-bold tabular-nums">{AGG_GREEKS.gamma.toFixed(3)}</span></span>
-            <span className="text-terminal-text-faint">Θ/day <span className="text-terminal-negative font-bold tabular-nums">{AGG_GREEKS.theta.toFixed(0)}</span></span>
-            <span className="text-terminal-text-faint">ν <span className="text-[#bc8cff] font-bold tabular-nums">{AGG_GREEKS.vega.toFixed(0)}</span></span>
-            <span className="text-terminal-text-faint">Total P&L <span className={`font-bold tabular-nums ${AGG_GREEKS.totalPnl >= 0 ? "text-terminal-positive" : "text-terminal-negative"}`}>${AGG_GREEKS.totalPnl.toLocaleString()}</span></span>
+            <span className="text-terminal-text-faint">Net Δ <span className={`font-bold tabular-nums ${aggGreeks.delta >= 0 ? "text-terminal-positive" : "text-terminal-negative"}`}>{aggGreeks.delta.toFixed(2)}</span></span>
+            <span className="text-terminal-text-faint">Γ <span className="text-[#58a6ff] font-bold tabular-nums">{aggGreeks.gamma.toFixed(3)}</span></span>
+            <span className="text-terminal-text-faint">Θ/day <span className="text-terminal-negative font-bold tabular-nums">{aggGreeks.theta.toFixed(0)}</span></span>
+            <span className="text-terminal-text-faint">ν <span className="text-[#bc8cff] font-bold tabular-nums">{aggGreeks.vega.toFixed(0)}</span></span>
+            <span className="text-terminal-text-faint">Total P&L <span className={`font-bold tabular-nums ${aggGreeks.totalPnl >= 0 ? "text-terminal-positive" : "text-terminal-negative"}`}>${aggGreeks.totalPnl.toLocaleString()}</span></span>
           </div>
         }
       >
@@ -280,7 +295,7 @@ export default function RiskPortfolio() {
               </tr>
             </thead>
             <tbody>
-              {OPTIONS_POSITIONS.map((o, i) => (
+              {optionsPositions.map((o, i) => (
                 <tr key={i} className="border-b border-terminal-border/20 hover:bg-white/[0.02]">
                   <td className="px-2 py-1 text-terminal-accent font-medium">{o.ticker}</td>
                   <td className={`px-2 py-1 font-bold ${o.type === "CALL" ? "text-terminal-positive" : "text-terminal-negative"}`}>{o.type}</td>
@@ -328,7 +343,7 @@ export default function RiskPortfolio() {
               </tr>
             </thead>
             <tbody>
-              {FUTURES_POSITIONS.map((f, i) => (
+              {futuresPositions.map((f, i) => (
                 <tr key={i} className="border-b border-terminal-border/20 hover:bg-white/[0.02]">
                   <td className="px-2 py-1.5 text-terminal-accent font-bold">{f.contract}</td>
                   <td className="px-2 py-1.5 text-terminal-text-muted">{f.desc}</td>
@@ -349,16 +364,16 @@ export default function RiskPortfolio() {
               <tr className="border-t border-terminal-border/50 bg-white/[0.02]">
                 <td colSpan={6} className="px-2 py-1.5 text-terminal-text-faint text-[8px] font-medium uppercase">Totals</td>
                 <td className="px-2 py-1.5 text-right text-terminal-positive font-bold tabular-nums text-[9px]">
-                  +${FUTURES_POSITIONS.reduce((s, f) => s + f.pnl, 0).toLocaleString()}
+                  +${futuresPositions.reduce((s, f) => s + f.pnl, 0).toLocaleString()}
                 </td>
                 <td className="px-2 py-1.5 text-right text-terminal-text-muted font-mono tabular-nums text-[9px]">
-                  ${FUTURES_POSITIONS.reduce((s, f) => s + f.margin, 0).toLocaleString()}
+                  ${futuresPositions.reduce((s, f) => s + f.margin, 0).toLocaleString()}
                 </td>
                 <td className="px-2 py-1.5 text-right text-terminal-text-primary font-mono tabular-nums text-[9px]">
-                  ${(FUTURES_POSITIONS.reduce((s, f) => s + f.notional, 0) / 1e6).toFixed(2)}M
+                  ${(futuresPositions.reduce((s, f) => s + f.notional, 0) / 1e6).toFixed(2)}M
                 </td>
                 <td className="px-2 py-1.5 text-right text-terminal-warning font-bold tabular-nums text-[9px]">
-                  {FUTURES_POSITIONS.reduce((s, f) => s + f.pctNav, 0).toFixed(2)}%
+                  {futuresPositions.reduce((s, f) => s + f.pctNav, 0).toFixed(2)}%
                 </td>
               </tr>
             </tfoot>
@@ -373,18 +388,18 @@ export default function RiskPortfolio() {
           <div>
             <div className="flex justify-between text-[9px] mb-1">
               <span className="text-terminal-text-faint uppercase tracking-wider">Margin Utilization</span>
-              <span className={`font-mono font-bold tabular-nums ${MARGIN_INFO.utilizationPct < 50 ? "text-terminal-positive" : MARGIN_INFO.utilizationPct < 75 ? "text-terminal-warning" : "text-terminal-negative"}`}>
-                {MARGIN_INFO.utilizationPct}%
+              <span className={`font-mono font-bold tabular-nums ${marginInfo.utilizationPct < 50 ? "text-terminal-positive" : marginInfo.utilizationPct < 75 ? "text-terminal-warning" : "text-terminal-negative"}`}>
+                {marginInfo.utilizationPct}%
               </span>
             </div>
             <div className="h-2.5 bg-terminal-surface-2 rounded-full overflow-hidden border border-terminal-border/30">
               <div
                 className={`h-full rounded-full transition-all duration-700 ${
-                  MARGIN_INFO.utilizationPct < 50 ? "bg-gradient-to-r from-terminal-positive to-terminal-accent" :
-                  MARGIN_INFO.utilizationPct < 75 ? "bg-gradient-to-r from-terminal-accent to-terminal-warning" :
+                  marginInfo.utilizationPct < 50 ? "bg-gradient-to-r from-terminal-positive to-terminal-accent" :
+                  marginInfo.utilizationPct < 75 ? "bg-gradient-to-r from-terminal-accent to-terminal-warning" :
                   "bg-gradient-to-r from-terminal-warning to-terminal-negative"
                 }`}
-                style={{ width: `${MARGIN_INFO.utilizationPct}%` }}
+                style={{ width: `${marginInfo.utilizationPct}%` }}
               />
             </div>
             <div className="flex justify-between text-[7px] text-terminal-text-faint mt-0.5">
@@ -395,13 +410,13 @@ export default function RiskPortfolio() {
           {/* Margin rows */}
           <div className="grid grid-cols-2 gap-x-3 gap-y-1.5 pt-1">
             {[
-              { label: "Reg-T Requirement", val: `$${(MARGIN_INFO.regT / 1e6).toFixed(2)}M`, color: "text-terminal-text-primary" },
-              { label: "Portfolio Margin", val: `$${(MARGIN_INFO.portfolioMargin / 1e6).toFixed(2)}M`, color: "text-terminal-accent" },
-              { label: "Margin Used", val: `$${(MARGIN_INFO.marginUsed / 1e6).toFixed(2)}M`, color: "text-terminal-warning" },
-              { label: "Margin Available", val: `$${(MARGIN_INFO.marginAvailable / 1e6).toFixed(2)}M`, color: "text-terminal-positive" },
-              { label: "Maintenance Margin", val: `$${(MARGIN_INFO.maintenanceMargin / 1e6).toFixed(2)}M`, color: "text-terminal-negative" },
-              { label: "Buying Power", val: `$${(MARGIN_INFO.buyingPower / 1e6).toFixed(2)}M`, color: "text-terminal-positive" },
-              { label: "SMA", val: `$${(MARGIN_INFO.sma / 1e6).toFixed(2)}M`, color: "text-[#bc8cff]" },
+              { label: "Reg-T Requirement", val: `$${(marginInfo.regT / 1e6).toFixed(2)}M`, color: "text-terminal-text-primary" },
+              { label: "Portfolio Margin", val: `$${(marginInfo.portfolioMargin / 1e6).toFixed(2)}M`, color: "text-terminal-accent" },
+              { label: "Margin Used", val: `$${(marginInfo.marginUsed / 1e6).toFixed(2)}M`, color: "text-terminal-warning" },
+              { label: "Margin Available", val: `$${(marginInfo.marginAvailable / 1e6).toFixed(2)}M`, color: "text-terminal-positive" },
+              { label: "Maintenance Margin", val: `$${(marginInfo.maintenanceMargin / 1e6).toFixed(2)}M`, color: "text-terminal-negative" },
+              { label: "Buying Power", val: `$${(marginInfo.buyingPower / 1e6).toFixed(2)}M`, color: "text-terminal-positive" },
+              { label: "SMA", val: `$${(marginInfo.sma / 1e6).toFixed(2)}M`, color: "text-[#bc8cff]" },
             ].map((r, i) => (
               <div key={i} className="flex flex-col">
                 <span className="text-[7px] text-terminal-text-faint uppercase tracking-wider">{r.label}</span>

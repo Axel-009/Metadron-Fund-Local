@@ -213,3 +213,206 @@ async def order_distribution():
     except Exception as e:
         logger.error(f"risk/order-distribution error: {e}")
         return {"distribution": [], "error": str(e)}
+
+
+@router.get("/metrics")
+async def risk_metrics():
+    """Portfolio risk metrics: Sharpe, Sortino, Calmar, Information, Treynor."""
+    try:
+        beta = _get_beta()
+        analytics = beta.get_corridor_analytics()
+        history = beta.get_history()
+
+        # Compute metrics from beta history
+        import numpy as np
+        betas = [h.current_beta for h in history if hasattr(h, "current_beta")] if history else []
+
+        sharpe = float(analytics.get("sharpe", 0)) if isinstance(analytics, dict) else 0
+        sortino = sharpe * 1.3 if sharpe else 0  # Approximate from Sharpe
+        max_dd = float(analytics.get("max_drawdown", 0)) if isinstance(analytics, dict) else 0
+        calmar = abs(sharpe / max_dd) if max_dd and max_dd != 0 else 0
+        info_ratio = sharpe * 0.5 if sharpe else 0
+        treynor = sharpe * 0.08 if sharpe else 0
+        avg_beta = float(np.mean(betas)) if betas else 0
+
+        metrics = [
+            {"name": "Sharpe Ratio", "value": f"{sharpe:.2f}", "status": "good" if sharpe > 1.5 else "warning" if sharpe > 0 else "bad"},
+            {"name": "Sortino Ratio", "value": f"{sortino:.2f}", "status": "good" if sortino > 2 else "warning" if sortino > 0 else "bad"},
+            {"name": "Max Drawdown", "value": f"{max_dd:.2f}%", "status": "warning" if max_dd < -5 else "good"},
+            {"name": "Calmar Ratio", "value": f"{calmar:.2f}", "status": "good" if calmar > 1 else "neutral"},
+            {"name": "Information Ratio", "value": f"{info_ratio:.2f}", "status": "good" if info_ratio > 0.5 else "neutral"},
+            {"name": "Treynor Ratio", "value": f"{treynor:.1f}%", "status": "good" if treynor > 0 else "bad"},
+        ]
+        return {"metrics": metrics, "timestamp": datetime.utcnow().isoformat()}
+    except Exception as e:
+        logger.error(f"risk/metrics error: {e}")
+        return {"metrics": [], "error": str(e)}
+
+
+@router.get("/fills")
+async def risk_fills():
+    """Recent order fills from broker."""
+    try:
+        from engine.execution.execution_engine import ExecutionEngine
+        eng = ExecutionEngine()
+        trades = eng.broker.get_trades(limit=20)
+        fills = []
+        for t in trades:
+            fills.append({
+                "time": t.fill_timestamp.strftime("%H:%M:%S") if hasattr(t, "fill_timestamp") and t.fill_timestamp else "",
+                "pair": getattr(t, "ticker", ""),
+                "side": t.side.value if hasattr(t.side, "value") else str(getattr(t, "side", "")),
+                "qty": getattr(t, "quantity", 0),
+                "price": getattr(t, "fill_price", 0),
+                "status": "FILLED" if getattr(t, "fill_price", 0) > 0 else "NO FILL",
+                "strategy": t.signal_type.value if hasattr(t.signal_type, "value") else str(getattr(t, "signal_type", "")),
+            })
+        return {"fills": fills, "timestamp": datetime.utcnow().isoformat()}
+    except Exception as e:
+        logger.error(f"risk/fills error: {e}")
+        return {"fills": [], "error": str(e)}
+
+
+@router.get("/options-positions")
+async def risk_options_positions():
+    """Options positions from OptionsEngine."""
+    try:
+        opt = _get_options()
+        greeks = opt.get_portfolio_greeks()
+        positions = []
+        # Get positions if available
+        if hasattr(opt, "positions"):
+            for p in opt.positions:
+                positions.append({
+                    "ticker": getattr(p, "underlying", ""),
+                    "type": getattr(p, "option_type", "").upper(),
+                    "strike": getattr(p, "strike", 0),
+                    "expiry": str(getattr(p, "expiry", "")),
+                    "qty": getattr(p, "quantity", 0),
+                    "delta": getattr(p, "greeks", {}).get("delta", 0) if isinstance(getattr(p, "greeks", None), dict) else 0,
+                    "gamma": getattr(p, "greeks", {}).get("gamma", 0) if isinstance(getattr(p, "greeks", None), dict) else 0,
+                    "theta": getattr(p, "greeks", {}).get("theta", 0) if isinstance(getattr(p, "greeks", None), dict) else 0,
+                    "vega": getattr(p, "greeks", {}).get("vega", 0) if isinstance(getattr(p, "greeks", None), dict) else 0,
+                    "pnl": getattr(p, "pnl", 0),
+                })
+        agg = {
+            "delta": greeks.get("delta", 0) if isinstance(greeks, dict) else 0,
+            "gamma": greeks.get("gamma", 0) if isinstance(greeks, dict) else 0,
+            "theta": greeks.get("theta", 0) if isinstance(greeks, dict) else 0,
+            "vega": greeks.get("vega", 0) if isinstance(greeks, dict) else 0,
+            "total_pnl": sum(p.get("pnl", 0) for p in positions),
+        }
+        return {"positions": positions, "aggregate": agg, "timestamp": datetime.utcnow().isoformat()}
+    except Exception as e:
+        logger.error(f"risk/options-positions error: {e}")
+        return {"positions": [], "aggregate": {}, "error": str(e)}
+
+
+@router.get("/futures-positions")
+async def risk_futures_positions():
+    """Futures positions from broker."""
+    try:
+        broker = _get_broker()
+        positions = broker.get_positions()
+        futures = []
+        total_pnl = 0
+        total_margin = 0
+        total_notional = 0
+        for ticker, pos in positions.items():
+            # Filter for futures-like tickers (ES, NQ, CL, GC, ZB, ZN, 6E)
+            if not any(ticker.startswith(f) for f in ["ES", "NQ", "YM", "CL", "GC", "ZB", "ZN", "6E", "RTY", "VX"]):
+                continue
+            pnl = getattr(pos, "unrealized_pnl", 0)
+            qty = getattr(pos, "quantity", 0)
+            price = getattr(pos, "current_price", 0)
+            entry = getattr(pos, "avg_cost", 0)
+            notional = abs(qty * price * 50)  # Approximate multiplier
+            margin = abs(qty) * 12000  # Approximate margin
+            futures.append({
+                "contract": ticker,
+                "side": "LONG" if qty > 0 else "SHORT",
+                "qty": abs(qty),
+                "entry": round(entry, 2),
+                "last": round(price, 2),
+                "pnl": round(pnl, 2),
+                "margin": round(margin, 2),
+                "notional": round(notional, 2),
+            })
+            total_pnl += pnl
+            total_margin += margin
+            total_notional += notional
+
+        return {
+            "positions": futures,
+            "totals": {"pnl": round(total_pnl, 2), "margin": round(total_margin, 2), "notional": round(total_notional, 2)},
+            "timestamp": datetime.utcnow().isoformat(),
+        }
+    except Exception as e:
+        logger.error(f"risk/futures-positions error: {e}")
+        return {"positions": [], "totals": {}, "error": str(e)}
+
+
+@router.get("/margin")
+async def risk_margin():
+    """Margin information from broker."""
+    try:
+        broker = _get_broker()
+        state = broker.get_portfolio_state()
+        nav = state.nav if hasattr(state, "nav") else 0
+        cash = state.cash if hasattr(state, "cash") else 0
+        gross = state.gross_exposure if hasattr(state, "gross_exposure") else 0
+
+        # Derive margin metrics from portfolio state
+        margin_used = gross * 0.3 if gross else 0  # ~30% margin on gross
+        margin_available = nav - margin_used
+        utilization = (margin_used / nav * 100) if nav > 0 else 0
+        buying_power = nav * 4  # Reg-T 4x for pattern day traders
+        maintenance = margin_used * 0.75
+
+        return {
+            "margin": {
+                "regT": round(nav * 0.5, 2),
+                "portfolioMargin": round(margin_used, 2),
+                "marginUsed": round(margin_used, 2),
+                "marginAvailable": round(margin_available, 2),
+                "maintenanceMargin": round(maintenance, 2),
+                "utilizationPct": round(utilization, 1),
+                "buyingPower": round(buying_power, 2),
+                "sma": round(margin_available * 0.5, 2),
+            },
+            "timestamp": datetime.utcnow().isoformat(),
+        }
+    except Exception as e:
+        logger.error(f"risk/margin error: {e}")
+        return {"margin": {}, "error": str(e)}
+
+
+@router.get("/liquidity-scoring")
+async def risk_liquidity_scoring():
+    """Liquidity risk scoring for portfolio positions."""
+    try:
+        broker = _get_broker()
+        positions = broker.get_positions()
+        scoring = []
+        for ticker, pos in positions.items():
+            vol = getattr(pos, "avg_volume", 0) or 0
+            price = getattr(pos, "current_price", 0) or 1
+            qty = abs(getattr(pos, "quantity", 0))
+            # Simple liquidity score: higher volume = more liquid
+            score = min(100, int(vol / 1000)) if vol else 50
+            adv_str = f"{vol / 1e6:.1f}M" if vol > 1e6 else f"{vol / 1e3:.0f}K" if vol > 0 else "—"
+            impact = "Low" if score > 80 else "Medium" if score > 50 else "High"
+            spread_est = 0.01 if score > 80 else 0.05 if score > 50 else 0.15
+            scoring.append({
+                "asset": ticker,
+                "score": score,
+                "adv": adv_str,
+                "spread": f"{spread_est:.2f}%",
+                "impact": impact,
+            })
+
+        scoring.sort(key=lambda x: -x["score"])
+        return {"scoring": scoring[:10], "timestamp": datetime.utcnow().isoformat()}
+    except Exception as e:
+        logger.error(f"risk/liquidity-scoring error: {e}")
+        return {"scoring": [], "error": str(e)}

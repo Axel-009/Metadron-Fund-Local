@@ -89,9 +89,19 @@ export default function AssetAllocation() {
   const { data: portData } = useEngineQuery<PortfolioLive>("/portfolio/live", { refetchInterval: 4000 });
   const { data: allocData } = useEngineQuery<AllocationData>("/portfolio/allocation", { refetchInterval: 10000 });
   const { data: posData } = useEngineQuery<{ positions: Array<{ ticker: string; quantity: number; avg_cost: number; current_price: number; unrealized_pnl: number; realized_pnl: number; sector: string }> }>("/portfolio/positions", { refetchInterval: 10000 });
+  const { data: indicesApi } = useEngineQuery<{ indices: Array<{ ticker: string; price: number; change: number; data: number[] }> }>("/portfolio/indices", { refetchInterval: 15000 });
+  const { data: moversApi } = useEngineQuery<{ movers: Array<{ ticker: string; change: number; momentum: string }> }>("/portfolio/movers", { refetchInterval: 30000 });
+  const { data: sectorAllocApi } = useEngineQuery<{ allocation: Array<{ name: string; value: number; color: string }> }>("/portfolio/sector-allocation", { refetchInterval: 30000 });
 
-  // NAV from API, fallback to static
-  const nav = portData?.nav ?? 128450320;
+  // NAV from API
+  const nav = portData?.nav ?? 0;
+
+  // Indices from API
+  const indices = indicesApi?.indices?.length ? indicesApi.indices : INDICES;
+  // Movers from API
+  const movers = moversApi?.movers?.length ? moversApi.movers : MOVERS;
+  // Sector allocation from API
+  const allocPie = sectorAllocApi?.allocation?.length ? sectorAllocApi.allocation : ALLOC_DATA;
 
   // Merge API positions into HOLDINGS format when available
   const holdings = useMemo(() => {
@@ -133,7 +143,7 @@ export default function AssetAllocation() {
                 </div>
                 {/* Indices strip */}
                 <div className="flex gap-4 ml-auto">
-                  {INDICES.map((idx) => (
+                  {indices.map((idx) => (
                     <div key={idx.ticker} className="text-center">
                       <div className="text-[9px] text-terminal-text-faint font-mono">{idx.ticker}</div>
                       <div className="text-[11px] text-terminal-text-primary font-mono tabular-nums">{idx.price.toFixed(2)}</div>
@@ -310,7 +320,7 @@ export default function AssetAllocation() {
                     dataKey="value"
                     stroke="none"
                   >
-                    {ALLOC_DATA.map((entry, i) => (
+                    {allocPie.map((entry, i) => (
                       <Cell key={i} fill={entry.color} />
                     ))}
                   </Pie>
@@ -318,7 +328,7 @@ export default function AssetAllocation() {
               </ResponsiveContainer>
             </div>
             <div className="space-y-1 mt-2">
-              {ALLOC_DATA.map((d, i) => (
+              {allocPie.map((d, i) => (
                 <div key={i} className="flex items-center gap-2 text-[9px]">
                   <span className="w-2 h-2 rounded-full flex-shrink-0" style={{ backgroundColor: d.color }} />
                   <span className="text-terminal-text-muted flex-1">{d.name}</span>
@@ -330,7 +340,7 @@ export default function AssetAllocation() {
             {/* Dynamic Movers */}
             <div className="mt-4 pt-3 border-t border-terminal-border">
               <div className="text-[9px] text-terminal-text-faint uppercase tracking-wider font-medium mb-2">Dynamic Movers</div>
-              {MOVERS.map((m, i) => (
+              {movers.map((m, i) => (
                 <div key={i} className="flex items-center gap-2 py-0.5 text-[9px]">
                   <span className="text-terminal-text-primary font-mono w-10">{m.ticker}</span>
                   <span className={`font-mono tabular-nums ${m.change >= 0 ? "text-terminal-positive" : "text-terminal-negative"}`}>
