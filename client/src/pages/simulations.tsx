@@ -1,4 +1,4 @@
-import { useState, useMemo } from "react";
+import { useState, useMemo, useEffect } from "react";
 import { DashboardPanel } from "@/components/dashboard-panel";
 import { ResizableDashboard } from "@/components/resizable-panel";
 import { useEngineQuery } from "@/hooks/use-engine-api";
@@ -128,7 +128,13 @@ function generateDeltaCurve() {
 // ═══════════ HMM PANEL ═══════════
 
 function HMMPanel() {
-  const currentRegime: Regime = "TRANSITION";
+  // Pull real regime from MetadronCube
+  const { data: cubeData } = useEngineQuery<{ regime: string; target_beta: number; max_leverage: number }>("/cube/state", { refetchInterval: 5000 });
+  const { data: regimeData } = useEngineQuery<{ regimes: Array<{ regime: string }> }>("/ml/regime-history", { refetchInterval: 30000 });
+
+  const rawRegime = (cubeData?.regime?.toUpperCase() || "TRANSITION");
+  const REGIME_MAP: Record<string, Regime> = { BULL: "BULL", BEAR: "BEAR", TRANSITION: "TRANSITION", TRENDING: "BULL", RANGE: "TRANSITION", STRESS: "BEAR", CRASH: "BEAR" };
+  const currentRegime: Regime = REGIME_MAP[rawRegime] ?? "TRANSITION";
   const history = useMemo(() => generateRegimeHistory(60), []);
 
   return (
@@ -256,15 +262,44 @@ function HMMPanel() {
 // ═══════════ BLACK-SCHOLES PANEL ═══════════
 
 function BlackScholesPanel() {
+  // Pull real vol surface from OptionsEngine
+  const { data: volApi } = useEngineQuery<{ grid: Array<{ strike: number; expiry: number; iv: number }> }>("/ml/vol-surface", { refetchInterval: 60000 });
+  // Pull real macro for risk-free rate and VIX-implied vol
+  const { data: macroApi } = useEngineQuery<{ vix?: number; yield_10y?: number }>("/macro/snapshot", { refetchInterval: 60000 });
+
   const [S, setS] = useState(189.45);
   const [K, setK] = useState(190);
   const [expDays, setExpDays] = useState(30);
   const [r, setR] = useState(0.0458);
   const [iv, setIV] = useState(0.285);
 
+  // Override defaults with real data when available
+  useEffect(() => {
+    if (macroApi?.yield_10y) setR(macroApi.yield_10y / 100);
+    if (macroApi?.vix) setIV(macroApi.vix / 100);
+  }, [macroApi]);
+
   const T = expDays / 365;
   const bs = useMemo(() => blackScholes(S, K, T, r, iv), [S, K, T, r, iv]);
-  const { surface, strikes, expiries } = useMemo(generateVolSurface, []);
+
+  // Use API vol surface when available, otherwise generate
+  const { surface, strikes, expiries } = useMemo(() => {
+    if (volApi?.grid?.length) {
+      const apiStrikes = Array.from(new Set(volApi.grid.map(g => g.strike))).sort((a, b) => a - b);
+      const apiExpiries = Array.from(new Set(volApi.grid.map(g => g.expiry))).sort((a, b) => a - b);
+      const apiSurface = apiStrikes.map(k => {
+        const row: { strike: number; [key: string]: number } = { strike: k };
+        apiExpiries.forEach(exp => {
+          const point = volApi.grid.find(g => g.strike === k && g.expiry === exp);
+          row[`${exp}d`] = point ? point.iv : 0;
+        });
+        return row;
+      });
+      return { strikes: apiStrikes, expiries: apiExpiries.map(e => `${e}d`), surface: apiSurface };
+    }
+    return generateVolSurface();
+  }, [volApi]);
+
   const deltaCurve = useMemo(generateDeltaCurve, []);
 
   const parity = Math.abs(bs.call - bs.put - S + K * Math.exp(-r * T)) < 0.01;
