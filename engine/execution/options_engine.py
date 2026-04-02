@@ -30,7 +30,7 @@ import numpy as np
 # External imports — graceful degradation
 # ---------------------------------------------------------------------------
 try:
-    from ..data.yahoo_data import get_adj_close, get_prices
+    from ..data.openbb_data import get_adj_close, get_prices
     from ..data.universe_engine import SECTOR_ETFS
     from ..signals.metadron_cube import CubeOutput, REGIME_PARAMS
     from ..signals.macro_engine import CubeRegime

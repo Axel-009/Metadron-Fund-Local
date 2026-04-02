@@ -29,7 +29,7 @@ import numpy as np
 import pandas as pd
 
 try:
-    from .yahoo_data import (
+    from .openbb_data import (
         get_adj_close, get_returns, get_prices,
         get_fundamentals, get_bulk_fundamentals,
     )

@@ -28,7 +28,7 @@ from enum import Enum
 from dataclasses import dataclass, field
 from typing import Optional, List
 
-from ..data.yahoo_data import get_adj_close, get_macro_data, get_returns
+from ..data.openbb_data import get_adj_close, get_macro_data, get_returns
 
 
 # ---------------------------------------------------------------------------

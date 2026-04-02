@@ -672,7 +672,7 @@ class AlpacaBroker:
 
         # Fallback to OpenBB if Alpaca quote unavailable
         try:
-            from ..data.yahoo_data import get_adj_close
+            from ..data.openbb_data import get_adj_close
             prices = get_adj_close(ticker, start=(
                 pd.Timestamp.now() - pd.Timedelta(days=10)).strftime("%Y-%m-%d")
             )

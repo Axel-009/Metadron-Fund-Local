@@ -20,7 +20,7 @@ import numpy as np
 import pandas as pd
 
 try:
-    from ..data.yahoo_data import get_adj_close, get_returns, get_prices
+    from ..data.openbb_data import get_adj_close, get_returns, get_prices
     from ..data.universe_engine import SECTOR_ETFS, SP500_TOP_HOLDINGS
 except ImportError:
     def get_adj_close(*a, **kw): return pd.DataFrame()
