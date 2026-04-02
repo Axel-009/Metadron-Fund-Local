@@ -31,6 +31,7 @@ import MonteCarloPage from "@/pages/monte-carlo";
 import SimulationsPage from "@/pages/simulations";
 import ArchivePage from "@/pages/archive";
 import MetadronCubePage from "@/pages/metadron-cube";
+import MoneyVelocityPage from "@/pages/money-velocity";
 
 // ═══════════ ALL AVAILABLE TABS ═══════════
 const ALL_TABS = [
@@ -58,6 +59,7 @@ const ALL_TABS = [
   { path: "/monte-carlo", label: "MC SIM" },
   { path: "/simulations", label: "SIM" },
   { path: "/archive", label: "ARCHIVE" },
+  { path: "/velocity", label: "VELOCITY" },
 ];
 
 const DEFAULT_PINNED = [
@@ -369,6 +371,7 @@ function AppRouter() {
       <Route path="/monte-carlo" component={MonteCarloPage} />
       <Route path="/simulations" component={SimulationsPage} />
       <Route path="/archive" component={ArchivePage} />
+      <Route path="/velocity" component={MoneyVelocityPage} />
       <Route component={NotFound} />
     </Switch>
   );
