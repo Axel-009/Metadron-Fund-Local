@@ -1,5 +1,6 @@
 import { DashboardPanel } from "@/components/dashboard-panel";
 import { useState, useEffect, useRef } from "react";
+import { useEngineQuery } from "@/hooks/use-engine-api";
 
 const ENGINES = [
   { id: "L1", name: "Data Ingestion", status: "online", latency: 1.2, cpu: 34, memory: 42, errors: 0 },
@@ -36,8 +37,39 @@ const LOG_MESSAGES = [
 ];
 
 export default function TechDashboard() {
+  // ─── Engine API — live system health ────────────────
+  const { data: healthApi } = useEngineQuery<{ engines: Array<{ id: string; name: string; level: string; status: string; latency: number; errors: number; error_msg?: string }> }>("/monitoring/engines/health", { refetchInterval: 5000 });
+  const { data: vpsApi } = useEngineQuery<{ metrics: Array<{ name: string; cpu: number; memory: number; disk: number; network: string }> }>("/monitoring/vps-metrics", { refetchInterval: 10000 });
+  const { data: logsApi } = useEngineQuery<{ messages: Array<{ time: string; level: string; message: string; source: string }> }>("/monitoring/logs", { refetchInterval: 5000 });
+
+  // Use API engines when available
   const [engines, setEngines] = useState(ENGINES);
+  useEffect(() => {
+    if (healthApi?.engines?.length) {
+      setEngines(healthApi.engines.map((e) => ({
+        id: e.id || e.level,
+        name: e.name,
+        status: e.status as "online" | "degraded" | "offline",
+        latency: e.latency,
+        cpu: 0,
+        memory: 0,
+        errors: e.errors,
+      })));
+    }
+  }, [healthApi]);
+
+  // Use API VPS metrics
+  const vpsMetrics = vpsApi?.metrics?.length
+    ? vpsApi.metrics.map((m) => ({ name: m.name, cpu: m.cpu, mem: m.memory, disk: m.disk, net: m.network || "—", status: m.cpu > 80 ? "warning" : "healthy" }))
+    : VPS_METRICS;
+
+  // Use API logs
   const [logs, setLogs] = useState(LOG_MESSAGES);
+  useEffect(() => {
+    if (logsApi?.messages?.length) {
+      setLogs(logsApi.messages.map((m) => m.message));
+    }
+  }, [logsApi]);
   const logRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -141,7 +173,7 @@ export default function TechDashboard() {
               </tr>
             </thead>
             <tbody>
-              {VPS_METRICS.map((v, i) => (
+              {vpsMetrics.map((v, i) => (
                 <tr key={i} className="border-b border-terminal-border/20">
                   <td className="px-2 py-1.5 flex items-center gap-1.5">
                     <span className={`w-1.5 h-1.5 rounded-full ${v.status === "healthy" ? "bg-terminal-positive" : "bg-terminal-warning"}`} />

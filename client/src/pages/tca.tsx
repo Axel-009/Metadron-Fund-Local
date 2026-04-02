@@ -1,6 +1,7 @@
 import { useState, useEffect, useMemo } from "react";
 import { DashboardPanel } from "@/components/dashboard-panel";
 import { ResizableDashboard } from "@/components/resizable-panel";
+import { useEngineQuery } from "@/hooks/use-engine-api";
 import {
   AreaChart, Area, XAxis, YAxis, Tooltip, ResponsiveContainer,
   BarChart, Bar, LineChart, Line, ComposedChart, Cell,
@@ -444,10 +445,15 @@ function SectorBreakdown({ records }: { records: TCARecord[] }) {
 // ═══════════ MAIN PAGE ═══════════
 
 export default function TCAPage() {
+  // ─── Engine API ─────────────────────────────────────
+  const { data: tcaApi } = useEngineQuery<{ trades: Array<Record<string, string | number>>; summary: Record<string, number> }>("/execution/tca", { refetchInterval: 10000 });
+  const { data: venueApi } = useEngineQuery<{ venues: Array<Record<string, string | number>> }>("/execution/venue-comparison", { refetchInterval: 30000 });
+  const { data: algoApi } = useEngineQuery<{ algos: Array<Record<string, string | number>> }>("/execution/algo-comparison", { refetchInterval: 30000 });
+
   const [records] = useState(generateTCARecords);
   const [costTrend] = useState(generateCostTrend);
-  const [venues] = useState(generateVenueComparison);
-  const [algos] = useState(generateAlgoComparison);
+  const venues = venueApi?.venues?.length ? venueApi.venues as ReturnType<typeof generateVenueComparison> : generateVenueComparison();
+  const algos = algoApi?.algos?.length ? algoApi.algos as ReturnType<typeof generateAlgoComparison> : generateAlgoComparison();
   const [activeView, setActiveView] = useState<"overview" | "detail">("overview");
 
   return (

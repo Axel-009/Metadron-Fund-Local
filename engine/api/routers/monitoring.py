@@ -266,3 +266,95 @@ async def archive_read(path: str = Query(..., description="Relative file path"))
     except Exception as e:
         logger.error(f"monitoring/archive/read error: {e}")
         return {"error": str(e)}
+
+
+@router.get("/vps-metrics")
+async def vps_metrics():
+    """VPS system metrics: CPU, memory, disk, network."""
+    try:
+        import shutil
+
+        # Disk usage
+        disk = shutil.disk_usage("/")
+        disk_total_gb = disk.total / (1024 ** 3)
+        disk_used_gb = disk.used / (1024 ** 3)
+        disk_pct = (disk.used / disk.total * 100) if disk.total else 0
+
+        # Memory (from /proc/meminfo if available)
+        mem_total = 0
+        mem_avail = 0
+        try:
+            with open("/proc/meminfo") as f:
+                for line in f:
+                    if line.startswith("MemTotal:"):
+                        mem_total = int(line.split()[1]) / 1024  # MB
+                    elif line.startswith("MemAvailable:"):
+                        mem_avail = int(line.split()[1]) / 1024
+        except Exception:
+            pass
+        mem_used = mem_total - mem_avail
+        mem_pct = (mem_used / mem_total * 100) if mem_total else 0
+
+        # CPU load
+        cpu_load = 0.0
+        try:
+            with open("/proc/loadavg") as f:
+                cpu_load = float(f.read().split()[0])
+        except Exception:
+            pass
+
+        return {
+            "metrics": [
+                {"name": "Primary", "cpu": round(cpu_load * 10, 1), "memory": round(mem_pct, 1), "disk": round(disk_pct, 1), "network": "—"},
+            ],
+            "system": {
+                "disk_total_gb": round(disk_total_gb, 1),
+                "disk_used_gb": round(disk_used_gb, 1),
+                "mem_total_mb": round(mem_total, 0),
+                "mem_used_mb": round(mem_used, 0),
+                "cpu_load": round(cpu_load, 2),
+            },
+            "timestamp": datetime.utcnow().isoformat(),
+        }
+    except Exception as e:
+        logger.error(f"monitoring/vps-metrics error: {e}")
+        return {"metrics": [], "error": str(e)}
+
+
+@router.get("/logs")
+async def log_stream(limit: int = Query(20, ge=1, le=100)):
+    """Recent log messages from engine log files."""
+    try:
+        log_files = sorted(PROJECT_ROOT.glob("logs/**/*.log"), key=os.path.getmtime, reverse=True)
+        if not log_files:
+            log_files = sorted(PROJECT_ROOT.glob("logs/**/*.txt"), key=os.path.getmtime, reverse=True)
+
+        messages = []
+        for lf in log_files[:3]:  # Check last 3 log files
+            try:
+                lines = lf.read_text(errors="replace").strip().split("\n")
+                for line in lines[-limit:]:
+                    if line.strip():
+                        # Parse log level if present
+                        level = "info"
+                        if "ERROR" in line.upper():
+                            level = "error"
+                        elif "WARN" in line.upper():
+                            level = "warn"
+                        elif "DEBUG" in line.upper():
+                            level = "debug"
+                        messages.append({
+                            "time": line[:19] if len(line) > 19 else "",
+                            "level": level,
+                            "message": line,
+                            "source": lf.name,
+                        })
+            except Exception:
+                continue
+
+        # Sort by time descending, take limit
+        messages.sort(key=lambda m: m["time"], reverse=True)
+        return {"messages": messages[:limit], "timestamp": datetime.utcnow().isoformat()}
+    except Exception as e:
+        logger.error(f"monitoring/logs error: {e}")
+        return {"messages": [], "error": str(e)}
