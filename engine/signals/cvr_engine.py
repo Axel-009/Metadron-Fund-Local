@@ -768,8 +768,26 @@ class CVREngine:
         return events
 
     def _scan_news(self, ticker: str) -> List[dict]:
-        """Scan company news for CVR-related catalysts."""
+        """Scan company news for CVR-related catalysts.
+
+        Sources: OpenBB (FMP/Tiingo) + NewsEngine (newsfilter.io real-time).
+        """
         events = []
+        # Enrich with NewsEngine (newsfilter.io) if available
+        try:
+            from engine.signals.news_engine import NewsEngine
+            ne = NewsEngine()
+            for item in ne.get_ticker_news(ticker, limit=5):
+                title = item.get("headline", "").lower()
+                all_kw = self._MERGER_KEYWORDS + self._PHARMA_KEYWORDS + self._RESTRUCTURING_KEYWORDS
+                for kw in all_kw:
+                    if kw in title:
+                        etype = "PHARMA_MILESTONE" if kw in self._PHARMA_KEYWORDS else "RESTRUCTURING" if kw in self._RESTRUCTURING_KEYWORDS else "MERGER_CVR"
+                        events.append({"ticker": ticker, "event_type": etype, "title": item.get("headline", ""), "_source": "NEWSFILTER"})
+                        break
+        except Exception:
+            pass
+
         try:
             news = get_company_news(ticker, limit=15, provider="fmp")
             if news.empty:
