@@ -28,9 +28,7 @@ const SCENARIOS = [
 
 // ═══════════ RANDOM WALK GENERATOR ═══════════
 
-function generatePaths(nPaths: number, days: number, initialCapital: number): SimPath[] {
-  const drift = 0.0004;
-  const vol = 0.012;
+function generatePaths(nPaths: number, days: number, initialCapital: number, drift = 0.0004, vol = 0.012): SimPath[] {
   const paths: SimPath[] = [];
   for (let p = 0; p < nPaths; p++) {
     const values: number[] = [initialCapital];
@@ -330,7 +328,16 @@ export default function MonteCarlo() {
   const [running, setRunning] = useState(false);
   const [runCount, setRunCount] = useState(10000);
 
-  // Generate paths (use 50 for visual display, full N for stats)
+  // Derive drift and vol from real market data when available
+  // VIX → annualized vol: VIX/100 → daily vol: VIX/(100*sqrt(252))
+  // SPY 1M return → annualized drift proxy
+  const realVol = macroApi?.vix ? (macroApi.vix / 100) / Math.sqrt(252) : 0.012;
+  const realDrift = macroApi?.spy_return_1m ? macroApi.spy_return_1m / 252 : 0.0004;
+  const volAdj = betaApi?.state?.vol_adjustment ?? 1.0;
+  const simVol = realVol * volAdj;
+  const simDrift = realDrift;
+
+  // Generate paths using real market parameters
   const [visualPaths, setVisualPaths] = useState<SimPath[]>(() => generatePaths(50, 252, 100000));
   const [statPaths, setStatPaths] = useState<SimPath[]>(() => generatePaths(200, 252, 100000));
   const [daysSim, setDaysSim] = useState(252);
@@ -339,8 +346,8 @@ export default function MonteCarlo() {
   const runSimulation = useCallback(() => {
     setRunning(true);
     setTimeout(() => {
-      const newVisual = generatePaths(50, days, initialCapital);
-      const newStats = generatePaths(200, days, initialCapital);
+      const newVisual = generatePaths(50, days, initialCapital, simDrift, simVol);
+      const newStats = generatePaths(200, days, initialCapital, simDrift, simVol);
       setVisualPaths(newVisual);
       setStatPaths(newStats);
       setDaysSim(days);
@@ -348,7 +355,7 @@ export default function MonteCarlo() {
       setRunCount(nPaths);
       setRunning(false);
     }, 600);
-  }, [nPaths, days, initialCapital]);
+  }, [nPaths, days, initialCapital, simDrift, simVol]);
 
   const stats = useMemo(() => computeStats(statPaths, daysSim), [statPaths, daysSim]);
 
