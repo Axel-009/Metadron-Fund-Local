@@ -549,7 +549,8 @@ function OrderDistributionChart() {
 // ═══════════ LIQUIDITY CHART ═══════════
 
 function LiquidityChart() {
-  const data = useMemo(generateLiquidityData, []);
+  const { data: liqApi } = useEngineQuery<{ liquidity: Array<{ time: string; bid: number; ask: number }> }>("/execution/liquidity-data", { refetchInterval: 30000 });
+  const data = liqApi?.liquidity?.length ? liqApi.liquidity : useMemo(generateLiquidityData, []);
   return (
     <div className="h-full">
       <ResponsiveContainer width="100%" height="100%">
@@ -575,7 +576,8 @@ function LiquidityChart() {
 // ═══════════ SPREAD CHART ═══════════
 
 function SpreadChart() {
-  const data = useMemo(generateSpreadData, []);
+  const { data: spreadApi } = useEngineQuery<{ spreads: Array<{ time: string; spread: number }> }>("/execution/spread-data", { refetchInterval: 30000 });
+  const data = spreadApi?.spreads?.length ? spreadApi.spreads : useMemo(generateSpreadData, []);
   return (
     <div className="h-full">
       <ResponsiveContainer width="100%" height="100%">
@@ -590,7 +592,8 @@ function SpreadChart() {
 // ═══════════ DEPTH CHART ═══════════
 
 function DepthChart() {
-  const data = useMemo(generateDepthData, []);
+  const { data: depthApi } = useEngineQuery<{ depth: Array<{ price: string; bidDepth: number; askDepth: number }> }>("/execution/depth-data", { refetchInterval: 30000 });
+  const data = depthApi?.depth?.length ? depthApi.depth : useMemo(generateDepthData, []);
   return (
     <div className="h-full">
       <ResponsiveContainer width="100%" height="100%">
@@ -720,7 +723,8 @@ function RiskPanel() {
 // ═══════════ PNL / TIME CHART ═══════════
 
 function PnlTimeChart() {
-  const data = useMemo(generatePnlData, []);
+  const { data: pnlApi } = useEngineQuery<{ series: Array<{ time: string; value: number }> }>("/portfolio/pnl-series", { refetchInterval: 10000 });
+  const data = pnlApi?.series?.length ? pnlApi.series : useMemo(generatePnlData, []);
   return (
     <div className="h-full flex flex-col">
       <div className="flex-1">
@@ -782,6 +786,19 @@ function PnlTimeChart() {
 // ═══════════ EXECUTION TABLE ═══════════
 
 function ExecutionTable() {
+  const { data: tcaApi } = useEngineQuery<{ trades: Array<{ ticker: string; quantity: number; fill_price: number; slippage: number; side: string }>; summary: { fill_rate: number; avg_slippage: number; total_trades: number } }>("/execution/tca", { refetchInterval: 10000 });
+
+  const executions = useMemo(() => {
+    if (!tcaApi?.trades?.length) return EXECUTIONS;
+    return tcaApi.trades.slice(0, 6).map((t) => ({
+      pair: t.ticker,
+      ctrl: t.quantity,
+      sens: Math.round(t.fill_price),
+      status: t.fill_price * t.quantity * (t.slippage || 0.001),
+      positive: t.side?.toUpperCase() !== "SELL",
+    }));
+  }, [tcaApi]);
+
   return (
     <div className="flex flex-col h-full text-[10px] font-mono tabular-nums">
       {/* Header */}
@@ -792,7 +809,7 @@ function ExecutionTable() {
         <span className="flex-1 text-right">Status</span>
       </div>
       <div className="flex-1 overflow-auto">
-        {EXECUTIONS.map((e, i) => (
+        {executions.map((e, i) => (
           <div
             key={i}
             className="flex items-center px-2 py-1.5 border-b border-terminal-border/20 hover:bg-white/[0.02]"

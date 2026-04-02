@@ -189,3 +189,134 @@ async def portfolio_exposures():
     except Exception as e:
         logger.error(f"portfolio/exposures error: {e}")
         return {"error": str(e)}
+
+
+# ─── Market indices (LIVE + ALLOC tabs) ────────────────────
+
+@router.get("/indices")
+async def portfolio_indices():
+    """Live market index quotes via OpenBB."""
+    try:
+        from engine.data.openbb_data import get_adj_close
+        from datetime import timedelta
+        end = datetime.utcnow().strftime("%Y-%m-%d")
+        start = (datetime.utcnow() - timedelta(days=10)).strftime("%Y-%m-%d")
+
+        tickers = ["SPY", "QQQ", "IWM", "DIA"]
+        indices = []
+        for t in tickers:
+            try:
+                df = get_adj_close(t, start=start, end=end)
+                if df.empty or len(df) < 2:
+                    continue
+                col = df.iloc[:, 0] if df.ndim > 1 else df
+                price = float(col.iloc[-1])
+                prev = float(col.iloc[-2])
+                change = price - prev
+                change_pct = (change / prev * 100) if prev else 0
+                spark = [float(v) for v in col.tail(8).values]
+                indices.append({
+                    "ticker": t, "price": round(price, 2),
+                    "change": round(change_pct, 2),
+                    "data": spark,
+                })
+            except Exception:
+                continue
+
+        return {"indices": indices, "timestamp": datetime.utcnow().isoformat()}
+    except Exception as e:
+        logger.error(f"portfolio/indices error: {e}")
+        return {"indices": [], "error": str(e)}
+
+
+@router.get("/movers")
+async def portfolio_movers():
+    """Top movers from universe based on momentum."""
+    try:
+        from engine.data.universe_engine import UniverseEngine
+        uni = UniverseEngine()
+        uni.load_universe()
+        all_secs = uni.get_all()
+
+        # Sort by momentum_3m for top/bottom movers
+        with_momentum = [s for s in all_secs if hasattr(s, "momentum_3m") and s.momentum_3m != 0]
+        with_momentum.sort(key=lambda s: s.momentum_3m, reverse=True)
+
+        movers = []
+        for s in with_momentum[:5]:
+            movers.append({
+                "ticker": s.ticker,
+                "change": round(s.momentum_3m * 100, 1),
+                "momentum": "strong" if s.momentum_3m > 0.05 else "moderate" if s.momentum_3m > 0 else "weak",
+            })
+        for s in with_momentum[-3:]:
+            movers.append({
+                "ticker": s.ticker,
+                "change": round(s.momentum_3m * 100, 1),
+                "momentum": "weak",
+            })
+
+        return {"movers": movers, "timestamp": datetime.utcnow().isoformat()}
+    except Exception as e:
+        logger.error(f"portfolio/movers error: {e}")
+        return {"movers": [], "error": str(e)}
+
+
+@router.get("/sector-allocation")
+async def portfolio_sector_allocation():
+    """Sector allocation from current positions."""
+    try:
+        broker = _get_broker()
+        positions = broker.get_positions()
+        sector_weights: dict[str, float] = {}
+        total_value = 0
+
+        for ticker, pos in positions.items():
+            val = abs(pos.quantity * pos.current_price) if hasattr(pos, "quantity") else 0
+            sector = pos.sector if hasattr(pos, "sector") else "Unknown"
+            sector_weights[sector] = sector_weights.get(sector, 0) + val
+            total_value += val
+
+        colors = ["#00d4aa", "#58a6ff", "#3fb950", "#bc8cff", "#f0883e", "#d29922", "#484f58", "#f85149", "#4ecdc4", "#da3633", "#a855f7"]
+        allocation = []
+        for i, (sector, val) in enumerate(sorted(sector_weights.items(), key=lambda x: -x[1])):
+            pct = (val / total_value * 100) if total_value > 0 else 0
+            allocation.append({
+                "name": sector,
+                "value": round(pct, 1),
+                "color": colors[i % len(colors)],
+            })
+
+        return {"allocation": allocation, "timestamp": datetime.utcnow().isoformat()}
+    except Exception as e:
+        logger.error(f"portfolio/sector-allocation error: {e}")
+        return {"allocation": [], "error": str(e)}
+
+
+@router.get("/pnl-series")
+async def portfolio_pnl_series():
+    """Intraday P&L time-series from trade history."""
+    try:
+        broker = _get_broker()
+        trades = broker.get_trades(limit=500)
+        if not trades:
+            return {"series": [], "timestamp": datetime.utcnow().isoformat()}
+
+        # Aggregate P&L by time bucket (15-min intervals)
+        from collections import defaultdict
+        buckets: dict[str, float] = defaultdict(float)
+        cumulative = 0
+        for t in reversed(trades):
+            ts = t.fill_timestamp if hasattr(t, "fill_timestamp") and t.fill_timestamp else None
+            if not ts:
+                continue
+            bucket = ts.strftime("%H:%M") if hasattr(ts, "strftime") else str(ts)[:5]
+            pnl = getattr(t, "realized_pnl", 0) or (t.fill_price * t.quantity * (1 if str(getattr(t, "side", "")).upper() in ("SELL", "SHORT") else -1)) * 0.001
+            cumulative += pnl
+            buckets[bucket] = cumulative
+
+        series = [{"time": k, "value": round(v, 2)} for k, v in sorted(buckets.items())]
+        return {"series": series, "timestamp": datetime.utcnow().isoformat()}
+    except Exception as e:
+        logger.error(f"portfolio/pnl-series error: {e}")
+        return {"series": [], "error": str(e)}

@@ -280,6 +280,59 @@ async def drain_warning():
         return {"error": str(e)}
 
 
+# ─── G10 Macro (per-country FRED data) ─────────────────────
+
+@router.get("/g10")
+async def macro_g10():
+    """G10 country economic indicators via MacroEngine → OpenBB FRED.
+
+    Fits in system: L2 MacroEngine uses these for GMTF monetary tension framework,
+    SDR-weighted currency tensions, and regime transition detection.
+    """
+    try:
+        from engine.data.openbb_data import get_fred_series, get_adj_close
+        from datetime import timedelta
+
+        # FRED series for key G10 indicators
+        G10_FRED = {
+            "US": {"gdp": "A191RL1Q225SBEA", "cpi": "CPIAUCSL", "unemp": "UNRATE", "rate": "FEDFUNDS", "y10": "GS10", "currency": "USD", "flag": "🇺🇸", "country": "United States"},
+            "UK": {"gdp": "CLVMNACSCAB1GQUK", "cpi": "GBRCPIALLMINMEI", "unemp": "LRHUTTTTGBM156S", "rate": "INTDSRGBM193N", "y10": "IRLTLT01GBM156N", "currency": "GBP", "flag": "🇬🇧", "country": "United Kingdom"},
+            "EUR": {"gdp": "CLVMNACSCAB1GQEA19", "cpi": "EA19CPALTT01GYM", "unemp": "LRHUTTTTEZM156S", "rate": "ECBDFR", "y10": "IRLTLT01DEM156N", "currency": "EUR", "flag": "🇪🇺", "country": "Eurozone"},
+            "JP": {"gdp": "JPNRGDPEXP", "cpi": "JPNCPIALLMINMEI", "unemp": "LRHUTTTTJPM156S", "rate": "INTDSRJPM193N", "y10": "IRLTLT01JPM156N", "currency": "JPY", "flag": "🇯🇵", "country": "Japan"},
+            "CA": {"gdp": "NGDPRSAXDCCAQ", "cpi": "CANCPIALLMINMEI", "unemp": "LRHUTTTTCAM156S", "rate": "INTDSRCAM193N", "y10": "IRLTLT01CAM156N", "currency": "CAD", "flag": "🇨🇦", "country": "Canada"},
+            "AU": {"gdp": "AUSGDPDEFQISMEI", "cpi": "AUSCPIALLQINMEI", "unemp": "LRHUTTTTAUM156S", "rate": "INTDSRAUM193N", "y10": "IRLTLT01AUM156N", "currency": "AUD", "flag": "🇦🇺", "country": "Australia"},
+            "NZ": {"gdp": "NZLGDPNQDSMEI", "cpi": "NZLCPIALLQINMEI", "unemp": "LRHUTTTTNZM156S", "rate": "INTDSRNZM193N", "y10": "IRLTLT01NZM156N", "currency": "NZD", "flag": "🇳🇿", "country": "New Zealand"},
+            "CH": {"gdp": "CHEGDPDEFQISMEI", "cpi": "CHECPIALLMINMEI", "unemp": "LRHUTTTTCHM156S", "rate": "INTDSRCHM193N", "y10": "IRLTLT01CHM156N", "currency": "CHF", "flag": "🇨🇭", "country": "Switzerland"},
+            "SE": {"gdp": "SWERGDPDEFQISMEI", "cpi": "SWECPIALLMINMEI", "unemp": "LRHUTTTTSEM156S", "rate": "INTDSRSEM193N", "y10": "IRLTLT01SEM156N", "currency": "SEK", "flag": "🇸🇪", "country": "Sweden"},
+            "NO": {"gdp": "NORGDPNQDSMEI", "cpi": "NORCPIALLQINMEI", "unemp": "LRHUTTTTNOM156S", "rate": "INTDSRNOM193N", "y10": "IRLTLT01NOM156N", "currency": "NOK", "flag": "🇳🇴", "country": "Norway"},
+        }
+
+        countries = []
+        for code, cfg in G10_FRED.items():
+            row = {"code": code, "flag": cfg["flag"], "country": cfg["country"], "currency": cfg["currency"]}
+
+            # Fetch each indicator — get latest value
+            for key, series_id in cfg.items():
+                if key in ("flag", "country", "currency"):
+                    continue
+                try:
+                    df = get_fred_series(series_id)
+                    if hasattr(df, "empty") and not df.empty:
+                        val = float(df.iloc[-1].iloc[0]) if df.ndim > 1 else float(df.iloc[-1])
+                        row[key] = round(val, 2)
+                    else:
+                        row[key] = None
+                except Exception:
+                    row[key] = None
+
+            countries.append(row)
+
+        return {"countries": countries, "timestamp": datetime.utcnow().isoformat()}
+    except Exception as e:
+        logger.error(f"macro/g10 error: {e}")
+        return {"countries": [], "error": str(e)}
+
+
 # ─── Economic calendar ─────────────────────────────────────
 
 @router.get("/calendar")

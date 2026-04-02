@@ -152,3 +152,130 @@ async def tca_metrics():
     except Exception as e:
         logger.error(f"execution/tca error: {e}")
         return {"trades": [], "summary": {}, "error": str(e)}
+
+
+@router.get("/spread-data")
+async def spread_data():
+    """Bid-ask spread estimates from L1 data layer (OpenBB price data → high-low range proxy).
+
+    Fits in system: L1 Data → L7 Execution surface uses these for slippage estimation.
+    """
+    try:
+        from engine.data.openbb_data import get_prices
+        from datetime import timedelta
+        import numpy as np
+
+        end = datetime.utcnow().strftime("%Y-%m-%d")
+        start = (datetime.utcnow() - timedelta(days=5)).strftime("%Y-%m-%d")
+        df = get_prices("SPY", start=start, end=end, interval="1d")
+
+        spreads = []
+        if not df.empty:
+            # Derive spread proxy from high-low range
+            if hasattr(df.columns, "levels"):
+                high = df["High"].iloc[:, 0] if "High" in df.columns.get_level_values(0) else None
+                low = df["Low"].iloc[:, 0] if "Low" in df.columns.get_level_values(0) else None
+                close = df["Close"].iloc[:, 0] if "Close" in df.columns.get_level_values(0) else None
+            else:
+                high = df.get("High") or df.get("high")
+                low = df.get("Low") or df.get("low")
+                close = df.get("Close") or df.get("close")
+
+            if high is not None and low is not None and close is not None:
+                for i in range(len(close)):
+                    hl_range = float(high.iloc[i] - low.iloc[i])
+                    spread_bps = (hl_range / float(close.iloc[i])) * 100 if float(close.iloc[i]) > 0 else 0
+                    spreads.append({"time": str(i), "spread": round(spread_bps, 4)})
+
+        return {"spreads": spreads, "timestamp": datetime.utcnow().isoformat()}
+    except Exception as e:
+        logger.error(f"execution/spread-data error: {e}")
+        return {"spreads": [], "error": str(e)}
+
+
+@router.get("/depth-data")
+async def depth_data():
+    """Market depth from L1 data layer (OpenBB volume profile → depth proxy).
+
+    Fits in system: L1 Data → L7 ExchangeCore ring buffer uses depth for order matching.
+    """
+    try:
+        from engine.data.openbb_data import get_prices
+        from datetime import timedelta
+        import numpy as np
+
+        end = datetime.utcnow().strftime("%Y-%m-%d")
+        start = (datetime.utcnow() - timedelta(days=30)).strftime("%Y-%m-%d")
+        df = get_prices("SPY", start=start, end=end)
+
+        depth = []
+        if not df.empty:
+            if hasattr(df.columns, "levels"):
+                close = df["Close"].iloc[:, 0] if "Close" in df.columns.get_level_values(0) else None
+                volume = df["Volume"].iloc[:, 0] if "Volume" in df.columns.get_level_values(0) else None
+            else:
+                close = df.get("Close") or df.get("close")
+                volume = df.get("Volume") or df.get("volume")
+
+            if close is not None and volume is not None:
+                prices = close.values.astype(float)
+                volumes = volume.values.astype(float)
+                current = prices[-1]
+                # Build volume profile around current price
+                step = current * 0.002  # 0.2% steps
+                for i in range(20):
+                    level = current - (10 - i) * step
+                    # Volume at this level proportional to how often price was near it
+                    near = np.sum(volumes[np.abs(prices - level) < step])
+                    if i < 10:
+                        depth.append({"price": f"{level:.0f}", "bidDepth": float(near), "askDepth": 0})
+                    else:
+                        depth.append({"price": f"{level:.0f}", "bidDepth": 0, "askDepth": float(near)})
+
+        return {"depth": depth, "timestamp": datetime.utcnow().isoformat()}
+    except Exception as e:
+        logger.error(f"execution/depth-data error: {e}")
+        return {"depth": [], "error": str(e)}
+
+
+@router.get("/liquidity-data")
+async def liquidity_data():
+    """Bid-ask liquidity from L1 data layer (OpenBB volume → bid/ask estimate).
+
+    Fits in system: L1 Data → L7 WonderTrader micro-price uses liquidity for execution routing.
+    """
+    try:
+        from engine.data.openbb_data import get_prices
+        from datetime import timedelta
+
+        end = datetime.utcnow().strftime("%Y-%m-%d")
+        start = (datetime.utcnow() - timedelta(days=30)).strftime("%Y-%m-%d")
+        df = get_prices("SPY", start=start, end=end)
+
+        liq = []
+        if not df.empty:
+            if hasattr(df.columns, "levels"):
+                high = df["High"].iloc[:, 0] if "High" in df.columns.get_level_values(0) else None
+                low = df["Low"].iloc[:, 0] if "Low" in df.columns.get_level_values(0) else None
+                volume = df["Volume"].iloc[:, 0] if "Volume" in df.columns.get_level_values(0) else None
+            else:
+                high = df.get("High") or df.get("high")
+                low = df.get("Low") or df.get("low")
+                volume = df.get("Volume") or df.get("volume")
+
+            if high is not None and low is not None and volume is not None:
+                for i in range(min(30, len(high))):
+                    h = float(high.iloc[i])
+                    l = float(low.iloc[i])
+                    v = float(volume.iloc[i])
+                    mid = (h + l) / 2
+                    liq.append({
+                        "time": f"{mid:.1f}",
+                        "bid": v * 0.48,  # ~48% buy volume estimate
+                        "ask": v * 0.52,  # ~52% sell volume estimate
+                    })
+
+        return {"liquidity": liq, "timestamp": datetime.utcnow().isoformat()}
+    except Exception as e:
+        logger.error(f"execution/liquidity-data error: {e}")
+        return {"liquidity": [], "error": str(e)}

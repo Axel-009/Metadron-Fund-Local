@@ -100,6 +100,7 @@ export default function MacroDashboard() {
   const { data: tensionData } = useEngineQuery<{ tension_score?: number; stance?: string }>("/macro/monetary-tension", { refetchInterval: 60000 });
   const { data: newsData } = useEngineQuery<{ news: Array<Record<string, string>> }>("/macro/news", { refetchInterval: 60000 });
   const { data: calendarData } = useEngineQuery<{ events: Array<Record<string, string>> }>("/macro/calendar", { refetchInterval: 300000 });
+  const { data: g10Data } = useEngineQuery<{ countries: Array<Record<string, string | number | null>> }>("/macro/g10", { refetchInterval: 120000 });
 
   // Override news from API when available
   const macroNews = useMemo(() => {
@@ -111,6 +112,39 @@ export default function MacroDashboard() {
       sentiment: "neutral" as const,
     }));
   }, [newsData]);
+
+  // G10 countries from FRED API
+  const g10Countries = useMemo(() => {
+    if (!g10Data?.countries?.length) return G10_COUNTRIES;
+    return g10Data.countries.map((c) => ({
+      flag: String(c.flag || ""),
+      country: String(c.country || ""),
+      code: String(c.code || ""),
+      gdp: Number(c.gdp ?? 0),
+      cpi: Number(c.cpi ?? 0),
+      unemp: Number(c.unemp ?? 0),
+      rate: Number(c.rate ?? 0),
+      y10: Number(c.y10 ?? 0),
+      currency: String(c.currency || ""),
+      cxChg: 0,
+      pmiMfg: 0,
+      pmiSvc: 0,
+    }));
+  }, [g10Data]);
+
+  // Economic calendar from OpenBB
+  const econCalendar = useMemo(() => {
+    if (!calendarData?.events?.length) return ECON_CALENDAR;
+    return calendarData.events.slice(0, 12).map((e) => ({
+      date: String(e.date || ""),
+      time: String(e.time || ""),
+      event: String(e.event || e.name || ""),
+      country: String(e.country || ""),
+      prev: String(e.previous || e.prev || "—"),
+      consensus: String(e.consensus || e.forecast || "—"),
+      importance: Number(e.importance || 2),
+    }));
+  }, [calendarData]);
 
   // Override regime from API
   const apiRegime = macroSnap?.regime?.toUpperCase() || REGIME.label;
@@ -178,7 +212,7 @@ export default function MacroDashboard() {
               </tr>
             </thead>
             <tbody>
-              {G10_COUNTRIES.map((c, i) => (
+              {g10Countries.map((c, i) => (
                 <tr key={c.code} className={`border-b border-terminal-border hover:bg-[#161b22] transition-colors ${i % 2 === 0 ? "" : "bg-[#0d1117]"}`}>
                   <td className="px-2 py-0.5 text-terminal-text-primary">
                     <span className="mr-1">{c.flag}</span>
