@@ -7,32 +7,6 @@
     "start": "node index.js",
     "test": "echo \"Error: no test specified\" && exit 1"
   },
-  "repository": {
-    "type": "git",
-    "url": "git+https://github.com/janlukasschroeder/realtime-newsapi.git"
-  },
-  "keywords": [
-    "Realtime",
-    "News",
-    "API",
-    "Financial news",
-    "News API",
-    "News stream",
-    "SEC filings",
-    "Reuters",
-    "Bloomberg",
-    "JSON news",
-    "Analyst ratings",
-    "The Wall Street Journal",
-    "Seeking Alpha",
-    "News aggregator"
-  ],
-  "author": "Jan Schroeder",
-  "license": "MIT",
-  "bugs": {
-    "url": "https://github.com/janlukasschroeder/realtime-newsapi/issues"
-  },
-  "homepage": "https://github.com/janlukasschroeder/realtime-newsapi#readme",
   "dependencies": {
     "socket.io-client": "^2.4.0"
   },
