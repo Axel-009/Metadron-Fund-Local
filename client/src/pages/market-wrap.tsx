@@ -245,39 +245,39 @@ function LiveNewsFeed() {
   const [speed, setSpeed] = useState<1 | 2 | 3>(1);
   const [paused, setPaused] = useState(false);
   const [newIds, setNewIds] = useState<Set<number>>(new Set());
-  const incomingIndex = useRef(0);
   const nextId = useRef(100);
+  const prevFeedLen = useRef(0);
 
   useEffect(() => {
     injectScrollCSS();
   }, []);
 
-  // Add new headlines every 8-12 seconds
+  // Poll real news from NewsEngine every 30s
+  const { data: newsFeed } = useEngineQuery<{ feed: Array<{ id: string; timestamp: string; source: string; headline: string; tickers: string[]; sentiment: string; category: string }> }>("/signals/news/live?limit=24", { refetchInterval: 30000 });
+
+  // Sync API news into the feed when new items arrive
   useEffect(() => {
-    const getDelay = () => 8000 + Math.random() * 4000;
-    let timeout: ReturnType<typeof setTimeout>;
-    const scheduleNext = () => {
-      timeout = setTimeout(() => {
-        const template = INCOMING_HEADLINES[incomingIndex.current % INCOMING_HEADLINES.length];
-        incomingIndex.current++;
-        const newItem: LiveNewsItem = {
-          ...template,
-          id: nextId.current++,
-          timestamp: "just now",
-        };
-        setNews(prev => [newItem, ...prev.slice(0, 23)]);
-        setNewIds(prev => {
-          const next = new Set(prev);
-          next.add(newItem.id);
-          setTimeout(() => setNewIds(s => { const n = new Set(s); n.delete(newItem.id); return n; }), 1000);
-          return next;
-        });
-        scheduleNext();
-      }, getDelay());
-    };
-    scheduleNext();
-    return () => clearTimeout(timeout);
-  }, []);
+    if (!newsFeed?.feed?.length) return;
+    if (newsFeed.feed.length === prevFeedLen.current) return;
+    prevFeedLen.current = newsFeed.feed.length;
+
+    const apiItems: LiveNewsItem[] = newsFeed.feed.map((n) => ({
+      id: nextId.current++,
+      timestamp: n.timestamp || "just now",
+      source: n.source || "OpenBB",
+      headline: n.headline,
+      tickers: n.tickers || [],
+      sentiment: (n.sentiment || "neutral") as LiveNewsItem["sentiment"],
+      category: (n.category || "top") as LiveNewsItem["category"],
+    }));
+
+    setNews(apiItems);
+
+    // Flash the newest items
+    const flashIds = new Set(apiItems.slice(0, 3).map(i => i.id));
+    setNewIds(flashIds);
+    setTimeout(() => setNewIds(new Set()), 1500);
+  }, [newsFeed]);
 
   const scrollClass = `news-scroll-${speed}x${paused ? " news-scroll-paused" : ""}`;
 
