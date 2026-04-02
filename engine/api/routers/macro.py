@@ -280,6 +280,50 @@ async def drain_warning():
         return {"error": str(e)}
 
 
+# ─── Economic calendar ─────────────────────────────────────
+
+@router.get("/calendar")
+async def economic_calendar():
+    """Upcoming economic events via OpenBB."""
+    try:
+        from engine.data.openbb_data import get_economic_calendar
+        df = get_economic_calendar()
+        if hasattr(df, "empty") and df.empty:
+            return {"events": [], "timestamp": datetime.utcnow().isoformat()}
+        if hasattr(df, "to_dict"):
+            records = df.head(20).to_dict(orient="records")
+            for r in records:
+                for k, v in r.items():
+                    if hasattr(v, "isoformat"):
+                        r[k] = v.isoformat()
+            return {"events": records, "timestamp": datetime.utcnow().isoformat()}
+        return {"events": [], "timestamp": datetime.utcnow().isoformat()}
+    except Exception as e:
+        logger.error(f"macro/calendar error: {e}")
+        return {"events": [], "error": str(e)}
+
+
+@router.get("/news")
+async def macro_news():
+    """Market news via OpenBB."""
+    try:
+        from engine.data.openbb_data import get_world_news
+        df = get_world_news()
+        if hasattr(df, "empty") and df.empty:
+            return {"news": [], "timestamp": datetime.utcnow().isoformat()}
+        if hasattr(df, "to_dict"):
+            records = df.head(15).to_dict(orient="records")
+            for r in records:
+                for k, v in r.items():
+                    if hasattr(v, "isoformat"):
+                        r[k] = v.isoformat()
+            return {"news": records, "timestamp": datetime.utcnow().isoformat()}
+        return {"news": [], "timestamp": datetime.utcnow().isoformat()}
+    except Exception as e:
+        logger.error(f"macro/news error: {e}")
+        return {"news": [], "error": str(e)}
+
+
 # ─── WRAP tab endpoints ────────────────────────────────────
 
 @router.get("/wrap")

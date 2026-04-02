@@ -502,13 +502,16 @@ function LiveTransactions() {
 // ═══════════ ORDER DISTRIBUTION (Donut) ═══════════
 
 function OrderDistributionChart() {
+  const { data: distData } = useEngineQuery<{ distribution: Array<{ name: string; value: number; color: string }> }>("/risk/order-distribution", { refetchInterval: 10000 });
+  const chartData = distData?.distribution?.length ? distData.distribution : ORDER_DISTRIBUTION;
+
   return (
     <div className="h-full flex flex-col">
       <div className="flex-1 relative">
         <ResponsiveContainer width="100%" height="100%">
           <PieChart>
             <Pie
-              data={ORDER_DISTRIBUTION}
+              data={chartData}
               cx="50%"
               cy="50%"
               innerRadius="55%"
@@ -517,7 +520,7 @@ function OrderDistributionChart() {
               dataKey="value"
               stroke="none"
             >
-              {ORDER_DISTRIBUTION.map((entry, i) => (
+              {chartData.map((entry, i) => (
                 <Cell key={i} fill={entry.color} />
               ))}
             </Pie>
@@ -531,7 +534,7 @@ function OrderDistributionChart() {
       </div>
       {/* Legend */}
       <div className="px-2 pb-1 grid grid-cols-2 gap-x-3 gap-y-0.5 text-[8px]">
-        {ORDER_DISTRIBUTION.map((d, i) => (
+        {chartData.map((d, i) => (
           <div key={i} className="flex items-center gap-1">
             <span className="w-1.5 h-1.5 rounded-full flex-shrink-0" style={{ backgroundColor: d.color }} />
             <span className="text-terminal-text-muted truncate">{d.name}</span>
@@ -615,6 +618,8 @@ function DepthChart() {
 function RiskPanel() {
   const { data: riskData } = useEngineQuery<RiskPortfolio>("/risk/portfolio", { refetchInterval: 5000 });
   const { data: portData } = useEngineQuery<PortfolioLive>("/portfolio/live", { refetchInterval: 5000 });
+  const { data: alertsData } = useEngineQuery<{ alerts: Array<{ name: string; value: string; severity: string }> }>("/risk/alerts", { refetchInterval: 10000 });
+  const riskAlerts = alertsData?.alerts?.length ? alertsData.alerts : TOP_RISKS;
 
   const beta = riskData?.current_beta ?? 0;
   const targetBeta = riskData?.target_beta ?? 0;
@@ -690,7 +695,7 @@ function RiskPanel() {
         <div className="text-[9px] text-terminal-text-muted font-semibold tracking-wider uppercase mb-1">
           TOP RISKS <span className="text-terminal-text-faint ml-2">{corridor}</span>
         </div>
-        {TOP_RISKS.map((r, i) => (
+        {riskAlerts.map((r, i) => (
           <div key={i} className="flex items-center gap-2 py-0.5">
             <span className="text-terminal-text-faint">{i === 0 ? "▲" : "○"}</span>
             <span className="text-terminal-text-muted flex-1">{r.name}</span>
