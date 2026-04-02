@@ -1,6 +1,7 @@
 import { DashboardPanel } from "@/components/dashboard-panel";
 import { ResizableDashboard } from "@/components/resizable-panel";
-import { useState, useEffect } from "react";
+import { useState, useEffect, useMemo } from "react";
+import { useEngineQuery, type RiskGreeks, type BetaState } from "@/hooks/use-engine-api";
 
 const GREEKS = [
   { name: "Delta", value: 0.72, label: "Δ", color: "#00d4aa" },
@@ -81,16 +82,26 @@ const MARGIN_INFO = {
 };
 
 export default function RiskPortfolio() {
-  const [varValue, setVarValue] = useState(1.22);
-  const [cvarValue, setCvarValue] = useState(2.15);
+  // ─── Engine API ─────────────────────────────────────
+  const { data: greeksData } = useEngineQuery<RiskGreeks>("/risk/greeks", { refetchInterval: 5000 });
+  const { data: betaData } = useEngineQuery<BetaState>("/portfolio/beta", { refetchInterval: 5000 });
+  const { data: stressData } = useEngineQuery<{ scenarios: Array<Record<string, unknown>> }>("/risk/beta/stress", { refetchInterval: 30000 });
 
-  useEffect(() => {
-    const iv = setInterval(() => {
-      setVarValue(1.1 + Math.random() * 0.3);
-      setCvarValue(1.9 + Math.random() * 0.5);
-    }, 5000);
-    return () => clearInterval(iv);
-  }, []);
+  // Override Greeks from API when available
+  const greeks = useMemo(() => {
+    if (!greeksData) return GREEKS;
+    return [
+      { name: "Delta", value: greeksData.delta ?? GREEKS[0].value, label: "Δ", color: "#00d4aa" },
+      { name: "Gamma", value: greeksData.gamma ?? GREEKS[1].value, label: "Γ", color: "#58a6ff" },
+      { name: "Theta", value: greeksData.theta ?? GREEKS[2].value, label: "Θ", color: "#f85149" },
+      { name: "Vega", value: greeksData.vega ?? GREEKS[3].value, label: "ν", color: "#bc8cff" },
+      { name: "Rho", value: greeksData.rho ?? GREEKS[4].value, label: "ρ", color: "#d29922" },
+    ];
+  }, [greeksData]);
+
+  // VaR from beta analytics
+  const varValue = (betaData?.analytics as Record<string, number>)?.var_pct ?? 1.22;
+  const cvarValue = (betaData?.analytics as Record<string, number>)?.cvar_pct ?? 2.15;
 
   return (
     <div className="h-full flex flex-col gap-[2px] p-[2px] overflow-auto" data-testid="risk-portfolio">
@@ -101,7 +112,7 @@ export default function RiskPortfolio() {
           {/* Greeks */}
           <DashboardPanel title="OPTIONS GREEKS — AGGREGATE">
             <div className="flex gap-4">
-              {GREEKS.map((g) => (
+              {greeks.map((g) => (
                 <div key={g.name} className="flex-1 text-center border border-terminal-border rounded p-3">
                   <div className="text-xl font-mono font-bold" style={{ color: g.color }}>{g.label}</div>
                   <div className="text-lg font-mono font-bold text-terminal-text-primary tabular-nums mt-1">

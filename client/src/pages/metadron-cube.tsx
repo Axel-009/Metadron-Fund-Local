@@ -6,6 +6,7 @@ import {
   Tooltip, PieChart, Pie, Cell, BarChart, Bar,
   RadarChart, Radar, PolarGrid, PolarAngleAxis, PolarRadiusAxis,
 } from "recharts";
+import { useEngineQuery, type CubeState } from "@/hooks/use-engine-api";
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // TYPE DEFINITIONS
@@ -1431,7 +1432,12 @@ function LearningLoopPanel({ betaTrend }: { betaTrend: { t: number; beta: number
 // ═══════════════════════════════════════════════════════════════════════════════
 
 export default function MetadronCubePage() {
-  // Core state
+  // ─── Engine API data ────────────────────────────────
+  const { data: cubeData } = useEngineQuery<CubeState>("/cube/state", { refetchInterval: 2500 });
+  const { data: cubeGates } = useEngineQuery<{ gates: Record<string, number> }>("/cube/gates", { refetchInterval: 5000 });
+  const { data: cubeKillSwitch } = useEngineQuery<{ active: boolean; triggers: string[] }>("/cube/kill-switch", { refetchInterval: 3000 });
+
+  // Core state — populated from API, falls back to generators if no data yet
   const [tensor, setTensor] = useState<CoreTensor>(() => generateCoreTensor());
   const [fed, setFed] = useState<FedPlumbingLayer>(() => generateFedPlumbing());
   const [liq, setLiq] = useState<LiquidityTensor>(() => generateLiquidityTensor());
@@ -1447,24 +1453,65 @@ export default function MetadronCubePage() {
   const betaTrend = useMemo(() => generateBetaTrend(), []);
   const [tick, setTick] = useState(0);
 
-  // Core tensor updates every 2s
+  // Sync API data into state when it arrives
   useEffect(() => {
-    const iv = setInterval(() => {
-      setTensor(generateCoreTensor());
-      setFed(generateFedPlumbing());
-      setLiq(generateLiquidityTensor());
-      setKernel(generateReserveKernel());
-      setRisk(generateRiskModel());
-      setFlow(generateCapitalFlow());
-      setRegime(generateRegimeState());
-      setKillSwitch(generateKillSwitch());
-      setGovData(generateRiskGovernor());
-      setTick((t) => t + 1);
-    }, 2500);
-    return () => clearInterval(iv);
-  }, []);
+    if (!cubeData) return;
+    const l = cubeData.liquidity || {};
+    const r = cubeData.risk || {};
+    const s = cubeData.sleeves || {};
 
-  // Gate scores update every 5s
+    const L = l.score ?? l.sofr_signal ?? tensor.L;
+    const R = r.score ?? r.vix_component ?? risk.R;
+    const F = flow.F;  // flow not directly in cube API, keep local
+    setTensor({ L, R, F, Ct: L * 0.4 + (1 - R) * 0.35 + F * 0.25 });
+
+    setFed({
+      sofr: l.score ?? fed.sofr,
+      tga: l.tga_balance_signal ?? fed.tga,
+      onRrp: l.reverse_repo_signal ?? fed.onRrp,
+      reserveAdequacy: l.reserve_flow ?? fed.reserveAdequacy,
+      fedFundsImpact: l.fed_funds_impact ?? fed.fedFundsImpact,
+      netPlumbing: l.score ?? fed.netPlumbing,
+    });
+
+    setLiq({
+      sofrWeight: l.score ?? liq.sofrWeight,
+      creditWeight: l.credit_impulse ?? liq.creditWeight,
+      m2vWeight: l.m2_velocity ?? liq.m2vWeight,
+      hySpreadWeight: l.hy_spread_z ?? liq.hySpreadWeight,
+      fedPlumbingWeight: l.fed_funds_impact ?? liq.fedPlumbingWeight,
+      L,
+    });
+
+    setRisk({
+      vix: r.score ?? risk.vix,
+      realizedVol: r.realized_vol ?? risk.realizedVol,
+      credit: r.credit_spread ?? risk.credit,
+      correlation: r.correlation_stress ?? risk.correlation,
+      tailRisk: r.tail_risk ?? risk.tailRisk,
+      R,
+    });
+
+    const regimeStr = (cubeData.regime || "TRENDING").toUpperCase() as Regime;
+    setRegime((prev) => ({
+      ...prev,
+      current: regimeStr,
+      confidence: cubeData.max_leverage ? cubeData.max_leverage / 3.0 : prev.confidence,
+    }));
+
+    setTick((t) => t + 1);
+  }, [cubeData]);
+
+  // Sync kill switch from API
+  useEffect(() => {
+    if (!cubeKillSwitch) return;
+    setKillSwitch((prev) => ({
+      ...prev,
+      active: cubeKillSwitch.active ?? prev.active,
+    }));
+  }, [cubeKillSwitch]);
+
+  // Gate scores update every 5s (keep generator as API gates are sparse)
   useEffect(() => {
     const iv = setInterval(() => {
       setGates(generateGateScores());

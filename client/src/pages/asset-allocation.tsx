@@ -2,7 +2,8 @@ import { DashboardPanel } from "@/components/dashboard-panel";
 import { ResizableDashboard } from "@/components/resizable-panel";
 import { MiniChart } from "@/components/mini-chart";
 import { PieChart, Pie, Cell, ResponsiveContainer } from "recharts";
-import { useState, useEffect } from "react";
+import { useState, useEffect, useMemo } from "react";
+import { useEngineQuery, type PortfolioLive, type AllocationData } from "@/hooks/use-engine-api";
 
 const INDICES = [
   { ticker: "SPY", price: 527.82, change: 0.84, data: [510, 512, 515, 518, 520, 522, 525, 527] },
@@ -84,16 +85,35 @@ function CreditBadge({ rating }: { rating: string }) {
 }
 
 export default function AssetAllocation() {
-  const [nav, setNav] = useState(128450320);
+  // ─── Engine API ─────────────────────────────────────
+  const { data: portData } = useEngineQuery<PortfolioLive>("/portfolio/live", { refetchInterval: 4000 });
+  const { data: allocData } = useEngineQuery<AllocationData>("/portfolio/allocation", { refetchInterval: 10000 });
+  const { data: posData } = useEngineQuery<{ positions: Array<{ ticker: string; quantity: number; avg_cost: number; current_price: number; unrealized_pnl: number; realized_pnl: number; sector: string }> }>("/portfolio/positions", { refetchInterval: 10000 });
 
-  useEffect(() => {
-    const iv = setInterval(() => setNav((n) => n + Math.floor(Math.random() * 10000 - 3000)), 4000);
-    return () => clearInterval(iv);
-  }, []);
+  // NAV from API, fallback to static
+  const nav = portData?.nav ?? 128450320;
 
-  const totalLeveraged = HOLDINGS.filter((h) => h.leveraged).reduce((s, h) => s + Math.abs(h.shares * h.price), 0);
-  const avgMarginPct = (HOLDINGS.reduce((s, h) => s + h.marginPct * (h.weightNav / 100), 0)).toFixed(1);
-  const totalPnl = HOLDINGS.reduce((s, h) => s + h.pnl, 0);
+  // Merge API positions into HOLDINGS format when available
+  const holdings = useMemo(() => {
+    if (!posData?.positions?.length) return HOLDINGS;
+    // Build lookup from API positions
+    const apiMap = new Map(posData.positions.map((p) => [p.ticker, p]));
+    return HOLDINGS.map((h) => {
+      const api = apiMap.get(h.ticker);
+      if (!api) return h;
+      return {
+        ...h,
+        shares: api.quantity || h.shares,
+        price: api.current_price || h.price,
+        pnl: api.unrealized_pnl + api.realized_pnl,
+        sector: api.sector || h.sector,
+      };
+    });
+  }, [posData]);
+
+  const totalLeveraged = holdings.filter((h) => h.leveraged).reduce((s, h) => s + Math.abs(h.shares * h.price), 0);
+  const avgMarginPct = (holdings.reduce((s, h) => s + h.marginPct * (h.weightNav / 100), 0)).toFixed(1);
+  const totalPnl = holdings.reduce((s, h) => s + h.pnl, 0);
 
   return (
     <div className="h-full flex flex-col gap-[2px] p-[2px] overflow-hidden" data-testid="asset-allocation">
@@ -157,7 +177,7 @@ export default function AssetAllocation() {
                 {/* Product Type breakdown */}
                 <div className="flex gap-3 ml-auto">
                   {["Equity", "Options", "Futures", "ETF", "Fixed Income", "Cash"].map((pt) => {
-                    const count = HOLDINGS.filter((h) => h.productType === pt).length;
+                    const count = holdings.filter((h) => h.productType === pt).length;
                     const color = PRODUCT_COLORS[pt];
                     return (
                       <div key={pt} className="flex flex-col items-center gap-0.5">
@@ -193,7 +213,7 @@ export default function AssetAllocation() {
               </tr>
             </thead>
             <tbody>
-              {HOLDINGS.map((h, i) => (
+              {holdings.map((h, i) => (
                 <tr key={i} className="border-b border-terminal-border/20 hover:bg-white/[0.02]">
                   <td className="px-2 py-1.5 text-terminal-accent font-medium">{h.ticker}</td>
                   <td className="px-2 py-1.5 text-terminal-text-muted max-w-[120px] truncate">{h.name}</td>
@@ -258,10 +278,10 @@ export default function AssetAllocation() {
               <tr className="border-t border-terminal-border/50 bg-white/[0.02]">
                 <td colSpan={7} className="px-2 py-1.5 text-[8px] text-terminal-text-faint uppercase font-medium">Totals</td>
                 <td className="px-2 py-1.5 text-right text-terminal-text-primary font-bold tabular-nums text-[9px]">
-                  {HOLDINGS.reduce((s, h) => s + h.weight, 0).toFixed(1)}%
+                  {holdings.reduce((s, h) => s + h.weight, 0).toFixed(1)}%
                 </td>
                 <td className="px-2 py-1.5 text-right text-terminal-text-muted font-bold tabular-nums text-[9px]">
-                  {HOLDINGS.reduce((s, h) => s + h.weightNav, 0).toFixed(2)}%
+                  {holdings.reduce((s, h) => s + h.weightNav, 0).toFixed(2)}%
                 </td>
                 <td colSpan={3} />
                 <td />

@@ -1,5 +1,6 @@
 import { useState, useEffect, useMemo } from "react";
 import { DashboardPanel } from "@/components/dashboard-panel";
+import { useEngineQuery, type TradeRecord } from "@/hooks/use-engine-api";
 
 // ═══════════ SIMULATED TRANSACTION DATA ═══════════
 
@@ -169,20 +170,42 @@ function FilterBar({ filter, setFilter }: { filter: any; setFilter: (f: any) => 
 // ═══════════ MAIN COMPONENT ═══════════
 
 export default function TransactionLog() {
-  const [allTxns, setAllTxns] = useState<Transaction[]>(() => generateTransactions(200));
+  // ─── Engine API ─────────────────────────────────────
+  const { data: tradesData } = useEngineQuery<{ trades: TradeRecord[] }>("/portfolio/trades?limit=500", { refetchInterval: 5000 });
+
+  // Map API trades to Transaction format, fallback to generated if no API data
+  const allTxns: Transaction[] = useMemo(() => {
+    if (!tradesData?.trades?.length) return generateTransactions(200);
+    return tradesData.trades.map((t, i) => {
+      const ticker = t.ticker || "UNKNOWN";
+      const d = TICKERS_DATA[ticker] || { pe: 0, eps: 0, mktCap: "—", sector: "Unknown", divYield: 0, beta: 1, basePrice: t.fill_price || 0 };
+      const side = (t.side?.toUpperCase() || "BUY") as Transaction["side"];
+      const notional = t.quantity * t.fill_price;
+      return {
+        id: t.id || `TXN-${i}`,
+        time: t.timestamp ? new Date(t.timestamp).toLocaleTimeString("en-US", { hour12: false, hour: "2-digit", minute: "2-digit", second: "2-digit" }) : "--:--:--",
+        ticker,
+        side,
+        qty: t.quantity,
+        price: t.fill_price,
+        notional: +notional.toFixed(2),
+        fillType: "FULL" as const,
+        venue: "ENGINE",
+        signalType: t.signal_type || "UNKNOWN",
+        latencyMs: 0,
+        slippageBps: 0,
+        pe: d.pe,
+        eps: d.eps,
+        mktCap: d.mktCap,
+        sector: d.sector,
+        divYield: d.divYield,
+        beta: d.beta,
+      };
+    });
+  }, [tradesData]);
+
   const [filter, setFilter] = useState({ ticker: "", side: "", fill: "", sector: "" });
   const [expandedId, setExpandedId] = useState<string | null>(null);
-
-  // Simulate new transactions arriving
-  useEffect(() => {
-    const interval = setInterval(() => {
-      setAllTxns((prev) => {
-        const newTxns = generateTransactions(1);
-        return [...newTxns, ...prev].slice(0, 500);
-      });
-    }, 5000);
-    return () => clearInterval(interval);
-  }, []);
 
   const filteredTxns = useMemo(() => {
     return allTxns.filter((t) => {

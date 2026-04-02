@@ -1,6 +1,7 @@
 import { DashboardPanel } from "@/components/dashboard-panel";
 import { ResizableDashboard } from "@/components/resizable-panel";
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useRef, useMemo } from "react";
+import { useEngineQuery, type MarketWrapData, type MacroSnapshot } from "@/hooks/use-engine-api";
 
 const SECTORS = [
   { name: "Technology", daily: 1.8, weekly: 3.2, monthly: 5.4, color: "#00d4aa" },
@@ -377,6 +378,26 @@ function LiveNewsFeed() {
 }
 
 export default function MarketWrap() {
+  // ─── Engine API ─────────────────────────────────────
+  const { data: wrapData } = useEngineQuery<MarketWrapData>("/macro/wrap", { refetchInterval: 30000 });
+  const { data: macroData } = useEngineQuery<MacroSnapshot>("/macro/snapshot", { refetchInterval: 15000 });
+
+  // Override sectors from API when available
+  const sectors = useMemo(() => {
+    if (!wrapData?.sectors?.length) return SECTORS;
+    return wrapData.sectors.map((s) => ({
+      name: s.sector,
+      daily: s.return_1d * 100,
+      weekly: s.return_1w * 100,
+      monthly: s.return_1m * 100,
+      color: SECTORS.find((sec) => sec.name.toLowerCase().startsWith(s.sector.toLowerCase().slice(0, 4)))?.color ?? "#7d8590",
+    }));
+  }, [wrapData]);
+
+  const regime = macroData?.regime ?? "risk-on";
+  const vix = macroData?.vix ?? 14.2;
+  const tone = wrapData?.market_tone ?? "risk-on";
+
   return (
     <div className="h-full flex flex-col gap-[2px] p-[2px] overflow-hidden" data-testid="market-wrap">
 
@@ -389,14 +410,14 @@ export default function MarketWrap() {
             <DashboardPanel title="MARKET DIRECTION">
               <div className="space-y-2 text-[11px] text-terminal-text-muted leading-relaxed">
                 <p>
-                  Markets are in a <span className="text-terminal-accent font-medium">risk-on</span> regime with strong breadth improvement.
-                  Tech continues to lead driven by AI infrastructure spending. The S&P 500 made new all-time highs with expanding participation
-                  beyond megacap tech. Bond yields remain elevated but stable. VIX at 14.2 suggests complacency — monitor for mean reversion.
+                  Markets are in a <span className="text-terminal-accent font-medium">{tone}</span> regime with{" "}
+                  {tone === "risk-on" ? "strong breadth improvement" : tone === "risk-off" ? "deteriorating breadth" : "mixed signals"}.
+                  Macro regime: <span className="text-terminal-accent font-medium">{regime}</span>.
+                  VIX at {vix.toFixed(1)}{vix < 16 ? " suggests complacency — monitor for mean reversion" : vix > 25 ? " elevated — risk management priority" : " within normal range"}.
                 </p>
                 <p>
-                  Key thesis: The <span className="text-terminal-positive">soft landing</span> narrative is gaining credibility as inflation
-                  decelerates without meaningful labor market deterioration. Fed messaging has shifted dovish at the margin.
-                  <span className="text-terminal-warning"> Energy sector</span> weakness driven by China demand concerns and inventory builds.
+                  Yield spread: {(macroData?.yield_spread ?? 0).toFixed(2)}% | Credit spread: {(macroData?.credit_spread ?? 0).toFixed(2)}% |
+                  SPY 1M: {((macroData?.spy_return_1m ?? 0) * 100).toFixed(1)}% | GMTF: {(macroData?.gmtf_score ?? 0).toFixed(2)}
                 </p>
               </div>
             </DashboardPanel>
@@ -404,7 +425,7 @@ export default function MarketWrap() {
             {/* GICS Sector Heatmap */}
             <DashboardPanel title="GICS SECTOR HEATMAP" className="flex-1">
               <div className="grid grid-cols-4 gap-1.5">
-                {SECTORS.map((s) => {
+                {sectors.map((s) => {
                   const intensity = Math.min(Math.abs(s.daily) / 2, 1);
                   const bg = s.daily >= 0
                     ? `rgba(0, 212, 170, ${0.08 + intensity * 0.2})`
