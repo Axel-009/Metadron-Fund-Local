@@ -121,6 +121,8 @@ interface StatArbPairAPI {
 
 export default function ArbitrageDashboard() {
   const { data: statArbData } = useEngineQuery<{ pairs: StatArbPairAPI[] }>("/signals/stat-arb/pairs?max_pairs=30", { refetchInterval: 15000 });
+  const { data: contagionApi } = useEngineQuery<Record<string, unknown>>("/signals/contagion", { refetchInterval: 30000 });
+  const { data: distressApi } = useEngineQuery<Record<string, unknown>>("/signals/distressed", { refetchInterval: 30000 });
 
   // Map API pairs into RVPair format, fallback to static data
   const pairs: RVPair[] = useMemo(() => {

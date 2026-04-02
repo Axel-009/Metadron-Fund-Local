@@ -106,8 +106,36 @@ export default function FixedIncomeDashboard() {
   // ─── Engine API ─────────────────────────────────────
   const { data: yieldData } = useEngineQuery<Record<string, number>>("/macro/yield-curve", { refetchInterval: 30000 });
   const { data: creditData } = useEngineQuery<Record<string, number>>("/macro/credit-pulse", { refetchInterval: 30000 });
+  const { data: posData } = useEngineQuery<{ positions: Array<{ ticker: string; quantity: number; current_price: number; unrealized_pnl: number; sector: string }> }>("/portfolio/positions", { refetchInterval: 15000 });
 
-  const spreadData = useMemo(() => generateSpreadData(), []);
+  // Wire yield curve from API
+  const yieldCurve = useMemo(() => {
+    if (!yieldData || !yieldData.yield_2y) return YIELD_CURVE;
+    return [
+      { tenor: "2Y", yield: yieldData.yield_2y || YIELD_CURVE.find(y => y.tenor === "2Y")?.yield || 0 },
+      { tenor: "5Y", yield: yieldData.yield_5y || YIELD_CURVE.find(y => y.tenor === "5Y")?.yield || 0 },
+      { tenor: "10Y", yield: yieldData.yield_10y || YIELD_CURVE.find(y => y.tenor === "10Y")?.yield || 0 },
+      { tenor: "30Y", yield: yieldData.yield_30y || YIELD_CURVE.find(y => y.tenor === "30Y")?.yield || 0 },
+      ...YIELD_CURVE.filter(y => !["2Y", "5Y", "10Y", "30Y"].includes(y.tenor)),
+    ].sort((a, b) => {
+      const order = ["3M", "6M", "1Y", "2Y", "3Y", "5Y", "7Y", "10Y", "20Y", "30Y"];
+      return order.indexOf(a.tenor) - order.indexOf(b.tenor);
+    });
+  }, [yieldData]);
+
+  // Wire credit spread from API
+  const spreadData = useMemo(() => {
+    const base = generateSpreadData();
+    if (creditData?.hy_spread) {
+      // Adjust the last data point to reflect real credit spread
+      base[base.length - 1].hy = creditData.hy_spread;
+    }
+    if (creditData?.ig_spread) {
+      base[base.length - 1].ig = creditData.ig_spread;
+    }
+    return base;
+  }, [creditData]);
+
   const totalPnL = BOND_HOLDINGS.reduce((s, b) => s + b.pnl, 0);
 
   return (
@@ -197,7 +225,7 @@ export default function FixedIncomeDashboard() {
         {/* Yield Curve */}
         <DashboardPanel title="US YIELD CURVE" className="flex-1">
           <ResponsiveContainer width="100%" height="100%">
-            <LineChart data={YIELD_CURVE} margin={{ top: 4, right: 8, left: -20, bottom: 0 }}>
+            <LineChart data={yieldCurve} margin={{ top: 4, right: 8, left: -20, bottom: 0 }}>
               <XAxis dataKey="tenor" tick={{ fontSize: 8, fill: "#8b949e" }} />
               <YAxis domain={[4.3, 5.4]} tickFormatter={v => `${v.toFixed(2)}%`} tick={{ fontSize: 8, fill: "#8b949e" }} />
               <Tooltip contentStyle={TOOLTIP_STYLE} formatter={(v: number) => [`${v.toFixed(3)}%`, "Yield"]} />
