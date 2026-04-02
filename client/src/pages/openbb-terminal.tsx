@@ -55,21 +55,30 @@ function generateOHLC(days = 200, startPrice = 189) {
   return data;
 }
 
-const WATCHLIST = [
-  { ticker: "AAPL", price: 189.45, chg: 1.23, pct: 0.65, vol: "62.3M", mktCap: "2.94T" },
-  { ticker: "MSFT", price: 420.12, chg: -2.18, pct: -0.52, vol: "24.1M", mktCap: "3.12T" },
-  { ticker: "NVDA", price: 875.30, chg: 18.42, pct: 2.15, vol: "48.7M", mktCap: "2.15T" },
-  { ticker: "AMZN", price: 185.67, chg: 2.34, pct: 1.28, vol: "35.9M", mktCap: "1.93T" },
-  { ticker: "GOOGL", price: 155.89, chg: -0.45, pct: -0.29, vol: "22.8M", mktCap: "1.94T" },
-  { ticker: "META", price: 505.78, chg: 8.12, pct: 1.63, vol: "18.4M", mktCap: "1.30T" },
-  { ticker: "TSLA", price: 178.22, chg: -5.34, pct: -2.91, vol: "89.1M", mktCap: "567B" },
-  { ticker: "JPM", price: 198.34, chg: 1.12, pct: 0.57, vol: "8.7M", mktCap: "572B" },
-  { ticker: "V", price: 282.90, chg: 0.78, pct: 0.28, vol: "5.2M", mktCap: "580B" },
-  { ticker: "UNH", price: 502.15, chg: -3.45, pct: -0.68, vol: "3.8M", mktCap: "462B" },
-  { ticker: "XOM", price: 115.23, chg: -1.87, pct: -1.60, vol: "15.2M", mktCap: "460B" },
-  { ticker: "SPY", price: 527.82, chg: 2.34, pct: 0.44, vol: "72.4M", mktCap: "—" },
-  { ticker: "QQQ", price: 448.19, chg: 5.12, pct: 1.16, vol: "42.1M", mktCap: "—" },
-  { ticker: "IWM", price: 210.45, chg: -0.67, pct: -0.32, vol: "28.3M", mktCap: "—" },
+// Full universe — all securities
+const ALL_SECURITIES = [
+  // Holdings (portfolio positions)
+  { ticker: "AAPL", price: 189.45, chg: 1.23, pct: 0.65, vol: "62.3M", mktCap: "2.94T", isHolding: true },
+  { ticker: "MSFT", price: 420.12, chg: -2.18, pct: -0.52, vol: "24.1M", mktCap: "3.12T", isHolding: true },
+  { ticker: "NVDA", price: 875.30, chg: 18.42, pct: 2.15, vol: "48.7M", mktCap: "2.15T", isHolding: true },
+  { ticker: "AMZN", price: 185.67, chg: 2.34, pct: 1.28, vol: "35.9M", mktCap: "1.93T", isHolding: true },
+  { ticker: "GOOGL", price: 155.89, chg: -0.45, pct: -0.29, vol: "22.8M", mktCap: "1.94T", isHolding: true },
+  { ticker: "JPM", price: 198.34, chg: 1.12, pct: 0.57, vol: "8.7M", mktCap: "572B", isHolding: true },
+  { ticker: "UNH", price: 502.15, chg: -3.45, pct: -0.68, vol: "3.8M", mktCap: "462B", isHolding: true },
+  { ticker: "V", price: 282.90, chg: 0.78, pct: 0.28, vol: "5.2M", mktCap: "580B", isHolding: true },
+  { ticker: "META", price: 505.78, chg: 8.12, pct: 1.63, vol: "18.4M", mktCap: "1.30T", isHolding: true },
+  { ticker: "XOM", price: 115.23, chg: -1.87, pct: -1.60, vol: "15.2M", mktCap: "460B", isHolding: true },
+  // Watchlist
+  { ticker: "TSLA", price: 178.22, chg: -5.34, pct: -2.91, vol: "89.1M", mktCap: "567B", isHolding: false },
+  { ticker: "SPY", price: 527.82, chg: 2.34, pct: 0.44, vol: "72.4M", mktCap: "—", isHolding: false },
+  { ticker: "QQQ", price: 448.19, chg: 5.12, pct: 1.16, vol: "42.1M", mktCap: "—", isHolding: false },
+  { ticker: "IWM", price: 210.45, chg: -0.67, pct: -0.32, vol: "28.3M", mktCap: "—", isHolding: false },
+  { ticker: "GLD", price: 218.34, chg: 1.45, pct: 0.67, vol: "12.1M", mktCap: "—", isHolding: false },
+  { ticker: "TLT", price: 94.12, chg: -0.89, pct: -0.94, vol: "18.7M", mktCap: "—", isHolding: false },
+  { ticker: "ARKK", price: 48.90, chg: -1.12, pct: -2.24, vol: "9.4M", mktCap: "—", isHolding: false },
+  { ticker: "COIN", price: 198.45, chg: 7.82, pct: 4.10, vol: "21.3M", mktCap: "49B", isHolding: false },
+  { ticker: "PLTR", price: 22.67, chg: 0.45, pct: 2.03, vol: "44.8M", mktCap: "48B", isHolding: false },
+  { ticker: "AMD", price: 168.90, chg: 3.12, pct: 1.88, vol: "37.2M", mktCap: "273B", isHolding: false },
 ];
 
 const SCREENER_RESULTS = [
@@ -278,7 +287,6 @@ function ChartPanel({ ticker }: { ticker: string }) {
             <LineChart data={data.slice(-80)} margin={{ top: 4, right: 10, bottom: 0, left: 50 }}>
               <YAxis tick={{ fontSize: 8, fill: "#484f58" }} domain={[20, 80]} axisLine={false} tickLine={false} width={0} />
               <Line type="monotone" dataKey="rsi" stroke="#bc8cff" strokeWidth={1} dot={false} />
-              {/* Overbought / Oversold lines */}
               <Line type="monotone" dataKey={() => 70} stroke="#f85149" strokeWidth={0.5} strokeDasharray="3 3" dot={false} />
               <Line type="monotone" dataKey={() => 30} stroke="#3fb950" strokeWidth={0.5} strokeDasharray="3 3" dot={false} />
             </LineChart>
@@ -317,36 +325,191 @@ function ChartPanel({ ticker }: { ticker: string }) {
   );
 }
 
-// ═══════════ WATCHLIST ═══════════
+// ═══════════ UPGRADED LEFT PANEL: SEARCH + HOLDINGS + WATCHLIST ═══════════
 
-function Watchlist({ selected, onSelect }: { selected: string; onSelect: (t: string) => void }) {
+interface SecurityItem {
+  ticker: string;
+  price: number;
+  chg: number;
+  pct: number;
+  vol: string;
+  mktCap: string;
+  isHolding: boolean;
+}
+
+function SecurityRow({
+  item,
+  selected,
+  onSelect,
+}: {
+  item: SecurityItem;
+  selected: string;
+  onSelect: (t: string) => void;
+}) {
+  return (
+    <div
+      onClick={() => onSelect(item.ticker)}
+      data-testid={`security-row-${item.ticker}`}
+      className={`flex items-center px-2 py-1 cursor-pointer border-b border-terminal-border/10 hover:bg-white/[0.02] ${
+        item.ticker === selected ? "bg-terminal-accent/5 border-l-2 border-l-terminal-accent" : ""
+      }`}
+    >
+      <span className={`w-[58px] font-semibold font-mono text-[10px] ${item.ticker === selected ? "text-terminal-accent" : "text-terminal-text-primary"}`}>
+        {item.ticker}
+      </span>
+      <span className="flex-1 text-right font-mono text-[10px] tabular-nums">{item.price.toFixed(2)}</span>
+      <span className={`w-[58px] text-right font-mono text-[10px] tabular-nums ${item.chg >= 0 ? "text-terminal-positive" : "text-terminal-negative"}`}>
+        {item.pct >= 0 ? "+" : ""}{item.pct.toFixed(2)}%
+      </span>
+      <span className="w-[52px] text-right font-mono text-[9px] text-terminal-text-faint tabular-nums">{item.vol}</span>
+    </div>
+  );
+}
+
+function SecurityListPanel({
+  selected,
+  onSelect,
+  watchlist,
+  onAddToWatchlist,
+}: {
+  selected: string;
+  onSelect: (t: string) => void;
+  watchlist: string[];
+  onAddToWatchlist: (ticker: string) => void;
+}) {
+  const [search, setSearch] = useState("");
+  const [holdingsCollapsed, setHoldingsCollapsed] = useState(false);
+  const [watchlistCollapsed, setWatchlistCollapsed] = useState(false);
+
+  const holdings = ALL_SECURITIES.filter(s => s.isHolding);
+  const watchItems = ALL_SECURITIES.filter(s => !s.isHolding || watchlist.includes(s.ticker));
+
+  // Filter by search
+  const searchLower = search.toLowerCase().trim();
+  const filteredHoldings = searchLower
+    ? holdings.filter(s => s.ticker.toLowerCase().includes(searchLower))
+    : holdings;
+  const filteredWatch = searchLower
+    ? watchItems.filter(s => s.ticker.toLowerCase().includes(searchLower))
+    : watchItems;
+
+  // Search result not in either list
+  const allTickers = ALL_SECURITIES.map(s => s.ticker.toLowerCase());
+  const searchResult = search.trim().toUpperCase();
+  const searchIsNew = searchLower.length >= 1 && !allTickers.includes(searchLower) && !watchlist.includes(searchResult);
+  // Or: ticker exists but not yet in watchlist
+  const matchedSecurity = searchLower.length >= 1
+    ? ALL_SECURITIES.find(s => s.ticker.toLowerCase() === searchLower)
+    : null;
+  const canAddToWatchlist = matchedSecurity && !matchedSecurity.isHolding && !watchlist.includes(matchedSecurity.ticker);
+
   return (
     <div className="h-full flex flex-col text-[10px] font-mono">
-      <div className="flex items-center px-2 py-1.5 text-[8px] text-terminal-text-faint uppercase tracking-wider border-b border-terminal-border/50">
-        <span className="w-[60px]">Symbol</span>
-        <span className="flex-1 text-right">Price</span>
-        <span className="w-[60px] text-right">Chg %</span>
-        <span className="w-[55px] text-right">Vol</span>
-      </div>
-      <div className="flex-1 overflow-auto">
-        {WATCHLIST.map((w) => (
-          <div
-            key={w.ticker}
-            onClick={() => onSelect(w.ticker)}
-            className={`flex items-center px-2 py-1 cursor-pointer border-b border-terminal-border/10 hover:bg-white/[0.02] ${
-              w.ticker === selected ? "bg-terminal-accent/5 border-l-2 border-l-terminal-accent" : ""
-            }`}
+      {/* Search bar */}
+      <div className="flex items-center gap-1 px-2 py-1.5 border-b border-terminal-border/50 flex-shrink-0">
+        {/* Magnifying glass icon */}
+        <svg className="w-3 h-3 text-terminal-text-faint flex-shrink-0" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5">
+          <circle cx="6.5" cy="6.5" r="4.5" />
+          <path d="M10.5 10.5L14 14" strokeLinecap="round" />
+        </svg>
+        <input
+          type="text"
+          value={search}
+          onChange={e => setSearch(e.target.value)}
+          placeholder="Search any security..."
+          data-testid="input-security-search"
+          className="flex-1 bg-transparent outline-none text-terminal-text-primary placeholder:text-terminal-text-faint text-[10px]"
+        />
+        {search && (
+          <button
+            onClick={() => setSearch("")}
+            className="text-terminal-text-faint hover:text-terminal-text-muted text-[10px] flex-shrink-0"
           >
-            <span className={`w-[60px] font-semibold ${w.ticker === selected ? "text-terminal-accent" : "text-terminal-text-primary"}`}>
-              {w.ticker}
-            </span>
-            <span className="flex-1 text-right tabular-nums">{w.price.toFixed(2)}</span>
-            <span className={`w-[60px] text-right tabular-nums ${w.chg >= 0 ? "text-terminal-positive" : "text-terminal-negative"}`}>
-              {w.pct >= 0 ? "+" : ""}{w.pct.toFixed(2)}%
-            </span>
-            <span className="w-[55px] text-right text-terminal-text-faint tabular-nums">{w.vol}</span>
-          </div>
-        ))}
+            ✕
+          </button>
+        )}
+      </div>
+
+      {/* ADD TO WATCHLIST button — shown when searching */}
+      {(canAddToWatchlist || searchIsNew) && search.trim().length >= 1 && (
+        <div className="px-2 py-1 border-b border-terminal-border/30 flex-shrink-0 bg-terminal-accent/5">
+          <button
+            onClick={() => {
+              onAddToWatchlist(search.trim().toUpperCase());
+              setSearch("");
+            }}
+            data-testid="button-add-to-watchlist"
+            className="w-full flex items-center justify-center gap-1.5 py-1 rounded text-[9px] font-semibold transition-colors bg-terminal-accent/15 text-terminal-accent border border-terminal-accent/30 hover:bg-terminal-accent/25"
+          >
+            <svg className="w-3 h-3" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5">
+              <circle cx="8" cy="8" r="6.5" />
+              <path d="M8 5v6M5 8h6" strokeLinecap="round" />
+            </svg>
+            ADD "{search.trim().toUpperCase()}" TO WATCHLIST
+          </button>
+        </div>
+      )}
+
+      {/* Column headers */}
+      <div className="flex items-center px-2 py-1 text-[8px] text-terminal-text-faint uppercase tracking-wider border-b border-terminal-border/50 flex-shrink-0">
+        <span className="w-[58px]">Symbol</span>
+        <span className="flex-1 text-right">Price</span>
+        <span className="w-[58px] text-right">Chg %</span>
+        <span className="w-[52px] text-right">Vol</span>
+      </div>
+
+      <div className="flex-1 overflow-auto">
+        {/* ── HOLDINGS Section ── */}
+        <div>
+          {/* Section header */}
+          <button
+            onClick={() => setHoldingsCollapsed(c => !c)}
+            data-testid="button-collapse-holdings"
+            className="w-full flex items-center gap-1.5 px-2 py-1 bg-terminal-bg/60 hover:bg-terminal-bg/80 transition-colors border-b border-terminal-border/40 text-[8px] text-terminal-text-faint uppercase tracking-wider select-none"
+          >
+            {/* Portfolio icon */}
+            <svg className="w-3 h-3 text-terminal-accent flex-shrink-0" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.3">
+              <rect x="2" y="5" width="12" height="9" rx="1.5" />
+              <path d="M5 5V4a3 3 0 016 0v1" strokeLinecap="round" />
+            </svg>
+            <span className="text-terminal-accent font-semibold">HOLDINGS</span>
+            <span className="text-terminal-text-faint ml-1">({filteredHoldings.length})</span>
+            <span className="ml-auto">{holdingsCollapsed ? "▶" : "▼"}</span>
+          </button>
+
+          {!holdingsCollapsed && filteredHoldings.map(item => (
+            <SecurityRow key={item.ticker} item={item} selected={selected} onSelect={onSelect} />
+          ))}
+          {!holdingsCollapsed && filteredHoldings.length === 0 && (
+            <div className="px-2 py-2 text-[9px] text-terminal-text-faint italic">No holdings match "{search}"</div>
+          )}
+        </div>
+
+        {/* ── WATCHLIST Section ── */}
+        <div>
+          {/* Section header */}
+          <button
+            onClick={() => setWatchlistCollapsed(c => !c)}
+            data-testid="button-collapse-watchlist"
+            className="w-full flex items-center gap-1.5 px-2 py-1 bg-terminal-bg/60 hover:bg-terminal-bg/80 transition-colors border-b border-terminal-border/40 text-[8px] text-terminal-text-faint uppercase tracking-wider select-none"
+          >
+            {/* Eye icon */}
+            <svg className="w-3 h-3 text-[#58a6ff] flex-shrink-0" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.3">
+              <path d="M1 8s3-5 7-5 7 5 7 5-3 5-7 5-7-5-7-5z" />
+              <circle cx="8" cy="8" r="2" />
+            </svg>
+            <span style={{ color: "#58a6ff" }} className="font-semibold">WATCHLIST</span>
+            <span className="text-terminal-text-faint ml-1">({filteredWatch.length})</span>
+            <span className="ml-auto">{watchlistCollapsed ? "▶" : "▼"}</span>
+          </button>
+
+          {!watchlistCollapsed && filteredWatch.map(item => (
+            <SecurityRow key={item.ticker} item={item} selected={selected} onSelect={onSelect} />
+          ))}
+          {!watchlistCollapsed && filteredWatch.length === 0 && (
+            <div className="px-2 py-2 text-[9px] text-terminal-text-faint italic">No watchlist items match "{search}"</div>
+          )}
+        </div>
       </div>
     </div>
   );
@@ -446,20 +609,36 @@ function CommandLine() {
 export default function OpenBBTerminal() {
   const [selectedTicker, setSelectedTicker] = useState("AAPL");
   const [rightPanel, setRightPanel] = useState<"watchlist" | "screener">("watchlist");
-  const [bottomPanel, setBottomPanel] = useState<"command" | "screener">("command");
+  const [extraWatchlist, setExtraWatchlist] = useState<string[]>([]);
+
+  const handleAddToWatchlist = useCallback((ticker: string) => {
+    setExtraWatchlist(prev => prev.includes(ticker) ? prev : [...prev, ticker]);
+  }, []);
+
+  // Build the lookup for the asset detail panel
+  const selectedData = ALL_SECURITIES.find(x => x.ticker === selectedTicker) || ALL_SECURITIES[0];
 
   return (
     <div className="h-full flex flex-col" data-testid="openbb-terminal">
       {/* Main grid */}
       <div className="flex-1 grid grid-cols-[240px_1fr_280px] grid-rows-[1fr_200px] gap-[2px] p-[2px] overflow-hidden">
-        {/* Left: Watchlist */}
+        {/* Left: Holdings + Watchlist */}
         <DashboardPanel
-          title="WATCHLIST"
+          title="SECURITIES"
           className="row-span-2"
-          headerRight={<span className="text-[8px] text-terminal-text-faint">{WATCHLIST.length} symbols</span>}
+          headerRight={
+            <span className="text-[8px] text-terminal-text-faint font-mono">
+              {ALL_SECURITIES.length + extraWatchlist.length} symbols
+            </span>
+          }
           noPadding
         >
-          <Watchlist selected={selectedTicker} onSelect={setSelectedTicker} />
+          <SecurityListPanel
+            selected={selectedTicker}
+            onSelect={setSelectedTicker}
+            watchlist={extraWatchlist}
+            onAddToWatchlist={handleAddToWatchlist}
+          />
         </DashboardPanel>
 
         {/* Center: Chart */}
@@ -479,7 +658,7 @@ export default function OpenBBTerminal() {
           <ChartPanel ticker={selectedTicker} />
         </DashboardPanel>
 
-        {/* Right: Screener / Details */}
+        {/* Right: Asset Detail / Screener */}
         <DashboardPanel
           title={rightPanel === "watchlist" ? "ASSET DETAIL" : "SCREENER"}
           headerRight={
@@ -504,37 +683,42 @@ export default function OpenBBTerminal() {
             <Screener />
           ) : (
             <div className="p-2 text-[10px] font-mono space-y-2">
-              {(() => {
-                const w = WATCHLIST.find((x) => x.ticker === selectedTicker) || WATCHLIST[0];
-                return (
-                  <>
-                    <div className="text-center pb-2 border-b border-terminal-border/30">
-                      <div className="text-terminal-accent text-sm font-semibold">{w.ticker}</div>
-                      <div className="text-xl tabular-nums text-terminal-text-primary">{w.price.toFixed(2)}</div>
-                      <div className={`text-xs tabular-nums ${w.chg >= 0 ? "text-terminal-positive" : "text-terminal-negative"}`}>
-                        {w.chg >= 0 ? "+" : ""}{w.chg.toFixed(2)} ({w.pct >= 0 ? "+" : ""}{w.pct.toFixed(2)}%)
-                      </div>
-                    </div>
-                    {[
-                      ["Mkt Cap", w.mktCap], ["Volume", w.vol],
-                      ["P/E", "28.4"], ["EPS", "6.67"],
-                      ["Div Yield", "0.52%"], ["Beta", "1.24"],
-                      ["52W High", (+w.price * 1.15).toFixed(2)], ["52W Low", (+w.price * 0.72).toFixed(2)],
-                      ["Avg Vol", "58.2M"], ["Float", "15.2B"],
-                    ].map(([k, v]) => (
-                      <div key={k} className="flex justify-between">
-                        <span className="text-terminal-text-faint">{k}</span>
-                        <span className="text-terminal-text-primary tabular-nums">{v}</span>
-                      </div>
-                    ))}
-                  </>
-                );
-              })()}
+              <div className="text-center pb-2 border-b border-terminal-border/30">
+                <div className="text-terminal-accent text-sm font-semibold">{selectedData.ticker}</div>
+                <div className="text-xl tabular-nums text-terminal-text-primary">{selectedData.price.toFixed(2)}</div>
+                <div className={`text-xs tabular-nums ${selectedData.chg >= 0 ? "text-terminal-positive" : "text-terminal-negative"}`}>
+                  {selectedData.chg >= 0 ? "+" : ""}{selectedData.chg.toFixed(2)} ({selectedData.pct >= 0 ? "+" : ""}{selectedData.pct.toFixed(2)}%)
+                </div>
+                {/* Holding / Watchlist badge */}
+                <div className="mt-1.5 flex items-center justify-center gap-1.5">
+                  {selectedData.isHolding ? (
+                    <span className="px-1.5 py-0.5 rounded text-[7px] font-semibold bg-terminal-accent/15 text-terminal-accent border border-terminal-accent/30">
+                      ◆ PORTFOLIO HOLDING
+                    </span>
+                  ) : (
+                    <span className="px-1.5 py-0.5 rounded text-[7px] font-semibold bg-[#58a6ff]/15 text-[#58a6ff] border border-[#58a6ff]/30">
+                      👁 WATCHLIST
+                    </span>
+                  )}
+                </div>
+              </div>
+              {[
+                ["Mkt Cap", selectedData.mktCap], ["Volume", selectedData.vol],
+                ["P/E", "28.4"], ["EPS", "6.67"],
+                ["Div Yield", "0.52%"], ["Beta", "1.24"],
+                ["52W High", (+selectedData.price * 1.15).toFixed(2)], ["52W Low", (+selectedData.price * 0.72).toFixed(2)],
+                ["Avg Vol", "58.2M"], ["Float", "15.2B"],
+              ].map(([k, v]) => (
+                <div key={k} className="flex justify-between">
+                  <span className="text-terminal-text-faint">{k}</span>
+                  <span className="text-terminal-text-primary tabular-nums">{v}</span>
+                </div>
+              ))}
             </div>
           )}
         </DashboardPanel>
 
-        {/* Bottom: Command line / Screener */}
+        {/* Bottom: Command line */}
         <div className="col-span-2 flex flex-col">
           <DashboardPanel
             title="OPENBB COMMAND LINE"

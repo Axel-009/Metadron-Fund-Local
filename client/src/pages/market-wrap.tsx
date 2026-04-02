@@ -46,8 +46,8 @@ const EARNINGS = [
   { date: "Apr 15", ticker: "BAC", type: "Earnings", est: "$0.82" },
 ];
 
-// ── NEW: Live news feed data ──
-const LIVE_NEWS = [
+// ── Live news feed data ──
+const INITIAL_LIVE_NEWS = [
   {
     id: 1,
     timestamp: "2m ago",
@@ -158,6 +158,20 @@ const LIVE_NEWS = [
   },
 ];
 
+// New headlines that arrive over time
+const INCOMING_HEADLINES = [
+  { source: "Bloomberg", headline: "UnitedHealth beats Q1 medical loss ratio estimates, cost pressures ease", tickers: ["UNH"], sentiment: "bullish" as const, category: "hot" as const },
+  { source: "Reuters", headline: "Google antitrust remedy trial begins — DOJ seeks search market structural changes", tickers: ["GOOGL"], sentiment: "bearish" as const, category: "breaking" as const },
+  { source: "CNBC", headline: "Exxon Permian Basin output exceeds 1.2M barrels/day, efficiency gains on target", tickers: ["XOM"], sentiment: "bullish" as const, category: "top" as const },
+  { source: "WSJ", headline: "Amazon Prime membership hits 250M globally, ad revenue up 23% YoY", tickers: ["AMZN"], sentiment: "bullish" as const, category: "hot" as const },
+  { source: "FT", headline: "US-China trade tensions flare — new 25% tariff on EV components proposed", tickers: ["TSLA", "SPY"], sentiment: "bearish" as const, category: "breaking" as const },
+  { source: "Bloomberg", headline: "Nvidia H200 allocation sold out through Q3 2026 — hyperscaler demand unprecedented", tickers: ["NVDA"], sentiment: "bullish" as const, category: "hot" as const },
+  { source: "Reuters", headline: "JPMorgan sees credit card delinquencies stabilizing — consumer resilience intact", tickers: ["JPM", "V"], sentiment: "bullish" as const, category: "top" as const },
+  { source: "CNBC", headline: "CPI March comes in at 3.1% YoY, slightly below 3.2% consensus estimate", tickers: ["SPY", "TLT", "QQQ"], sentiment: "bullish" as const, category: "breaking" as const },
+  { source: "WSJ", headline: "Meta AI assistant reaches 600M monthly users — monetization roadmap unveiled", tickers: ["META"], sentiment: "bullish" as const, category: "hot" as const },
+  { source: "Bloomberg", headline: "Apple Vision Pro 2 enters mass production — holiday 2026 launch confirmed", tickers: ["AAPL"], sentiment: "bullish" as const, category: "top" as const },
+];
+
 const SENTIMENT_CONFIG = {
   bullish: { emoji: "🟢", label: "Bullish", color: "#3fb950" },
   bearish: { emoji: "🔴", label: "Bearish", color: "#f85149" },
@@ -170,16 +184,198 @@ const CATEGORY_CONFIG = {
   breaking: { emoji: "🚨", label: "Breaking", color: "#f85149" },
 } as const;
 
-export default function MarketWrap() {
-  const [ticker, setTicker] = useState(0);
-  const newsFeedRef = useRef<HTMLDivElement>(null);
+type LiveNewsItem = typeof INITIAL_LIVE_NEWS[0];
 
-  // Ticker animation for news feed timestamp freshness feel
+// ── CSS for scroll animation (injected once) ──
+const SCROLL_CSS = `
+@keyframes news-scroll-1x {
+  0% { transform: translateY(0); }
+  100% { transform: translateY(-50%); }
+}
+@keyframes news-scroll-2x {
+  0% { transform: translateY(0); }
+  100% { transform: translateY(-50%); }
+}
+@keyframes news-scroll-3x {
+  0% { transform: translateY(0); }
+  100% { transform: translateY(-50%); }
+}
+.news-scroll-1x {
+  animation: news-scroll-1x 30s linear infinite;
+}
+.news-scroll-2x {
+  animation: news-scroll-1x 15s linear infinite;
+}
+.news-scroll-3x {
+  animation: news-scroll-1x 10s linear infinite;
+}
+.news-scroll-paused {
+  animation-play-state: paused !important;
+}
+@keyframes slide-in-from-bottom {
+  from { opacity: 0; transform: translateY(16px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+.news-new-item {
+  animation: slide-in-from-bottom 0.4s ease-out forwards;
+}
+`;
+
+function injectScrollCSS() {
+  if (document.getElementById("news-scroll-style")) return;
+  const el = document.createElement("style");
+  el.id = "news-scroll-style";
+  el.textContent = SCROLL_CSS;
+  document.head.appendChild(el);
+}
+
+// ── Live News Feed Component ──
+function LiveNewsFeed() {
+  const [news, setNews] = useState<LiveNewsItem[]>(INITIAL_LIVE_NEWS);
+  const [speed, setSpeed] = useState<1 | 2 | 3>(1);
+  const [paused, setPaused] = useState(false);
+  const [newIds, setNewIds] = useState<Set<number>>(new Set());
+  const incomingIndex = useRef(0);
+  const nextId = useRef(100);
+
   useEffect(() => {
-    const iv = setInterval(() => setTicker((t) => t + 1), 30000);
-    return () => clearInterval(iv);
+    injectScrollCSS();
   }, []);
 
+  // Add new headlines every 8-12 seconds
+  useEffect(() => {
+    const getDelay = () => 8000 + Math.random() * 4000;
+    let timeout: ReturnType<typeof setTimeout>;
+    const scheduleNext = () => {
+      timeout = setTimeout(() => {
+        const template = INCOMING_HEADLINES[incomingIndex.current % INCOMING_HEADLINES.length];
+        incomingIndex.current++;
+        const newItem: LiveNewsItem = {
+          ...template,
+          id: nextId.current++,
+          timestamp: "just now",
+        };
+        setNews(prev => [newItem, ...prev.slice(0, 23)]);
+        setNewIds(prev => {
+          const next = new Set(prev);
+          next.add(newItem.id);
+          setTimeout(() => setNewIds(s => { const n = new Set(s); n.delete(newItem.id); return n; }), 1000);
+          return next;
+        });
+        scheduleNext();
+      }, getDelay());
+    };
+    scheduleNext();
+    return () => clearTimeout(timeout);
+  }, []);
+
+  const scrollClass = `news-scroll-${speed}x${paused ? " news-scroll-paused" : ""}`;
+
+  const bullishCount = news.filter(n => n.sentiment === "bullish").length;
+  const bearishCount = news.filter(n => n.sentiment === "bearish").length;
+
+  return (
+    <DashboardPanel
+      title="LIVE NEWS — PORTFOLIO RELEVANT"
+      className="col-span-3"
+      noPadding
+      headerRight={
+        <div className="flex items-center gap-3 text-[8px] font-mono">
+          {/* LIVE indicator */}
+          <div className="flex items-center gap-1">
+            <span
+              className="w-2 h-2 rounded-full bg-terminal-positive"
+              style={{ animation: "pulse 1.2s ease-in-out infinite", boxShadow: "0 0 0 0 #3fb950" }}
+            />
+            <span className="text-terminal-positive font-semibold tracking-wider">LIVE</span>
+          </div>
+          {/* Sentiment counts */}
+          <span className="text-terminal-text-faint">
+            {bullishCount}🟢 {bearishCount}🔴
+          </span>
+          {/* Speed controls */}
+          <div className="flex items-center gap-0.5 ml-1">
+            <span className="text-terminal-text-faint mr-1">SPEED:</span>
+            {([1, 2, 3] as const).map(s => (
+              <button
+                key={s}
+                onClick={() => setSpeed(s)}
+                className={`px-1.5 py-0.5 rounded text-[8px] transition-colors ${speed === s ? "bg-terminal-accent/20 text-terminal-accent border border-terminal-accent/40" : "text-terminal-text-faint hover:text-terminal-text-muted border border-transparent"}`}
+              >
+                {s}x
+              </button>
+            ))}
+          </div>
+          {/* Pause/play */}
+          <button
+            onClick={() => setPaused(p => !p)}
+            className={`px-1.5 py-0.5 rounded text-[8px] border transition-colors ${paused ? "border-terminal-warning/40 text-terminal-warning bg-terminal-warning/10" : "border-terminal-border/40 text-terminal-text-faint hover:text-terminal-text-muted"}`}
+          >
+            {paused ? "▶ PLAY" : "⏸ PAUSE"}
+          </button>
+        </div>
+      }
+    >
+      {/* Scroll container — fixed height viewport */}
+      <div
+        className="overflow-hidden relative"
+        style={{ height: 180 }}
+        onMouseEnter={() => setPaused(true)}
+        onMouseLeave={() => setPaused(false)}
+      >
+        {/* Fade masks */}
+        <div className="absolute inset-x-0 top-0 h-6 z-10 pointer-events-none" style={{ background: "linear-gradient(to bottom, var(--color-terminal-surface, #0d1117), transparent)" }} />
+        <div className="absolute inset-x-0 bottom-0 h-6 z-10 pointer-events-none" style={{ background: "linear-gradient(to top, var(--color-terminal-surface, #0d1117), transparent)" }} />
+
+        {/* Scrolling content — doubled for seamless loop */}
+        <div className={scrollClass}>
+          {[...news, ...news].map((item, idx) => {
+            const sent = SENTIMENT_CONFIG[item.sentiment];
+            const cat = CATEGORY_CONFIG[item.category];
+            const isNew = newIds.has(item.id) && idx < news.length;
+            return (
+              <div
+                key={`${item.id}-${idx}`}
+                className={`flex items-center gap-2 px-2 py-1 border-b border-terminal-border/20 hover:bg-white/[0.02] transition-colors text-[9px] font-mono ${isNew ? "news-new-item bg-terminal-accent/3" : ""}`}
+              >
+                {/* Timestamp */}
+                <span className="text-terminal-text-faint whitespace-nowrap w-14 flex-shrink-0">{item.timestamp}</span>
+                {/* Source */}
+                <span className="text-terminal-accent text-[8px] font-semibold flex-shrink-0 w-16 truncate">{item.source}</span>
+                {/* Headline */}
+                <span className="text-terminal-text-muted flex-1 leading-relaxed truncate">{item.headline}</span>
+                {/* Tickers */}
+                <div className="flex gap-1 flex-shrink-0">
+                  {item.tickers.slice(0, 3).map(t => (
+                    <span
+                      key={t}
+                      className="inline-block px-1 py-0.5 rounded text-[7px] font-bold"
+                      style={{ color: "#00d4aa", background: "rgba(0,212,170,0.12)", border: "1px solid rgba(0,212,170,0.25)" }}
+                    >
+                      {t}
+                    </span>
+                  ))}
+                </div>
+                {/* Sentiment */}
+                <div className="flex items-center gap-1 flex-shrink-0 w-16">
+                  <span className="text-[9px]">{sent.emoji}</span>
+                  <span className="text-[7px] font-medium" style={{ color: sent.color }}>{sent.label}</span>
+                </div>
+                {/* Category */}
+                <div className="flex items-center gap-1 flex-shrink-0 w-16">
+                  <span className="text-[9px]">{cat.emoji}</span>
+                  <span className="text-[7px] font-medium" style={{ color: cat.color }}>{cat.label}</span>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      </div>
+    </DashboardPanel>
+  );
+}
+
+export default function MarketWrap() {
   return (
     <div className="h-full grid grid-cols-3 grid-rows-[auto_1fr_auto_auto] gap-[2px] p-[2px] overflow-auto" data-testid="market-wrap">
       {/* Market Direction Narrative */}
@@ -266,92 +462,8 @@ export default function MarketWrap() {
         </DashboardPanel>
       </div>
 
-      {/* ── NEW: Live News Feed — full width, below GICS sector map ── */}
-      <DashboardPanel
-        title="LIVE NEWS — PORTFOLIO RELEVANT"
-        className="col-span-3"
-        noPadding
-        headerRight={
-          <div className="flex items-center gap-1.5 text-[8px] font-mono">
-            <span className="w-1.5 h-1.5 rounded-full bg-terminal-positive animate-pulse" />
-            <span className="text-terminal-positive">LIVE</span>
-            <span className="text-terminal-text-faint ml-2">
-              {LIVE_NEWS.filter((n) => n.sentiment === "bullish").length}🟢{" "}
-              {LIVE_NEWS.filter((n) => n.sentiment === "bearish").length}🔴
-            </span>
-          </div>
-        }
-      >
-        <div ref={newsFeedRef} className="overflow-auto" style={{ maxHeight: 200 }}>
-          <table className="w-full text-[9px] font-mono">
-            <thead className="sticky top-0 bg-terminal-surface z-10">
-              <tr className="text-terminal-text-faint uppercase tracking-wider border-b border-terminal-border/50">
-                <th className="text-left px-2 py-1.5 font-medium w-16">Time</th>
-                <th className="text-left px-2 py-1.5 font-medium w-20">Source</th>
-                <th className="text-left px-2 py-1.5 font-medium">Headline</th>
-                <th className="text-left px-2 py-1.5 font-medium w-28">Tickers</th>
-                <th className="text-center px-2 py-1.5 font-medium w-20">Sentiment</th>
-                <th className="text-center px-2 py-1.5 font-medium w-20">Category</th>
-              </tr>
-            </thead>
-            <tbody>
-              {LIVE_NEWS.map((item) => {
-                const sent = SENTIMENT_CONFIG[item.sentiment];
-                const cat = CATEGORY_CONFIG[item.category];
-                return (
-                  <tr
-                    key={item.id}
-                    className="border-b border-terminal-border/20 hover:bg-white/[0.02] transition-colors"
-                  >
-                    {/* Timestamp */}
-                    <td className="px-2 py-1.5 text-terminal-text-faint whitespace-nowrap">{item.timestamp}</td>
-                    {/* Source */}
-                    <td className="px-2 py-1.5">
-                      <span className="text-terminal-accent text-[8px] font-medium">{item.source}</span>
-                    </td>
-                    {/* Headline */}
-                    <td className="px-2 py-1.5 text-terminal-text-muted leading-relaxed max-w-[420px]">
-                      {item.headline}
-                    </td>
-                    {/* Tickers */}
-                    <td className="px-2 py-1.5">
-                      <div className="flex flex-wrap gap-1">
-                        {item.tickers.map((t) => (
-                          <span
-                            key={t}
-                            className="inline-block px-1 py-0.5 rounded text-[7px] font-bold font-mono"
-                            style={{
-                              color: "#00d4aa",
-                              background: "rgba(0,212,170,0.12)",
-                              border: "1px solid rgba(0,212,170,0.25)",
-                            }}
-                          >
-                            {t}
-                          </span>
-                        ))}
-                      </div>
-                    </td>
-                    {/* Sentiment */}
-                    <td className="px-2 py-1.5 text-center">
-                      <div className="flex items-center justify-center gap-1">
-                        <span className="text-[10px]">{sent.emoji}</span>
-                        <span className="text-[7px] font-medium" style={{ color: sent.color }}>{sent.label}</span>
-                      </div>
-                    </td>
-                    {/* Category */}
-                    <td className="px-2 py-1.5 text-center">
-                      <div className="flex items-center justify-center gap-1">
-                        <span className="text-[10px]">{cat.emoji}</span>
-                        <span className="text-[7px] font-medium" style={{ color: cat.color }}>{cat.label}</span>
-                      </div>
-                    </td>
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
-        </div>
-      </DashboardPanel>
+      {/* ── UPGRADED: Live News Feed — full width, below GICS sector map ── */}
+      <LiveNewsFeed />
 
       {/* Bottom: Upcoming Earnings/Dividends */}
       <DashboardPanel title="INCOMING EVENTS" className="col-span-3">
