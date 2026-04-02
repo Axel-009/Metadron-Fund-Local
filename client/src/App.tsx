@@ -30,11 +30,12 @@ import MLModelsPage from "@/pages/ml-models";
 import MonteCarloPage from "@/pages/monte-carlo";
 import SimulationsPage from "@/pages/simulations";
 import ArchivePage from "@/pages/archive";
+import MetadronCubePage from "@/pages/metadron-cube";
 
 // ═══════════ ALL AVAILABLE TABS ═══════════
 const ALL_TABS = [
   { path: "/live", label: "LIVE" },
-  { path: "/market", label: "MARKET" },
+  { path: "/cube", label: "CUBE" },
   { path: "/market-wrap", label: "WRAP" },
   { path: "/allocation", label: "ALLOC" },
   { path: "/risk", label: "RISK" },
@@ -60,7 +61,7 @@ const ALL_TABS = [
 ];
 
 const DEFAULT_PINNED = [
-  "/live", "/market", "/market-wrap", "/allocation", "/risk",
+  "/live", "/cube", "/market-wrap", "/allocation", "/risk",
   "/openbb", "/txlog", "/futures", "/tca", "/agents",
 ];
 
@@ -344,7 +345,7 @@ function AppRouter() {
   return (
     <Switch>
       <Route path="/" component={LiveDashboard} />
-      <Route path="/market" component={LiveDashboard} />
+      <Route path="/cube" component={MetadronCubePage} />
       <Route path="/market-wrap" component={MarketWrap} />
       <Route path="/live" component={LiveDashboard} />
       <Route path="/allocation" component={AssetAllocation} />
