@@ -5,6 +5,7 @@ import {
   PolarRadiusAxis, Treemap, XAxis, YAxis, CartesianGrid, Tooltip,
   ResponsiveContainer, ReferenceLine, Legend, Scatter,
 } from "recharts";
+import { useEngineQuery } from "@/hooks/use-engine-api";
 
 /* ═══════════════════════════════════════════════════════════════════════
    METADRON MONEY VELOCITY & US LIQUIDITY INDICATOR TAB
@@ -353,6 +354,15 @@ const AXIS_STYLE = { fontSize: 8, fill: C.textFaint, fontFamily: "monospace" };
 // MAIN COMPONENT
 // ══════════════════════════════════════════════════════════════════════
 export default function MoneyVelocityPage() {
+  // ─── Engine API ─────────────────────────────────────
+  const { data: fedBsApi } = useEngineQuery<{ walcl?: number; soma_treasuries?: number; soma_mbs?: number; reserves?: number; on_rrp?: number; tga?: number }>("/macro/fed-balance-sheet", { refetchInterval: 30000 });
+  const { data: reservesApi } = useEngineQuery<{ fed_to_pd?: number; pd_to_gsib?: number; gsib_to_shadow?: number; shadow_to_market?: number; net_market_liquidity?: number; bottleneck?: string }>("/macro/reserves-flow", { refetchInterval: 30000 });
+  const { data: velocityApi } = useEngineQuery<{ velocity?: number; velocity_change?: number; credit_impulse?: number; sofr_rate?: number; liquidity_score?: number }>("/macro/velocity", { refetchInterval: 15000 });
+  const { data: liqScoreApi } = useEngineQuery<{ score?: number; regime?: string }>("/macro/liquidity-score", { refetchInterval: 15000 });
+  const { data: drainApi } = useEngineQuery<{ warning_level?: number; triggers?: string[] }>("/macro/drain-warning", { refetchInterval: 30000 });
+  const { data: sectorFlowApi } = useEngineQuery<{ sector_scores?: Record<string, number>; overweight?: string[]; underweight?: string[]; flow_regime?: string }>("/macro/sector-flows", { refetchInterval: 30000 });
+  const { data: creditApi } = useEngineQuery<{ impulse?: number; regime?: string; z_score?: number }>("/macro/credit-impulse", { refetchInterval: 30000 });
+
   // ── State ──
   const [tick, setTick] = useState(0);
   const [timeframe, setTimeframe] = useState<"D" | "W" | "M" | "Q">("D");
@@ -377,24 +387,24 @@ export default function MoneyVelocityPage() {
   const liqComp = useMemo(() => genLiquidityComposite(90), [tick]);
   const changes = useMemo(() => genChanges(), [tick]);
 
-  // Derived
-  const latestNet = netLiq[netLiq.length - 1]?.net || 5998;
-  const latestScore = liqComp[liqComp.length - 1]?.score || 62;
-  const latestVelocity = m2v[m2v.length - 1]?.velocity || 1.149;
-  const latestSofr = rates[rates.length - 1]?.sofr || 4.32;
-  const latestTga = reserves[reserves.length - 1]?.tga || 722;
-  const latestOnRrp = reserves[reserves.length - 1]?.onRrp || 118;
-  const latestBankRes = reserves[reserves.length - 1]?.bankRes || 3340;
-  const latestFedBs = fedBs[fedBs.length - 1]?.total || 6820;
+  // Derived — override with API data when available
+  const latestNet = reservesApi?.net_market_liquidity ?? netLiq[netLiq.length - 1]?.net ?? 5998;
+  const latestScore = liqScoreApi?.score != null ? liqScoreApi.score * 100 : (liqComp[liqComp.length - 1]?.score ?? 62);
+  const latestVelocity = velocityApi?.velocity ?? m2v[m2v.length - 1]?.velocity ?? 1.149;
+  const latestSofr = velocityApi?.sofr_rate ?? rates[rates.length - 1]?.sofr ?? 4.32;
+  const latestTga = fedBsApi?.tga ?? reserves[reserves.length - 1]?.tga ?? 722;
+  const latestOnRrp = fedBsApi?.on_rrp ?? reserves[reserves.length - 1]?.onRrp ?? 118;
+  const latestBankRes = fedBsApi?.reserves ?? reserves[reserves.length - 1]?.bankRes ?? 3340;
+  const latestFedBs = fedBsApi?.walcl ?? fedBs[fedBs.length - 1]?.total ?? 6820;
   const velocityRegime = latestVelocity > 1.18 ? "ACCELERATING" : latestVelocity < 1.10 ? "DECELERATING" : "STABLE";
-  const liqRegime = latestScore > 65 ? "EXPANSIONARY" : latestScore > 40 ? "NEUTRAL" : "CONTRACTIONARY";
+  const liqRegime = liqScoreApi?.regime ?? (latestScore > 65 ? "EXPANSIONARY" : latestScore > 40 ? "NEUTRAL" : "CONTRACTIONARY");
   const sdrCtv = useMemo(() => {
     let s = 0; let w = 0;
     ctvPairs.filter((p) => p.sdr > 0).forEach((p) => { s += p.ctv * p.sdr; w += p.sdr; });
     return w > 0 ? s / w : 0;
   }, [ctvPairs]);
 
-  const drainWarning = latestOnRrp < 50 && latestBankRes < 3000;
+  const drainWarning = drainApi?.warning_level != null ? drainApi.warning_level >= 2 : (latestOnRrp < 50 && latestBankRes < 3000);
 
   return (
     <div className="h-full flex flex-col overflow-hidden">

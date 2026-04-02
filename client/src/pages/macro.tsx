@@ -4,6 +4,7 @@ import { ResizableDashboard } from "@/components/resizable-panel";
 import {
   LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, ReferenceLine,
 } from "recharts";
+import { useEngineQuery, type MacroSnapshot } from "@/hooks/use-engine-api";
 
 // ═══════════ MOCK DATA ═══════════
 
@@ -92,11 +93,33 @@ const TOOLTIP_STYLE = {
 };
 
 export default function MacroDashboard() {
-  const spreadData = useMemo(() => genChartData(-0.38, 0.06, 0.004, 30), []);
-  const vixData    = useMemo(() => genChartData(18.4, 1.2, -0.02, 30), []);
+  // ─── Engine API ─────────────────────────────────────
+  const { data: macroSnap } = useEngineQuery<MacroSnapshot>("/macro/snapshot", { refetchInterval: 15000 });
+  const { data: velocityData } = useEngineQuery<{ velocity?: number; credit_impulse?: number; sofr_rate?: number; ted_spread?: number; liquidity_score?: number }>("/macro/velocity", { refetchInterval: 30000 });
+  const { data: yieldCurve } = useEngineQuery<Record<string, number>>("/macro/yield-curve", { refetchInterval: 30000 });
+  const { data: tensionData } = useEngineQuery<{ tension_score?: number; stance?: string }>("/macro/monetary-tension", { refetchInterval: 60000 });
+
+  // Override regime from API
+  const apiRegime = macroSnap?.regime?.toUpperCase() || REGIME.label;
+  const regime = { label: apiRegime, confidence: macroSnap ? Math.round((macroSnap.gmtf_score || 0.67) * 100) : REGIME.confidence, prev: REGIME.prev };
+
+  // Override liquidity metrics from API
+  const liqMetrics = useMemo(() => {
+    if (!velocityData) return LIQUIDITY_METRICS;
+    return [
+      { label: "Fed Balance Sheet", value: velocityData.liquidity_score != null ? `Score: ${(velocityData.liquidity_score).toFixed(1)}` : LIQUIDITY_METRICS[0].value, chg: "", dir: "up" },
+      { label: "Money Velocity", value: velocityData.velocity != null ? `V=${(velocityData.velocity).toFixed(3)}` : LIQUIDITY_METRICS[1].value, chg: "", dir: (velocityData.velocity || 0) > 1.15 ? "up" : "down" },
+      { label: "SOFR Rate", value: velocityData.sofr_rate != null ? `${velocityData.sofr_rate.toFixed(2)}%` : LIQUIDITY_METRICS[2].value, chg: "", dir: "up" },
+      { label: "TED Spread", value: velocityData.ted_spread != null ? `${(velocityData.ted_spread * 100).toFixed(1)}bps` : LIQUIDITY_METRICS[3].value, chg: "", dir: "down" },
+      { label: "Credit Impulse", value: velocityData.credit_impulse != null ? `${velocityData.credit_impulse.toFixed(2)}` : LIQUIDITY_METRICS[4].value, chg: "", dir: (velocityData.credit_impulse || 0) > 0 ? "up" : "down" },
+    ];
+  }, [velocityData]);
+
+  const spreadData = useMemo(() => genChartData(macroSnap?.yield_spread ?? -0.38, 0.06, 0.004, 30), [macroSnap]);
+  const vixData    = useMemo(() => genChartData(macroSnap?.vix ?? 18.4, 1.2, -0.02, 30), [macroSnap]);
   const dxyData    = useMemo(() => genChartData(104.2, 0.3, 0.01, 30), []);
 
-  const r = REGIME_COLORS[REGIME.label];
+  const r = REGIME_COLORS[regime.label] || REGIME_COLORS["TRANSITION"];
 
   return (
     <div className="h-full flex flex-col gap-1 p-1 overflow-hidden">
@@ -105,15 +128,15 @@ export default function MacroDashboard() {
       <div className="flex-shrink-0 terminal-panel flex items-center justify-between px-3 py-1" style={{ border: `1px solid ${r.border}`, backgroundColor: r.bg }}>
         <div className="flex items-center gap-3">
           <span className="text-[9px] text-terminal-text-muted tracking-widest">MACRO REGIME</span>
-          <span className="text-[18px] font-mono font-bold tracking-widest" style={{ color: r.text }}>{REGIME.label}</span>
-          <span className="text-[10px] font-mono text-terminal-text-muted">CONFIDENCE: <span style={{ color: r.text }}>{REGIME.confidence}%</span></span>
-          <span className="text-[9px] text-terminal-text-faint">PREV: {REGIME.prev}</span>
+          <span className="text-[18px] font-mono font-bold tracking-widest" style={{ color: r.text }}>{regime.label}</span>
+          <span className="text-[10px] font-mono text-terminal-text-muted">CONFIDENCE: <span style={{ color: r.text }}>{regime.confidence}%</span></span>
+          <span className="text-[9px] text-terminal-text-faint">PREV: {regime.prev}</span>
         </div>
         <div className="flex items-center gap-3">
           {Object.entries(REGIME_COLORS).map(([label, c]) => (
             <div key={label} className="flex items-center gap-1">
-              <div className="w-2 h-2 rounded-full" style={{ backgroundColor: c.text, opacity: label === REGIME.label ? 1 : 0.3 }} />
-              <span className="text-[8px] font-mono" style={{ color: label === REGIME.label ? c.text : "#555" }}>{label}</span>
+              <div className="w-2 h-2 rounded-full" style={{ backgroundColor: c.text, opacity: label === regime.label ? 1 : 0.3 }} />
+              <span className="text-[8px] font-mono" style={{ color: label === regime.label ? c.text : "#555" }}>{label}</span>
             </div>
           ))}
         </div>
@@ -237,7 +260,7 @@ export default function MacroDashboard() {
 
           <DashboardPanel title="MONEY VELOCITY & LIQUIDITY">
             <div className="grid grid-cols-1 gap-2">
-              {LIQUIDITY_METRICS.map(m => (
+              {liqMetrics.map(m => (
                 <div key={m.label} className="flex items-center justify-between border-b border-terminal-border pb-1">
                   <span className="text-[9px] text-terminal-text-muted">{m.label}</span>
                   <div className="flex items-center gap-2">

@@ -5,6 +5,7 @@ import {
   AreaChart, Area, XAxis, YAxis, Tooltip, ResponsiveContainer,
   LineChart, Line, BarChart, Bar, ComposedChart,
 } from "recharts";
+import { useEngineQuery } from "@/hooks/use-engine-api";
 
 // ═══════════ MOCK DATA ═══════════
 
@@ -428,6 +429,11 @@ function RollCalendar({ rolls }: { rolls: ReturnType<typeof generateRollCalendar
 // ═══════════ MAIN PAGE ═══════════
 
 export default function FuturesPage() {
+  // ─── Engine API ─────────────────────────────────────
+  const { data: l7Status } = useEngineQuery<Record<string, unknown>>("/execution/l7/status", { refetchInterval: 10000 });
+  const { data: wtStatus } = useEngineQuery<Record<string, unknown>>("/execution/wondertrader/status", { refetchInterval: 10000 });
+  const { data: betaData } = useEngineQuery<{ state: { current_beta?: number; target_beta?: number } }>("/portfolio/beta", { refetchInterval: 10000 });
+
   const [selectedContract, setSelectedContract] = useState("ESM6");
   const [positions] = useState(generatePositions);
   const [orders] = useState(generateOrders);
