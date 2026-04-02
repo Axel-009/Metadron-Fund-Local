@@ -186,7 +186,15 @@ const CATEGORY_CONFIG = {
   breaking: { emoji: "🚨", label: "Breaking", color: "#f85149" },
 } as const;
 
-type LiveNewsItem = typeof INITIAL_LIVE_NEWS[0];
+interface LiveNewsItem {
+  id: number;
+  timestamp: string;
+  source: string;
+  headline: string;
+  tickers: string[];
+  sentiment: "bullish" | "bearish" | "neutral";
+  category: "hot" | "top" | "breaking";
+}
 
 // ── CSS for scroll animation (injected once) ──
 const SCROLL_CSS = `

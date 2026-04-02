@@ -4,6 +4,7 @@ import {
   LineChart, Line, BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer,
   PieChart, Pie, Cell,
 } from "recharts";
+import { useEngineQuery } from "@/hooks/use-engine-api";
 
 // ═══════════ MOCK DATA ═══════════
 
@@ -102,6 +103,10 @@ const fmtM = (n: number) => `$${(n / 1_000_000).toFixed(2)}M`;
 const fmtK = (n: number) => `$${n.toLocaleString()}`;
 
 export default function FixedIncomeDashboard() {
+  // ─── Engine API ─────────────────────────────────────
+  const { data: yieldData } = useEngineQuery<Record<string, number>>("/macro/yield-curve", { refetchInterval: 30000 });
+  const { data: creditData } = useEngineQuery<Record<string, number>>("/macro/credit-pulse", { refetchInterval: 30000 });
+
   const spreadData = useMemo(() => generateSpreadData(), []);
   const totalPnL = BOND_HOLDINGS.reduce((s, b) => s + b.pnl, 0);
 

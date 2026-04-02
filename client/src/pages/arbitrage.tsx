@@ -5,6 +5,7 @@ import {
   LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, ReferenceLine,
   RadarChart, Radar, PolarGrid, PolarAngleAxis, PolarRadiusAxis,
 } from "recharts";
+import { useEngineQuery } from "@/hooks/use-engine-api";
 
 // ═══════════ MOCK DATA ═══════════
 
@@ -112,21 +113,52 @@ function generateZscoreHistory(currentZ: number, halfLife: number) {
   return data;
 }
 
+interface StatArbPairAPI {
+  ticker_a: string; ticker_b: string; correlation: number;
+  cointegration_pvalue: number; half_life: number; spread_zscore: number;
+  hedge_ratio: number; signal_strength: number; status: string;
+}
+
 export default function ArbitrageDashboard() {
+  const { data: statArbData } = useEngineQuery<{ pairs: StatArbPairAPI[] }>("/signals/stat-arb/pairs?max_pairs=30", { refetchInterval: 15000 });
+
+  // Map API pairs into RVPair format, fallback to static data
+  const pairs: RVPair[] = useMemo(() => {
+    if (!statArbData?.pairs?.length) return RV_PAIRS;
+    return statArbData.pairs.map((p) => {
+      const signal: Signal =
+        p.spread_zscore > 2 ? "LONG_A_SHORT_B" :
+        p.spread_zscore < -2 ? "SHORT_A_LONG_B" :
+        p.status === "STOPPED" ? "EXIT" : "FLAT";
+      return {
+        pairA: p.ticker_a,
+        pairB: p.ticker_b,
+        sector: "—",
+        zscore: p.spread_zscore,
+        signal,
+        halfLife: p.half_life,
+        hedgeRatio: p.hedge_ratio,
+        correlation: p.correlation,
+        pval: p.cointegration_pvalue,
+        spread: p.spread_zscore * 10,
+        pnl: p.signal_strength * 10000,
+      };
+    });
+  }, [statArbData]);
+
   const [selectedIdx, setSelectedIdx] = useState<number>(0);
   const [sortKey, setSortKey] = useState<string>("zscore");
   const [sortDir, setSortDir] = useState<1 | -1>(-1);
 
-  const selectedPair = RV_PAIRS[selectedIdx];
+  const selectedPair = pairs[selectedIdx] || pairs[0] || RV_PAIRS[0];
 
   const sortedPairs = useMemo(() => {
-    return [...RV_PAIRS].sort((a, b) => {
-      const av = Math.abs((a as Record<string, number | string>)[sortKey] as number);
-      const bv = Math.abs((b as Record<string, number | string>)[sortKey] as number);
-      if (typeof av === "number" && typeof bv === "number") return sortDir * (bv - av);
-      return 0;
+    return [...pairs].sort((a, b) => {
+      const av = Math.abs((a as unknown as Record<string, number>)[sortKey] ?? 0);
+      const bv = Math.abs((b as unknown as Record<string, number>)[sortKey] ?? 0);
+      return sortDir * (bv - av);
     });
-  }, [sortKey, sortDir]);
+  }, [pairs, sortKey, sortDir]);
 
   const zHistory = useMemo(() => generateZscoreHistory(selectedPair.zscore, selectedPair.halfLife), [selectedIdx]);
 
@@ -137,9 +169,9 @@ export default function ArbitrageDashboard() {
     raw: f.value,
   }));
 
-  const activePairs   = RV_PAIRS.filter(p => p.signal !== "FLAT").length;
-  const totalPairPnL  = RV_PAIRS.reduce((s, p) => s + p.pnl, 0);
-  const highConviction= RV_PAIRS.filter(p => Math.abs(p.zscore) >= 3).length;
+  const activePairs   = pairs.filter(p => p.signal !== "FLAT").length;
+  const totalPairPnL  = pairs.reduce((s, p) => s + p.pnl, 0);
+  const highConviction= pairs.filter(p => Math.abs(p.zscore) >= 3).length;
 
   return (
     <div className="h-full flex flex-col gap-1 p-1 overflow-hidden">
@@ -147,10 +179,10 @@ export default function ArbitrageDashboard() {
       {/* ─── Summary Bar ─── */}
       <div className="flex-shrink-0 grid gap-1" style={{ gridTemplateColumns: "repeat(5, 1fr)" }}>
         {[
-          { label:"ACTIVE PAIRS",     value:`${activePairs} / ${RV_PAIRS.length}`,  color:"text-terminal-accent" },
+          { label:"ACTIVE PAIRS",     value:`${activePairs} / ${pairs.length}`,  color:"text-terminal-accent" },
           { label:"HIGH CONVICTION",  value:`${highConviction} pairs`,               color:"text-terminal-warning" },
           { label:"PAIR BOOK P&L",    value:`+$${totalPairPnL.toLocaleString()}`,    color:"text-terminal-positive" },
-          { label:"AVG Z-SCORE",      value:(RV_PAIRS.reduce((s,p)=>s+Math.abs(p.zscore),0)/RV_PAIRS.length).toFixed(2), color:"text-terminal-text-primary" },
+          { label:"AVG Z-SCORE",      value:(pairs.reduce((s,p)=>s+Math.abs(p.zscore),0)/(pairs.length||1)).toFixed(2), color:"text-terminal-text-primary" },
           { label:"SELECTED PAIR",    value:`${selectedPair.pairA}/${selectedPair.pairB}`, color:"text-terminal-accent" },
         ].map(c => (
           <div key={c.label} className="terminal-panel p-2 flex flex-col justify-between">
@@ -188,7 +220,7 @@ export default function ArbitrageDashboard() {
             </thead>
             <tbody>
               {sortedPairs.map((p, i) => {
-                const realIdx = RV_PAIRS.indexOf(p);
+                const realIdx = pairs.indexOf(p);
                 const isSelected = realIdx === selectedIdx;
                 const zAbs = Math.abs(p.zscore);
                 const zColor = zAbs >= 3 ? "#f85149" : zAbs >= 2 ? "#d29922" : "#e6edf3";
