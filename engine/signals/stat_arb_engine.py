@@ -1038,7 +1038,7 @@ class StatArbEngine:
         """
         try:
             from ..data.universe_engine import get_engine
-            from ..data.yahoo_data import get_adj_close
+            from ..data.openbb_data import get_adj_close
             import pandas as pd
         except ImportError:
             logger.debug("Cannot discover pairs — imports unavailable")

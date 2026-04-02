@@ -38,7 +38,7 @@ from sklearn.preprocessing import StandardScaler
 from xgboost import XGBRegressor
 from sklearn.ensemble import GradientBoostingRegressor
 
-from ..data.yahoo_data import get_adj_close, get_returns, get_prices
+from ..data.openbb_data import get_adj_close, get_returns, get_prices
 
 
 # ---------------------------------------------------------------------------

@@ -43,7 +43,7 @@ from enum import Enum
 import numpy as np
 import pandas as pd
 
-from ..data.yahoo_data import get_adj_close
+from ..data.openbb_data import get_adj_close
 
 
 # ---------------------------------------------------------------------------

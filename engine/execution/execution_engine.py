@@ -43,7 +43,7 @@ from ..data.universe_engine import (
     UniverseEngine, get_engine, SECTOR_ETFS,
     MACRO_ONLY_TICKERS, TRADEABLE_ETFS, AssetClass,
 )
-from ..data.yahoo_data import get_returns, get_adj_close, get_market_stats
+from ..data.openbb_data import get_returns, get_adj_close, get_market_stats
 from ..signals.macro_engine import MacroEngine, MacroSnapshot, MarketRegime
 from ..signals.metadron_cube import MetadronCube, CubeOutput
 from ..ml.alpha_optimizer import AlphaOptimizer, AlphaOutput, AlphaSignal
@@ -1843,7 +1843,7 @@ class ExecutionEngine:
                 ticker = sig.ticker
                 spot = 0.0
                 try:
-                    from ..data.yahoo_data import get_adj_close
+                    from ..data.openbb_data import get_adj_close
                     p = get_adj_close([ticker], start=datetime.now().strftime("%Y-%m-%d"))
                     if not p.empty:
                         spot = float(p[ticker].iloc[-1])

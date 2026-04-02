@@ -449,7 +449,8 @@ def get_market_stats(
     start = (datetime.now() - timedelta(days=lookback_years * 365)).strftime("%Y-%m-%d")
     prices = get_adj_close(benchmark, start, end)
     if prices.empty:
-        return {"Rm": 0.05, "sigma_m": 0.15, "last_price": 5000.0}
+        logger.error("get_market_stats: no price data for %s — returning error state", benchmark)
+        return {"Rm": None, "sigma_m": None, "last_price": None, "error": f"No price data for {benchmark}"}
     close = prices.iloc[:, 0] if isinstance(prices, pd.DataFrame) else prices
     log_ret = np.log(close / close.shift(1)).dropna()
     sigma_m = float(log_ret.std() * np.sqrt(252))
@@ -481,7 +482,8 @@ def get_fundamentals(ticker: str, provider: Optional[str] = None) -> dict:
         except Exception as e:
             logger.debug(f"OpenBB fundamentals failed for {ticker}: {e}")
 
-    return {"ticker": ticker}
+    logger.warning("get_fundamentals: no data for %s — OpenBB unavailable or provider failed", ticker)
+    return {"ticker": ticker, "error": "No fundamental data available"}
 
 
 def _parse_openbb_fundamentals(ticker: str, row) -> dict:
