@@ -1,13 +1,66 @@
 import type { Express } from "express";
 import { createServer, type Server } from "http";
 import { storage } from "./storage";
+import http from "http";
+
+const ENGINE_API_HOST = process.env.ENGINE_API_HOST || "127.0.0.1";
+const ENGINE_API_PORT = parseInt(process.env.ENGINE_API_PORT || "8001", 10);
+
+/**
+ * Proxy requests matching /api/engine/* to the Python FastAPI server.
+ * Falls through to Express mock routes if the Python server is unreachable.
+ */
+function proxyToEngine(
+  app: Express,
+  prefix: string = "/api/engine"
+): void {
+  app.all(`${prefix}/{*path}`, (req, res, next) => {
+    const targetPath = req.originalUrl;
+    const options: http.RequestOptions = {
+      hostname: ENGINE_API_HOST,
+      port: ENGINE_API_PORT,
+      path: targetPath,
+      method: req.method,
+      headers: {
+        ...req.headers,
+        host: `${ENGINE_API_HOST}:${ENGINE_API_PORT}`,
+      },
+      timeout: 30000,
+    };
+
+    const proxyReq = http.request(options, (proxyRes) => {
+      res.writeHead(proxyRes.statusCode || 500, proxyRes.headers);
+      proxyRes.pipe(res, { end: true });
+    });
+
+    proxyReq.on("error", (_err) => {
+      // Python server not running — fall through to mock routes
+      next();
+    });
+
+    proxyReq.on("timeout", () => {
+      proxyReq.destroy();
+      next();
+    });
+
+    if (req.body && Object.keys(req.body).length > 0) {
+      proxyReq.write(JSON.stringify(req.body));
+    }
+    proxyReq.end();
+  });
+}
 
 export async function registerRoutes(
   httpServer: Server,
   app: Express
 ): Promise<Server> {
 
-  // Portfolio live state
+  // ─── Proxy /api/engine/* to Python FastAPI ─────────────
+  proxyToEngine(app);
+
+  // ─── Legacy mock endpoints (fallback if Python is down) ─
+  // These return static data so the frontend can render even without the engine.
+
   app.get("/api/portfolio/live", (_req, res) => {
     res.json({
       nav: 128450320 + Math.floor(Math.random() * 100000),
@@ -19,7 +72,6 @@ export async function registerRoutes(
     });
   });
 
-  // Signal stream
   app.get("/api/signals/stream", (_req, res) => {
     const signals = Array.from({ length: 10 }, (_, i) => ({
       timestamp: new Date(Date.now() - i * 60000).toISOString(),
@@ -31,7 +83,6 @@ export async function registerRoutes(
     res.json(signals);
   });
 
-  // Engine status
   app.get("/api/engines/status", (_req, res) => {
     const engines = [
       { id: "L1", name: "Data Ingestion", level: "L1", status: "online", latency: 1.2, cpu: 34, memory: 42, errors: 0 },
@@ -45,7 +96,6 @@ export async function registerRoutes(
     res.json(engines);
   });
 
-  // Market wrap
   app.get("/api/market/wrap", (_req, res) => {
     res.json({
       direction: "risk-on",
@@ -56,7 +106,6 @@ export async function registerRoutes(
     });
   });
 
-  // Risk portfolio
   app.get("/api/risk/portfolio", (_req, res) => {
     res.json({
       pnl: 45750,
@@ -70,7 +119,6 @@ export async function registerRoutes(
     });
   });
 
-  // Allocation basket
   app.get("/api/allocation/basket", (_req, res) => {
     const holdings = [
       { ticker: "AAPL", name: "Apple Inc", weight: 8.5, shares: 1200, price: 189.45, change: 1.2, sector: "Technology" },
@@ -80,7 +128,6 @@ export async function registerRoutes(
     res.json(holdings);
   });
 
-  // ML anomalies
   app.get("/api/ml/anomalies", (_req, res) => {
     const anomalies = [
       { id: "1", asset: "SMCI", type: "Volume Spike", zScore: 4.2, detected: "2m ago", severity: "critical" },
@@ -90,7 +137,6 @@ export async function registerRoutes(
     res.json(anomalies);
   });
 
-  // Reports
   app.get("/api/reports", (_req, res) => {
     const reports = [
       { id: "1", name: "Platinum Report", type: "Executive", description: "Comprehensive portfolio overview", lastGenerated: "Apr 01, 2026 — 18:00", status: "ready" },
