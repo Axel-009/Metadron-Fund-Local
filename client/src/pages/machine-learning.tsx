@@ -1,6 +1,7 @@
 import { DashboardPanel } from "@/components/dashboard-panel";
 import { AreaChart, Area, XAxis, YAxis, ResponsiveContainer, Tooltip } from "recharts";
 import { useMemo } from "react";
+import { useEngineQuery } from "@/hooks/use-engine-api";
 
 const STRESS_TESTS = [
   { scenario: "2008 GFC Replay", portfolioImpact: -18.2, var95: -22.5, recovery: "14 days", status: "pass" },
@@ -57,7 +58,35 @@ const REL_VALUE_PAIRS = [
 ];
 
 export default function MachineLearning() {
+  const { data: stressApi } = useEngineQuery<{ tests: Record<string, unknown> }>("/ml/stress-tests", { refetchInterval: 60000 });
+  const { data: alphaApi } = useEngineQuery<{ expected_return: number; volatility: number; sharpe: number; max_drawdown: number }>("/ml/alpha/last", { refetchInterval: 15000 });
+  const { data: anomalyApi } = useEngineQuery<{ anomalies: Array<Record<string, string | number>> }>("/monitoring/anomalies", { refetchInterval: 10000 });
+  const { data: pairsApi } = useEngineQuery<{ pairs: Array<Record<string, string | number>> }>("/signals/stat-arb/pairs?max_pairs=15", { refetchInterval: 30000 });
+  const { data: patternsApi } = useEngineQuery<Record<string, unknown>>("/ml/patterns?ticker=SPY", { refetchInterval: 30000 });
+
   const equityCurve = useMemo(generateEquityCurve, []);
+
+  // Wire anomalies
+  const anomalies = anomalyApi?.anomalies?.length
+    ? (anomalyApi.anomalies as Array<Record<string, string | number>>).slice(0, 5).map((a) => ({
+        asset: String(a.asset || a.ticker || ""),
+        type: String(a.type || ""),
+        zScore: Number(a.zScore || a.z_score || 0),
+        severity: String(a.severity || "medium"),
+        detected: String(a.detected || a.timestamp || ""),
+      }))
+    : ANOMALIES;
+
+  // Wire RV pairs
+  const relValuePairs = pairsApi?.pairs?.length
+    ? pairsApi.pairs.slice(0, 13).map((p) => ({
+        pair: `${p.ticker_a} / ${p.ticker_b}`,
+        spreadZ: Number(p.spread_zscore || 0),
+        halfLife: Number(p.half_life || 0),
+        signal: Number(p.spread_zscore || 0) > 1.5 ? "long" : Number(p.spread_zscore || 0) < -1.5 ? "short" : "neutral",
+        pnl: Number(p.signal_strength || 0) * 10,
+      }))
+    : REL_VALUE_PAIRS;
 
   return (
     <div className="h-full grid grid-cols-[1fr_1fr] grid-rows-[auto_1fr_1fr] gap-[2px] p-[2px] overflow-auto" data-testid="ml-dashboard">
@@ -159,7 +188,7 @@ export default function MachineLearning() {
               </tr>
             </thead>
             <tbody>
-              {ANOMALIES.map((a, i) => (
+              {anomalies.map((a, i) => (
                 <tr key={i} className="border-b border-terminal-border/20">
                   <td className="px-2 py-1.5 text-terminal-text-primary">{a.asset}</td>
                   <td className="px-2 py-1.5 text-terminal-text-muted">{a.type}</td>
@@ -193,7 +222,7 @@ export default function MachineLearning() {
               </tr>
             </thead>
             <tbody>
-              {REL_VALUE_PAIRS.map((p, i) => (
+              {relValuePairs.map((p, i) => (
                 <tr key={i} className="border-b border-terminal-border/20">
                   <td className="px-2 py-1.5 text-terminal-text-primary">{p.pair}</td>
                   <td className={`px-2 py-1.5 text-right tabular-nums ${Math.abs(p.spreadZ) > 2 ? "text-terminal-warning" : "text-terminal-text-muted"}`}>

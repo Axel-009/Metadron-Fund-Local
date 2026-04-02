@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef, useCallback, useMemo } from "react";
 import { DashboardPanel } from "@/components/dashboard-panel";
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, LineChart, Line, ReferenceLine, Cell } from "recharts";
+import { useEngineQuery } from "@/hooks/use-engine-api";
 
 // ═══════════ TYPES ═══════════
 
@@ -319,6 +320,10 @@ function KpiCard({ label, value, sub, positive }: { label: string; value: string
 // ═══════════ MAIN MONTE CARLO PAGE ═══════════
 
 export default function MonteCarlo() {
+  // ─── Engine API — market parameters for simulation ──
+  const { data: macroApi } = useEngineQuery<{ vix?: number; spy_return_1m?: number }>("/macro/snapshot", { refetchInterval: 60000 });
+  const { data: betaApi } = useEngineQuery<{ state: { vol_adjustment?: number } }>("/portfolio/beta", { refetchInterval: 60000 });
+
   const [nPaths, setNPaths] = useState(10000);
   const [days, setDays] = useState(252);
   const [initialCapital, setInitialCapital] = useState(100000);

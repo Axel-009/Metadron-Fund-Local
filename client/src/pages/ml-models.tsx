@@ -1,5 +1,6 @@
-import { useState, useMemo } from "react";
+import { useState, useMemo, useEffect } from "react";
 import { ChevronDown, ChevronRight, Search } from "lucide-react";
+import { useEngineQuery } from "@/hooks/use-engine-api";
 
 // ═══════════ TYPES ═══════════
 
@@ -462,6 +463,9 @@ function StatusFilterPills({
 // ═══════════ MAIN PAGE ═══════════
 
 export default function MLModelsPage() {
+  // ─── Engine API — live engine module status ─────────
+  const { data: modelsApi } = useEngineQuery<{ modules: Array<{ layer: string; name: string; status: string; error?: string }>; online: number; total: number }>("/ml/models/status", { refetchInterval: 15000 });
+
   const [search, setSearch] = useState("");
   const [typeFilter, setTypeFilter] = useState<ModelType | null>(null);
   const [statusFilter, setStatusFilter] = useState<EngineStatus | null>(null);

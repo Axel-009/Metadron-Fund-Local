@@ -1,5 +1,6 @@
 import { DashboardPanel } from "@/components/dashboard-panel";
-import { useRef, useEffect, useCallback } from "react";
+import { useRef, useEffect, useCallback, useMemo } from "react";
+import { useEngineQuery } from "@/hooks/use-engine-api";
 
 const STRATEGIES = [
   { name: "Mean Reversion Alpha", status: "active", sharpe: 1.82, pnl: "+12.4%", trades: 1420 },
@@ -148,11 +149,35 @@ function FlowDiagram() {
 }
 
 export default function StrategyBuilder() {
+  // ─── Engine API — live strategy performance ─────────
+  const { data: stratApi } = useEngineQuery<{
+    strategies: Array<{ name: string; pnl: number; trades: number; sharpe: number; status: string }>;
+    perf_cards: Array<{ name: string; value: string }>;
+  }>("/ml/strategy/performance", { refetchInterval: 15000 });
+
+  const strategies = stratApi?.strategies?.length
+    ? stratApi.strategies.map((s) => ({
+        name: s.name,
+        status: s.status,
+        sharpe: s.sharpe,
+        pnl: s.pnl > 0 ? `+${s.pnl.toLocaleString()}` : `${s.pnl.toLocaleString()}`,
+        trades: s.trades,
+      }))
+    : STRATEGIES;
+
+  const perfCards = stratApi?.perf_cards?.length
+    ? stratApi.perf_cards.map((c, i) => ({
+        label: c.name,
+        value: c.value,
+        color: ["#00d4aa", "#f85149", "#58a6ff", "#bc8cff"][i % 4],
+      }))
+    : PERF_CARDS;
+
   return (
     <div className="h-full grid grid-cols-[260px_1fr] grid-rows-[auto_1fr] gap-[2px] p-[2px] overflow-auto" data-testid="strategy-builder">
       {/* Performance Summary */}
       <div className="col-span-2 flex gap-[2px]">
-        {PERF_CARDS.map((p, i) => (
+        {perfCards.map((p, i) => (
           <DashboardPanel key={i} title={p.label} className="flex-1">
             <div className="text-xl font-mono font-bold tabular-nums text-center" style={{ color: p.color }}>
               {p.value}
@@ -174,7 +199,7 @@ export default function StrategyBuilder() {
       {/* Strategy List Sidebar */}
       <DashboardPanel title="STRATEGIES" noPadding>
         <div className="overflow-auto h-full">
-          {STRATEGIES.map((s, i) => (
+          {strategies.map((s, i) => (
             <div key={i} className="px-2 py-2 border-b border-terminal-border/20 hover:bg-white/[0.02] cursor-pointer">
               <div className="flex items-center gap-2">
                 <span className={`w-1.5 h-1.5 rounded-full ${
