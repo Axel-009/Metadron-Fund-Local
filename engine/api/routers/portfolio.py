@@ -29,6 +29,8 @@ def _get_broker():
     return _broker
 
 
+
+
 def _get_alpha():
     global _alpha
     if _alpha is None:
@@ -52,16 +54,18 @@ async def portfolio_live():
     """Current portfolio state: NAV, P&L, positions, exposure."""
     try:
         broker = _get_broker()
-        state = broker.get_portfolio_state()
+        state = broker.get_portfolio_summary()
+        # get_portfolio_summary() returns a dict
+        s = state if isinstance(state, dict) else {}
         return {
-            "nav": state.nav if hasattr(state, "nav") else getattr(state, "cash", 0),
-            "cash": state.cash if hasattr(state, "cash") else 0,
-            "total_pnl": state.total_pnl if hasattr(state, "total_pnl") else 0,
-            "gross_exposure": state.gross_exposure if hasattr(state, "gross_exposure") else 0,
-            "net_exposure": state.net_exposure if hasattr(state, "net_exposure") else 0,
-            "positions_count": len(state.positions) if hasattr(state, "positions") else 0,
-            "win_count": state.win_count if hasattr(state, "win_count") else 0,
-            "loss_count": state.loss_count if hasattr(state, "loss_count") else 0,
+            "nav": s.get("nav", 0),
+            "cash": s.get("cash", 0),
+            "total_pnl": s.get("total_pnl", 0),
+            "gross_exposure": s.get("gross_exposure", 0),
+            "net_exposure": s.get("net_exposure", 0),
+            "positions_count": s.get("positions", 0),
+            "win_count": s.get("win_count", 0),
+            "loss_count": s.get("loss_count", 0),
             "timestamp": datetime.utcnow().isoformat(),
         }
     except Exception as e:
@@ -74,9 +78,9 @@ async def portfolio_positions():
     """All current positions with P&L."""
     try:
         broker = _get_broker()
-        positions = broker.get_positions()
+        positions = broker.get_all_positions()
         result = []
-        for ticker, pos in positions.items():
+        for ticker, pos in (positions.items() if isinstance(positions, dict) else []):
             result.append({
                 "ticker": ticker,
                 "quantity": pos.quantity if hasattr(pos, "quantity") else 0,
@@ -97,7 +101,7 @@ async def portfolio_trades(limit: int = Query(50, ge=1, le=500)):
     """Recent trade history."""
     try:
         broker = _get_broker()
-        trades = broker.get_trades(limit=limit)
+        trades = broker.get_trade_history()[-limit:]
         result = []
         for t in trades:
             result.append({
@@ -267,7 +271,7 @@ async def portfolio_sector_allocation():
     """Sector allocation from current positions."""
     try:
         broker = _get_broker()
-        positions = broker.get_positions()
+        positions = broker.get_all_positions()
         sector_weights: dict[str, float] = {}
         total_value = 0
 
@@ -298,7 +302,7 @@ async def portfolio_pnl_series():
     """Intraday P&L time-series from trade history."""
     try:
         broker = _get_broker()
-        trades = broker.get_trades(limit=500)
+        trades = broker.get_trade_history()[-500:]
         if not trades:
             return {"series": [], "timestamp": datetime.utcnow().isoformat()}
 

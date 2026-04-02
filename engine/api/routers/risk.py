@@ -12,6 +12,20 @@ router = APIRouter()
 _options = None
 _beta = None
 _decision = None
+_broker = None
+
+
+def _get_broker():
+    global _broker
+    if _broker is None:
+        try:
+            from engine.execution.execution_engine import ExecutionEngine
+            eng = ExecutionEngine()
+            _broker = eng.broker
+        except Exception:
+            from engine.execution.paper_broker import PaperBroker
+            _broker = PaperBroker()
+    return _broker
 
 
 def _get_options():
@@ -185,7 +199,7 @@ async def order_distribution():
         try:
             from engine.execution.execution_engine import ExecutionEngine
             eng = ExecutionEngine()
-            trades = eng.broker.get_trades(limit=200)
+            trades = eng.broker.get_trade_history()[-200:]
         except Exception:
             trades = []
 
@@ -255,7 +269,7 @@ async def risk_fills():
     try:
         from engine.execution.execution_engine import ExecutionEngine
         eng = ExecutionEngine()
-        trades = eng.broker.get_trades(limit=20)
+        trades = eng.broker.get_trade_history()[-20:]
         fills = []
         for t in trades:
             fills.append({
@@ -313,7 +327,7 @@ async def risk_futures_positions():
     """Futures positions from broker."""
     try:
         broker = _get_broker()
-        positions = broker.get_positions()
+        positions = broker.get_all_positions()
         futures = []
         total_pnl = 0
         total_margin = 0
@@ -357,10 +371,11 @@ async def risk_margin():
     """Margin information from broker."""
     try:
         broker = _get_broker()
-        state = broker.get_portfolio_state()
-        nav = state.nav if hasattr(state, "nav") else 0
-        cash = state.cash if hasattr(state, "cash") else 0
-        gross = state.gross_exposure if hasattr(state, "gross_exposure") else 0
+        state = broker.get_portfolio_summary()
+        s = state if isinstance(state, dict) else {}
+        nav = s.get("nav", 0)
+        cash = s.get("cash", 0)
+        gross = s.get("gross_exposure", 0)
 
         # Derive margin metrics from portfolio state
         margin_used = gross * 0.3 if gross else 0  # ~30% margin on gross
@@ -392,7 +407,7 @@ async def risk_liquidity_scoring():
     """Liquidity risk scoring for portfolio positions."""
     try:
         broker = _get_broker()
-        positions = broker.get_positions()
+        positions = broker.get_all_positions()
         scoring = []
         for ticker, pos in positions.items():
             vol = getattr(pos, "avg_volume", 0) or 0
