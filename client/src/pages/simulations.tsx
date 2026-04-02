@@ -1,6 +1,7 @@
 import { useState, useMemo } from "react";
 import { DashboardPanel } from "@/components/dashboard-panel";
 import { ResizableDashboard } from "@/components/resizable-panel";
+import { useEngineQuery } from "@/hooks/use-engine-api";
 import {
   BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer,
   LineChart, Line, Cell, ReferenceLine,
@@ -395,6 +396,11 @@ function BlackScholesPanel() {
 // ═══════════ MAIN SIMULATIONS PAGE ═══════════
 
 export default function Simulations() {
+  // ─── Engine API — regime and vol surface data ───────
+  const { data: regimeApi } = useEngineQuery<{ regimes: Array<Record<string, unknown>> }>("/ml/regime-history", { refetchInterval: 30000 });
+  const { data: volApi } = useEngineQuery<{ grid: Array<{ strike: number; expiry: number; iv: number }> }>("/ml/vol-surface", { refetchInterval: 60000 });
+  const { data: cubeApi } = useEngineQuery<{ regime: string; target_beta: number; max_leverage: number }>("/cube/state", { refetchInterval: 15000 });
+
   return (
     <div className="h-full flex flex-col p-[2px] overflow-hidden" data-testid="simulations">
       <ResizableDashboard

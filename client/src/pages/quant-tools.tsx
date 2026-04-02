@@ -1,6 +1,7 @@
 import { useState, useMemo } from "react";
 import { DashboardPanel } from "@/components/dashboard-panel";
 import { ResizableDashboard } from "@/components/resizable-panel";
+import { useEngineQuery } from "@/hooks/use-engine-api";
 import {
   AreaChart, Area, XAxis, YAxis, Tooltip, ResponsiveContainer,
   ComposedChart, Line, Bar, BarChart, ReferenceLine,
@@ -540,10 +541,41 @@ function StrengthGauge({ strength }: { strength: number }) {
 export default function QuantToolsPage() {
   const [selectedTicker, setSelectedTicker] = useState("NVDA");
 
+  // ─── Engine API — live OHLCV + indicators from OpenBB ──
+  const { data: techApi } = useEngineQuery<{
+    data: Array<Record<string, number | string>>;
+    signal: string;
+    signal_score: number;
+    latest: { close: number; rsi: number; macd: number; sma20: number; sma50: number };
+  }>(`/ml/technical-indicators?ticker=${selectedTicker}&days=120`, { refetchInterval: 30000 });
+
   const cfg = useMemo(() => TICKERS.find(t => t.ticker === selectedTicker) ?? TICKERS[0], [selectedTicker]);
-  const ohlcv = useMemo(() => generateOHLCV(cfg), [cfg]);
+
+  // Use API data when available, fall back to generator
+  const ohlcv = useMemo(() => {
+    if (techApi?.data?.length && techApi.data.length > 20) {
+      return techApi.data.map((d) => ({
+        date: String(d.date || ""),
+        open: Number(d.open || 0),
+        high: Number(d.high || 0),
+        low: Number(d.low || 0),
+        close: Number(d.close || 0),
+        volume: Number(d.volume || 0),
+        sma20: Number(d.sma20 || 0),
+        sma50: Number(d.sma50 || 0),
+        rsi: Number(d.rsi || 50),
+        macd: Number(d.macd || 0),
+        signal: Number(d.signal || 0),
+        histogram: Number(d.histogram || 0),
+        bb_upper: Number(d.bb_upper || 0),
+        bb_lower: Number(d.bb_lower || 0),
+      }));
+    }
+    return generateOHLCV(cfg);
+  }, [techApi, cfg]);
+
   const indicators = useMemo(() => calcIndicators(ohlcv), [ohlcv]);
-  const close = ohlcv[ohlcv.length - 1]?.close ?? cfg.basePrice;
+  const close = techApi?.latest?.close ?? ohlcv[ohlcv.length - 1]?.close ?? cfg.basePrice;
   const prevClose = ohlcv[ohlcv.length - 2]?.close ?? close;
   const pctChange = +((close - prevClose) / prevClose * 100).toFixed(2);
   const { composite, signals, strength } = useMemo(() => scoreSignal(indicators, close), [indicators, close]);

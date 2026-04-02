@@ -1,6 +1,7 @@
 import { useState, useMemo, useEffect, useRef } from "react";
 import { DashboardPanel } from "@/components/dashboard-panel";
 import { ResizableDashboard } from "@/components/resizable-panel";
+import { useEngineQuery } from "@/hooks/use-engine-api";
 import {
   LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer,
   PieChart, Pie, Cell, BarChart, Bar,
@@ -1013,11 +1014,19 @@ function LearningTab() {
 
 // ═══════════ MAIN PAGE ═══════════
 
-const agents = generateAgents();
+const _fallbackAgents = generateAgents();
 
 type AgentSubTab = "REGISTRY" | "SKILLS" | "LEARNING";
 
 export default function AgentsPage() {
+  // ─── Engine API — live agent data ───────────────────
+  const { data: rankingsApi } = useEngineQuery<{ agents: Array<Record<string, string | number>> }>("/agents/research/rankings", { refetchInterval: 15000 });
+  const { data: personasApi } = useEngineQuery<{ personas: Array<Record<string, string>> }>("/agents/personas", { refetchInterval: 60000 });
+  const { data: sectorBotsApi } = useEngineQuery<{ bots: Array<Record<string, string>> }>("/agents/sector-bots", { refetchInterval: 30000 });
+
+  // Use API agents when available
+  const agents = _fallbackAgents; // Structural merge deferred — API data available via rankingsApi
+
   const [subTab, setSubTab] = useState<AgentSubTab>("REGISTRY");
 
   return (
