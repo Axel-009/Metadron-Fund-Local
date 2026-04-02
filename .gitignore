@@ -37,3 +37,11 @@ data/gsd_planning/
 # NVIDIA CUDA pre-built plugin binaries
 !repos/layer5_infra/nividia-repo/**/*.so
 !repos/layer5_infra/nividia-repo/**/*.o
+
+# Frontend (Node/Vite)
+server/public
+vite.config.ts.*
+*.tar.gz
+*.db
+*.db-shm
+*.db-wal
