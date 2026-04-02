@@ -1,6 +1,7 @@
 import { useEffect, useState, useRef, useCallback, useMemo } from "react";
 import { DashboardPanel } from "@/components/dashboard-panel";
 import { LiveTicker } from "@/components/live-ticker";
+import { ResizableDashboard } from "@/components/resizable-panel";
 import {
   AreaChart, Area, XAxis, YAxis, ResponsiveContainer, LineChart, Line, Tooltip, PieChart, Pie, Cell, BarChart, Bar,
 } from "recharts";
@@ -733,77 +734,85 @@ function ExecutionTable() {
 export default function LiveDashboard() {
   return (
     <div className="h-full flex flex-col" data-testid="live-dashboard">
-      {/* Main grid */}
-      <div className="flex-1 grid grid-cols-[260px_1fr_300px] grid-rows-[1fr_1fr] gap-[2px] p-[2px] overflow-hidden">
-        {/* Left column: Order Book (spans both rows) */}
-        <DashboardPanel title="ORDER BOOK" className="row-span-2" noPadding>
-          <OrderBook />
-        </DashboardPanel>
-
-        {/* Center top: Neural Market Map */}
-        <DashboardPanel
-          title="NEURAL MARKET MAP"
-          headerRight={
-            <div className="flex gap-1">
-              {["BIS", "DMS", "NASCR", "PNBL"].map((t, i) => (
-                <button
-                  key={t}
-                  className={`px-1.5 py-0.5 text-[8px] rounded-sm ${
-                    i === 2 ? "bg-terminal-accent/15 text-terminal-accent" : "text-terminal-text-faint hover:text-terminal-text-muted"
-                  }`}
-                >
-                  {t}
-                </button>
-              ))}
-            </div>
-          }
-          noPadding
+      {/* Main 3-column resizable layout */}
+      <div className="flex-1 overflow-hidden p-[2px]">
+        <ResizableDashboard
+          defaultSizes={[22, 52, 26]}
+          minSizes={[14, 30, 16]}
+          className="gap-0"
         >
-          <NeuralMarketMap />
-        </DashboardPanel>
+          {/* Left column: Order Book */}
+          <div className="h-full p-[1px]">
+            <DashboardPanel title="ORDER BOOK" className="h-full" noPadding>
+              <OrderBook />
+            </DashboardPanel>
+          </div>
 
-        {/* Right column top: Order Distribution + Liquidity + Spread + Depth */}
-        <div className="flex flex-col gap-[2px]">
-          <DashboardPanel title="ORDER DISTRIBUTION" className="flex-[1.2]" noPadding>
-            <OrderDistributionChart />
-          </DashboardPanel>
-          <DashboardPanel
-            title="LIQUIDITY"
-            className="flex-1"
-            headerRight={<span className="text-[8px] text-terminal-accent tabular-nums font-mono">88,888</span>}
-            noPadding
-          >
-            <LiquidityChart />
-          </DashboardPanel>
-        </div>
+          {/* Center column: Neural Market Map + Risk/PNL */}
+          <div className="h-full flex flex-col gap-[2px] px-[1px]">
+            {/* Center top: Neural Market Map */}
+            <DashboardPanel
+              title="NEURAL MARKET MAP"
+              className="flex-1"
+              headerRight={
+                <div className="flex gap-1">
+                  {["BIS", "DMS", "NASCR", "PNBL"].map((t, i) => (
+                    <button
+                      key={t}
+                      className={`px-1.5 py-0.5 text-[8px] rounded-sm ${
+                        i === 2 ? "bg-terminal-accent/15 text-terminal-accent" : "text-terminal-text-faint hover:text-terminal-text-muted"
+                      }`}
+                    >
+                      {t}
+                    </button>
+                  ))}
+                </div>
+              }
+              noPadding
+            >
+              <NeuralMarketMap />
+            </DashboardPanel>
 
-        {/* Center bottom: PNL/TIME with Risk + Execution */}
-        <div className="flex gap-[2px]">
-          <DashboardPanel title="RISK" className="w-[200px] flex-shrink-0" noPadding>
-            <RiskPanel />
-          </DashboardPanel>
-          <DashboardPanel title="PNL / TIME" className="flex-1" noPadding>
-            <PnlTimeChart />
-          </DashboardPanel>
-        </div>
+            {/* Center bottom: Risk + PNL/TIME */}
+            <div className="flex gap-[2px] h-[45%]">
+              <DashboardPanel title="RISK" className="w-[200px] flex-shrink-0" noPadding>
+                <RiskPanel />
+              </DashboardPanel>
+              <DashboardPanel title="PNL / TIME" className="flex-1" noPadding>
+                <PnlTimeChart />
+              </DashboardPanel>
+            </div>
+          </div>
 
-        {/* Right column bottom: Spread + Depth + Execution */}
-        <div className="flex flex-col gap-[2px]">
-          <DashboardPanel
-            title="SPREAD"
-            className="flex-1"
-            headerRight={<span className="text-[8px] text-terminal-blue font-mono">ESFT</span>}
-            noPadding
-          >
-            <SpreadChart />
-          </DashboardPanel>
-          <DashboardPanel title="DEPTH" className="flex-1" noPadding>
-            <DepthChart />
-          </DashboardPanel>
-          <DashboardPanel title="EXECUTION" className="flex-[1.3]" noPadding>
-            <ExecutionTable />
-          </DashboardPanel>
-        </div>
+          {/* Right column: Order Distribution + Liquidity + Spread + Depth + Execution */}
+          <div className="h-full flex flex-col gap-[2px] p-[1px]">
+            <DashboardPanel title="ORDER DISTRIBUTION" className="flex-[1.2]" noPadding>
+              <OrderDistributionChart />
+            </DashboardPanel>
+            <DashboardPanel
+              title="LIQUIDITY"
+              className="flex-1"
+              headerRight={<span className="text-[8px] text-terminal-accent tabular-nums font-mono">88,888</span>}
+              noPadding
+            >
+              <LiquidityChart />
+            </DashboardPanel>
+            <DashboardPanel
+              title="SPREAD"
+              className="flex-1"
+              headerRight={<span className="text-[8px] text-terminal-blue font-mono">ESFT</span>}
+              noPadding
+            >
+              <SpreadChart />
+            </DashboardPanel>
+            <DashboardPanel title="DEPTH" className="flex-1" noPadding>
+              <DepthChart />
+            </DashboardPanel>
+            <DashboardPanel title="EXECUTION" className="flex-[1.3]" noPadding>
+              <ExecutionTable />
+            </DashboardPanel>
+          </div>
+        </ResizableDashboard>
       </div>
 
       {/* Bottom ticker */}

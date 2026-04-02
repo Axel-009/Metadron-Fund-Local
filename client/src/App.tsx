@@ -26,6 +26,7 @@ import ETFDashboard from "@/pages/etf";
 import FixedIncomeDashboard from "@/pages/fixed-income";
 import MacroDashboard from "@/pages/macro";
 import ArbitrageDashboard from "@/pages/arbitrage";
+import MLModelsPage from "@/pages/ml-models";
 
 // ═══════════ ALL AVAILABLE TABS ═══════════
 const ALL_TABS = [
@@ -49,6 +50,7 @@ const ALL_TABS = [
   { path: "/fixed-income", label: "FIXED INC" },
   { path: "/macro", label: "MACRO" },
   { path: "/arb", label: "ARB" },
+  { path: "/ml-models", label: "ML MODELS" },
 ];
 
 const DEFAULT_PINNED = [
@@ -356,6 +358,7 @@ function AppRouter() {
       <Route path="/fixed-income" component={FixedIncomeDashboard} />
       <Route path="/macro" component={MacroDashboard} />
       <Route path="/arb" component={ArbitrageDashboard} />
+      <Route path="/ml-models" component={MLModelsPage} />
       <Route component={NotFound} />
     </Switch>
   );

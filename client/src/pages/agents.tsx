@@ -1,4 +1,4 @@
-import { useState, useMemo } from "react";
+import { useState, useMemo, useEffect, useRef } from "react";
 import { DashboardPanel } from "@/components/dashboard-panel";
 import {
   LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer,
@@ -24,6 +24,19 @@ interface Agent {
   totalPnl: number;
   lastActive: string;
   weight: number;
+}
+
+type RufloRole = "Coordinator" | "Worker" | "Scout" | "Analyst";
+type RufloStatus = "ONLINE" | "IDLE" | "BUSY" | "OFFLINE";
+
+interface RufloAgent {
+  id: string;
+  name: string;
+  role: RufloRole;
+  status: RufloStatus;
+  tasksCompleted: number;
+  successRate: number;
+  currentTask: string;
 }
 
 // ═══════════ MOCK DATA ═══════════
@@ -90,6 +103,151 @@ function generateAccuracyTrend() {
   return trend;
 }
 
+// ═══════════ RUFLO DATA ═══════════
+
+const RUFLO_AGENTS: RufloAgent[] = [
+  {
+    id: "openclaw_ceo",
+    name: "Openclaw CEO",
+    role: "Coordinator",
+    status: "ONLINE",
+    tasksCompleted: 18420,
+    successRate: 97.3,
+    currentTask: "Orchestrating macro regime classification across swarm",
+  },
+  {
+    id: "ruflo_alpha",
+    name: "Ruflo-Alpha",
+    role: "Coordinator",
+    status: "BUSY",
+    tasksCompleted: 9841,
+    successRate: 94.1,
+    currentTask: "Delegating sector rotation signals to worker nodes",
+  },
+  {
+    id: "ruflo_scout_1",
+    name: "Scout-01",
+    role: "Scout",
+    status: "ONLINE",
+    tasksCompleted: 34210,
+    successRate: 88.7,
+    currentTask: "Scanning earnings filings — Q1 2026 batch",
+  },
+  {
+    id: "ruflo_scout_2",
+    name: "Scout-02",
+    role: "Scout",
+    status: "BUSY",
+    tasksCompleted: 29874,
+    successRate: 86.2,
+    currentTask: "Monitoring Fed wire feeds and FOMC minutes",
+  },
+  {
+    id: "ruflo_worker_1",
+    name: "Worker-01",
+    role: "Worker",
+    status: "BUSY",
+    tasksCompleted: 52140,
+    successRate: 91.4,
+    currentTask: "Processing NVDA options flow — 4,200 contracts",
+  },
+  {
+    id: "ruflo_worker_2",
+    name: "Worker-02",
+    role: "Worker",
+    status: "ONLINE",
+    tasksCompleted: 48390,
+    successRate: 89.8,
+    currentTask: "Building portfolio correlation matrix (10 holdings)",
+  },
+  {
+    id: "ruflo_analyst_1",
+    name: "Analyst-01",
+    role: "Analyst",
+    status: "BUSY",
+    tasksCompleted: 7230,
+    successRate: 93.6,
+    currentTask: "Generating valuation DCF model — MSFT, AAPL",
+  },
+  {
+    id: "ruflo_analyst_2",
+    name: "Analyst-02",
+    role: "Analyst",
+    status: "IDLE",
+    tasksCompleted: 6180,
+    successRate: 90.2,
+    currentTask: "Awaiting macro data feed — CPI release at 08:30",
+  },
+];
+
+// ═══════════ SKILLS DATA ═══════════
+
+interface AgentSkill {
+  name: string;
+  category: "Trading" | "Analysis" | "Risk" | "Data";
+  proficiency: number;
+  timesUsed: number;
+  lastUsed: string;
+  source: "Built-in" | "Learned" | "Installed";
+}
+
+const AGENT_SKILLS: AgentSkill[] = [
+  { name: "DCF Valuation", category: "Analysis", proficiency: 94, timesUsed: 8412, lastUsed: "2m ago", source: "Built-in" },
+  { name: "Options Flow Analysis", category: "Trading", proficiency: 88, timesUsed: 12840, lastUsed: "Just now", source: "Built-in" },
+  { name: "Macro Regime Detection", category: "Analysis", proficiency: 91, timesUsed: 4230, lastUsed: "5m ago", source: "Learned" },
+  { name: "Earnings Call NLP", category: "Analysis", proficiency: 85, timesUsed: 3180, lastUsed: "1h ago", source: "Installed" },
+  { name: "Portfolio Risk VaR", category: "Risk", proficiency: 97, timesUsed: 62100, lastUsed: "1m ago", source: "Built-in" },
+  { name: "Technical Pattern Recognition", category: "Trading", proficiency: 79, timesUsed: 28400, lastUsed: "3m ago", source: "Built-in" },
+  { name: "Sentiment Scoring", category: "Analysis", proficiency: 82, timesUsed: 94200, lastUsed: "Just now", source: "Learned" },
+  { name: "Factor Model Decomposition", category: "Analysis", proficiency: 88, timesUsed: 2140, lastUsed: "4h ago", source: "Installed" },
+  { name: "Liquidity Stress Testing", category: "Risk", proficiency: 93, timesUsed: 1820, lastUsed: "2h ago", source: "Built-in" },
+  { name: "Tick Data Processing", category: "Data", proficiency: 99, timesUsed: 1240000, lastUsed: "Just now", source: "Built-in" },
+  { name: "Alternative Data Parsing", category: "Data", proficiency: 76, timesUsed: 3420, lastUsed: "30m ago", source: "Installed" },
+  { name: "Correlation Matrix", category: "Risk", proficiency: 95, timesUsed: 48200, lastUsed: "2m ago", source: "Built-in" },
+  { name: "Momentum Factor", category: "Trading", proficiency: 87, timesUsed: 19800, lastUsed: "15m ago", source: "Learned" },
+  { name: "SEC Filing Parser", category: "Data", proficiency: 81, timesUsed: 6840, lastUsed: "45m ago", source: "Installed" },
+];
+
+// ═══════════ LEARNING DATA ═══════════
+
+interface Learning {
+  id: number;
+  timestamp: string;
+  what: string;
+  confidence: number;
+  type: "Pattern" | "Rule" | "Correlation" | "Insight";
+}
+
+const RECENT_LEARNINGS: Learning[] = [
+  { id: 1, timestamp: "2m ago", what: "High short interest + positive earnings surprise predicts +8.2% avg pop in 72h", confidence: 0.87, type: "Pattern" },
+  { id: 2, timestamp: "14m ago", what: "Dovish Fed language correlates with Tech sector outperformance by +2.1% in 5-day window", confidence: 0.92, type: "Correlation" },
+  { id: 3, timestamp: "31m ago", what: "When VIX > 25 and RSI(14) < 35, mean-reversion probability increases to 73%", confidence: 0.79, type: "Rule" },
+  { id: 4, timestamp: "1h ago", what: "NVDA guidance beats reliably propagate to AMD, AVGO within 2 trading sessions", confidence: 0.83, type: "Correlation" },
+  { id: 5, timestamp: "2h ago", what: "Q1 earnings beats with upward full-year guidance = sustained 10-day momentum 68% of cases", confidence: 0.71, type: "Pattern" },
+  { id: 6, timestamp: "3h ago", what: "Oil supply shock events have diminishing volatility impact on XOM vs. 2022 baseline", confidence: 0.66, type: "Insight" },
+  { id: 7, timestamp: "5h ago", what: "10Y > 4.5% threshold now shows higher Financials relative outperformance vs. historical", confidence: 0.88, type: "Rule" },
+  { id: 8, timestamp: "8h ago", what: "China PMI sub-49 reading triggers Energy sector weakness within 3 sessions with 79% reliability", confidence: 0.79, type: "Pattern" },
+];
+
+function generateLearningRate() {
+  const data: { day: string; rate: number }[] = [];
+  let rate = 42;
+  for (let i = 29; i >= 0; i--) {
+    const d = new Date(Date.now() - i * 86400000);
+    rate = Math.min(95, Math.max(30, rate + (Math.random() - 0.4) * 5));
+    data.push({ day: d.toLocaleDateString("en-US", { month: "short", day: "numeric" }), rate: +rate.toFixed(1) });
+  }
+  return data;
+}
+
+const MODEL_VERSIONS = [
+  { version: "v3.8.2", date: "Apr 1, 2026", notes: "Improved macro regime detection, +3.2% accuracy uplift" },
+  { version: "v3.7.0", date: "Mar 15, 2026", notes: "Earnings call NLP skill installed, sentiment engine retrained" },
+  { version: "v3.6.1", date: "Mar 2, 2026", notes: "Risk VaR model recalibrated post-Feb volatility event" },
+  { version: "v3.5.0", date: "Feb 10, 2026", notes: "Momentum factor skill learned from 5-year backtest analysis" },
+  { version: "v3.4.2", date: "Jan 28, 2026", notes: "Hotfix: Correlation matrix overflow on 50+ asset portfolios" },
+];
+
 // ═══════════ SMALL COMPONENTS ═══════════
 
 const TIER_COLORS: Record<Tier, string> = {
@@ -112,6 +270,34 @@ const TYPE_LABELS: Record<AgentType, string> = {
   research_bot: "RESEARCH",
   specialist: "SPECIALIST",
   hybrid: "HYBRID",
+};
+
+const RUFLO_STATUS_COLORS: Record<RufloStatus, string> = {
+  ONLINE: "#3fb950",
+  BUSY: "#00d4aa",
+  IDLE: "#d29922",
+  OFFLINE: "#484f58",
+};
+
+const RUFLO_ROLE_COLORS: Record<RufloRole, string> = {
+  Coordinator: "#00d4aa",
+  Worker: "#58a6ff",
+  Scout: "#bc8cff",
+  Analyst: "#d29922",
+};
+
+const SKILL_CAT_COLORS: Record<string, string> = {
+  Trading: "#00d4aa",
+  Analysis: "#58a6ff",
+  Risk: "#f85149",
+  Data: "#d29922",
+};
+
+const LEARNING_TYPE_COLORS: Record<string, string> = {
+  Pattern: "#00d4aa",
+  Rule: "#58a6ff",
+  Correlation: "#bc8cff",
+  Insight: "#d29922",
 };
 
 function TierBadge({ tier }: { tier: Tier }) {
@@ -365,7 +551,6 @@ function TierDistribution({ agents }: { agents: Agent[] }) {
 // ═══════════ SIGNAL CONSENSUS ═══════════
 
 function SignalConsensus({ agents }: { agents: Agent[] }) {
-  // Simulate current vote distribution
   const activeAgents = agents.filter(a => a.status === "ACTIVE");
   const bullish = Math.round(activeAgents.length * 0.52);
   const bearish = Math.round(activeAgents.length * 0.21);
@@ -444,12 +629,394 @@ function AccuracyTrendChart({ data }: { data: ReturnType<typeof generateAccuracy
   );
 }
 
+// ═══════════ REGISTRY SUB-TAB (existing content) ═══════════
+
+function RegistryTab({ agents }: { agents: Agent[] }) {
+  const accuracyTrend = useMemo(() => generateAccuracyTrend(), []);
+  return (
+    <div className="flex-1 grid grid-cols-[1fr_200px] gap-1 overflow-hidden">
+      {/* Left: registry + trend */}
+      <div className="flex flex-col gap-1 overflow-hidden">
+        <DashboardPanel
+          title="AGENT REGISTRY"
+          className="flex-1 overflow-hidden"
+          noPadding
+          headerRight={
+            <span className="text-[9px] text-terminal-text-faint font-mono">
+              {agents.filter(a => a.status === "ACTIVE").length} ACTIVE / {agents.length} TOTAL
+            </span>
+          }
+        >
+          <div className="p-2 h-full overflow-hidden flex flex-col">
+            <AgentRegistryTable agents={agents} />
+          </div>
+        </DashboardPanel>
+
+        <DashboardPanel title="30-DAY ENSEMBLE ACCURACY TREND" className="h-28 flex-shrink-0">
+          <AccuracyTrendChart data={accuracyTrend} />
+        </DashboardPanel>
+      </div>
+
+      {/* Right sidebar */}
+      <div className="flex flex-col gap-1 overflow-hidden">
+        <DashboardPanel title="TIER DISTRIBUTION" className="flex-1">
+          <TierDistribution agents={agents} />
+        </DashboardPanel>
+        <DashboardPanel title="SIGNAL CONSENSUS" className="flex-1">
+          <SignalConsensus agents={agents} />
+        </DashboardPanel>
+      </div>
+    </div>
+  );
+}
+
+// ═══════════ RUFLO SWARM SECTION ═══════════
+
+function RufloSwarmSection() {
+  const [connected] = useState(true);
+  const onlineCount = RUFLO_AGENTS.filter(a => a.status === "ONLINE" || a.status === "BUSY").length;
+
+  return (
+    <div className="flex-shrink-0 mt-1">
+      <DashboardPanel
+        title="RUFLO SWARM"
+        noPadding
+        headerRight={
+          <div className="flex items-center gap-2">
+            <span
+              className="w-1.5 h-1.5 rounded-full"
+              style={{ backgroundColor: connected ? "#3fb950" : "#484f58", boxShadow: connected ? "0 0 4px #3fb950" : "none" }}
+            />
+            <span
+              className="text-[9px] font-mono font-semibold tracking-wider"
+              style={{ color: connected ? "#3fb950" : "#484f58" }}
+            >
+              {connected ? "CONNECTED" : "DISCONNECTED"}
+            </span>
+            <span className="text-[9px] text-terminal-text-faint font-mono ml-1">
+              {onlineCount}/{RUFLO_AGENTS.length} active
+            </span>
+          </div>
+        }
+      >
+        <div className="overflow-x-auto">
+          <table className="w-full text-[10px] font-mono">
+            <thead className="sticky top-0 bg-terminal-surface z-10">
+              <tr className="border-b border-terminal-border text-terminal-text-faint text-[9px] uppercase tracking-wider">
+                <th className="py-1.5 px-2 text-left">Agent</th>
+                <th className="py-1.5 px-2 text-left">Role</th>
+                <th className="py-1.5 px-2 text-left">Status</th>
+                <th className="py-1.5 px-2 text-right">Tasks Done</th>
+                <th className="py-1.5 px-2 text-right">Success Rate</th>
+                <th className="py-1.5 px-2 text-left">Current Task</th>
+              </tr>
+            </thead>
+            <tbody>
+              {RUFLO_AGENTS.map((agent) => {
+                const isCeo = agent.id === "openclaw_ceo";
+                return (
+                  <tr
+                    key={agent.id}
+                    className={`border-b border-terminal-border/30 hover:bg-white/[0.02] transition-colors ${isCeo ? "bg-terminal-accent/3" : ""}`}
+                  >
+                    <td className="py-1.5 px-2">
+                      <div className="flex items-center gap-1.5">
+                        {isCeo && <span className="text-terminal-accent text-[10px]">◆</span>}
+                        <span className={`font-semibold ${isCeo ? "text-terminal-accent" : "text-terminal-text-primary"}`}>
+                          {agent.name}
+                        </span>
+                      </div>
+                    </td>
+                    <td className="py-1.5 px-2">
+                      <span
+                        className="px-1.5 py-0.5 rounded text-[8px] font-semibold"
+                        style={{
+                          color: RUFLO_ROLE_COLORS[agent.role],
+                          backgroundColor: `${RUFLO_ROLE_COLORS[agent.role]}15`,
+                          border: `1px solid ${RUFLO_ROLE_COLORS[agent.role]}35`,
+                        }}
+                      >
+                        {agent.role.toUpperCase()}
+                      </span>
+                    </td>
+                    <td className="py-1.5 px-2">
+                      <div className="flex items-center gap-1.5">
+                        <span
+                          className="w-1.5 h-1.5 rounded-full flex-shrink-0"
+                          style={{
+                            backgroundColor: RUFLO_STATUS_COLORS[agent.status],
+                            boxShadow: agent.status === "ONLINE" ? `0 0 4px ${RUFLO_STATUS_COLORS[agent.status]}` : "none",
+                          }}
+                        />
+                        <span style={{ color: RUFLO_STATUS_COLORS[agent.status] }} className="text-[9px] font-semibold">
+                          {agent.status}
+                        </span>
+                      </div>
+                    </td>
+                    <td className="py-1.5 px-2 text-right tabular-nums text-terminal-text-muted">
+                      {agent.tasksCompleted.toLocaleString()}
+                    </td>
+                    <td className="py-1.5 px-2 text-right">
+                      <div className="flex items-center justify-end gap-1.5">
+                        <span
+                          className="tabular-nums font-semibold"
+                          style={{ color: agent.successRate >= 90 ? "#3fb950" : agent.successRate >= 80 ? "#d29922" : "#f85149" }}
+                        >
+                          {agent.successRate.toFixed(1)}%
+                        </span>
+                        <div className="w-10 h-1 bg-terminal-bg rounded-full overflow-hidden">
+                          <div
+                            className="h-full rounded-full"
+                            style={{
+                              width: `${agent.successRate}%`,
+                              backgroundColor: agent.successRate >= 90 ? "#3fb950" : agent.successRate >= 80 ? "#d29922" : "#f85149",
+                            }}
+                          />
+                        </div>
+                      </div>
+                    </td>
+                    <td className="py-1.5 px-2 text-terminal-text-muted max-w-[320px] truncate">
+                      {agent.currentTask}
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+      </DashboardPanel>
+    </div>
+  );
+}
+
+// ═══════════ SKILLS SUB-TAB ═══════════
+
+function SkillsTab() {
+  const [filterCat, setFilterCat] = useState<string>("all");
+  const [filterSource, setFilterSource] = useState<string>("all");
+
+  const cats = ["all", "Trading", "Analysis", "Risk", "Data"];
+  const sources = ["all", "Built-in", "Learned", "Installed"];
+
+  const filtered = AGENT_SKILLS.filter(s => {
+    if (filterCat !== "all" && s.category !== filterCat) return false;
+    if (filterSource !== "all" && s.source !== filterSource) return false;
+    return true;
+  });
+
+  return (
+    <div className="flex-1 overflow-hidden flex flex-col gap-1">
+      <DashboardPanel
+        title="AGENT SKILLS INVENTORY"
+        className="flex-1 overflow-hidden"
+        noPadding
+        headerRight={
+          <div className="flex items-center gap-1">
+            {cats.map(c => (
+              <button
+                key={c}
+                onClick={() => setFilterCat(c)}
+                className={`px-1.5 py-0.5 rounded text-[8px] transition-colors ${filterCat === c ? "bg-terminal-accent/15 text-terminal-accent border border-terminal-accent/30" : "text-terminal-text-faint hover:text-terminal-text-muted border border-transparent"}`}
+              >
+                {c === "all" ? "ALL" : c.toUpperCase()}
+              </button>
+            ))}
+            <span className="w-px h-3 bg-terminal-border mx-1" />
+            {sources.map(s => (
+              <button
+                key={s}
+                onClick={() => setFilterSource(s)}
+                className={`px-1.5 py-0.5 rounded text-[8px] transition-colors ${filterSource === s ? "bg-terminal-accent/15 text-terminal-accent border border-terminal-accent/30" : "text-terminal-text-faint hover:text-terminal-text-muted border border-transparent"}`}
+              >
+                {s.toUpperCase()}
+              </button>
+            ))}
+          </div>
+        }
+      >
+        <div className="overflow-auto h-full">
+          <table className="w-full text-[10px] font-mono">
+            <thead className="sticky top-0 bg-terminal-surface z-10">
+              <tr className="border-b border-terminal-border text-terminal-text-faint text-[9px] uppercase tracking-wider">
+                <th className="py-1.5 px-2 text-left">Skill Name</th>
+                <th className="py-1.5 px-2 text-left">Category</th>
+                <th className="py-1.5 px-2 text-left w-[180px]">Proficiency</th>
+                <th className="py-1.5 px-2 text-right">Times Used</th>
+                <th className="py-1.5 px-2 text-right">Last Used</th>
+                <th className="py-1.5 px-2 text-left">Source</th>
+              </tr>
+            </thead>
+            <tbody>
+              {filtered.map((skill) => {
+                const catColor = SKILL_CAT_COLORS[skill.category] || "#8b949e";
+                const sourceColor = skill.source === "Built-in" ? "#00d4aa" : skill.source === "Learned" ? "#bc8cff" : "#58a6ff";
+                return (
+                  <tr key={skill.name} className="border-b border-terminal-border/30 hover:bg-white/[0.02] transition-colors">
+                    <td className="py-1.5 px-2 font-semibold text-terminal-text-primary">{skill.name}</td>
+                    <td className="py-1.5 px-2">
+                      <span
+                        className="px-1.5 py-0.5 rounded text-[8px] font-semibold"
+                        style={{ color: catColor, backgroundColor: `${catColor}15`, border: `1px solid ${catColor}35` }}
+                      >
+                        {skill.category.toUpperCase()}
+                      </span>
+                    </td>
+                    <td className="py-1.5 px-2">
+                      <div className="flex items-center gap-2">
+                        <div className="flex-1 h-1.5 bg-terminal-bg rounded-full overflow-hidden">
+                          <div
+                            className="h-full rounded-full transition-all"
+                            style={{
+                              width: `${skill.proficiency}%`,
+                              backgroundColor: skill.proficiency >= 90 ? "#00d4aa" : skill.proficiency >= 75 ? "#3fb950" : "#d29922",
+                            }}
+                          />
+                        </div>
+                        <span className="text-[9px] text-terminal-text-primary tabular-nums w-8 text-right">
+                          {skill.proficiency}%
+                        </span>
+                      </div>
+                    </td>
+                    <td className="py-1.5 px-2 text-right tabular-nums text-terminal-text-muted">
+                      {skill.timesUsed.toLocaleString()}
+                    </td>
+                    <td className="py-1.5 px-2 text-right text-terminal-text-faint">{skill.lastUsed}</td>
+                    <td className="py-1.5 px-2">
+                      <span
+                        className="px-1.5 py-0.5 rounded text-[8px] font-semibold"
+                        style={{ color: sourceColor, backgroundColor: `${sourceColor}15`, border: `1px solid ${sourceColor}35` }}
+                      >
+                        {skill.source.toUpperCase()}
+                      </span>
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+      </DashboardPanel>
+    </div>
+  );
+}
+
+// ═══════════ LEARNING SUB-TAB ═══════════
+
+function LearningTab() {
+  const learningRate = useMemo(() => generateLearningRate(), []);
+  const totalLessons = AGENT_SKILLS.reduce((s, k) => s + k.timesUsed, 0);
+
+  const statCards = [
+    { label: "TOTAL LESSONS LEARNED", value: totalLessons.toLocaleString(), color: "text-terminal-accent" },
+    { label: "RECENT LEARNINGS (30D)", value: "248", color: "text-terminal-positive" },
+    { label: "AVG CONFIDENCE", value: `${(RECENT_LEARNINGS.reduce((s, l) => s + l.confidence, 0) / RECENT_LEARNINGS.length * 100).toFixed(1)}%`, color: "text-[#58a6ff]" },
+    { label: "MODEL VERSION", value: MODEL_VERSIONS[0].version, color: "text-terminal-warning" },
+    { label: "ACTIVE SKILLS", value: `${AGENT_SKILLS.length}`, color: "text-terminal-text-primary" },
+    { label: "LEARNING RATE TREND", value: "↑ +12.4%", color: "text-terminal-positive" },
+  ];
+
+  return (
+    <div className="flex-1 overflow-hidden flex flex-col gap-1">
+      {/* Stat cards */}
+      <div className="grid grid-cols-6 gap-1 flex-shrink-0">
+        {statCards.map(c => (
+          <div key={c.label} className="bg-terminal-bg rounded border border-terminal-border/50 px-2 py-1.5">
+            <div className="text-[9px] text-terminal-text-faint tracking-wider mb-0.5">{c.label}</div>
+            <div className={`text-sm font-mono font-semibold ${c.color}`}>{c.value}</div>
+          </div>
+        ))}
+      </div>
+
+      {/* Learning rate chart + Model history */}
+      <div className="grid grid-cols-[1fr_260px] gap-1 flex-shrink-0 h-36">
+        <DashboardPanel title="LEARNING RATE — 30 DAY TREND" className="overflow-hidden">
+          <ResponsiveContainer width="100%" height="100%">
+            <BarChart data={learningRate} margin={{ top: 4, right: 8, left: -20, bottom: 0 }}>
+              <XAxis dataKey="day" tick={{ fill: "#484f58", fontSize: 8 }} tickLine={false} axisLine={false} interval={6} />
+              <YAxis tick={{ fill: "#484f58", fontSize: 8 }} tickLine={false} axisLine={false} />
+              <Tooltip
+                contentStyle={{ backgroundColor: "#0d1117", border: "1px solid #1e2530", borderRadius: "4px", fontSize: 9 }}
+                formatter={(v: number) => [`${v.toFixed(1)} lessons/day`]}
+              />
+              <Bar dataKey="rate" fill="#00d4aa" fillOpacity={0.6} radius={[1, 1, 0, 0]} />
+            </BarChart>
+          </ResponsiveContainer>
+        </DashboardPanel>
+
+        <DashboardPanel title="MODEL VERSION HISTORY" noPadding>
+          <div className="overflow-auto h-full">
+            {MODEL_VERSIONS.map((mv) => (
+              <div key={mv.version} className="flex items-start gap-2 px-2 py-1.5 border-b border-terminal-border/20 hover:bg-white/[0.02]">
+                <span className="text-terminal-accent font-mono text-[9px] font-semibold flex-shrink-0 w-14">{mv.version}</span>
+                <span className="text-terminal-text-faint text-[8px] font-mono flex-shrink-0 w-20">{mv.date}</span>
+                <span className="text-terminal-text-muted text-[9px] leading-relaxed">{mv.notes}</span>
+              </div>
+            ))}
+          </div>
+        </DashboardPanel>
+      </div>
+
+      {/* Recent learnings list */}
+      <DashboardPanel title="RECENT LEARNINGS" className="flex-1 overflow-hidden" noPadding>
+        <div className="overflow-auto h-full">
+          <table className="w-full text-[10px] font-mono">
+            <thead className="sticky top-0 bg-terminal-surface z-10">
+              <tr className="border-b border-terminal-border text-terminal-text-faint text-[9px] uppercase tracking-wider">
+                <th className="py-1.5 px-2 text-left w-20">Time</th>
+                <th className="py-1.5 px-2 text-left w-24">Type</th>
+                <th className="py-1.5 px-2 text-left">What Was Learned</th>
+                <th className="py-1.5 px-2 text-right w-24">Confidence</th>
+              </tr>
+            </thead>
+            <tbody>
+              {RECENT_LEARNINGS.map((l) => {
+                const typeColor = LEARNING_TYPE_COLORS[l.type] || "#8b949e";
+                const confColor = l.confidence >= 0.85 ? "#3fb950" : l.confidence >= 0.70 ? "#d29922" : "#f85149";
+                return (
+                  <tr key={l.id} className="border-b border-terminal-border/20 hover:bg-white/[0.02] transition-colors">
+                    <td className="py-1.5 px-2 text-terminal-text-faint">{l.timestamp}</td>
+                    <td className="py-1.5 px-2">
+                      <span
+                        className="px-1.5 py-0.5 rounded text-[8px] font-semibold"
+                        style={{ color: typeColor, backgroundColor: `${typeColor}15`, border: `1px solid ${typeColor}35` }}
+                      >
+                        {l.type.toUpperCase()}
+                      </span>
+                    </td>
+                    <td className="py-1.5 px-2 text-terminal-text-muted leading-relaxed">{l.what}</td>
+                    <td className="py-1.5 px-2 text-right">
+                      <div className="flex items-center justify-end gap-1.5">
+                        <div className="w-10 h-1 bg-terminal-bg rounded-full overflow-hidden">
+                          <div
+                            className="h-full rounded-full"
+                            style={{ width: `${l.confidence * 100}%`, backgroundColor: confColor }}
+                          />
+                        </div>
+                        <span className="font-semibold tabular-nums" style={{ color: confColor }}>
+                          {(l.confidence * 100).toFixed(0)}%
+                        </span>
+                      </div>
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+      </DashboardPanel>
+    </div>
+  );
+}
+
 // ═══════════ MAIN PAGE ═══════════
 
 const agents = generateAgents();
-const accuracyTrend = generateAccuracyTrend();
+
+type AgentSubTab = "REGISTRY" | "SKILLS" | "LEARNING";
 
 export default function AgentsPage() {
+  const [subTab, setSubTab] = useState<AgentSubTab>("REGISTRY");
+
   return (
     <div className="h-full flex flex-col gap-1 p-1 overflow-hidden">
       {/* Summary Row */}
@@ -457,42 +1024,40 @@ export default function AgentsPage() {
         <AgentSummaryRow agents={agents} />
       </div>
 
-      {/* Main content area */}
-      <div className="flex-1 grid grid-cols-[1fr_200px] gap-1 overflow-hidden">
-        {/* Left: registry + trend */}
-        <div className="flex flex-col gap-1 overflow-hidden">
-          {/* Agent Registry Table */}
-          <DashboardPanel
-            title="AGENT REGISTRY"
-            className="flex-1 overflow-hidden"
-            noPadding
-            headerRight={
-              <span className="text-[9px] text-terminal-text-faint font-mono">
-                {agents.filter(a => a.status === "ACTIVE").length} ACTIVE / {agents.length} TOTAL
-              </span>
-            }
+      {/* Sub-tabs */}
+      <div className="flex items-center gap-1 flex-shrink-0 border-b border-terminal-border/50 pb-1">
+        {(["REGISTRY", "SKILLS", "LEARNING"] as AgentSubTab[]).map(tab => (
+          <button
+            key={tab}
+            onClick={() => setSubTab(tab)}
+            className={`px-3 py-1 text-[10px] font-mono font-semibold tracking-wider rounded-t transition-colors ${
+              subTab === tab
+                ? "bg-terminal-accent/15 text-terminal-accent border border-terminal-accent/30 border-b-0"
+                : "text-terminal-text-faint hover:text-terminal-text-muted border border-transparent"
+            }`}
           >
-            <div className="p-2 h-full overflow-hidden flex flex-col">
-              <AgentRegistryTable agents={agents} />
-            </div>
-          </DashboardPanel>
-
-          {/* Accuracy trend */}
-          <DashboardPanel title="30-DAY ENSEMBLE ACCURACY TREND" className="h-28 flex-shrink-0">
-            <AccuracyTrendChart data={accuracyTrend} />
-          </DashboardPanel>
-        </div>
-
-        {/* Right sidebar */}
-        <div className="flex flex-col gap-1 overflow-hidden">
-          <DashboardPanel title="TIER DISTRIBUTION" className="flex-1">
-            <TierDistribution agents={agents} />
-          </DashboardPanel>
-          <DashboardPanel title="SIGNAL CONSENSUS" className="flex-1">
-            <SignalConsensus agents={agents} />
-          </DashboardPanel>
-        </div>
+            {tab}
+          </button>
+        ))}
       </div>
+
+      {/* Tab content */}
+      {subTab === "REGISTRY" && (
+        <div className="flex-1 flex flex-col gap-1 overflow-hidden">
+          <RegistryTab agents={agents} />
+          <RufloSwarmSection />
+        </div>
+      )}
+      {subTab === "SKILLS" && (
+        <div className="flex-1 flex flex-col overflow-hidden">
+          <SkillsTab />
+        </div>
+      )}
+      {subTab === "LEARNING" && (
+        <div className="flex-1 flex flex-col overflow-hidden">
+          <LearningTab />
+        </div>
+      )}
     </div>
   );
 }
