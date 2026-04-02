@@ -3,6 +3,7 @@ import { DashboardPanel } from "@/components/dashboard-panel";
 import {
   PieChart, Pie, Cell, Tooltip, ResponsiveContainer,
 } from "recharts";
+import { useEngineQuery } from "@/hooks/use-engine-api";
 
 // ═══════════ MOCK DATA ═══════════
 
@@ -91,13 +92,16 @@ const fmtN = (n: number, d = 2) =>
   n.toLocaleString("en-US", { minimumFractionDigits: d, maximumFractionDigits: d });
 
 export default function ETFDashboard() {
+  // ─── Engine API ─────────────────────────────────────
+  const { data: sectorData } = useEngineQuery<{ sectors: Array<{ sector: string; count: number; momentum: number }> }>("/universe/sectors", { refetchInterval: 30000 });
+
   const [sortKey, setSortKey] = useState<string>("weight");
   const [sortDir, setSortDir] = useState<1 | -1>(-1);
 
   const sorted = useMemo(() => {
     return [...ETF_HOLDINGS].sort((a, b) => {
-      const av = (a as Record<string, number | string>)[sortKey];
-      const bv = (b as Record<string, number | string>)[sortKey];
+      const av = (a as unknown as Record<string, number | string>)[sortKey];
+      const bv = (b as unknown as Record<string, number | string>)[sortKey];
       if (typeof av === "number" && typeof bv === "number") return sortDir * (av - bv);
       return sortDir * String(av).localeCompare(String(bv));
     });
