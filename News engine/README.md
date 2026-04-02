@@ -49,7 +49,8 @@ api.on('articles', (articles) => {
 });
 ```
 
-5. `node index.js` to start listening for new articles.
+5. `node index.js` to start listening for new articles. New filings are
+   printed in your console as soon as they are published on one of the supported news platforms.
 
 ## Live Demo
 
@@ -57,13 +58,73 @@ api.on('articles', (articles) => {
 
 # Query API
 
-Use `curl` or Postman to send requests to the query API.
+Use `curl` or Postman to send requests to the query API. Articles that match your filter criteria are returned in JSON
+format.
 
 - API endpoint: `https://api.newsfilter.io/public/actions`
 - Supported HTTP Method: `POST`
 - Supported content type: `JSON`
 
+## Example - FDA Approvals
+
+Return all articles with "FDA Approval" in the title or description of the article.
+
+Demo: [https://reqbin.com/bf9gon0l](https://reqbin.com/bf9gon0l)
+
+```json
+{
+  "type": "filterArticles",
+  "queryString": "title:\"FDA Approval\" OR description:\"FDA Approval\""
+}
+```
+
+## Example - AAPL
+
+Return all articles with mentioning `AAPL`.
+
+Demo: [https://reqbin.com/b6qkjsyl](https://reqbin.com/b6qkjsyl)
+
+```json
+{
+  "type": "filterArticles",
+  "queryString": "title:AAPL OR description:AAPL OR symbols:AAPL"
+}
+```
+
+# Response Format
+
+- `id` (string) - unique ID of the article
+- `title` (string) - title of the article
+- `description` (string) - description of the article
+- `symbols` (array) - array of ticker symbols mentioned in the article, e.g. AAPL
+- `url` (string) - URL to original article
+- `publishedAt` (string) - ISO 8601 formatted date of publication time
+- `source` (object)
+  - `id` (string) - unique ID of news source
+  - `name` (string) - human readable name of news source
+- `author` (string) - name of the author
+
+## Example
+
+```
+[
+    {
+      source: {
+        id: 'seekingAlpha',
+        name: 'Seeking Alpha'
+      },
+      symbols: ['EWH'],
+      title: 'Hang Seng soars despite massive rally',
+      description: 'Hong Kong is gearing up for more protests this week...',
+      url: 'https://seekingalpha.com/news/3492784-hang-seng-soars-despite-massive-rally',
+      publishedAt: '2019-08-19T03:23:00-04:00',
+      id: 'c7007ef5eae6cf50225cc4f19d368fe5'
+    }
+];
+```
+
 # Consulting
 
 This service is already used around the world by startups, top news organizations, graduate school researchers,
 and, of course, hackers like you :)
+If you or your company are interested in more advanced features feel free to email & contact me for consulting.
