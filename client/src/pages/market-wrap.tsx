@@ -1,4 +1,5 @@
 import { DashboardPanel } from "@/components/dashboard-panel";
+import { useState, useEffect, useRef } from "react";
 
 const SECTORS = [
   { name: "Technology", daily: 1.8, weekly: 3.2, monthly: 5.4, color: "#00d4aa" },
@@ -45,9 +46,142 @@ const EARNINGS = [
   { date: "Apr 15", ticker: "BAC", type: "Earnings", est: "$0.82" },
 ];
 
+// ── NEW: Live news feed data ──
+const LIVE_NEWS = [
+  {
+    id: 1,
+    timestamp: "2m ago",
+    source: "Bloomberg",
+    headline: "NVDA surges on record AI chip demand — Blackwell GPU orders double sequentially",
+    tickers: ["NVDA"],
+    sentiment: "bullish" as const,
+    category: "hot" as const,
+  },
+  {
+    id: 2,
+    timestamp: "7m ago",
+    source: "Reuters",
+    headline: "Fed signals potential rate cut in June — meeting minutes reveal dovish shift in tone",
+    tickers: ["SPY", "QQQ", "TLT"],
+    sentiment: "bullish" as const,
+    category: "top" as const,
+  },
+  {
+    id: 3,
+    timestamp: "15m ago",
+    source: "CNBC",
+    headline: "JPMorgan beats Q1 earnings estimates by 8%, raises full-year NII guidance above consensus",
+    tickers: ["JPM"],
+    sentiment: "bullish" as const,
+    category: "top" as const,
+  },
+  {
+    id: 4,
+    timestamp: "23m ago",
+    source: "WSJ",
+    headline: "Tesla recalls 500K vehicles over full-self-driving autopilot lateral control concerns",
+    tickers: ["TSLA"],
+    sentiment: "bearish" as const,
+    category: "breaking" as const,
+  },
+  {
+    id: 5,
+    timestamp: "31m ago",
+    source: "Reuters",
+    headline: "Oil drops 2.3% as OPEC+ weighs surprise production increase at April emergency meeting",
+    tickers: ["XOM", "CL"],
+    sentiment: "bearish" as const,
+    category: "top" as const,
+  },
+  {
+    id: 6,
+    timestamp: "44m ago",
+    source: "Bloomberg",
+    headline: "Microsoft Azure cloud revenue accelerates to +31% YoY — beats Copilot adoption targets",
+    tickers: ["MSFT"],
+    sentiment: "bullish" as const,
+    category: "hot" as const,
+  },
+  {
+    id: 7,
+    timestamp: "1h ago",
+    source: "FT",
+    headline: "China manufacturing PMI contracts for third month, raising global growth slowdown fears",
+    tickers: ["XOM", "GLD"],
+    sentiment: "bearish" as const,
+    category: "top" as const,
+  },
+  {
+    id: 8,
+    timestamp: "1h ago",
+    source: "CNBC",
+    headline: "Apple reportedly in advanced talks to integrate Gemini AI into iOS 19 — partnership widening",
+    tickers: ["AAPL", "GOOGL"],
+    sentiment: "bullish" as const,
+    category: "hot" as const,
+  },
+  {
+    id: 9,
+    timestamp: "1h ago",
+    source: "Reuters",
+    headline: "Meta launches AI-powered ad optimization engine — click-through rates improve 18%",
+    tickers: ["META"],
+    sentiment: "bullish" as const,
+    category: "top" as const,
+  },
+  {
+    id: 10,
+    timestamp: "2h ago",
+    source: "Bloomberg",
+    headline: "10Y Treasury yield breaks 4.35% resistance, risk assets face headwind",
+    tickers: ["TLT", "SPY"],
+    sentiment: "bearish" as const,
+    category: "breaking" as const,
+  },
+  {
+    id: 11,
+    timestamp: "2h ago",
+    source: "WSJ",
+    headline: "Amazon AWS wins $4.2B DoD JEDI follow-on cloud contract, analyst upgrades issued",
+    tickers: ["AMZN"],
+    sentiment: "bullish" as const,
+    category: "hot" as const,
+  },
+  {
+    id: 12,
+    timestamp: "3h ago",
+    source: "FT",
+    headline: "Visa settles DOJ antitrust case for $100M, removes overhang on shares",
+    tickers: ["V"],
+    sentiment: "bullish" as const,
+    category: "top" as const,
+  },
+];
+
+const SENTIMENT_CONFIG = {
+  bullish: { emoji: "🟢", label: "Bullish", color: "#3fb950" },
+  bearish: { emoji: "🔴", label: "Bearish", color: "#f85149" },
+  neutral: { emoji: "⚪", label: "Neutral", color: "#7d8590" },
+} as const;
+
+const CATEGORY_CONFIG = {
+  hot: { emoji: "🔥", label: "Hot", color: "#f0883e" },
+  top: { emoji: "⭐", label: "Top", color: "#d29922" },
+  breaking: { emoji: "🚨", label: "Breaking", color: "#f85149" },
+} as const;
+
 export default function MarketWrap() {
+  const [ticker, setTicker] = useState(0);
+  const newsFeedRef = useRef<HTMLDivElement>(null);
+
+  // Ticker animation for news feed timestamp freshness feel
+  useEffect(() => {
+    const iv = setInterval(() => setTicker((t) => t + 1), 30000);
+    return () => clearInterval(iv);
+  }, []);
+
   return (
-    <div className="h-full grid grid-cols-3 grid-rows-[auto_1fr_auto] gap-[2px] p-[2px] overflow-auto" data-testid="market-wrap">
+    <div className="h-full grid grid-cols-3 grid-rows-[auto_1fr_auto_auto] gap-[2px] p-[2px] overflow-auto" data-testid="market-wrap">
       {/* Market Direction Narrative */}
       <DashboardPanel title="MARKET DIRECTION" className="col-span-2">
         <div className="space-y-2 text-[11px] text-terminal-text-muted leading-relaxed">
@@ -104,9 +238,9 @@ export default function MarketWrap() {
         </div>
       </DashboardPanel>
 
-      {/* Right column: Events */}
+      {/* Right column: CVR News + Fed Calendar */}
       <div className="flex flex-col gap-[2px]">
-        {/* News */}
+        {/* CVR News */}
         <DashboardPanel title="CVR NEWS" className="flex-1">
           <div className="space-y-1.5">
             {NEWS.map((n, i) => (
@@ -131,6 +265,93 @@ export default function MarketWrap() {
           </div>
         </DashboardPanel>
       </div>
+
+      {/* ── NEW: Live News Feed — full width, below GICS sector map ── */}
+      <DashboardPanel
+        title="LIVE NEWS — PORTFOLIO RELEVANT"
+        className="col-span-3"
+        noPadding
+        headerRight={
+          <div className="flex items-center gap-1.5 text-[8px] font-mono">
+            <span className="w-1.5 h-1.5 rounded-full bg-terminal-positive animate-pulse" />
+            <span className="text-terminal-positive">LIVE</span>
+            <span className="text-terminal-text-faint ml-2">
+              {LIVE_NEWS.filter((n) => n.sentiment === "bullish").length}🟢{" "}
+              {LIVE_NEWS.filter((n) => n.sentiment === "bearish").length}🔴
+            </span>
+          </div>
+        }
+      >
+        <div ref={newsFeedRef} className="overflow-auto" style={{ maxHeight: 200 }}>
+          <table className="w-full text-[9px] font-mono">
+            <thead className="sticky top-0 bg-terminal-surface z-10">
+              <tr className="text-terminal-text-faint uppercase tracking-wider border-b border-terminal-border/50">
+                <th className="text-left px-2 py-1.5 font-medium w-16">Time</th>
+                <th className="text-left px-2 py-1.5 font-medium w-20">Source</th>
+                <th className="text-left px-2 py-1.5 font-medium">Headline</th>
+                <th className="text-left px-2 py-1.5 font-medium w-28">Tickers</th>
+                <th className="text-center px-2 py-1.5 font-medium w-20">Sentiment</th>
+                <th className="text-center px-2 py-1.5 font-medium w-20">Category</th>
+              </tr>
+            </thead>
+            <tbody>
+              {LIVE_NEWS.map((item) => {
+                const sent = SENTIMENT_CONFIG[item.sentiment];
+                const cat = CATEGORY_CONFIG[item.category];
+                return (
+                  <tr
+                    key={item.id}
+                    className="border-b border-terminal-border/20 hover:bg-white/[0.02] transition-colors"
+                  >
+                    {/* Timestamp */}
+                    <td className="px-2 py-1.5 text-terminal-text-faint whitespace-nowrap">{item.timestamp}</td>
+                    {/* Source */}
+                    <td className="px-2 py-1.5">
+                      <span className="text-terminal-accent text-[8px] font-medium">{item.source}</span>
+                    </td>
+                    {/* Headline */}
+                    <td className="px-2 py-1.5 text-terminal-text-muted leading-relaxed max-w-[420px]">
+                      {item.headline}
+                    </td>
+                    {/* Tickers */}
+                    <td className="px-2 py-1.5">
+                      <div className="flex flex-wrap gap-1">
+                        {item.tickers.map((t) => (
+                          <span
+                            key={t}
+                            className="inline-block px-1 py-0.5 rounded text-[7px] font-bold font-mono"
+                            style={{
+                              color: "#00d4aa",
+                              background: "rgba(0,212,170,0.12)",
+                              border: "1px solid rgba(0,212,170,0.25)",
+                            }}
+                          >
+                            {t}
+                          </span>
+                        ))}
+                      </div>
+                    </td>
+                    {/* Sentiment */}
+                    <td className="px-2 py-1.5 text-center">
+                      <div className="flex items-center justify-center gap-1">
+                        <span className="text-[10px]">{sent.emoji}</span>
+                        <span className="text-[7px] font-medium" style={{ color: sent.color }}>{sent.label}</span>
+                      </div>
+                    </td>
+                    {/* Category */}
+                    <td className="px-2 py-1.5 text-center">
+                      <div className="flex items-center justify-center gap-1">
+                        <span className="text-[10px]">{cat.emoji}</span>
+                        <span className="text-[7px] font-medium" style={{ color: cat.color }}>{cat.label}</span>
+                      </div>
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+      </DashboardPanel>
 
       {/* Bottom: Upcoming Earnings/Dividends */}
       <DashboardPanel title="INCOMING EVENTS" className="col-span-3">
