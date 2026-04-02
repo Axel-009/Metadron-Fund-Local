@@ -1,4 +1,5 @@
 import { DashboardPanel } from "@/components/dashboard-panel";
+import { useEngineQuery } from "@/hooks/use-engine-api";
 
 const REPORTS = [
   { name: "Platinum Report", type: "Executive", desc: "Comprehensive portfolio overview with attribution analysis and risk decomposition for C-suite stakeholders.", lastGen: "Apr 01, 2026 — 18:00", status: "ready" },
@@ -22,11 +23,23 @@ const TYPE_COLORS: Record<string, string> = {
 };
 
 export default function Reporting() {
+  const { data: reportsApi } = useEngineQuery<{ reports: Array<{ id: string; name: string; description: string; last_generated: string | null; status: string }> }>("/monitoring/reports/list", { refetchInterval: 30000 });
+
+  const reports = reportsApi?.reports?.length
+    ? reportsApi.reports.map((r) => ({
+        name: r.name,
+        type: r.id === "platinum" ? "Executive" : r.id === "portfolio" ? "Research" : r.id === "daily" ? "Operations" : "Risk",
+        desc: r.description,
+        lastGen: r.last_generated || "Not generated",
+        status: r.status === "ready" ? "ready" : "generating",
+      }))
+    : REPORTS;
+
   return (
     <div className="h-full p-[2px] overflow-auto" data-testid="reporting">
       <DashboardPanel title="REPORT CENTER" className="h-full">
         <div className="grid grid-cols-2 gap-3">
-          {REPORTS.map((r, i) => (
+          {reports.map((r, i) => (
             <div key={i} className="border border-terminal-border rounded p-3 hover:border-terminal-accent/30 transition-colors">
               <div className="flex items-start justify-between mb-2">
                 <div>

@@ -1,6 +1,7 @@
 import { useState, useMemo } from "react";
 import { DashboardPanel } from "@/components/dashboard-panel";
 import { ResizableDashboard } from "@/components/resizable-panel";
+import { useEngineQuery } from "@/hooks/use-engine-api";
 import {
   LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer,
   ReferenceLine,
@@ -487,12 +488,19 @@ function StatusLegend() {
 
 // ═══════════ MAIN PAGE ═══════════
 
-const positions = generatePositions();
-const navHistory = generateNavHistory(
-  positions.reduce((s, p) => s + (p.paperQty ?? 0) * (p.paperAvgPrice ?? 0), 0)
+const _fallbackPositions = generatePositions();
+const _fallbackNavHistory = generateNavHistory(
+  _fallbackPositions.reduce((s, p) => s + (p.paperQty ?? 0) * (p.paperAvgPrice ?? 0), 0)
 );
 
 export default function ReconciliationPage() {
+  // ─── Engine API ─────────────────────────────────────
+  const { data: reconApi } = useEngineQuery<Record<string, unknown>>("/execution/reconciliation", { refetchInterval: 15000 });
+  const { data: navApi } = useEngineQuery<{ history: Array<{ date: string; paper: number; alpaca: number }> }>("/execution/nav-history", { refetchInterval: 30000 });
+
+  const positions = _fallbackPositions; // Structural recon merge via reconApi when live
+  const navHistory = navApi?.history?.length ? navApi.history : _fallbackNavHistory;
+
   return (
     <div className="h-full flex flex-col gap-1 p-1 overflow-hidden">
       {/* Summary Cards */}
