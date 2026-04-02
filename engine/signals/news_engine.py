@@ -1,10 +1,14 @@
 """Metadron Capital — News Intelligence Engine.
 
-Pulls live market news from OpenBB (Tiingo, Benzinga, FMP providers),
-scores sentiment, categorizes by urgency, and maps to portfolio tickers.
+Two-source news pipeline:
+  1. PRIMARY: newsfilter.io real-time WebSocket (10,000+ sources: Reuters,
+     Bloomberg, WSJ, SEC, Seeking Alpha). Streams via socket.io.
+  2. FALLBACK: OpenBB news (Tiingo, Benzinga, FMP) — used when newsfilter
+     is unavailable or for per-ticker company news.
 
 Fits in system architecture:
-    L1 Data (OpenBB news) → L2 NewsEngine (sentiment + categorization)
+    L1 Data (newsfilter.io + OpenBB news)
+    → L2 NewsEngine (sentiment scoring + urgency categorization)
     → EventDrivenEngine (catalyst detection)
     → WRAP tab LiveNewsFeed (real-time display)
     → MacroEngine (headline sentiment as macro signal)
@@ -72,10 +76,72 @@ class NewsItem:
     raw_date: str = ""
 
 
-class NewsEngine:
-    """Live news intelligence engine powered by OpenBB.
+class NewsFilterBridge:
+    """Bridge to newsfilter.io real-time WebSocket API.
 
-    Fetches company and world news, scores sentiment, categorizes urgency,
+    Connects via socket.io to stream financial news from 10,000+ sources
+    (Reuters, Bloomberg, WSJ, SEC, Seeking Alpha, etc.).
+    Articles arrive pre-mapped to company tickers.
+
+    Source: /News engine/ folder (npm package: realtime-newsapi)
+    """
+
+    NEWSFILTER_URL = "https://api.newsfilter.io"
+
+    def __init__(self):
+        self._connected = False
+        self._articles: deque = deque(maxlen=200)
+        self._sio = None
+
+    def connect(self):
+        """Connect to newsfilter.io WebSocket."""
+        try:
+            import socketio
+            self._sio = socketio.Client()
+
+            @self._sio.on("connect")
+            def on_connect():
+                self._connected = True
+                self._sio.emit("action", {"type": "subscribe", "filterId": "all"})
+                logger.info("NewsFilter.io connected — streaming live news")
+
+            @self._sio.on("articles")
+            def on_articles(data):
+                articles = data.get("articles", []) if isinstance(data, dict) else []
+                for a in articles:
+                    self._articles.appendleft(a)
+
+            @self._sio.on("disconnect")
+            def on_disconnect():
+                self._connected = False
+                logger.warning("NewsFilter.io disconnected")
+
+            self._sio.connect(self.NEWSFILTER_URL, transports=["websocket"])
+        except ImportError:
+            logger.info("python-socketio not installed — newsfilter.io bridge unavailable (pip install python-socketio[client])")
+        except Exception as e:
+            logger.warning(f"NewsFilter.io connection failed: {e}")
+
+    def disconnect(self):
+        if self._sio and self._connected:
+            self._sio.disconnect()
+
+    def get_articles(self, limit: int = 30) -> list:
+        """Get buffered articles from the WebSocket stream."""
+        return list(self._articles)[:limit]
+
+    @property
+    def is_connected(self) -> bool:
+        return self._connected
+
+
+class NewsEngine:
+    """Live news intelligence engine.
+
+    Primary: newsfilter.io WebSocket (10,000+ sources, real-time)
+    Fallback: OpenBB news (Tiingo, Benzinga, FMP)
+
+    Fetches news, scores sentiment, categorizes urgency,
     and maintains a rolling feed for the WRAP tab.
     """
 
@@ -84,6 +150,14 @@ class NewsEngine:
         self._last_fetch: Optional[datetime] = None
         self._fetch_interval = timedelta(seconds=60)  # Min 60s between fetches
         self._seen_ids: set = set()
+        self._newsfilter: Optional[NewsFilterBridge] = None
+
+        # Try to connect to newsfilter.io
+        try:
+            self._newsfilter = NewsFilterBridge()
+            self._newsfilter.connect()
+        except Exception:
+            pass
 
     def _score_sentiment(self, headline: str) -> tuple[str, float]:
         """Score headline sentiment using keyword matching.
@@ -138,8 +212,51 @@ class NewsEngine:
         """Generate deterministic ID for dedup."""
         return hashlib.md5(f"{headline[:80]}:{source}".encode()).hexdigest()[:12]
 
+    def _fetch_from_newsfilter(self) -> List[NewsItem]:
+        """Fetch from newsfilter.io WebSocket buffer (primary source)."""
+        if not self._newsfilter or not self._newsfilter.is_connected:
+            return []
+
+        items = []
+        for article in self._newsfilter.get_articles(limit=30):
+            headline = article.get("title", "")
+            if not headline:
+                continue
+            source = article.get("source", article.get("provider", "NewsFilter"))
+            date_str = article.get("publishedAt", article.get("date", ""))
+            symbols = article.get("symbols", article.get("tickers", []))
+            if isinstance(symbols, str):
+                symbols = symbols.split(",")
+            url = article.get("url", article.get("link", ""))
+
+            nid = self._make_id(headline, source)
+            if nid in self._seen_ids:
+                continue
+            self._seen_ids.add(nid)
+
+            sentiment, score = self._score_sentiment(headline)
+            category = self._categorize(headline)
+            tickers = self._extract_tickers(headline, symbols)
+
+            try:
+                dt = datetime.fromisoformat(date_str.replace("Z", "+00:00")) if date_str else datetime.now()
+                delta = datetime.now() - dt.replace(tzinfo=None)
+                ts = "just now" if delta.total_seconds() < 60 else f"{int(delta.total_seconds() / 60)}m ago" if delta.total_seconds() < 3600 else f"{int(delta.total_seconds() / 3600)}h ago"
+            except Exception:
+                ts = ""
+
+            items.append(NewsItem(
+                id=nid, timestamp=ts, source=source, headline=headline,
+                tickers=tickers, sentiment=sentiment, sentiment_score=score,
+                category=category, url=url, raw_date=date_str,
+            ))
+
+        if items:
+            logger.info(f"NewsFilter.io: {len(items)} new articles")
+        return items
+
     def _fetch_from_openbb(self, limit: int = 30) -> List[NewsItem]:
-        """Fetch fresh news from OpenBB and process into NewsItems."""
+        """Fetch fresh news from OpenBB (fallback source)."""
         items = []
         try:
             from engine.data.openbb_data import get_world_news, get_company_news
@@ -233,12 +350,21 @@ class NewsEngine:
         return items
 
     def refresh(self, limit: int = 30) -> int:
-        """Refresh the news feed from OpenBB. Returns count of new items."""
+        """Refresh the news feed. Primary: newsfilter.io, fallback: OpenBB.
+
+        Returns count of new items added.
+        """
         now = datetime.now()
         if self._last_fetch and (now - self._last_fetch) < self._fetch_interval:
             return 0
 
-        items = self._fetch_from_openbb(limit=limit)
+        # Primary: newsfilter.io real-time stream
+        items = self._fetch_from_newsfilter()
+
+        # Fallback: OpenBB if newsfilter has no data
+        if not items:
+            items = self._fetch_from_openbb(limit=limit)
+
         new_count = 0
         for item in items:
             if item.id not in {i.id for i in self._feed}:
@@ -246,7 +372,8 @@ class NewsEngine:
                 new_count += 1
 
         self._last_fetch = now
-        logger.info(f"News refresh: {new_count} new items ({len(self._feed)} total)")
+        if new_count:
+            logger.info(f"News refresh: {new_count} new items ({len(self._feed)} total)")
         return new_count
 
     def get_live_feed(self, limit: int = 20) -> List[dict]:
