@@ -1,4 +1,5 @@
 import { DashboardPanel } from "@/components/dashboard-panel";
+import { ResizableDashboard } from "@/components/resizable-panel";
 import { useState, useEffect } from "react";
 
 const GREEKS = [
@@ -92,26 +93,28 @@ export default function RiskPortfolio() {
   }, []);
 
   return (
-    <div className="h-full grid grid-cols-3 gap-[2px] p-[2px] overflow-auto" data-testid="risk-portfolio">
+    <div className="h-full flex flex-col gap-[2px] p-[2px] overflow-auto" data-testid="risk-portfolio">
 
-      {/* ── ROW 1: Greeks | VaR | Metrics ── */}
-      {/* Greeks */}
-      <DashboardPanel title="OPTIONS GREEKS — AGGREGATE" className="col-span-2">
-        <div className="flex gap-4">
-          {GREEKS.map((g) => (
-            <div key={g.name} className="flex-1 text-center border border-terminal-border rounded p-3">
-              <div className="text-xl font-mono font-bold" style={{ color: g.color }}>{g.label}</div>
-              <div className="text-lg font-mono font-bold text-terminal-text-primary tabular-nums mt-1">
-                {g.value > 0 && g.name !== "Rho" ? "+" : ""}{g.value}
-              </div>
-              <div className="text-[8px] text-terminal-text-faint uppercase tracking-wider mt-0.5">{g.name}</div>
+      {/* ── ROW 1: Greeks | VaR (resizable) ── */}
+      <div className="flex-shrink-0 h-36">
+        <ResizableDashboard defaultSizes={[68, 32]} minSizes={[40, 22]}>
+          {/* Greeks */}
+          <DashboardPanel title="OPTIONS GREEKS — AGGREGATE">
+            <div className="flex gap-4">
+              {GREEKS.map((g) => (
+                <div key={g.name} className="flex-1 text-center border border-terminal-border rounded p-3">
+                  <div className="text-xl font-mono font-bold" style={{ color: g.color }}>{g.label}</div>
+                  <div className="text-lg font-mono font-bold text-terminal-text-primary tabular-nums mt-1">
+                    {g.value > 0 && g.name !== "Rho" ? "+" : ""}{g.value}
+                  </div>
+                  <div className="text-[8px] text-terminal-text-faint uppercase tracking-wider mt-0.5">{g.name}</div>
+                </div>
+              ))}
             </div>
-          ))}
-        </div>
-      </DashboardPanel>
+          </DashboardPanel>
 
-      {/* VaR / CVaR Gauges */}
-      <DashboardPanel title="VAR / CVAR">
+          {/* VaR / CVaR Gauges */}
+          <DashboardPanel title="VAR / CVAR">
         <div className="flex flex-col gap-3">
           <div>
             <div className="flex justify-between text-[9px] mb-1">
@@ -142,6 +145,8 @@ export default function RiskPortfolio() {
           </div>
         </div>
       </DashboardPanel>
+        </ResizableDashboard>
+      </div>
 
       {/* ── ROW 2: Portfolio Metrics | Fills Table | Liquidity Risk ── */}
       {/* Portfolio Metrics */}
@@ -290,10 +295,11 @@ export default function RiskPortfolio() {
         </div>
       </DashboardPanel>
 
-      {/* ── ROW 4: Futures Positions | Margin Panel ── */}
-
-      {/* Futures Positions */}
-      <DashboardPanel title="FUTURES POSITIONS" className="col-span-2" noPadding>
+      {/* ── ROW 4: Futures Positions | Margin Panel (resizable) ── */}
+      <div className="flex-shrink-0 h-52">
+        <ResizableDashboard defaultSizes={[68, 32]} minSizes={[40, 22]}>
+          {/* Futures Positions */}
+          <DashboardPanel title="FUTURES POSITIONS" noPadding>
         <div className="overflow-auto">
           <table className="w-full text-[9px] font-mono">
             <thead>
@@ -347,10 +353,10 @@ export default function RiskPortfolio() {
             </tfoot>
           </table>
         </div>
-      </DashboardPanel>
+          </DashboardPanel>
 
-      {/* Margin Information Panel */}
-      <DashboardPanel title="MARGIN INFORMATION">
+          {/* Margin Information Panel */}
+          <DashboardPanel title="MARGIN INFORMATION">
         <div className="space-y-2">
           {/* Margin Utilization Gauge */}
           <div>
@@ -393,7 +399,9 @@ export default function RiskPortfolio() {
             ))}
           </div>
         </div>
-      </DashboardPanel>
+          </DashboardPanel>
+        </ResizableDashboard>
+      </div>
 
     </div>
   );

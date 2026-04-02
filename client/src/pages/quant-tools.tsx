@@ -1,5 +1,6 @@
 import { useState, useMemo } from "react";
 import { DashboardPanel } from "@/components/dashboard-panel";
+import { ResizableDashboard } from "@/components/resizable-panel";
 import {
   AreaChart, Area, XAxis, YAxis, Tooltip, ResponsiveContainer,
   ComposedChart, Line, Bar, BarChart, ReferenceLine,
@@ -579,9 +580,10 @@ export default function QuantToolsPage() {
       </div>
 
       {/* Main grid */}
-      <div className="flex-1 grid grid-cols-[1fr_240px] gap-1 overflow-hidden">
+      <div className="flex-1 min-h-0 overflow-hidden">
+        <ResizableDashboard defaultSizes={[75, 25]} minSizes={[45, 18]}>
         {/* Left: price chart + signals + strategies */}
-        <div className="flex flex-col gap-1 overflow-hidden">
+        <div className="h-full flex flex-col gap-1 overflow-hidden">
           {/* Price chart */}
           <DashboardPanel
             title={`${selectedTicker} — PRICE CHART (120 DAYS)`}
@@ -660,7 +662,7 @@ export default function QuantToolsPage() {
         </div>
 
         {/* Right: indicators panel */}
-        <div className="overflow-auto">
+        <div className="h-full overflow-auto">
           <DashboardPanel title="TECHNICAL INDICATORS" className="h-full">
             <div className="space-y-3 text-[10px]">
 
@@ -782,6 +784,7 @@ export default function QuantToolsPage() {
             </div>
           </DashboardPanel>
         </div>
+        </ResizableDashboard>
       </div>
     </div>
   );

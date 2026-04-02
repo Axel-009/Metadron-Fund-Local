@@ -1,5 +1,6 @@
 import { useMemo } from "react";
 import { DashboardPanel } from "@/components/dashboard-panel";
+import { ResizableDashboard } from "@/components/resizable-panel";
 import {
   LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, ReferenceLine,
 } from "recharts";
@@ -98,10 +99,10 @@ export default function MacroDashboard() {
   const r = REGIME_COLORS[REGIME.label];
 
   return (
-    <div className="h-full grid gap-1 p-1 overflow-hidden" style={{ gridTemplateColumns: "1fr 1fr 1fr 190px", gridTemplateRows: "44px 1fr 1fr 160px" }}>
+    <div className="h-full flex flex-col gap-1 p-1 overflow-hidden">
 
       {/* ─── Regime Banner (full width) ─── */}
-      <div className="col-span-4 terminal-panel flex items-center justify-between px-3 py-1" style={{ border: `1px solid ${r.border}`, backgroundColor: r.bg }}>
+      <div className="flex-shrink-0 terminal-panel flex items-center justify-between px-3 py-1" style={{ border: `1px solid ${r.border}`, backgroundColor: r.bg }}>
         <div className="flex items-center gap-3">
           <span className="text-[9px] text-terminal-text-muted tracking-widest">MACRO REGIME</span>
           <span className="text-[18px] font-mono font-bold tracking-widest" style={{ color: r.text }}>{REGIME.label}</span>
@@ -118,8 +119,12 @@ export default function MacroDashboard() {
         </div>
       </div>
 
-      {/* ─── G10 Table (spans 3 cols) ─── */}
-      <DashboardPanel title="G10 ECONOMIC INDICATORS" className="col-span-3" noPadding>
+      {/* ─── Main: G10 + Charts | Economic Calendar ─── */}
+      <div className="flex-1 min-h-0">
+        <ResizableDashboard defaultSizes={[78, 22]} minSizes={[50, 15]}>
+          {/* Left: G10 Table + 3 Charts + News/Liquidity */}
+          <div className="h-full flex flex-col gap-1 overflow-hidden">
+      <DashboardPanel title="G10 ECONOMIC INDICATORS" noPadding>
         <div className="overflow-auto h-full">
           <table className="w-full text-[10px] font-mono border-collapse">
             <thead className="sticky top-0 bg-terminal-surface z-10">
@@ -172,98 +177,82 @@ export default function MacroDashboard() {
         </div>
       </DashboardPanel>
 
-      {/* ─── Economic Calendar (right sidebar, spans rows 2-3) ─── */}
-      <DashboardPanel title="ECONOMIC CALENDAR" className="row-span-2" noPadding>
-        <div className="overflow-auto h-full">
-          {ECON_CALENDAR.map((e, i) => (
-            <div key={i} className={`px-2 py-1 border-b border-terminal-border hover:bg-[#161b22] ${i % 2 === 0 ? "" : "bg-[#0d1117]"}`}>
-              <div className="flex items-center justify-between mb-0.5">
-                <span className="text-[9px] font-mono text-terminal-text-muted">{e.date} {e.time}</span>
-                <div className="flex items-center gap-1">
-                  <span>{e.country}</span>
-                  <span className="text-[8px]">
-                    {e.importance === 3 ? "🔴" : e.importance === 2 ? "🟡" : "🟢"}
+          </div>
+
+          {/* Right: 3 Charts container */}
+          <div className="flex flex-col gap-1 h-full overflow-auto">
+            <DashboardPanel title="2s10s YIELD SPREAD (30D)" className="flex-1">
+              <ResponsiveContainer width="100%" height="100%">
+                <LineChart data={spreadData} margin={{ top: 4, right: 6, left: -20, bottom: 0 }}>
+                  <XAxis dataKey="day" tick={{ fontSize: 8, fill: "#8b949e" }} tickFormatter={v => `D${v}`} />
+                  <YAxis domain={[-0.6, -0.1]} tickFormatter={v => `${v.toFixed(2)}%`} tick={{ fontSize: 8, fill: "#8b949e" }} />
+                  <ReferenceLine y={0} stroke="#555" strokeDasharray="3 3" />
+                  <Tooltip contentStyle={TOOLTIP_STYLE} formatter={(v: number) => [`${v.toFixed(3)}%`, "2s10s"]} />
+                  <Line type="monotone" dataKey="val" stroke="#d29922" strokeWidth={1.5} dot={false} />
+                </LineChart>
+              </ResponsiveContainer>
+            </DashboardPanel>
+            <DashboardPanel title="VIX INDEX (30D)" className="flex-1">
+              <ResponsiveContainer width="100%" height="100%">
+                <LineChart data={vixData} margin={{ top: 4, right: 6, left: -20, bottom: 0 }}>
+                  <XAxis dataKey="day" tick={{ fontSize: 8, fill: "#8b949e" }} tickFormatter={v => `D${v}`} />
+                  <YAxis domain={[13, 26]} tick={{ fontSize: 8, fill: "#8b949e" }} />
+                  <ReferenceLine y={20} stroke="#d29922" strokeDasharray="3 3" label={{ value: "20", position: "right", fontSize: 8, fill: "#d29922" }} />
+                  <Tooltip contentStyle={TOOLTIP_STYLE} formatter={(v: number) => [v.toFixed(2), "VIX"]} />
+                  <Line type="monotone" dataKey="val" stroke="#a855f7" strokeWidth={1.5} dot={false} />
+                </LineChart>
+              </ResponsiveContainer>
+            </DashboardPanel>
+            <DashboardPanel title="DXY DOLLAR INDEX (30D)" className="flex-1">
+              <ResponsiveContainer width="100%" height="100%">
+                <LineChart data={dxyData} margin={{ top: 4, right: 6, left: -20, bottom: 0 }}>
+                  <XAxis dataKey="day" tick={{ fontSize: 8, fill: "#8b949e" }} tickFormatter={v => `D${v}`} />
+                  <YAxis domain={[102, 107]} tick={{ fontSize: 8, fill: "#8b949e" }} />
+                  <Tooltip contentStyle={TOOLTIP_STYLE} formatter={(v: number) => [v.toFixed(2), "DXY"]} />
+                  <Line type="monotone" dataKey="val" stroke="#3b82f6" strokeWidth={1.5} dot={false} />
+                </LineChart>
+              </ResponsiveContainer>
+            </DashboardPanel>
+          </div>
+        </ResizableDashboard>
+      </div>
+
+      {/* ─── Bottom Row: News + Liquidity (resizable) ─── */}
+      <div className="flex-shrink-0 h-40">
+        <ResizableDashboard defaultSizes={[60, 40]} minSizes={[30, 25]}>
+          <DashboardPanel title="MACRO NEWS FEED" noPadding>
+            <div className="overflow-auto h-full">
+              {MACRO_NEWS.map((n, i) => (
+                <div key={i} className={`px-2 py-1 border-b border-terminal-border flex items-start gap-2 hover:bg-[#161b22] ${i % 2 === 0 ? "" : "bg-[#0d1117]"}`}>
+                  <span className="text-[8px] font-mono text-terminal-text-faint w-16 flex-shrink-0">{n.ts}</span>
+                  <span className="text-[8px] font-mono text-terminal-text-muted w-14 flex-shrink-0">{n.src}</span>
+                  <span className="text-[9px] text-terminal-text-primary flex-1 leading-tight">{n.headline}</span>
+                  <span className="text-[8px] font-mono px-1 rounded flex-shrink-0" style={{ backgroundColor: SENTIMENT_COLORS[n.sentiment] + "22", color: SENTIMENT_COLORS[n.sentiment] }}>
+                    {n.sentiment}
                   </span>
                 </div>
-              </div>
-              <div className="text-[9px] text-terminal-text-primary leading-tight mb-0.5">{e.event}</div>
-              <div className="flex gap-2 text-[8px] font-mono">
-                <span className="text-terminal-text-faint">PREV: <span className="text-terminal-text-muted">{e.prev}</span></span>
-                <span className="text-terminal-text-faint">CONS: <span className="text-terminal-accent">{e.consensus}</span></span>
-              </div>
+              ))}
             </div>
-          ))}
-        </div>
-      </DashboardPanel>
+          </DashboardPanel>
 
-      {/* ─── Row 3: 3 Macro Charts ─── */}
-      <DashboardPanel title="2s10s YIELD SPREAD (30D)">
-        <ResponsiveContainer width="100%" height="100%">
-          <LineChart data={spreadData} margin={{ top: 4, right: 6, left: -20, bottom: 0 }}>
-            <XAxis dataKey="day" tick={{ fontSize: 8, fill: "#8b949e" }} tickFormatter={v => `D${v}`} />
-            <YAxis domain={[-0.6, -0.1]} tickFormatter={v => `${v.toFixed(2)}%`} tick={{ fontSize: 8, fill: "#8b949e" }} />
-            <ReferenceLine y={0} stroke="#555" strokeDasharray="3 3" />
-            <Tooltip contentStyle={TOOLTIP_STYLE} formatter={(v: number) => [`${v.toFixed(3)}%`, "2s10s"]} />
-            <Line type="monotone" dataKey="val" stroke="#d29922" strokeWidth={1.5} dot={false} />
-          </LineChart>
-        </ResponsiveContainer>
-      </DashboardPanel>
-
-      <DashboardPanel title="VIX INDEX (30D)">
-        <ResponsiveContainer width="100%" height="100%">
-          <LineChart data={vixData} margin={{ top: 4, right: 6, left: -20, bottom: 0 }}>
-            <XAxis dataKey="day" tick={{ fontSize: 8, fill: "#8b949e" }} tickFormatter={v => `D${v}`} />
-            <YAxis domain={[13, 26]} tick={{ fontSize: 8, fill: "#8b949e" }} />
-            <ReferenceLine y={20} stroke="#d29922" strokeDasharray="3 3" label={{ value: "20", position: "right", fontSize: 8, fill: "#d29922" }} />
-            <Tooltip contentStyle={TOOLTIP_STYLE} formatter={(v: number) => [v.toFixed(2), "VIX"]} />
-            <Line type="monotone" dataKey="val" stroke="#a855f7" strokeWidth={1.5} dot={false} />
-          </LineChart>
-        </ResponsiveContainer>
-      </DashboardPanel>
-
-      <DashboardPanel title="DXY DOLLAR INDEX (30D)">
-        <ResponsiveContainer width="100%" height="100%">
-          <LineChart data={dxyData} margin={{ top: 4, right: 6, left: -20, bottom: 0 }}>
-            <XAxis dataKey="day" tick={{ fontSize: 8, fill: "#8b949e" }} tickFormatter={v => `D${v}`} />
-            <YAxis domain={[102, 107]} tick={{ fontSize: 8, fill: "#8b949e" }} />
-            <Tooltip contentStyle={TOOLTIP_STYLE} formatter={(v: number) => [v.toFixed(2), "DXY"]} />
-            <Line type="monotone" dataKey="val" stroke="#3b82f6" strokeWidth={1.5} dot={false} />
-          </LineChart>
-        </ResponsiveContainer>
-      </DashboardPanel>
-
-      {/* ─── Row 4: News Feed + Liquidity ─── */}
-      <DashboardPanel title="MACRO NEWS FEED" className="col-span-2" noPadding>
-        <div className="overflow-auto h-full">
-          {MACRO_NEWS.map((n, i) => (
-            <div key={i} className={`px-2 py-1 border-b border-terminal-border flex items-start gap-2 hover:bg-[#161b22] ${i % 2 === 0 ? "" : "bg-[#0d1117]"}`}>
-              <span className="text-[8px] font-mono text-terminal-text-faint w-16 flex-shrink-0">{n.ts}</span>
-              <span className="text-[8px] font-mono text-terminal-text-muted w-14 flex-shrink-0">{n.src}</span>
-              <span className="text-[9px] text-terminal-text-primary flex-1 leading-tight">{n.headline}</span>
-              <span className="text-[8px] font-mono px-1 rounded flex-shrink-0" style={{ backgroundColor: SENTIMENT_COLORS[n.sentiment] + "22", color: SENTIMENT_COLORS[n.sentiment] }}>
-                {n.sentiment}
-              </span>
-            </div>
-          ))}
-        </div>
-      </DashboardPanel>
-
-      <DashboardPanel title="MONEY VELOCITY & LIQUIDITY" className="col-span-2">
-        <div className="grid grid-cols-1 gap-2">
-          {LIQUIDITY_METRICS.map(m => (
-            <div key={m.label} className="flex items-center justify-between border-b border-terminal-border pb-1">
-              <span className="text-[9px] text-terminal-text-muted">{m.label}</span>
-              <div className="flex items-center gap-2">
-                <span className="text-[12px] font-mono font-bold text-terminal-accent">{m.value}</span>
-                <span className={`text-[9px] font-mono ${m.dir === "up" ? "text-terminal-positive" : "text-terminal-negative"}`}>{m.chg}</span>
+          <DashboardPanel title="MONEY VELOCITY & LIQUIDITY">
+            <div className="grid grid-cols-1 gap-2">
+              {LIQUIDITY_METRICS.map(m => (
+                <div key={m.label} className="flex items-center justify-between border-b border-terminal-border pb-1">
+                  <span className="text-[9px] text-terminal-text-muted">{m.label}</span>
+                  <div className="flex items-center gap-2">
+                    <span className="text-[12px] font-mono font-bold text-terminal-accent">{m.value}</span>
+                    <span className={`text-[9px] font-mono ${m.dir === "up" ? "text-terminal-positive" : "text-terminal-negative"}`}>{m.chg}</span>
+                  </div>
+                </div>
+              ))}
+              <div className="text-[8px] text-terminal-text-faint mt-1">
+                GMTF: Global Monetary Tension Framework | V=GDP/M2 | SDR: USD 43.38% EUR 29.31% CNY 12.28% JPY 7.59% GBP 7.44%
               </div>
             </div>
-          ))}
-          <div className="text-[8px] text-terminal-text-faint mt-1">
-            GMTF: Global Monetary Tension Framework | V=GDP/M2 | SDR: USD 43.38% EUR 29.31% CNY 12.28% JPY 7.59% GBP 7.44%
-          </div>
-        </div>
-      </DashboardPanel>
+          </DashboardPanel>
+        </ResizableDashboard>
+      </div>
     </div>
   );
 }

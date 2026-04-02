@@ -1,5 +1,6 @@
 import { useState, useEffect, useMemo } from "react";
 import { DashboardPanel } from "@/components/dashboard-panel";
+import { ResizableDashboard } from "@/components/resizable-panel";
 import {
   AreaChart, Area, XAxis, YAxis, Tooltip, ResponsiveContainer,
   BarChart, Bar, LineChart, Line, ComposedChart, Cell,
@@ -472,39 +473,53 @@ export default function TCAPage() {
       </div>
 
       {activeView === "overview" ? (
-        <div className="flex-1 grid grid-cols-[1fr_1fr_280px] grid-rows-2 gap-1 overflow-hidden">
-          {/* Row 1 */}
-          <DashboardPanel title="COST DECOMPOSITION BY ASSET" className="h-full">
-            <CostDecomposition records={records} />
-          </DashboardPanel>
-          <DashboardPanel title="30-DAY COST TREND" className="h-full">
-            <CostTrendChart data={costTrend} />
-          </DashboardPanel>
-          <DashboardPanel title="SECTOR COSTS" className="row-span-2">
-            <SectorBreakdown records={records} />
-          </DashboardPanel>
+        <div className="flex-1 min-h-0">
+          <ResizableDashboard defaultSizes={[73, 27]} minSizes={[45, 18]}>
+            {/* Left: 2 rows of charts */}
+            <div className="h-full flex flex-col gap-1 overflow-hidden">
+              <div className="flex-1 min-h-0">
+                <ResizableDashboard defaultSizes={[50, 50]} minSizes={[30, 30]}>
+                  <DashboardPanel title="COST DECOMPOSITION BY ASSET">
+                    <CostDecomposition records={records} />
+                  </DashboardPanel>
+                  <DashboardPanel title="30-DAY COST TREND">
+                    <CostTrendChart data={costTrend} />
+                  </DashboardPanel>
+                </ResizableDashboard>
+              </div>
+              <div className="flex-1 min-h-0">
+                <ResizableDashboard defaultSizes={[50, 50]} minSizes={[30, 30]}>
+                  <DashboardPanel title="VWAP SLIPPAGE BY ASSET">
+                    <VWAPSlippageChart records={records} />
+                  </DashboardPanel>
+                  <DashboardPanel title="IMPL. SHORTFALL DISTRIBUTION">
+                    <ISDistribution records={records} />
+                  </DashboardPanel>
+                </ResizableDashboard>
+              </div>
+            </div>
 
-          {/* Row 2 */}
-          <DashboardPanel title="VWAP SLIPPAGE BY ASSET" className="h-full">
-            <VWAPSlippageChart records={records} />
-          </DashboardPanel>
-          <DashboardPanel title="IMPL. SHORTFALL DISTRIBUTION" className="h-full">
-            <ISDistribution records={records} />
-          </DashboardPanel>
+            {/* Right: Sector Costs sidebar */}
+            <DashboardPanel title="SECTOR COSTS">
+              <SectorBreakdown records={records} />
+            </DashboardPanel>
+          </ResizableDashboard>
         </div>
       ) : (
-        <div className="flex-1 grid grid-cols-[1fr_280px] gap-1 overflow-hidden">
-          <DashboardPanel title="PER-ASSET TRANSACTION COST ANALYSIS" className="h-full" noPadding>
-            <PerAssetTable records={records} />
-          </DashboardPanel>
-          <div className="flex flex-col gap-1">
-            <DashboardPanel title="VENUE ANALYSIS" className="flex-1">
-              <VenueAnalysis venues={venues} />
+        <div className="flex-1 min-h-0">
+          <ResizableDashboard defaultSizes={[75, 25]} minSizes={[50, 18]}>
+            <DashboardPanel title="PER-ASSET TRANSACTION COST ANALYSIS" noPadding>
+              <PerAssetTable records={records} />
             </DashboardPanel>
-            <DashboardPanel title="ALGO PERFORMANCE" className="flex-1">
-              <AlgoPerformance algos={algos} />
-            </DashboardPanel>
-          </div>
+            <div className="h-full flex flex-col gap-1 overflow-hidden">
+              <DashboardPanel title="VENUE ANALYSIS" className="flex-1">
+                <VenueAnalysis venues={venues} />
+              </DashboardPanel>
+              <DashboardPanel title="ALGO PERFORMANCE" className="flex-1">
+                <AlgoPerformance algos={algos} />
+              </DashboardPanel>
+            </div>
+          </ResizableDashboard>
         </div>
       )}
     </div>

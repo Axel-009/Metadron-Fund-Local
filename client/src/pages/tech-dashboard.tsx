@@ -158,6 +158,82 @@ export default function TechDashboard() {
         </div>
       </DashboardPanel>
 
+      {/* Memory Consumption & Efficiency */}
+      <DashboardPanel title="MEMORY CONSUMPTION & EFFICIENCY" className="col-span-2" noPadding>
+        <div className="p-2">
+          {/* Mini bar chart */}
+          <div className="flex items-end gap-1 h-12 mb-2">
+            {[
+              { layer: "L1", rss: 120, color: "bg-terminal-accent" },
+              { layer: "L2", rss: 340, color: "bg-terminal-blue" },
+              { layer: "L3", rss: 85, color: "bg-terminal-accent" },
+              { layer: "L4", rss: 210, color: "bg-terminal-blue" },
+              { layer: "L5", rss: 580, color: "bg-terminal-negative" },
+              { layer: "L6", rss: 250, color: "bg-terminal-warning" },
+              { layer: "L7", rss: 180, color: "bg-terminal-blue" },
+            ].map((d) => {
+              const maxRss = 580;
+              const pct = (d.rss / maxRss) * 100;
+              return (
+                <div key={d.layer} className="flex flex-col items-center gap-0.5 flex-1">
+                  <span className="text-[7px] font-mono text-terminal-text-faint tabular-nums">{d.rss}</span>
+                  <div
+                    className={`w-full rounded-t ${d.color} opacity-80`}
+                    style={{ height: `${(pct / 100) * 36}px` }}
+                  />
+                  <span className="text-[7px] font-mono text-terminal-text-faint">{d.layer}</span>
+                </div>
+              );
+            })}
+          </div>
+          {/* Table */}
+          <table className="w-full text-[9px] font-mono">
+            <thead>
+              <tr className="text-terminal-text-faint uppercase tracking-wider border-b border-terminal-border/50">
+                <th className="text-left px-2 py-1 font-medium">Layer</th>
+                <th className="text-right px-2 py-1 font-medium">RSS (MB)</th>
+                <th className="text-right px-2 py-1 font-medium">Heap (MB)</th>
+                <th className="text-right px-2 py-1 font-medium">CPU Time (ms)</th>
+                <th className="text-right px-2 py-1 font-medium">GC Pauses</th>
+                <th className="text-right px-2 py-1 font-medium">Efficiency %</th>
+              </tr>
+            </thead>
+            <tbody>
+              {([
+                { layer: "L1", rss: 120, heap: 84,  cpu: 1.2,  gc: 2,  eff: 94 },
+                { layer: "L2", rss: 340, heap: 210, cpu: 3.4,  gc: 8,  eff: 87 },
+                { layer: "L3", rss: 85,  heap: 61,  cpu: 2.1,  gc: 1,  eff: 96 },
+                { layer: "L4", rss: 210, heap: 148, cpu: 0.8,  gc: 4,  eff: 91 },
+                { layer: "L5", rss: 580, heap: 412, cpu: 12.4, gc: 22, eff: 78 },
+                { layer: "L6", rss: 250, heap: 171, cpu: 8.6,  gc: 6,  eff: 85 },
+                { layer: "L7", rss: 180, heap: 122, cpu: 2.8,  gc: 3,  eff: 93 },
+              ] as const).map((row) => {
+                const effColor = row.eff >= 90 ? "text-terminal-positive" : row.eff >= 80 ? "text-terminal-warning" : "text-terminal-negative";
+                return (
+                  <tr key={row.layer} className="border-b border-terminal-border/20 hover:bg-white/[0.02]">
+                    <td className="px-2 py-1 text-terminal-accent font-medium">{row.layer}</td>
+                    <td className="px-2 py-1 text-right text-terminal-text-muted tabular-nums">{row.rss}</td>
+                    <td className="px-2 py-1 text-right text-terminal-text-muted tabular-nums">{row.heap}</td>
+                    <td className="px-2 py-1 text-right text-terminal-text-muted tabular-nums">{row.cpu}</td>
+                    <td className={`px-2 py-1 text-right tabular-nums ${row.gc > 10 ? "text-terminal-warning" : "text-terminal-text-muted"}`}>{row.gc}</td>
+                    <td className={`px-2 py-1 text-right tabular-nums font-medium ${effColor}`}>{row.eff}%</td>
+                  </tr>
+                );
+              })}
+              {/* TOTAL row */}
+              <tr className="border-t border-terminal-border/50 bg-white/[0.02]">
+                <td className="px-2 py-1 text-terminal-text-primary font-bold uppercase text-[8px] tracking-wider">Total</td>
+                <td className="px-2 py-1 text-right text-terminal-text-primary font-bold tabular-nums">1765</td>
+                <td className="px-2 py-1 text-right text-terminal-text-primary font-bold tabular-nums">1208</td>
+                <td className="px-2 py-1 text-right text-terminal-text-primary font-bold tabular-nums">31.3</td>
+                <td className="px-2 py-1 text-right text-terminal-text-primary font-bold tabular-nums">46</td>
+                <td className="px-2 py-1 text-right text-terminal-warning font-bold tabular-nums">89%</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </DashboardPanel>
+
       {/* Latency Table */}
       <DashboardPanel title="ENGINE LATENCY" noPadding>
         <div className="overflow-auto h-full">

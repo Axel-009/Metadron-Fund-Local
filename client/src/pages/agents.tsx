@@ -1,5 +1,6 @@
 import { useState, useMemo, useEffect, useRef } from "react";
 import { DashboardPanel } from "@/components/dashboard-panel";
+import { ResizableDashboard } from "@/components/resizable-panel";
 import {
   LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer,
   PieChart, Pie, Cell, BarChart, Bar,
@@ -634,38 +635,40 @@ function AccuracyTrendChart({ data }: { data: ReturnType<typeof generateAccuracy
 function RegistryTab({ agents }: { agents: Agent[] }) {
   const accuracyTrend = useMemo(() => generateAccuracyTrend(), []);
   return (
-    <div className="flex-1 grid grid-cols-[1fr_200px] gap-1 overflow-hidden">
-      {/* Left: registry + trend */}
-      <div className="flex flex-col gap-1 overflow-hidden">
-        <DashboardPanel
-          title="AGENT REGISTRY"
-          className="flex-1 overflow-hidden"
-          noPadding
-          headerRight={
-            <span className="text-[9px] text-terminal-text-faint font-mono">
-              {agents.filter(a => a.status === "ACTIVE").length} ACTIVE / {agents.length} TOTAL
-            </span>
-          }
-        >
-          <div className="p-2 h-full overflow-hidden flex flex-col">
-            <AgentRegistryTable agents={agents} />
-          </div>
-        </DashboardPanel>
+    <div className="flex-1 min-h-0 overflow-hidden">
+      <ResizableDashboard defaultSizes={[80, 20]} minSizes={[50, 15]}>
+        {/* Left: registry + trend */}
+        <div className="h-full flex flex-col gap-1 overflow-hidden">
+          <DashboardPanel
+            title="AGENT REGISTRY"
+            className="flex-1 overflow-hidden"
+            noPadding
+            headerRight={
+              <span className="text-[9px] text-terminal-text-faint font-mono">
+                {agents.filter(a => a.status === "ACTIVE").length} ACTIVE / {agents.length} TOTAL
+              </span>
+            }
+          >
+            <div className="p-2 h-full overflow-hidden flex flex-col">
+              <AgentRegistryTable agents={agents} />
+            </div>
+          </DashboardPanel>
 
-        <DashboardPanel title="30-DAY ENSEMBLE ACCURACY TREND" className="h-28 flex-shrink-0">
-          <AccuracyTrendChart data={accuracyTrend} />
-        </DashboardPanel>
-      </div>
+          <DashboardPanel title="30-DAY ENSEMBLE ACCURACY TREND" className="h-28 flex-shrink-0">
+            <AccuracyTrendChart data={accuracyTrend} />
+          </DashboardPanel>
+        </div>
 
-      {/* Right sidebar */}
-      <div className="flex flex-col gap-1 overflow-hidden">
-        <DashboardPanel title="TIER DISTRIBUTION" className="flex-1">
-          <TierDistribution agents={agents} />
-        </DashboardPanel>
-        <DashboardPanel title="SIGNAL CONSENSUS" className="flex-1">
-          <SignalConsensus agents={agents} />
-        </DashboardPanel>
-      </div>
+        {/* Right sidebar */}
+        <div className="h-full flex flex-col gap-1 overflow-hidden">
+          <DashboardPanel title="TIER DISTRIBUTION" className="flex-1">
+            <TierDistribution agents={agents} />
+          </DashboardPanel>
+          <DashboardPanel title="SIGNAL CONSENSUS" className="flex-1">
+            <SignalConsensus agents={agents} />
+          </DashboardPanel>
+        </div>
+      </ResizableDashboard>
     </div>
   );
 }
