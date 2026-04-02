@@ -1,0 +1,16 @@
+{
+  "name": "realtime-newsapi",
+  "version": "1.1.2",
+  "description": "Realtime News API",
+  "main": "index.js",
+  "scripts": {
+    "start": "node index.js",
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "dependencies": {
+    "socket.io-client": "^2.4.0"
+  },
+  "bin": {
+    "realtime-newsapi": "./index.js"
+  }
+}
