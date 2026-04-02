@@ -1,0 +1,23 @@
+{
+  "name": "realtime-newsapi",
+  "version": "1.1.2",
+  "description": "Realtime News API",
+  "main": "index.js",
+  "scripts": {
+    "start": "node index.js",
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/janlukasschroeder/realtime-newsapi.git"
+  },
+  "keywords": ["Realtime", "News", "API", "Financial news"],
+  "author": "Jan Schroeder",
+  "license": "MIT",
+  "dependencies": {
+    "socket.io-client": "^2.4.0"
+  },
+  "bin": {
+    "realtime-newsapi": "./index.js"
+  }
+}
