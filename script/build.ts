@@ -1,6 +1,7 @@
 import { build as esbuild } from "esbuild";
 import { build as viteBuild } from "vite";
-import { rm, readFile } from "fs/promises";
+import { rm, readFile, copyFile, mkdir } from "fs/promises";
+import { existsSync } from "fs";
 
 // server deps to bundle to reduce openat(2) syscalls
 // which helps cold start times
@@ -59,7 +60,26 @@ async function buildAll() {
   });
 }
 
-buildAll().catch((err) => {
-  console.error(err);
-  process.exit(1);
-});
+async function copyMarketing() {
+  const files = [
+    ["marketing/index.html", "dist/public/marketing.html"],
+    ["marketing/login.html", "dist/public/login.html"],
+  ];
+  if (existsSync("marketing/assets/aj.png")) {
+    await mkdir("dist/public/assets/marketing", { recursive: true });
+    files.push(["marketing/assets/aj.png", "dist/public/assets/marketing/aj.png"]);
+  }
+  for (const [src, dest] of files) {
+    if (existsSync(src)) {
+      await copyFile(src, dest);
+      console.log(`copied ${src} → ${dest}`);
+    }
+  }
+}
+
+buildAll()
+  .then(copyMarketing)
+  .catch((err) => {
+    console.error(err);
+    process.exit(1);
+  });
