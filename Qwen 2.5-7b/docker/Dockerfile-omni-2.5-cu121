@@ -1,0 +1,16 @@
+# Dockerfile of qwenllm/qwen-omni:2.5-cu121
+ARG CUDA_VERSION=12.1.0
+ARG from=nvidia/cuda:${CUDA_VERSION}-cudnn8-devel-ubuntu22.04
+FROM ${from} as base
+ARG DEBIAN_FRONTEND=noninteractive
+RUN apt update -y && apt upgrade -y && apt install -y --no-install-recommends git git-lfs python3 python3-pip python3-dev wget vim libsndfile1 ccache software-properties-common ffmpeg && rm -rf /var/lib/apt/lists/*
+RUN ln -s /usr/bin/python3 /usr/bin/python
+RUN git lfs install
+FROM base as dev
+WORKDIR /data/shared/Qwen/
+FROM dev as bundle_req
+RUN pip3 install networkx==3.1 torch==2.6.0 torchvision==0.21.0 torchaudio==2.6.0 xformers==0.0.29.post2
+RUN pip3 install transformers==4.52.3 accelerate qwen-omni-utils modelscope_studio
+RUN pip3 install gradio==5.23.1 gradio_client==1.8.0 librosa==0.11.0 ffmpeg==1.4 ffmpeg-python==0.2.0 soundfile==0.13.1 av
+COPY ../web_demo.py ./
+EXPOSE 80
