@@ -1,0 +1,378 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width,initial-scale=1.0"/>
+<title>Investor Portal — Metadron Capital</title>
+<link rel="preconnect" href="https://fonts.googleapis.com"/>
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin/>
+<link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,300;0,400;0,500;0,600;0,700;1,300;1,400;1,600&family=DM+Sans:wght@300;400;500;600;700&family=DM+Mono:wght@400;500&display=swap" rel="stylesheet"/>
+<style>
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0;}
+:root{
+  --bg:#05091a;--bg-mid:#080d22;--bg-card:#0c1430;--bg-lift:#101a3a;
+  --accent:#00e5c0;--accent2:#4facfe;--gold:#c9a84c;--gold-dim:rgba(201,168,76,0.12);
+  --text:#eef3ff;--muted:#7a90b8;--faint:#3a4e6e;
+  --border:rgba(79,172,254,0.12);--border-b:rgba(0,229,192,0.28);
+  --glow:rgba(0,229,192,0.22);--grid:rgba(79,172,254,0.032);
+  --pos:#34d399;--neg:#f87171;
+}
+html,body{height:100%;font-family:'DM Sans',sans-serif;background:var(--bg);color:var(--text);overflow:hidden;}
+::selection{background:rgba(0,229,192,0.15);color:var(--accent);}
+
+body::before{
+  content:'';position:fixed;inset:0;
+  background-image:linear-gradient(var(--grid) 1px,transparent 1px),linear-gradient(90deg,var(--grid) 1px,transparent 1px);
+  background-size:56px 56px;pointer-events:none;z-index:0;
+}
+
+/* ── Layout ── */
+.layout{display:grid;grid-template-columns:1fr 1fr;height:100vh;position:relative;z-index:1;}
+
+/* ── Left Panel ── */
+.left{
+  position:relative;padding:48px 52px;
+  display:flex;flex-direction:column;justify-content:space-between;
+  border-right:1px solid var(--border);overflow:hidden;
+}
+.left::after{
+  content:'';position:absolute;inset:0;
+  background:linear-gradient(135deg,rgba(0,229,192,0.025),rgba(79,172,254,0.015));
+  pointer-events:none;
+}
+.l-orb{
+  position:absolute;border-radius:50%;pointer-events:none;
+  animation:orbf 12s ease-in-out infinite;
+}
+.l-orb-1{
+  width:560px;height:560px;top:-140px;right:-140px;
+  background:radial-gradient(circle,rgba(0,229,192,0.06) 0%,transparent 65%);
+}
+.l-orb-2{
+  width:320px;height:320px;bottom:-80px;left:-80px;
+  background:radial-gradient(circle,rgba(79,172,254,0.05) 0%,transparent 65%);
+  animation-delay:-6s;
+}
+@keyframes orbf{0%,100%{transform:translate(0,0);}50%{transform:translate(14px,-18px);}}
+
+.l-logo{display:flex;align-items:center;gap:14px;position:relative;z-index:1;}
+.l-logo-txt{
+  font-family:'Cormorant Garamond',serif;
+  font-size:20px;font-weight:600;letter-spacing:0.12em;text-transform:uppercase;
+}
+.l-logo-txt em{color:var(--accent);font-style:normal;}
+
+.l-mid{flex:1;display:flex;flex-direction:column;justify-content:center;position:relative;z-index:1;}
+.l-eyebrow{
+  font-family:'DM Mono',monospace;font-size:9px;letter-spacing:0.2em;
+  color:var(--accent);text-transform:uppercase;margin-bottom:20px;
+  display:flex;align-items:center;gap:8px;
+}
+.l-eyebrow::before{content:'';width:20px;height:1px;background:var(--accent);}
+.l-headline{
+  font-family:'Cormorant Garamond',serif;
+  font-size:clamp(34px,3.2vw,52px);font-weight:600;
+  line-height:1.06;letter-spacing:-0.02em;margin-bottom:20px;
+}
+.l-headline em{font-style:italic;color:var(--accent);}
+.l-sub{font-size:15px;color:var(--muted);line-height:1.75;margin-bottom:36px;font-weight:300;max-width:380px;}
+
+/* Ticker */
+.ticker-shell{
+  border:1px solid var(--border);border-radius:6px;
+  overflow:hidden;background:var(--bg-card);margin-bottom:28px;
+  padding:8px 0;
+}
+.ticker-track{
+  display:inline-flex;gap:36px;
+  animation:tick 30s linear infinite;
+  white-space:nowrap;padding:0 18px;
+}
+@keyframes tick{from{transform:translateX(0);}to{transform:translateX(-50%);}}
+.ti-item{
+  display:inline-flex;align-items:center;gap:7px;
+  font-family:'DM Mono',monospace;font-size:10px;flex-shrink:0;
+}
+.ti-sym{color:var(--muted);}
+.ti-val{color:var(--accent);}
+.ti-up{color:var(--pos);font-size:9px;}
+.ti-dn{color:var(--neg);font-size:9px;}
+
+/* Stats */
+.l-stats{display:grid;grid-template-columns:1fr 1fr;gap:10px;}
+.ls{
+  padding:16px;background:rgba(12,20,48,0.7);
+  border:1px solid var(--border);border-radius:6px;
+  backdrop-filter:blur(8px);
+}
+.ls-v{
+  font-family:'DM Mono',monospace;font-size:20px;font-weight:500;
+  color:var(--accent);line-height:1;margin-bottom:5px;
+}
+.ls-l{font-size:9px;color:var(--faint);letter-spacing:0.12em;text-transform:uppercase;font-family:'DM Mono',monospace;}
+
+.l-foot{font-size:11px;color:var(--faint);line-height:1.65;position:relative;z-index:1;}
+.l-foot a{color:var(--accent);border-bottom:1px solid rgba(0,229,192,0.3);}
+
+/* Live badge */
+.live-b{
+  display:inline-flex;align-items:center;gap:6px;
+  padding:4px 12px;
+  background:rgba(52,211,153,0.07);border:1px solid rgba(52,211,153,0.2);border-radius:100px;
+  font-family:'DM Mono',monospace;font-size:9px;color:var(--pos);letter-spacing:0.12em;
+  margin-bottom:20px;width:fit-content;
+}
+.live-dot{width:5px;height:5px;border-radius:50%;background:var(--pos);animation:blink 1.5s infinite;}
+@keyframes blink{0%,100%{opacity:1;}50%{opacity:0.2;}}
+
+/* ── Right Panel ── */
+.right{
+  display:flex;align-items:center;justify-content:center;
+  padding:52px 72px;position:relative;
+}
+.r-corner{
+  position:absolute;top:0;right:0;
+  width:220px;height:220px;
+  background:radial-gradient(circle at top right,rgba(0,229,192,0.04),transparent 70%);
+  pointer-events:none;
+}
+
+.form-box{width:100%;max-width:400px;}
+
+.form-logo{
+  display:flex;align-items:center;gap:10px;margin-bottom:32px;
+}
+.form-logo-txt{
+  font-family:'DM Mono',monospace;font-size:10px;
+  color:var(--faint);letter-spacing:0.12em;text-transform:uppercase;
+}
+
+.form-title{
+  font-family:'Cormorant Garamond',serif;
+  font-size:36px;font-weight:600;letter-spacing:-0.02em;margin-bottom:8px;
+}
+.form-sub{font-size:14px;color:var(--muted);line-height:1.65;margin-bottom:36px;font-weight:300;}
+
+.form-err{
+  padding:13px 16px;
+  background:rgba(248,113,113,0.07);border:1px solid rgba(248,113,113,0.25);border-radius:6px;
+  font-size:13px;color:#fca5a5;margin-bottom:18px;display:none;
+}
+.form-err.show{display:block;}
+
+.field{margin-bottom:20px;}
+.flbl{
+  display:block;font-family:'DM Mono',monospace;
+  font-size:10px;letter-spacing:0.12em;color:var(--muted);
+  text-transform:uppercase;font-weight:500;margin-bottom:9px;
+}
+.finput{
+  width:100%;padding:14px 16px;
+  background:var(--bg-card);border:1px solid var(--border);border-radius:5px;
+  color:var(--text);font-size:14px;font-family:'DM Sans',sans-serif;
+  outline:none;transition:border-color 0.2s,box-shadow 0.2s;
+}
+.finput::placeholder{color:var(--faint);}
+.finput:focus{border-color:var(--border-b);box-shadow:0 0 0 3px rgba(0,229,192,0.08);background:rgba(12,20,48,0.9);}
+.finput.err{border-color:rgba(248,113,113,0.5);box-shadow:0 0 0 3px rgba(248,113,113,0.06);}
+
+.frow{display:flex;align-items:center;justify-content:space-between;margin-bottom:28px;}
+.fcheck{display:flex;align-items:center;gap:8px;font-size:13px;color:var(--muted);cursor:pointer;}
+.fcheck input{accent-color:var(--accent);width:14px;height:14px;}
+.fforgot{font-size:13px;color:var(--accent);cursor:pointer;transition:opacity 0.2s;}
+.fforgot:hover{opacity:0.7;}
+
+.btn-login{
+  width:100%;padding:16px;
+  background:linear-gradient(135deg,var(--accent),var(--accent2));
+  color:#000;border:none;border-radius:5px;
+  font-size:13px;font-weight:700;letter-spacing:0.1em;text-transform:uppercase;
+  cursor:pointer;transition:all 0.25s;
+  display:flex;align-items:center;justify-content:center;gap:8px;
+  font-family:'DM Sans',sans-serif;
+}
+.btn-login:hover{transform:translateY(-2px);box-shadow:0 8px 36px rgba(0,229,192,0.32);}
+.btn-login:active{transform:translateY(0);}
+.btn-login.loading{opacity:0.7;pointer-events:none;}
+.spinner{
+  width:16px;height:16px;border:2px solid rgba(0,0,0,0.25);border-top-color:#000;
+  border-radius:50%;animation:spin 0.6s linear infinite;display:none;
+}
+.btn-login.loading .spinner{display:block;}
+.btn-login.loading .btxt{display:none;}
+@keyframes spin{to{transform:rotate(360deg);}}
+
+.fdiv{
+  display:flex;align-items:center;gap:12px;
+  margin:24px 0;color:var(--faint);font-size:11px;
+}
+.fdiv::before,.fdiv::after{content:'';flex:1;height:1px;background:var(--border);}
+
+.faccess{
+  padding:17px;
+  background:rgba(0,229,192,0.04);border:1px solid var(--border-b);border-radius:6px;
+  font-size:12px;color:var(--muted);line-height:1.65;text-align:center;
+}
+.faccess a{color:var(--accent);}
+
+@media(max-width:768px){
+  .layout{grid-template-columns:1fr;}
+  .left{display:none;}
+  .right{padding:40px 28px;align-items:flex-start;padding-top:80px;}
+  html,body{overflow:auto;}
+}
+</style>
+</head>
+<body>
+<div class="layout">
+
+  <!-- LEFT -->
+  <div class="left">
+    <div class="l-orb l-orb-1"></div>
+    <div class="l-orb l-orb-2"></div>
+
+    <div class="l-logo">
+      <svg width="36" height="36" viewBox="0 0 36 36" fill="none">
+        <polygon points="18,2 33,10 33,26 18,34 3,26 3,10" fill="none" stroke="#00e5c0" stroke-width="1.3"/>
+        <polygon points="18,8 28,13.5 28,24.5 18,30 8,24.5 8,13.5" fill="rgba(0,229,192,0.06)" stroke="#00e5c0" stroke-width="0.7"/>
+        <polygon points="18,14 23,17 23,23 18,26 13,23 13,17" fill="rgba(0,229,192,0.18)" stroke="#4facfe" stroke-width="0.5"/>
+        <path d="M13 23V13l5 6 5-6v10" stroke="#00e5c0" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" fill="none"/>
+      </svg>
+      <span style="display:flex;align-items:center;gap:4px;">
+        <svg width="20" height="20" viewBox="0 0 28 28" fill="none">
+          <rect x="1" y="1" width="26" height="26" rx="4" stroke="#00d4aa" stroke-width="1.5"/>
+          <path d="M7 20V8l7 8 7-8v12" stroke="#00d4aa" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
+          <circle cx="14" cy="12" r="2" fill="#00d4aa" fill-opacity="0.3" stroke="#00d4aa" stroke-width="1"/>
+        </svg>
+        <span style="font-family:'DM Mono',monospace;font-style:italic;font-weight:700;font-size:15px;letter-spacing:0.18em;color:#eef3ff;">ETADRON</span>
+        <em style="font-family:'Cormorant Garamond',serif;font-style:normal;color:#00e5c0;font-size:15px;letter-spacing:0.22em;">CAPITAL</em>
+      </span>
+    </div>
+
+    <div class="l-mid">
+      <div class="live-b"><div class="live-dot"></div><span id="live-clk">NYC 00:00:00</span></div>
+      <div class="l-eyebrow">Investor Portal</div>
+      <h2 class="l-headline">Your capital.<br/>Our <em>intelligence.</em></h2>
+      <p class="l-sub">Access the full Metadron trading terminal — live dashboards, strategy analytics, performance attribution, and the real-time Metadron Cube engine.</p>
+      <div class="ticker-shell">
+        <div class="ticker-track" id="ticker"></div>
+      </div>
+      <div class="l-stats">
+        <div class="ls"><div class="ls-v" id="ls-nav">$1,412.80</div><div class="ls-l">Today's NAV</div></div>
+        <div class="ls"><div class="ls-v" id="ls-pnl">+0.34%</div><div class="ls-l">Daily PnL</div></div>
+        <div class="ls"><div class="ls-v" id="ls-sh">2.14</div><div class="ls-l">Sharpe Ratio</div></div>
+        <div class="ls"><div class="ls-v" id="ls-sc">86/100</div><div class="ls-l">Cube Signal</div></div>
+      </div>
+    </div>
+
+    <div class="l-foot">
+      Access is restricted to authorised investors. By logging in you confirm you have been granted access and acknowledge this platform is for informational purposes only.<br/>
+      <a href="/">← Back to main site</a>
+    </div>
+  </div>
+
+  <!-- RIGHT -->
+  <div class="right">
+    <div class="r-corner"></div>
+    <div class="form-box">
+      <div class="form-logo">
+        <svg width="26" height="26" viewBox="0 0 26 26" fill="none">
+          <polygon points="13,2 24,7.5 24,18.5 13,24 2,18.5 2,7.5" fill="none" stroke="#00e5c0" stroke-width="1.2"/>
+          <polygon points="13,7 20,11 20,18 13,21 6,18 6,11" fill="rgba(0,229,192,0.07)" stroke="#00e5c0" stroke-width="0.6"/>
+          <path d="M9 18V8l4 5 4-5v10" stroke="#00e5c0" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round" fill="none"/>
+        </svg>
+        <span class="form-logo-txt">Metadron Capital · Investor Access</span>
+      </div>
+
+      <h1 class="form-title">Sign In</h1>
+      <p class="form-sub">Access your portfolio dashboard and the live Metadron trading engine.</p>
+
+      <div class="form-err" id="ferr">Invalid credentials. Please check your details or contact your account manager.</div>
+
+      <form id="login-form" novalidate>
+        <div class="field">
+          <label class="flbl" for="email">Email Address</label>
+          <input class="finput" type="email" id="email" placeholder="you@example.com" autocomplete="email"/>
+        </div>
+        <div class="field">
+          <label class="flbl" for="password">Password</label>
+          <input class="finput" type="password" id="password" placeholder="••••••••••••" autocomplete="current-password"/>
+        </div>
+        <div class="frow">
+          <label class="fcheck"><input type="checkbox" id="rem"/> Remember me</label>
+          <span class="fforgot" onclick="alert('Please contact your Metadron Capital account manager to reset your credentials.')">Forgot password?</span>
+        </div>
+        <button type="submit" class="btn-login" id="lbtn">
+          <span class="btxt">
+            Sign In to Portal
+            <svg width="13" height="13" viewBox="0 0 13 13" fill="none"><path d="M2 6.5h9M7 3l3 3.5-3 3" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>
+          </span>
+          <div class="spinner"></div>
+        </button>
+      </form>
+
+      <div class="fdiv">Authorised access only</div>
+
+      <div class="faccess">
+        Don't have access yet? <a href="mailto:contact@metadroncapital.com">Request investor credentials</a> from your Metadron Capital account manager. Access is by invitation only.
+      </div>
+
+      <p style="margin-top:24px;font-size:11px;color:var(--faint);line-height:1.65;text-align:center;">
+        By signing in you agree to our terms of access. All activity is logged and monitored. Metadron Capital is not a registered investment adviser.
+      </p>
+    </div>
+  </div>
+</div>
+
+<script>
+// Clock
+setInterval(()=>{
+  const t=new Date().toLocaleTimeString('en-US',{hour:'2-digit',minute:'2-digit',second:'2-digit',hour12:false,timeZone:'America/New_York'});
+  const el=document.getElementById('live-clk');
+  if(el)el.textContent='NYC '+t;
+},1000);
+
+// Ticker
+const tickers=[
+  {s:'SOFR',v:'4.320',c:'+0.002',u:true},{s:'EFFR',v:'4.330',c:'+0.001',u:true},
+  {s:'US10Y',v:'4.281%',c:'-0.014',u:false},{s:'US2Y',v:'4.098%',c:'-0.008',u:false},
+  {s:'2s10s',v:'-18.3bps',c:'+0.6',u:true},{s:'DXY',v:'104.28',c:'+0.14',u:true},
+  {s:'USDJPY',v:'149.82',c:'+0.21',u:true},{s:'EURUSD',v:'1.0831',c:'-0.0012',u:false},
+  {s:'ON-RRP',v:'$118B',c:'-$4B',u:false},{s:'TGA',v:'$722B',c:'+$12B',u:true},
+  {s:'VIX',v:'16.84',c:'-0.32',u:false},{s:'SPX',v:'5,204',c:'+18.4',u:true},
+];
+const doubled=[...tickers,...tickers];
+const tr=document.getElementById('ticker');
+if(tr)tr.innerHTML=doubled.map(t=>`<span class="ti-item"><span class="ti-sym">${t.s}</span><span class="ti-val">${t.v}</span><span class="${t.u?'ti-up':'ti-dn'}">${t.c}</span></span>`).join('');
+
+// Stats animation
+setInterval(()=>{
+  const el=id=>document.getElementById(id);
+  if(el('ls-nav'))el('ls-nav').textContent='$'+(1412+Math.random()*2-1).toFixed(2);
+  if(el('ls-pnl'))el('ls-pnl').textContent='+'+(0.25+Math.random()*0.2).toFixed(2)+'%';
+  if(el('ls-sh'))el('ls-sh').textContent=(2.10+Math.random()*0.12).toFixed(2);
+  if(el('ls-sc'))el('ls-sc').textContent=Math.floor(82+Math.random()*10)+'/100';
+},5000);
+
+// Form
+const form=document.getElementById('login-form');
+const lbtn=document.getElementById('lbtn');
+const ferr=document.getElementById('ferr');
+const emailEl=document.getElementById('email');
+const passEl=document.getElementById('password');
+
+form.addEventListener('submit',async e=>{
+  e.preventDefault();
+  ferr.classList.remove('show');
+  emailEl.classList.remove('err');passEl.classList.remove('err');
+  const em=emailEl.value.trim(),pw=passEl.value;
+  if(!em||!em.includes('@')){emailEl.classList.add('err');emailEl.focus();return;}
+  if(!pw||pw.length<4){passEl.classList.add('err');passEl.focus();return;}
+  lbtn.classList.add('loading');
+  await new Promise(r=>setTimeout(r,1500));
+  window.location.href='/';
+});
+[emailEl,passEl].forEach(i=>i.addEventListener('focus',()=>i.classList.remove('err')));
+</script>
+</body>
+</html>
