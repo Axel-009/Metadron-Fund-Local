@@ -82,15 +82,17 @@ Instead of one model for everything, route tasks to specialized models:
 ```
 TASK ROUTING ARCHITECTURE:
 
-Financial Sentiment / Classification (HIGH VOLUME, LOW COMPLEXITY)
-  └── FinMA-7B (quantized)
+Financial Sentiment / Classification + Math (HIGH VOLUME, LOW-MED COMPLEXITY)
+  └── Qwen2.5-7B-Instruct + Qwen2.5-Math-7B-Instruct (FP16 or Q4)
       ├── News headline sentiment → BULLISH/BEARISH/NEUTRAL
       ├── SEC filing classification → MATERIAL/ROUTINE
       ├── Earnings surprise direction
+      ├── Numerical calculations, factor math
       └── ~50-100 calls per heartbeat, short input, classification output
+      └── Replaces FinMA-7B (which is outdated LLaMA-1 based)
 
 Quantitative Analysis / Code / Structured Data (MEDIUM VOLUME, HIGH COMPLEXITY)
-  └── Qwen2.5-14B or Qwen2.5-32B (quantized)
+  └── Qwen2.5-14B-Instruct (Q4_K_M on GEX44) or Qwen2.5-32B (Q4 on GEX131)
       ├── Financial data structuring + table parsing
       ├── Walk-forward strategy code generation (overnight)
       ├── Backtest result interpretation
@@ -98,7 +100,7 @@ Quantitative Analysis / Code / Structured Data (MEDIUM VOLUME, HIGH COMPLEXITY)
       └── ~10-20 calls per intelligence phase, medium input, structured output
 
 Investment Reasoning / Narrative (LOW VOLUME, HIGHEST COMPLEXITY)
-  └── Mimo v2 (API) OR InvestLM-65B (if self-hosted, needs big GPU)
+  └── Mimo v2 (API) OR InvestLM-65B (GEX131 only, ~40 GB Q4)
       ├── 12 investor persona agents (Buffett, Munger, etc.)
       ├── MiroFish report generation (multi-turn)
       ├── Trade thesis narrative
@@ -108,29 +110,35 @@ Investment Reasoning / Narrative (LOW VOLUME, HIGHEST COMPLEXITY)
 
 ### Model Specifications & VRAM Requirements
 
-#### FinMA-7B (PIXIU Project)
-- **Base:** LLaMA-7B fine-tuned on financial NLP tasks
-- **Strength:** Sentiment analysis, headline classification, financial QA
-- **VRAM:** ~14 GB (FP16) / ~4-5 GB (INT4 GPTQ/AWQ)
+#### FinMA-7B (PIXIU Project) — CAUTION
+- **Base:** Original LLaMA-7B (NOT LLaMA-2/3) fine-tuned on 136K financial instructions
+- **Variants:** `finma-7b-nlp` (sentiment/NER) and `finma-7b-full` (NLP + generation)
+- **VRAM:** ~14 GB (FP16) / ~4-5 GB (INT4 GGUF via llama.cpp conversion)
 - **Speed:** ~30-50 tokens/sec on RTX 4000 (INT4)
-- **Why include:** Purpose-built for exactly what your news_sentiment_agent does.
-  Replaces expensive Claude/GPT-4 API calls for simple classification tasks.
-  100x cheaper per classification than API calls.
+- **PROBLEM:** Based on original LLaMA (2023), now significantly behind Qwen2.5-7B
+  on most financial benchmarks due to 2+ years of architectural advances.
+- **Verdict:** Skip FinMA. Use **Qwen2.5-7B** instead — it outperforms FinMA on
+  financial sentiment while also handling code, math, and structured output.
+  Or use **Qwen2.5-Math-7B-Instruct** which surpasses Qwen2-Math-72B on math.
 
-#### Qwen2.5 (Alibaba)
+#### Qwen2.5 (Alibaba) — PRIMARY RECOMMENDATION
 - **Sizes available:** 0.5B, 1.5B, 3B, 7B, 14B, 32B, 72B
 - **Strength:** Best open-source model for quantitative tasks, code, structured output, math
+- **Specialized variants:** Qwen2.5-Math (surpasses 72B on math at 7B), Qwen2.5-Coder
+- **Quantization:** Official GGUF, AWQ, GPTQ from Qwen team on HuggingFace
+- **Quality retention:** AWQ ~95% quality, GGUF Q4_K_M ~92% (loss is in creative, not numerical)
 - **VRAM by size:**
 
-| Size | FP16 VRAM | INT4 (GPTQ/AWQ) VRAM | Tokens/sec (RTX 4000, INT4) | Use Case |
-|------|-----------|----------------------|-----------------------------|----------|
-| 7B | ~14 GB | ~4-5 GB | ~40-60 t/s | Light quant tasks |
-| 14B | ~28 GB | ~8-10 GB | ~20-35 t/s | **Sweet spot for finance** |
-| 32B | ~64 GB | ~18-20 GB | ~10-20 t/s | Complex reasoning |
-| 72B | ~144 GB | ~40-45 GB | Too slow on single GPU | Needs multi-GPU |
+| Size | FP16 VRAM | INT8 VRAM | INT4 (Q4_K_M) VRAM | Tokens/sec (RTX 4000 Ada, INT4) |
+|------|-----------|-----------|---------------------|---------------------------------|
+| 7B | ~14 GB | ~8 GB | ~4-6 GB | ~40-60 t/s |
+| 14B | ~28 GB | ~14 GB | ~10-12 GB | ~20-35 t/s |
+| 32B | ~64 GB | ~32 GB | ~18-22 GB | ~10-20 t/s |
+| 72B | ~144 GB | ~72 GB | ~36-48 GB | Needs GEX131 (96 GB) |
 
-- **Recommendation:** Qwen2.5-14B-AWQ — fits in 20 GB VRAM alongside FinMA-7B,
-  excellent at structured financial analysis and code generation.
+- **GEX44 sweet spot:** Qwen2.5-7B-FP16 (14 GB) + Qwen2.5-Math-7B-Q4 (5 GB) = 19 GB
+  OR Qwen2.5-14B-Q4 (10 GB) + Qwen2.5-7B-Q4 (5 GB) = 15 GB
+- **GEX131 sweet spot:** Qwen2.5-72B-Q4 (48 GB) + Qwen2.5-Math-7B-FP16 (14 GB) = 62 GB
 
 #### InvestLM-65B
 - **Base:** LLaMA-65B fine-tuned on investment texts
@@ -158,26 +166,33 @@ Investment Reasoning / Narrative (LOW VOLUME, HIGHEST COMPLEXITY)
 Hetzner GEX44
 ├── GPU: NVIDIA RTX 4000 SFF Ada — 20 GB GDDR6 ECC
 ├── CPU: Intel Core i5-13500
-├── RAM: 64 GB DDR5
-├── Storage: 2x 512 GB NVMe (expandable)
+├── RAM: 64 GB DDR4
+├── Storage: 2x 512 GB NVMe
 ├── Price: EUR 184/month + EUR 79 setup
 │
-├── VRAM Allocation (20 GB total):
-│   ├── FinMA-7B-INT4    → ~5 GB  (sentiment/classification, always loaded)
-│   ├── Qwen2.5-14B-AWQ → ~10 GB (quant analysis, always loaded)
-│   ├── Overhead/KV cache → ~5 GB
-│   └── TOTAL: 20 GB ✓ fits
+├── VRAM Allocation — Option 1 (dual 7B, both always loaded):
+│   ├── Qwen2.5-7B-Instruct FP16    → ~14 GB (general + sentiment)
+│   ├── Qwen2.5-Math-7B-Instruct Q4 → ~5 GB  (numerical tasks)
+│   ├── Overhead/KV cache            → ~1 GB
+│   └── TOTAL: 20 GB ✓ fits, both always loaded
 │
-├── Serving: vLLM or llama.cpp
-│   ├── FinMA: dedicated instance, port 8100
-│   ├── Qwen2.5: dedicated instance, port 8101
-│   └── OpenAI-compatible API (drop-in replacement)
+├── VRAM Allocation — Option 2 (14B + 7B, hot-swap via llama.cpp):
+│   ├── Qwen2.5-14B-Instruct Q4     → ~10 GB (primary, always loaded)
+│   ├── Qwen2.5-7B Q4               → ~5 GB  (secondary, swappable)
+│   ├── Overhead/KV cache            → ~5 GB
+│   └── TOTAL: 20 GB ✓ fits via llama.cpp LRU model management
+│
+├── Serving: llama.cpp server (RECOMMENDED for GEX44)
+│   ├── Native multi-model with LRU eviction
+│   ├── OpenAI-compatible API (drop-in replacement for Anthropic/OpenAI calls)
+│   ├── Single server, multiple models, auto-swap
+│   └── Best VRAM efficiency with GGUF quantization
 │
 ├── Mimo v2: via API (not local — save GPU for specialist models)
 │
 └── Overnight (Air-LLM):
     ├── Unload daytime models
-    ├── Load InvestLM-65B layer-by-layer via Air-LLM
+    ├── Load InvestLM-65B layer-by-layer via Air-LLM (~30-120s per response)
     ├── Generate deep analysis reports
     └── Reload daytime models before market open
 ```
@@ -189,29 +204,32 @@ and quant tasks. Only pay API for Mimo v2 reasoning calls.
 
 ```
 Hetzner GEX131
-├── GPU: NVIDIA RTX PRO 6000 Blackwell — 96 GB GDDR7 ECC
-├── CPU: Intel Xeon Gold 5412U (24 cores)
+├── GPU: NVIDIA RTX PRO 6000 Blackwell Max-Q — 96 GB GDDR7 ECC
+│   └── 5th-gen Tensor Cores: ~50-100+ tok/s on 72B Q4
+├── CPU: Intel Xeon Gold 5412U (24 cores / 48 threads)
 ├── RAM: 256 GB DDR5 ECC
-├── Storage: 2x 960 GB NVMe
-├── Price: EUR 889/month
+├── Storage: 2x 960 GB Gen4 NVMe
+├── Price: EUR 889/month (EUR 1.42/hr)
 │
 ├── VRAM Allocation (96 GB total):
-│   ├── FinMA-7B-INT4         → ~5 GB   (sentiment, always loaded)
-│   ├── Qwen2.5-32B-AWQ      → ~20 GB  (quant analysis, always loaded)
-│   ├── InvestLM-65B-INT4    → ~40 GB  (investment reasoning, always loaded)
-│   ├── Mimo v2 (if local)   → ~20 GB  (general reasoning)
-│   ├── Overhead/KV cache    → ~11 GB
-│   └── TOTAL: 96 GB ✓ fits ALL models simultaneously
+│   ├── Qwen2.5-72B-Instruct Q4  → ~48 GB  (primary: all complex tasks)
+│   ├── Qwen2.5-Math-7B FP16     → ~14 GB  (numerical precision)
+│   ├── InvestLM-65B-AWQ          → ~40 GB  (swap with 72B overnight)
+│   ├── OR: run 72B + Math-7B daytime (62 GB), swap to InvestLM overnight
+│   ├── Overhead/KV cache         → ~34 GB (massive context windows)
+│   └── TOTAL: 96 GB — fits 72B + 7B simultaneously
 │
-├── Serving: vLLM with multi-model
-│   ├── All 3-4 models loaded concurrently
-│   ├── No model swapping needed
-│   └── Zero API costs — fully self-hosted
+├── Serving: vLLM (RECOMMENDED for GEX131)
+│   ├── PagedAttention for efficient KV cache
+│   ├── High throughput with continuous batching
+│   ├── OpenAI-compatible API
+│   └── 50-100+ tok/s on Blackwell Tensor Cores
 │
 └── Advantage: ZERO external API dependency
     ├── Complete data privacy (no financial data leaves your server)
     ├── Fixed EUR 889/month regardless of volume
-    └── No rate limits, no API outages
+    ├── No rate limits, no API outages
+    └── 72B quality rivals GPT-4 class on financial tasks
 ```
 
 ### Cost Comparison: Self-Hosted vs API
@@ -227,22 +245,34 @@ Hetzner GEX131
 100+ headlines + quant analysis = ~2,000-5,000 LLM calls/day at production.
 **Self-hosted wins at your volume.**
 
-### Serving Infrastructure: llama.cpp vs vLLM
+### Serving Infrastructure: llama.cpp vs vLLM vs TGI
 
-| Feature | llama.cpp | vLLM |
-|---------|-----------|------|
-| Multi-model | Swap models (1 at a time) | Multiple concurrent (needs VRAM) |
-| Quantization | GGUF (excellent Q4/Q5/Q8) | AWQ/GPTQ |
-| Throughput | Good for single-user | Better for concurrent requests |
-| Memory efficiency | Best (GGUF quantization) | Good (PagedAttention) |
-| OpenAI-compatible API | Yes (built-in server) | Yes (built-in) |
-| Best for GEX44 (20 GB) | **Yes** — efficient VRAM use | Tight with 2 models |
-| Best for GEX131 (96 GB) | Works | **Yes** — concurrent serving |
+| Feature | llama.cpp | vLLM | TGI |
+|---------|-----------|------|-----|
+| **Status** | Active | Active, recommended | **Maintenance mode** (Dec 2025) |
+| **Multi-model** | LRU eviction (hot-swap) | No native support | No |
+| **Quantization** | GGUF (Q2-Q8, imatrix) | AWQ/GPTQ/FP8/Marlin | AWQ/GPTQ |
+| **Throughput** | Good for 1-5 users | Best (120-160 req/s on A100) | Good |
+| **TTFT** | Varies | 50-80ms | 60-90ms |
+| **Memory efficiency** | Best (GGUF) | Good (PagedAttention) | Good |
+| **OpenAI-compatible API** | Yes (built-in) | Yes (built-in) | Yes |
+| **Multi-GPU** | Layer splitting (suboptimal) | Tensor + pipeline parallelism | Tensor parallelism |
+| **LoRA adapters** | Limited | Via Lorax (thousands on 1 base) | Limited |
+| **Best for GEX44 (20 GB)** | **Yes** | Tight | Skip |
+| **Best for GEX131 (96 GB)** | Works | **Yes** | Skip |
 
-**GEX44 recommendation:** llama.cpp with model swapping (load FinMA for
-classification batch, swap to Qwen for analysis, or run both with small KV)
+**GEX44 recommendation:** **llama.cpp server** — only option with native
+multi-model LRU management. Load Qwen2.5-7B + Math-7B simultaneously, or
+hot-swap between 14B and 7B models transparently.
 
-**GEX131 recommendation:** vLLM with all models loaded concurrently
+**GEX131 recommendation:** **vLLM** — PagedAttention + continuous batching
+for high-throughput single-model serving (Qwen2.5-72B). If you need
+multiple models, run separate vLLM instances with `--gpu-memory-utilization`.
+
+**LoRA alternative:** If you fine-tune multiple adapters on Qwen2.5 base
+(e.g., sentiment adapter, quant adapter, reasoning adapter), Lorax via
+vLLM serves thousands of adapters from one base with near-zero VRAM overhead.
+This is the most efficient multi-"model" approach if applicable.
 
 ### Integration Architecture
 
@@ -253,19 +283,20 @@ Engine Heartbeat (3-min cycle)
 │
 ├── Phase 2: SIGNALS
 │   ├── news_engine.py → newsfilter.io headlines
-│   └── Headlines → LOCAL FinMA-7B (port 8100)
+│   └── Headlines → LOCAL Qwen2.5-7B (llama.cpp, port 8100)
 │       └── Sentiment: BULLISH/BEARISH/NEUTRAL + confidence
 │       └── Latency: ~50-100ms per headline (batched)
+│       └── Replaces Claude/GPT-4 API calls in news_sentiment_agent
 │
 ├── Phase 3: INTELLIGENCE
-│   ├── alpha_optimizer.py → LOCAL Qwen2.5-14B (port 8101)
+│   ├── alpha_optimizer.py → LOCAL Qwen2.5-14B or Math-7B (port 8100)
 │   │   └── Feature importance interpretation
-│   │   └── Strategy refinement suggestions
+│   │   └── Numerical calculations (Math-7B surpasses 72B on math)
 │   └── investor_personas.py → Mimo v2 API (complex reasoning)
 │       └── 12 persona signals (Buffett, Munger, etc.)
 │
 ├── Phase 4: DECISION
-│   └── decision_matrix.py → LOCAL Qwen2.5-14B (port 8101)
+│   └── decision_matrix.py → LOCAL Qwen2.5-14B (port 8100)
 │       └── Trade thesis structuring
 │       └── Risk narrative
 │
@@ -279,11 +310,28 @@ Engine Heartbeat (3-min cycle)
     └── market_wrap.py → LOCAL Qwen2.5-14B
         └── Daily narrative generation
 
-OVERNIGHT (Air-LLM on GEX44, or direct on GEX131):
+OVERNIGHT (Air-LLM on GEX44, or vLLM model swap on GEX131):
 ├── InvestLM-65B → Deep investment analysis reports
 ├── Platinum Report generation → narrative sections
 └── Weekly strategy review → multi-turn reasoning
 ```
+
+### Why Qwen2.5 Replaces FinMA
+
+FinMA-7B was fine-tuned on financial data but is based on **original LLaMA (2023)**.
+Qwen2.5-7B (2025) has 2+ years of architectural advances and outperforms FinMA
+on most financial benchmarks while ALSO handling code, math, and structured output.
+
+Additionally, Qwen2.5-Math-7B-Instruct specifically surpasses Qwen2-Math-72B
+on mathematical benchmarks — meaning a 7B specialized model beats a 72B general
+model on numerical tasks. This is directly relevant for:
+- Alpha optimizer calculations
+- Risk metric computation  
+- Factor engineering
+- Backtest result interpretation
+
+Using the Qwen2.5 family (7B general + 7B math, or 14B general) gives you
+better performance than FinMA + separate math model, with fewer moving parts.
 
 ---
 
@@ -573,8 +621,8 @@ Only if you evolve to:
 - NVIDIA RTX 4000 SFF Ada — **20 GB GDDR6 ECC VRAM**
 - 2x 512 GB NVMe
 - Location: Falkenstein (FSN1)
-- **Best for:** FinMA-7B + Qwen2.5-14B dual-model serving, Mimo v2 via API
-- **Fits:** 2 quantized models simultaneously, overnight InvestLM via Air-LLM
+- **Best for:** Qwen2.5-7B FP16 + Math-7B Q4 dual serving, or 14B Q4 single
+- **Fits:** 2 Qwen2.5-7B models simultaneously, overnight InvestLM via Air-LLM
 
 #### Full GPU: GEX131 (EUR 889/month)
 
@@ -650,8 +698,9 @@ PRE-MARKET (08:00-09:30 ET) — 3-min heartbeat:
 
 ```
 Phase 1 — GEX44 (Recommended Start)                  EUR 184/mo FIXED
-  ├── FinMA-7B + Qwen2.5-14B on GPU (20 GB VRAM)
-  ├── Mimo v2 via API (reasoning only)
+  ├── Qwen2.5-7B FP16 + Qwen2.5-Math-7B Q4 on GPU (20 GB VRAM)
+  ├── llama.cpp server with LRU model management
+  ├── Mimo v2 via API (complex reasoning only)
   ├── Overnight: InvestLM-65B via Air-LLM
   ├── PM2 managing all services
   ├── ~2,000-5,000 local LLM calls/day at zero marginal cost
@@ -659,8 +708,8 @@ Phase 1 — GEX44 (Recommended Start)                  EUR 184/mo FIXED
       TOTAL: ~EUR 234-284/mo
 
 Phase 2 — GEX131 (Full Self-Hosted)                  EUR 889/mo FIXED
-  ├── ALL models loaded concurrently (96 GB VRAM)
-  ├── FinMA-7B + Qwen2.5-32B + InvestLM-65B + Mimo v2
+  ├── Qwen2.5-72B Q4 (48 GB) + Math-7B FP16 (14 GB) daytime
+  ├── InvestLM-65B AWQ (40 GB) overnight swap
   ├── Zero API costs, zero external dependency
   ├── Complete data privacy (no data leaves server)
   └── 24-core Xeon + 256 GB RAM for engine + ML
