@@ -267,7 +267,7 @@ body::before{
 
     <div class="l-foot">
       Access is restricted to authorised investors. By logging in you confirm you have been granted access and acknowledge this platform is for informational purposes only.<br/>
-      <a href="index.html">← Back to main site</a>
+      <a href="/marketing.html">← Back to main site</a>
     </div>
   </div>
 
@@ -370,7 +370,7 @@ form.addEventListener('submit',async e=>{
   if(!pw||pw.length<4){passEl.classList.add('err');passEl.focus();return;}
   lbtn.classList.add('loading');
   await new Promise(r=>setTimeout(r,1500));
-  window.location.href='terminal/index.html';
+  window.location.href='/';
 });
 [emailEl,passEl].forEach(i=>i.addEventListener('focus',()=>i.classList.remove('err')));
 </script>
