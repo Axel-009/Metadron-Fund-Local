@@ -1,1 +1,48 @@
-__pycache__/\n*.pyc\n.pytest_cache/\n*.egg-info/\n.env\n.env.vault.plain\n!.env.vault.gpg\ndist/\nbuild/\nnode_modules/\n*.so\n*.o\n*.a\n*.whl\n*.egg\n.venv/\n*.log\n.DS_Store\ntarget/\n*.pkl\n\n# Runtime logs and data directories\nlogs/\ndata/paul_patterns/\ndata/gsd_gradients/\ndata/gsd_planning/\n\n# \u2500\u2500 Sub-repo overrides \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\n# Keep build/ ignored globally (including open-bb build configs)\n\n# ML model artifacts needed for integration\n!repos/layer3_ml/QLIB/examples/benchmarks/**/*.pkl\n!intelligence_platform/QLIB/examples/benchmarks/**/*.pkl\n!repos/layer3_ml/Stock-prediction/**/*.pkl\n!repos/layer5_infra/Kserve/**/*.pkl\n\n# NVIDIA CUDA pre-built plugin binaries\n!repos/layer5_infra/nividia-repo/**/*.so\n!repos/layer5_infra/nividia-repo/**/*.o\n\n# Frontend (Node/Vite)\nserver/public\nvite.config.ts.*\n*.tar.gz\n*.db\n*.db-shm\n*.db-wal\nQwen 2.5-7b/assets/Qwen2.5_Omni.pdf\n
+__pycache__/
+*.pyc
+.pytest_cache/
+*.egg-info/
+.env
+.env.vault.plain
+!.env.vault.gpg
+dist/
+build/
+node_modules/
+*.so
+*.o
+*.a
+*.whl
+*.egg
+.venv/
+*.log
+.DS_Store
+target/
+*.pkl
+
+# Runtime logs and data directories
+logs/
+data/paul_patterns/
+data/gsd_gradients/
+data/gsd_planning/
+
+# \u2500\u2500 Sub-repo overrides \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500
+# Keep build/ ignored globally (including open-bb build configs)
+
+# ML model artifacts needed for integration
+!repos/layer3_ml/QLIB/examples/benchmarks/**/*.pkl
+!intelligence_platform/QLIB/examples/benchmarks/**/*.pkl
+!repos/layer3_ml/Stock-prediction/**/*.pkl
+!repos/layer5_infra/Kserve/**/*.pkl
+
+# NVIDIA CUDA pre-built plugin binaries
+!repos/layer5_infra/nividia-repo/**/*.so
+!repos/layer5_infra/nividia-repo/**/*.o
+
+# Frontend (Node/Vite)
+server/public
+vite.config.ts.*
+*.tar.gz
+*.db
+*.db-shm
+*.db-wal
+Qwen 2.5-7b/assets/Qwen2.5_Omni.pdf
