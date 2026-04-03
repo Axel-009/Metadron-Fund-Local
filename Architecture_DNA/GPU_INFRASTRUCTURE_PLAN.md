@@ -57,27 +57,233 @@ API-based (like Anthropic), 250-500 GB is sufficient.
 
 ---
 
-## GPU vs CPU — Revised for Mimo v2
+## Self-Hosted Model Strategy — GPU Infrastructure
 
-### The Mimo v2 Question Changes Everything
+### LLM Touchpoints in Metadron (35+ locations)
 
-If Mimo v2 is a **self-hosted LLM** replacing Anthropic API calls:
-- Model weights: 20-80 GB VRAM depending on parameter count
-- Inference: GPU-bound (transformer attention is matrix multiply)
-- **GPU becomes mandatory** for acceptable latency
+The codebase has **35+ locations** where LLM inference is used or could be used.
+These break down into distinct task categories:
 
-If Mimo v2 is an **API service** (like Anthropic):
-- Network I/O only, no local compute
-- **GPU remains optional**
+| Task Category | Locations | Current Provider | Call Frequency |
+|--------------|-----------|-----------------|----------------|
+| **Investor Persona Reasoning** (12 agents) | `ai-hedgefund/src/agents/{persona}.py` | Claude/GPT-4 | Per-ticker per heartbeat |
+| **News Sentiment Classification** | `ai-hedgefund/src/agents/news_sentiment.py` | Claude/GPT-4 | 5 articles/ticker |
+| **MiroFish Report Generation** | `mirofish/backend/app/services/report_agent.py` | OpenAI-compatible | On-demand (multi-turn) |
+| **MiroFish Profile/Ontology** | `mirofish/backend/app/services/oasis_profile_generator.py` | OpenAI-compatible | Per-simulation |
+| **Investor Persona Orchestration** | `engine/agents/investor_personas.py` | Configurable | Per-decision cycle |
+| **News Engine** | `engine/signals/news_engine.py` | newsfilter.io (no LLM) | Continuous |
+| **Research/Sector Bots** | `engine/agents/research_bots.py`, `sector_bots.py` | Quantitative (no LLM) | Per-heartbeat |
+| **Signal Engines** | `engine/signals/*.py` | Quantitative (no LLM) | Per-heartbeat |
 
-### Decision Matrix
+### Task-to-Model Routing — The Multi-Model Strategy
 
-| Mimo v2 Deployment | GPU Needed? | Recommended Server |
-|--------------------|-------------|-------------------|
-| API-based (remote) | No | AX102 (CPU, EUR ~90/mo) |
-| Local, 7B params | Yes, 8 GB VRAM | GEX44 entry GPU (EUR ~200/mo) |
-| Local, 13-30B params | Yes, 24 GB VRAM | GEX44 with A10/L40 (EUR ~250+/mo) |
-| Local, 70B+ params | Yes, 48-80 GB VRAM | Multi-GPU or cloud (EUR ~500+/mo) |
+Instead of one model for everything, route tasks to specialized models:
+
+```
+TASK ROUTING ARCHITECTURE:
+
+Financial Sentiment / Classification (HIGH VOLUME, LOW COMPLEXITY)
+  └── FinMA-7B (quantized)
+      ├── News headline sentiment → BULLISH/BEARISH/NEUTRAL
+      ├── SEC filing classification → MATERIAL/ROUTINE
+      ├── Earnings surprise direction
+      └── ~50-100 calls per heartbeat, short input, classification output
+
+Quantitative Analysis / Code / Structured Data (MEDIUM VOLUME, HIGH COMPLEXITY)
+  └── Qwen2.5-14B or Qwen2.5-32B (quantized)
+      ├── Financial data structuring + table parsing
+      ├── Walk-forward strategy code generation (overnight)
+      ├── Backtest result interpretation
+      ├── Factor engineering suggestions
+      └── ~10-20 calls per intelligence phase, medium input, structured output
+
+Investment Reasoning / Narrative (LOW VOLUME, HIGHEST COMPLEXITY)
+  └── Mimo v2 (API) OR InvestLM-65B (if self-hosted, needs big GPU)
+      ├── 12 investor persona agents (Buffett, Munger, etc.)
+      ├── MiroFish report generation (multi-turn)
+      ├── Trade thesis narrative
+      ├── Risk commentary
+      └── ~12-24 calls per decision cycle, long input, reasoning output
+```
+
+### Model Specifications & VRAM Requirements
+
+#### FinMA-7B (PIXIU Project)
+- **Base:** LLaMA-7B fine-tuned on financial NLP tasks
+- **Strength:** Sentiment analysis, headline classification, financial QA
+- **VRAM:** ~14 GB (FP16) / ~4-5 GB (INT4 GPTQ/AWQ)
+- **Speed:** ~30-50 tokens/sec on RTX 4000 (INT4)
+- **Why include:** Purpose-built for exactly what your news_sentiment_agent does.
+  Replaces expensive Claude/GPT-4 API calls for simple classification tasks.
+  100x cheaper per classification than API calls.
+
+#### Qwen2.5 (Alibaba)
+- **Sizes available:** 0.5B, 1.5B, 3B, 7B, 14B, 32B, 72B
+- **Strength:** Best open-source model for quantitative tasks, code, structured output, math
+- **VRAM by size:**
+
+| Size | FP16 VRAM | INT4 (GPTQ/AWQ) VRAM | Tokens/sec (RTX 4000, INT4) | Use Case |
+|------|-----------|----------------------|-----------------------------|----------|
+| 7B | ~14 GB | ~4-5 GB | ~40-60 t/s | Light quant tasks |
+| 14B | ~28 GB | ~8-10 GB | ~20-35 t/s | **Sweet spot for finance** |
+| 32B | ~64 GB | ~18-20 GB | ~10-20 t/s | Complex reasoning |
+| 72B | ~144 GB | ~40-45 GB | Too slow on single GPU | Needs multi-GPU |
+
+- **Recommendation:** Qwen2.5-14B-AWQ — fits in 20 GB VRAM alongside FinMA-7B,
+  excellent at structured financial analysis and code generation.
+
+#### InvestLM-65B
+- **Base:** LLaMA-65B fine-tuned on investment texts
+- **Strength:** Investment-specific reasoning, financial QA, portfolio commentary
+- **VRAM:** ~130 GB (FP16) / ~35-40 GB (INT4 GGUF via TheBloke)
+- **Problem:** Even quantized, needs ~40 GB VRAM — won't fit alongside other models
+  on a single 20 GB GPU. Requires 48+ GB VRAM (A6000, L40, A100).
+- **Alternative:** Use via API, or skip it — Qwen2.5-32B with financial prompting
+  achieves ~85% of InvestLM quality for investment reasoning.
+
+#### Air-LLM (Already in your stack)
+- **What it is:** Inference framework, not a model — enables layer-by-layer loading
+  to run models larger than VRAM (e.g., 70B on 4 GB VRAM)
+- **Tradeoff:** 10-50x slower inference (seconds per token, not tokens per second)
+- **Use case:** Overnight batch jobs only (not real-time). Good for:
+  - Nightly report generation with InvestLM-65B
+  - Weekly deep analysis runs
+  - NOT for intraday decision loop (too slow)
+
+### Recommended Self-Hosted Configuration
+
+#### Option A: GEX44 — Dual-Model Serving (~EUR 184/month)
+
+```
+Hetzner GEX44
+├── GPU: NVIDIA RTX 4000 SFF Ada — 20 GB GDDR6 ECC
+├── CPU: Intel Core i5-13500
+├── RAM: 64 GB DDR5
+├── Storage: 2x 512 GB NVMe (expandable)
+├── Price: EUR 184/month + EUR 79 setup
+│
+├── VRAM Allocation (20 GB total):
+│   ├── FinMA-7B-INT4    → ~5 GB  (sentiment/classification, always loaded)
+│   ├── Qwen2.5-14B-AWQ → ~10 GB (quant analysis, always loaded)
+│   ├── Overhead/KV cache → ~5 GB
+│   └── TOTAL: 20 GB ✓ fits
+│
+├── Serving: vLLM or llama.cpp
+│   ├── FinMA: dedicated instance, port 8100
+│   ├── Qwen2.5: dedicated instance, port 8101
+│   └── OpenAI-compatible API (drop-in replacement)
+│
+├── Mimo v2: via API (not local — save GPU for specialist models)
+│
+└── Overnight (Air-LLM):
+    ├── Unload daytime models
+    ├── Load InvestLM-65B layer-by-layer via Air-LLM
+    ├── Generate deep analysis reports
+    └── Reload daytime models before market open
+```
+
+**Monthly cost: EUR 184 fixed** — no per-token API charges for classification
+and quant tasks. Only pay API for Mimo v2 reasoning calls.
+
+#### Option B: GEX131 — Full Self-Hosted (~EUR 889/month)
+
+```
+Hetzner GEX131
+├── GPU: NVIDIA RTX PRO 6000 Blackwell — 96 GB GDDR7 ECC
+├── CPU: Intel Xeon Gold 5412U (24 cores)
+├── RAM: 256 GB DDR5 ECC
+├── Storage: 2x 960 GB NVMe
+├── Price: EUR 889/month
+│
+├── VRAM Allocation (96 GB total):
+│   ├── FinMA-7B-INT4         → ~5 GB   (sentiment, always loaded)
+│   ├── Qwen2.5-32B-AWQ      → ~20 GB  (quant analysis, always loaded)
+│   ├── InvestLM-65B-INT4    → ~40 GB  (investment reasoning, always loaded)
+│   ├── Mimo v2 (if local)   → ~20 GB  (general reasoning)
+│   ├── Overhead/KV cache    → ~11 GB
+│   └── TOTAL: 96 GB ✓ fits ALL models simultaneously
+│
+├── Serving: vLLM with multi-model
+│   ├── All 3-4 models loaded concurrently
+│   ├── No model swapping needed
+│   └── Zero API costs — fully self-hosted
+│
+└── Advantage: ZERO external API dependency
+    ├── Complete data privacy (no financial data leaves your server)
+    ├── Fixed EUR 889/month regardless of volume
+    └── No rate limits, no API outages
+```
+
+### Cost Comparison: Self-Hosted vs API
+
+| Scenario | API Cost/month | Self-Hosted Cost/month | Break-Even |
+|----------|---------------|----------------------|------------|
+| Light (100 calls/day) | ~EUR 30-50 | EUR 184 (GEX44) | Never — API cheaper |
+| Medium (1,000 calls/day) | ~EUR 150-300 | EUR 184 (GEX44) | ~1 month |
+| Heavy (5,000 calls/day) | ~EUR 500-1,500 | EUR 184 (GEX44) | Immediately |
+| Full self-hosted | ~EUR 0 | EUR 889 (GEX131) | vs ~EUR 2,000+ API |
+
+**Your usage estimate:** 12 personas × every decision cycle + sentiment on
+100+ headlines + quant analysis = ~2,000-5,000 LLM calls/day at production.
+**Self-hosted wins at your volume.**
+
+### Serving Infrastructure: llama.cpp vs vLLM
+
+| Feature | llama.cpp | vLLM |
+|---------|-----------|------|
+| Multi-model | Swap models (1 at a time) | Multiple concurrent (needs VRAM) |
+| Quantization | GGUF (excellent Q4/Q5/Q8) | AWQ/GPTQ |
+| Throughput | Good for single-user | Better for concurrent requests |
+| Memory efficiency | Best (GGUF quantization) | Good (PagedAttention) |
+| OpenAI-compatible API | Yes (built-in server) | Yes (built-in) |
+| Best for GEX44 (20 GB) | **Yes** — efficient VRAM use | Tight with 2 models |
+| Best for GEX131 (96 GB) | Works | **Yes** — concurrent serving |
+
+**GEX44 recommendation:** llama.cpp with model swapping (load FinMA for
+classification batch, swap to Qwen for analysis, or run both with small KV)
+
+**GEX131 recommendation:** vLLM with all models loaded concurrently
+
+### Integration Architecture
+
+```
+Engine Heartbeat (3-min cycle)
+│
+├── Phase 1: DATA → OpenBB API (unchanged)
+│
+├── Phase 2: SIGNALS
+│   ├── news_engine.py → newsfilter.io headlines
+│   └── Headlines → LOCAL FinMA-7B (port 8100)
+│       └── Sentiment: BULLISH/BEARISH/NEUTRAL + confidence
+│       └── Latency: ~50-100ms per headline (batched)
+│
+├── Phase 3: INTELLIGENCE
+│   ├── alpha_optimizer.py → LOCAL Qwen2.5-14B (port 8101)
+│   │   └── Feature importance interpretation
+│   │   └── Strategy refinement suggestions
+│   └── investor_personas.py → Mimo v2 API (complex reasoning)
+│       └── 12 persona signals (Buffett, Munger, etc.)
+│
+├── Phase 4: DECISION
+│   └── decision_matrix.py → LOCAL Qwen2.5-14B (port 8101)
+│       └── Trade thesis structuring
+│       └── Risk narrative
+│
+├── Phase 5: EXECUTION → Alpaca API (unchanged)
+│
+├── Phase 6: LEARNING
+│   └── learning_loop.py → LOCAL Qwen2.5-14B
+│       └── Performance attribution analysis
+│
+└── Phase 7: MONITORING
+    └── market_wrap.py → LOCAL Qwen2.5-14B
+        └── Daily narrative generation
+
+OVERNIGHT (Air-LLM on GEX44, or direct on GEX131):
+├── InvestLM-65B → Deep investment analysis reports
+├── Platinum Report generation → narrative sections
+└── Weekly strategy review → multi-turn reasoning
+```
 
 ---
 
@@ -353,19 +559,31 @@ Only if you evolve to:
 
 ### Recommended Products
 
-#### Without GPU: AX102 (~EUR 80-90/month)
+#### CPU Only: AX102 (~EUR 80-90/month)
 
 - AMD Ryzen 9 7950X3D — 16 cores / 32 threads
 - 128 GB DDR5 ECC RAM
 - 2x 1 TB NVMe SSD (RAID-1)
-- **Best for:** Mimo v2 via API, full engine + web stack + PM2
+- **Best for:** All LLM via API, full engine + web stack + PM2
 
-#### With GPU: GEX44 (~EUR 200+/month)
+#### Entry GPU: GEX44 (EUR 184/month + EUR 79 setup)
 
-- Dedicated CPU + NVIDIA GPU (A10/L40 tier)
-- 64-128 GB RAM
-- NVMe storage
-- **Best for:** Self-hosted Mimo v2, local FinRL training
+- Intel Core i5-13500
+- 64 GB DDR5 RAM
+- NVIDIA RTX 4000 SFF Ada — **20 GB GDDR6 ECC VRAM**
+- 2x 512 GB NVMe
+- Location: Falkenstein (FSN1)
+- **Best for:** FinMA-7B + Qwen2.5-14B dual-model serving, Mimo v2 via API
+- **Fits:** 2 quantized models simultaneously, overnight InvestLM via Air-LLM
+
+#### Full GPU: GEX131 (EUR 889/month)
+
+- Intel Xeon Gold 5412U — 24 cores
+- 256 GB DDR5 ECC RAM
+- NVIDIA RTX PRO 6000 Blackwell — **96 GB GDDR7 ECC VRAM**
+- 2x 960 GB NVMe
+- Location: Nuremberg (NBG1) or Falkenstein (FSN1)
+- **Best for:** ALL models loaded concurrently, zero API dependency, complete privacy
 
 ---
 
@@ -431,18 +649,47 @@ PRE-MARKET (08:00-09:30 ET) — 3-min heartbeat:
 ## Scaling Path
 
 ```
-Phase 1 (Now):      AX102 dedicated + PM2           ~EUR 90/mo
-                    Mimo v2 via API, full engine
-                    500 GB NVMe, 128 GB RAM
+Phase 1 — GEX44 (Recommended Start)                  EUR 184/mo FIXED
+  ├── FinMA-7B + Qwen2.5-14B on GPU (20 GB VRAM)
+  ├── Mimo v2 via API (reasoning only)
+  ├── Overnight: InvestLM-65B via Air-LLM
+  ├── PM2 managing all services
+  ├── ~2,000-5,000 local LLM calls/day at zero marginal cost
+  └── Only API cost: Mimo v2 reasoning (~EUR 50-100/mo estimated)
+      TOTAL: ~EUR 234-284/mo
 
-Phase 2 (Mimo local): Upgrade to GEX44 (GPU)        ~EUR 200-250/mo
-                      Self-hosted Mimo v2 inference
-                      1 TB NVMe for model weights
+Phase 2 — GEX131 (Full Self-Hosted)                  EUR 889/mo FIXED
+  ├── ALL models loaded concurrently (96 GB VRAM)
+  ├── FinMA-7B + Qwen2.5-32B + InvestLM-65B + Mimo v2
+  ├── Zero API costs, zero external dependency
+  ├── Complete data privacy (no data leaves server)
+  └── 24-core Xeon + 256 GB RAM for engine + ML
+      TOTAL: EUR 889/mo (zero variable costs)
 
-Phase 3 (Scale):    Add cloud VPS for backtesting    ~EUR 300-350/mo
-                    Separate compute for overnight ML
+Phase 3 — Split Architecture                         EUR 1,100+/mo
+  ├── GEX131 for LLM inference + engine
+  ├── AX102 for backtesting + overnight ML training
+  └── Separate compute prevents backtest from competing with live engine
 
-Phase 4 (HFT):     Add US East node for execution    ~EUR 500+/mo
-                    Sub-second order routing
-                    Rust order matching engine
+Phase 4 — US East Node (HFT Evolution)               EUR 1,500+/mo
+  ├── Add US East dedicated for sub-second execution
+  ├── Rust order matching engine
+  └── EU GPU server for LLM + intelligence, US for execution
+```
+
+## Security Advantage of Self-Hosted
+
+```
+API-based:
+  └── Every LLM call sends financial signals, positions, trade reasoning
+      to third-party servers (Anthropic, OpenAI)
+      └── Risk: data retention policies, potential exposure
+
+Self-hosted (GEX44/GEX131):
+  └── ALL inference happens on YOUR server
+      ├── No financial data leaves the machine
+      ├── No API keys to manage (except Mimo v2 on GEX44)
+      ├── No rate limits during market hours
+      ├── No API outages during critical trading decisions
+      └── Fixed monthly cost regardless of call volume
 ```
