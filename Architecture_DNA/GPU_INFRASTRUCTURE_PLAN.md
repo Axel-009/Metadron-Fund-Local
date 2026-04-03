@@ -1,5 +1,9 @@
 # Metadron Capital — Infrastructure & Hosting Plan
 
+> **CONFIRMED:** Hetzner GEX44 purchased (April 2026).
+> Production config: Qwen2.5-7B FP16 + Qwen2.5-Math-7B Q4 via llama.cpp.
+> See [GEX44 Setup Guide](#gex44-setup-guide) for deployment steps.
+
 ## Codebase Profile (as of 2026-04)
 
 | Metric | Value |
