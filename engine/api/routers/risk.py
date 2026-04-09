@@ -311,7 +311,7 @@ async def risk_metrics():
         metrics = [
             {"name": "Sharpe Ratio",      "value": f"{sharpe:.2f}",      "status": "good" if sharpe > 1.5 else "warning" if sharpe > 0 else "bad"},
             {"name": "Sortino Ratio",     "value": f"{sortino:.2f}",     "status": "good" if sortino > 2 else "warning" if sortino > 0 else "bad"},
-            {"name": "Max Drawdown",      "value": f"{max_dd_pct:.2f}%", "status": "warning" if max_dd_pct > 5 else "good"},
+            {"name": "Max Drawdown",      "value": f"{max_dd_pct:.2f}%", "status": "warning" if max_dd_pct > 20 else "good"},
             {"name": "Calmar Ratio",      "value": f"{calmar:.2f}",      "status": "good" if calmar > 1 else "neutral"},
             {"name": "Information Ratio", "value": f"{info_ratio:.2f}",  "status": "good" if info_ratio > 0.5 else "neutral"},
             {"name": "Treynor Ratio",     "value": f"{treynor:.1f}%",    "status": "good" if treynor > 0 else "bad"},
