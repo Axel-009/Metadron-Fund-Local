@@ -320,8 +320,8 @@ function LiveTransactions({ onTickerSelect }: LiveTransactionsProps) {
       {/* Scrollable transaction rows */}
       <div ref={scrollRef} className="flex-1 overflow-auto">
         {trades.length === 0 && (
-          <div style={{color: "var(--muted)", fontSize: 12, padding: 20, textAlign: "center"}}>
-            Waiting for data...
+          <div style={{color: "var(--muted)", fontSize: 11, padding: "28px 16px", textAlign: "center", lineHeight: 1.6, opacity: 0.7}}>
+            No executions yet — trades will appear here once the L7 engine fills an order through Alpaca or the paper broker.
           </div>
         )}
         {trades.map((tx, i) => {
@@ -404,8 +404,8 @@ function OrderDistributionChart() {
     <div className="h-full flex flex-col">
       <div className="flex-1 relative">
         {chartData.length === 0 ? (
-          <div style={{color: "var(--muted)", fontSize: 12, padding: 20, textAlign: "center"}}>
-            Waiting for data...
+          <div style={{color: "var(--muted)", fontSize: 11, padding: "28px 16px", textAlign: "center", lineHeight: 1.6, opacity: 0.7}}>
+            No order distribution yet — execute your first trade to see signal type breakdown.
           </div>
         ) : (
           <ResponsiveContainer width="100%" height="100%">
@@ -476,8 +476,8 @@ function LiquidityChart({ selectedTicker }: MarketDataProps) {
   return (
     <div className="h-full">
       {data.length === 0 ? (
-        <div style={{color: "var(--muted)", fontSize: 12, padding: 20, textAlign: "center"}}>
-          Waiting for data...
+        <div style={{color: "var(--muted)", fontSize: 11, padding: "28px 16px", textAlign: "center", lineHeight: 1.6, opacity: 0.7}}>
+          Select a ticker from the blotter to load market data.
         </div>
       ) : (
         <ResponsiveContainer width="100%" height="100%">
@@ -516,8 +516,8 @@ function SpreadChart({ selectedTicker }: MarketDataProps) {
   return (
     <div className="h-full">
       {data.length === 0 ? (
-        <div style={{color: "var(--muted)", fontSize: 12, padding: 20, textAlign: "center"}}>
-          Waiting for data...
+        <div style={{color: "var(--muted)", fontSize: 11, padding: "28px 16px", textAlign: "center", lineHeight: 1.6, opacity: 0.7}}>
+          Select a ticker from the blotter to load market data.
         </div>
       ) : (
         <ResponsiveContainer width="100%" height="100%">
@@ -545,8 +545,8 @@ function DepthChart({ selectedTicker }: MarketDataProps) {
   return (
     <div className="h-full">
       {data.length === 0 ? (
-        <div style={{color: "var(--muted)", fontSize: 12, padding: 20, textAlign: "center"}}>
-          Waiting for data...
+        <div style={{color: "var(--muted)", fontSize: 11, padding: "28px 16px", textAlign: "center", lineHeight: 1.6, opacity: 0.7}}>
+          Select a ticker from the blotter to load market data.
         </div>
       ) : (
         <ResponsiveContainer width="100%" height="100%">
@@ -653,8 +653,8 @@ function RiskPanel() {
           TOP RISKS <span className="text-terminal-text-faint ml-2">{corridor}</span>
         </div>
         {riskAlerts.length === 0 && (
-          <div style={{color: "var(--muted)", fontSize: 12, padding: "8px 0", textAlign: "center"}}>
-            Waiting for data...
+          <div style={{color: "var(--muted)", fontSize: 11, padding: "8px 0", textAlign: "center", opacity: 0.7}}>
+            Risk engine initializing...
           </div>
         )}
         {riskAlerts.map((r, i) => (
@@ -689,8 +689,8 @@ function PnlTimeChart() {
     <div className="h-full flex flex-col">
       <div className="flex-1">
         {data.length === 0 ? (
-          <div style={{color: "var(--muted)", fontSize: 12, padding: 20, textAlign: "center"}}>
-            Waiting for data...
+          <div style={{color: "var(--muted)", fontSize: 11, padding: "28px 16px", textAlign: "center", lineHeight: 1.6, opacity: 0.7}}>
+            No PnL data yet — series will populate after the first trade execution.
           </div>
         ) : (
           <ResponsiveContainer width="100%" height="100%">
@@ -779,8 +779,8 @@ function ExecutionTable() {
       </div>
       <div className="flex-1 overflow-auto">
         {positions.length === 0 && (
-          <div style={{color: "var(--muted)", fontSize: 12, padding: 20, textAlign: "center"}}>
-            Waiting for data...
+          <div style={{color: "var(--muted)", fontSize: 11, padding: "28px 16px", textAlign: "center", lineHeight: 1.6, opacity: 0.7}}>
+            No open positions — top-of-book quotes will appear here once you hold a position.
           </div>
         )}
         {positions.slice(0, 6).map((p, i) => (
