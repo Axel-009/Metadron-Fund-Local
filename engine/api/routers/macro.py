@@ -358,20 +358,37 @@ async def economic_calendar():
 
 @router.get("/news")
 async def macro_news():
-    """Market news via OpenBB."""
+    """Market news routed through the NewsEngine.
+
+    The NewsEngine is the single news source for the entire platform.
+    Primary: newsfilter.io WebSocket (10,000+ sources, real-time)
+    Fallback: OpenBB news (Tiingo/Benzinga/FMP)
+
+    This endpoint feeds the WRAP tab news sidebar. The same NewsEngine
+    singleton is shared with EventDrivenEngine and CVREngine so all
+    news consumers see the same warmed feed.
+    """
     try:
-        from engine.data.openbb_data import get_world_news
-        df = get_world_news()
-        if hasattr(df, "empty") and df.empty:
-            return {"news": [], "timestamp": datetime.utcnow().isoformat()}
-        if hasattr(df, "to_dict"):
-            records = df.head(15).to_dict(orient="records")
-            for r in records:
-                for k, v in r.items():
-                    if hasattr(v, "isoformat"):
-                        r[k] = v.isoformat()
-            return {"news": records, "timestamp": datetime.utcnow().isoformat()}
-        return {"news": [], "timestamp": datetime.utcnow().isoformat()}
+        from engine.signals.news_engine import NewsEngine
+
+        # Use module-level singleton to share with signals router
+        global _news_engine
+        if "_news_engine" not in globals() or _news_engine is None:
+            _news_engine = NewsEngine()
+
+        feed = _news_engine.get_live_feed(limit=15)
+        news = []
+        for item in feed:
+            news.append({
+                "time": getattr(item, "timestamp", "") if hasattr(item, "timestamp") else str(getattr(item, "published", "")),
+                "headline": getattr(item, "headline", "") or getattr(item, "title", ""),
+                "source": getattr(item, "source", "NewsEngine"),
+                "tickers": getattr(item, "tickers", []),
+                "sentiment": getattr(item, "sentiment", "neutral"),
+                "url": getattr(item, "url", ""),
+            })
+
+        return {"news": news, "source": "news_engine", "timestamp": datetime.utcnow().isoformat()}
     except Exception as e:
         logger.error(f"macro/news error: {e}")
         return {"news": [], "error": str(e)}

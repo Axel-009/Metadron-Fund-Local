@@ -367,7 +367,7 @@ export default function MarketWrap() {
               <div className="space-y-1.5">
                 {news.length === 0 && (
                   <div className="text-[10px] text-terminal-text-faint text-center py-4 opacity-70">
-                    News feed loading — requires Tiingo API key...
+                    News feed loading — connecting to NewsEngine...
                   </div>
                 )}
                 {news.map((n, i) => (
