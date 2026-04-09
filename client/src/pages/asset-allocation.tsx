@@ -5,50 +5,11 @@ import { PieChart, Pie, Cell, ResponsiveContainer } from "recharts";
 import { useState, useEffect, useMemo } from "react";
 import { useEngineQuery, type PortfolioLive, type AllocationData } from "@/hooks/use-engine-api";
 
-const INDICES = [
-  { ticker: "SPY", price: 527.82, change: 0.84, data: [510, 512, 515, 518, 520, 522, 525, 527] },
-  { ticker: "QQQ", price: 448.19, change: 1.23, data: [430, 432, 435, 440, 442, 445, 447, 448] },
-  { ticker: "IWM", price: 210.45, change: -0.32, data: [212, 211, 210, 209, 210, 211, 210, 210] },
-  { ticker: "DIA", price: 398.76, change: 0.51, data: [392, 394, 395, 396, 397, 398, 398, 399] },
-  { ticker: "VIX", price: 14.22, change: -3.41, data: [16, 15, 15, 14, 14, 14, 14, 14] },
-];
+// Static fallbacks removed — all data from live API endpoints
 
-// Extended HOLDINGS with new columns: productType, leveraged, marginPct, creditRating, strategy, weightNav, pnl
-const HOLDINGS = [
-  { ticker: "AAPL", name: "Apple Inc", weight: 8.5, shares: 1200, price: 189.45, change: 1.2, sector: "Technology", productType: "Equity", leveraged: false, marginPct: 50, creditRating: "AA+", strategy: "Momentum", weightNav: 8.50, pnl: 24380 },
-  { ticker: "MSFT", name: "Microsoft Corp", weight: 7.8, shares: 800, price: 420.12, change: 0.8, sector: "Technology", productType: "Equity", leveraged: false, marginPct: 50, creditRating: "AAA", strategy: "Quality", weightNav: 7.80, pnl: 18920 },
-  { ticker: "NVDA", name: "NVIDIA Corp", weight: 6.2, shares: 500, price: 875.30, change: 2.4, sector: "Technology", productType: "Equity", leveraged: false, marginPct: 50, creditRating: "A", strategy: "Growth", weightNav: 6.20, pnl: 52140 },
-  { ticker: "AMZN", name: "Amazon.com", weight: 5.5, shares: 600, price: 185.67, change: 1.5, sector: "Consumer", productType: "Equity", leveraged: false, marginPct: 50, creditRating: "AA", strategy: "Growth", weightNav: 5.50, pnl: 15680 },
-  { ticker: "GOOGL", name: "Alphabet Inc", weight: 4.8, shares: 700, price: 155.89, change: -0.3, sector: "Technology", productType: "Equity", leveraged: false, marginPct: 50, creditRating: "AA+", strategy: "Value", weightNav: 4.80, pnl: -3240 },
-  { ticker: "JPM", name: "JPMorgan Chase", weight: 4.2, shares: 450, price: 198.34, change: 0.6, sector: "Financials", productType: "Equity", leveraged: false, marginPct: 50, creditRating: "A+", strategy: "Event-Driven", weightNav: 4.20, pnl: 8910 },
-  { ticker: "UNH", name: "UnitedHealth", weight: 3.8, shares: 200, price: 502.15, change: -0.8, sector: "Healthcare", productType: "Equity", leveraged: false, marginPct: 50, creditRating: "A", strategy: "Quality", weightNav: 3.80, pnl: -7240 },
-  { ticker: "V", name: "Visa Inc", weight: 3.5, shares: 350, price: 282.90, change: 0.4, sector: "Financials", productType: "Equity", leveraged: false, marginPct: 50, creditRating: "AA-", strategy: "Mean Reversion", weightNav: 3.50, pnl: 4120 },
-  { ticker: "META", name: "Meta Platforms", weight: 3.2, shares: 250, price: 505.78, change: 1.8, sector: "Technology", productType: "Equity", leveraged: false, marginPct: 50, creditRating: "A+", strategy: "Momentum", weightNav: 3.20, pnl: 19450 },
-  { ticker: "XOM", name: "Exxon Mobil", weight: 2.8, shares: 400, price: 115.23, change: -1.1, sector: "Energy", productType: "Equity", leveraged: false, marginPct: 50, creditRating: "AA", strategy: "Value", weightNav: 2.80, pnl: -9870 },
-  { ticker: "SPY PUT", name: "SPY May-31 520P", weight: 1.8, shares: -30, price: 7.80, change: -2.1, sector: "Derivatives", productType: "Options", leveraged: true, marginPct: 20, creditRating: "NR", strategy: "Protective Put", weightNav: 1.80, pnl: 4800 },
-  { ticker: "ESM25", name: "E-mini S&P Jun", weight: 1.0, shares: 4, price: 5282.75, change: 0.65, sector: "Futures", productType: "Futures", leveraged: true, marginPct: 100, creditRating: "NR", strategy: "Momentum", weightNav: 1.03, pnl: 34250 },
-  { ticker: "GLD", name: "SPDR Gold ETF", weight: 1.5, shares: 600, price: 215.40, change: 0.3, sector: "Commodities", productType: "ETF", leveraged: false, marginPct: 50, creditRating: "AAA", strategy: "Mean Reversion", weightNav: 1.50, pnl: 3240 },
-  { ticker: "TLT", name: "iShares 20Y Bond", weight: 1.2, shares: 800, price: 96.80, change: -0.4, sector: "Fixed Income", productType: "Fixed Income", leveraged: false, marginPct: 25, creditRating: "AAA", strategy: "Value", weightNav: 1.20, pnl: -2100 },
-  { ticker: "USD CASH", name: "Cash & Equivalents", weight: 5.5, shares: 0, price: 1.00, change: 0, sector: "Cash", productType: "Cash", leveraged: false, marginPct: 0, creditRating: "AAA", strategy: "—", weightNav: 5.50, pnl: 0 },
-];
 
-const MOVERS = [
-  { ticker: "SMCI", change: 12.4, momentum: "strong" },
-  { ticker: "ARM", change: 8.7, momentum: "strong" },
-  { ticker: "PLTR", change: 5.2, momentum: "moderate" },
-  { ticker: "COIN", change: -6.8, momentum: "weak" },
-  { ticker: "RIVN", change: -8.3, momentum: "weak" },
-];
 
-const ALLOC_DATA = [
-  { name: "Technology", value: 38, color: "#00d4aa" },
-  { name: "Financials", value: 15, color: "#58a6ff" },
-  { name: "Healthcare", value: 12, color: "#3fb950" },
-  { name: "Consumer", value: 11, color: "#bc8cff" },
-  { name: "Energy", value: 8, color: "#f0883e" },
-  { name: "Industrials", value: 7, color: "#d29922" },
-  { name: "Cash", value: 9, color: "#484f58" },
-];
+
 
 const CREDIT_COLORS: Record<string, string> = {
   "AAA": "#3fb950",
@@ -97,26 +58,34 @@ export default function AssetAllocation() {
   const nav = portData?.nav ?? 0;
 
   // Indices from API
-  const indices = indicesApi?.indices?.length ? indicesApi.indices : INDICES;
+  const indices = indicesApi?.indices || [];
   // Movers from API
-  const movers = moversApi?.movers?.length ? moversApi.movers : MOVERS;
+  const movers = moversApi?.movers || [];
   // Sector allocation from API
-  const allocPie = sectorAllocApi?.allocation?.length ? sectorAllocApi.allocation : ALLOC_DATA;
+  const allocPie = sectorAllocApi?.allocation || [];
 
-  // Merge API positions into HOLDINGS format when available
+  // Positions directly from broker — no static fallback
   const holdings = useMemo(() => {
-    if (!posData?.positions?.length) return HOLDINGS;
-    // Build lookup from API positions
-    const apiMap = new Map(posData.positions.map((p) => [p.ticker, p]));
-    return HOLDINGS.map((h) => {
-      const api = apiMap.get(h.ticker);
-      if (!api) return h;
+    if (!posData?.positions?.length) return [];
+    const totalValue = posData.positions.reduce((s, p) => s + Math.abs((p.quantity || 0) * (p.current_price || 0)), 0);
+    return posData.positions.map((p) => {
+      const val = Math.abs((p.quantity || 0) * (p.current_price || 0));
+      const weight = totalValue > 0 ? (val / totalValue * 100) : 0;
       return {
-        ...h,
-        shares: api.quantity || h.shares,
-        price: api.current_price || h.price,
-        pnl: api.unrealized_pnl + api.realized_pnl,
-        sector: api.sector || h.sector,
+        ticker: p.ticker,
+        name: p.ticker,
+        weight: +weight.toFixed(1),
+        shares: p.quantity || 0,
+        price: p.current_price || 0,
+        change: p.current_price && p.avg_cost ? ((p.current_price - p.avg_cost) / p.avg_cost * 100) : 0,
+        sector: p.sector || "Unknown",
+        productType: "Equity",
+        leveraged: false,
+        marginPct: 50,
+        creditRating: "NR",
+        strategy: "—",
+        weightNav: +weight.toFixed(2),
+        pnl: (p.unrealized_pnl || 0) + (p.realized_pnl || 0),
       };
     });
   }, [posData]);
@@ -143,6 +112,11 @@ export default function AssetAllocation() {
                 </div>
                 {/* Indices strip */}
                 <div className="flex gap-4 ml-auto">
+                  {indices.length === 0 && (
+                    <div style={{color: "var(--muted)", fontSize: 11, padding: "20px 16px", textAlign: "center", opacity: 0.7, gridColumn: "1 / -1"}}>
+                      Index data loading — awaiting market hours...
+                    </div>
+                  )}
                   {indices.map((idx) => (
                     <div key={idx.ticker} className="text-center">
                       <div className="text-[9px] text-terminal-text-faint font-mono">{idx.ticker}</div>
@@ -223,6 +197,11 @@ export default function AssetAllocation() {
               </tr>
             </thead>
             <tbody>
+              {holdings.length === 0 && (
+                <tr><td colSpan={12} style={{color: "var(--muted)", fontSize: 11, padding: "20px 16px", textAlign: "center", opacity: 0.7}}>
+                  No positions — holdings will appear once you execute a trade.
+                </td></tr>
+              )}
               {holdings.map((h, i) => (
                 <tr key={i} className="border-b border-terminal-border/20 hover:bg-white/[0.02]">
                   <td className="px-2 py-1.5 text-terminal-accent font-medium">{h.ticker}</td>
@@ -311,7 +290,7 @@ export default function AssetAllocation() {
               <ResponsiveContainer width="100%" height="100%">
                 <PieChart>
                   <Pie
-                    data={ALLOC_DATA}
+                    data={allocPie}
                     cx="50%"
                     cy="50%"
                     innerRadius="45%"
@@ -340,6 +319,11 @@ export default function AssetAllocation() {
             {/* Dynamic Movers */}
             <div className="mt-4 pt-3 border-t border-terminal-border">
               <div className="text-[9px] text-terminal-text-faint uppercase tracking-wider font-medium mb-2">Dynamic Movers</div>
+              {movers.length === 0 && (
+                <div style={{color: "var(--muted)", fontSize: 11, padding: "16px", textAlign: "center", opacity: 0.7}}>
+                  Movers loading — awaiting universe engine...
+                </div>
+              )}
               {movers.map((m, i) => (
                 <div key={i} className="flex items-center gap-2 py-0.5 text-[9px]">
                   <span className="text-terminal-text-primary font-mono w-10">{m.ticker}</span>
