@@ -7,127 +7,6 @@ import {
 } from "recharts";
 import { useEngineQuery, type PortfolioLive, type TradeRecord, type RiskPortfolio, type RiskGreeks } from "@/hooks/use-engine-api";
 
-// ═══════════ SIMULATED DATA GENERATORS ═══════════
-
-interface LiveTx {
-  id: string;
-  time: string;
-  ticker: string;
-  side: "BUY" | "SELL" | "SHORT" | "COVER";
-  qty: number;
-  price: number;
-  notional: number;
-  fillType: "FULL" | "PARTIAL" | "REJECTED";
-  venue: string;
-  signal: string;
-  latencyMs: number;
-}
-
-const TX_TICKERS: Record<string, number> = {
-  AAPL: 189, MSFT: 420, NVDA: 875, AMZN: 185, GOOGL: 155,
-  META: 505, JPM: 198, TSLA: 178, XOM: 115, UNH: 502,
-  V: 282, BAC: 35, GS: 437, LLY: 803, AVGO: 1357,
-};
-const TX_VENUES = ["ARCA", "NYSE", "NASDAQ", "BATS", "IEX", "EDGX", "DARK"];
-const TX_SIGNALS = ["ML_AGENT", "MICRO_PX", "RV_PAIR", "SOCIAL", "CVR", "EVENT", "DRL", "MOM", "TFT"];
-
-let _txSeq = 100000;
-function generateLiveTx(): LiveTx {
-  const tickers = Object.keys(TX_TICKERS);
-  const ticker = tickers[Math.floor(Math.random() * tickers.length)];
-  const base = TX_TICKERS[ticker];
-  const side = (["BUY", "SELL", "SHORT", "COVER"] as const)[Math.floor(Math.random() * 4)];
-  const qty = Math.floor(50 + Math.random() * 950);
-  const price = +(base * (1 + (Math.random() - 0.5) * 0.02)).toFixed(2);
-  const now = new Date();
-  _txSeq++;
-  return {
-    id: `TX-${_txSeq.toString(36).toUpperCase()}`,
-    time: now.toLocaleTimeString("en-US", { hour12: false, hour: "2-digit", minute: "2-digit", second: "2-digit" }) + "." + now.getMilliseconds().toString().padStart(3, "0"),
-    ticker,
-    side,
-    qty,
-    price,
-    notional: +(qty * price),
-    fillType: Math.random() > 0.05 ? (Math.random() > 0.1 ? "FULL" : "PARTIAL") : "REJECTED",
-    venue: TX_VENUES[Math.floor(Math.random() * TX_VENUES.length)],
-    signal: TX_SIGNALS[Math.floor(Math.random() * TX_SIGNALS.length)],
-    latencyMs: +(0.5 + Math.random() * 12).toFixed(1),
-  };
-}
-
-function generateInitialTxs(count: number): LiveTx[] {
-  return Array.from({ length: count }, () => generateLiveTx()).reverse();
-}
-
-function generatePnlData() {
-  const data: { time: string; value: number }[] = [];
-  let v = 800;
-  for (let i = 0; i < 60; i++) {
-    v += Math.random() * 40 - 15;
-    const h = Math.floor(i / 4) + 9;
-    const m = (i % 4) * 15;
-    data.push({ time: `${h}:${m.toString().padStart(2, "0")}`, value: Math.round(v) });
-  }
-  return data;
-}
-
-function generateLiquidityData() {
-  const d: { time: string; bid: number; ask: number }[] = [];
-  for (let i = 0; i < 30; i++) {
-    d.push({
-      time: `${(1556 + i * 0.1).toFixed(1)}`,
-      bid: Math.random() * 5000 + 8000,
-      ask: Math.random() * 5000 + 8000,
-    });
-  }
-  return d;
-}
-
-function generateSpreadData() {
-  const d: { time: string; spread: number }[] = [];
-  for (let i = 0; i < 40; i++) {
-    d.push({ time: `${i}`, spread: Math.random() * 0.3 + 0.02 });
-  }
-  return d;
-}
-
-function generateDepthData() {
-  const d: { price: string; bidDepth: number; askDepth: number }[] = [];
-  for (let i = 0; i < 20; i++) {
-    const p = 57000 + i * 200;
-    d.push({
-      price: p.toFixed(0),
-      bidDepth: i < 10 ? (10 - i) * 1000 + Math.random() * 2000 : 0,
-      askDepth: i >= 10 ? (i - 9) * 1000 + Math.random() * 2000 : 0,
-    });
-  }
-  return d;
-}
-
-const ORDER_DISTRIBUTION = [
-  { name: "Market", value: 29.6, color: "#00d4aa" },
-  { name: "Limit", value: 3.5, color: "#58a6ff" },
-  { name: "Stop", value: 10, color: "#f85149" },
-  { name: "Conditional", value: 16, color: "#bc8cff" },
-  { name: "TWAP", value: 8.4, color: "#d29922" },
-  { name: "Bracket", value: 14, color: "#4ecdc4" },
-  { name: "Trailing", value: 18.5, color: "#3fb950" },
-];
-
-const EXECUTIONS = [
-  { pair: "AAPL", ctrl: 597, sens: 860, status: 506.23, positive: true },
-  { pair: "MSFT", ctrl: 398, sens: 956, status: 505.38, positive: true },
-  { pair: "BTC/USD", ctrl: 5920.0, sens: 544, status: 508.52, positive: true },
-  { pair: "KWTC/DAY", ctrl: 3022.06, sens: 401, status: -796.58, positive: false },
-];
-
-const TOP_RISKS = [
-  { name: "Tech Concentration", value: "34.2%", severity: "high" },
-  { name: "Rising Volatility", value: "VIX 21.8", severity: "medium" },
-  { name: "Correlation Breakdown", value: "ρ=0.92", severity: "low" },
-];
-
 // ═══════════ NEURAL MARKET MAP (Canvas) ═══════════
 
 interface MapNode {
@@ -330,58 +209,63 @@ function NeuralMarketMap() {
 
 // ═══════════ LIVE TRANSACTIONS COMPONENT ═══════════
 
-function LiveTransactions() {
-  const { data: tradesData } = useEngineQuery<{ trades: TradeRecord[] }>("/portfolio/trades?limit=200", { refetchInterval: 3000 });
-  const [flashId, setFlashId] = useState<string | null>(null);
+interface BlotterTrade {
+  ticker: string;
+  side: string;
+  quantity: number;
+  fill_price: number;
+  arrival_price: number;
+  slippage_bps: number;
+  signal_type: string;
+  product_type: string;
+  routing_strategy: string;
+  timestamp: string;
+}
+
+interface LiveTransactionsProps {
+  onTickerSelect: (ticker: string) => void;
+}
+
+function LiveTransactions({ onTickerSelect }: LiveTransactionsProps) {
+  const { data: blotterData } = useEngineQuery<{
+    trades: Array<BlotterTrade>;
+    source: string;
+  }>("/execution/l7/blotter?limit=200", { refetchInterval: 3000 });
+
+  const [flashIdx, setFlashIdx] = useState<number | null>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
   const prevCountRef = useRef(0);
 
-  // Map API trades to LiveTx format
-  const txns: LiveTx[] = useMemo(() => {
-    if (!tradesData?.trades?.length) return [];
-    return tradesData.trades.map((t) => {
-      const side = (t.side?.toUpperCase() || "BUY") as LiveTx["side"];
-      const notional = t.quantity * t.fill_price;
-      return {
-        id: t.id || `TX-${Math.random().toString(36).slice(2, 8).toUpperCase()}`,
-        time: t.timestamp ? new Date(t.timestamp).toLocaleTimeString("en-US", { hour12: false, hour: "2-digit", minute: "2-digit", second: "2-digit" }) : "--:--:--",
-        ticker: t.ticker,
-        side,
-        qty: t.quantity,
-        price: t.fill_price,
-        notional,
-        fillType: "FULL" as const,
-        venue: "ENGINE",
-        signal: t.signal_type || "UNKNOWN",
-        latencyMs: 0,
-      };
-    });
-  }, [tradesData]);
+  const trades = blotterData?.trades || [];
 
   // Flash new entries
   useEffect(() => {
-    if (txns.length > prevCountRef.current && txns.length > 0) {
-      setFlashId(txns[0].id);
-      setTimeout(() => setFlashId(null), 800);
+    if (trades.length > prevCountRef.current && trades.length > 0) {
+      setFlashIdx(0);
+      setTimeout(() => setFlashIdx(null), 800);
     }
-    prevCountRef.current = txns.length;
-  }, [txns]);
+    prevCountRef.current = trades.length;
+  }, [trades.length]);
 
-  // Running stats
-  const filled = txns.filter((t) => t.fillType !== "REJECTED");
-  const totalNotional = filled.reduce((s, t) => s + t.notional, 0);
-  const buys = filled.filter((t) => t.side === "BUY" || t.side === "COVER").length;
-  const sells = filled.filter((t) => t.side === "SELL" || t.side === "SHORT").length;
-  const avgLatency = filled.length ? filled.reduce((s, t) => s + t.latencyMs, 0) / filled.length : 0;
-
-  // Auto-scroll to top on new tx
+  // Auto-scroll to top on new trade
   useEffect(() => {
     if (scrollRef.current) {
       scrollRef.current.scrollTop = 0;
     }
-  }, [txns.length]);
+  }, [trades.length]);
 
   const fmtNotional = (n: number) => n >= 1e6 ? `$${(n / 1e6).toFixed(1)}M` : `$${(n / 1e3).toFixed(0)}K`;
+  const fmtTime = (ts: string) => {
+    try {
+      return new Date(ts).toLocaleTimeString("en-US", { hour12: false, hour: "2-digit", minute: "2-digit", second: "2-digit" });
+    } catch {
+      return "--:--:--";
+    }
+  };
+
+  const totalNotional = trades.reduce((s, t) => s + t.quantity * t.fill_price, 0);
+  const buys = trades.filter((t) => t.side?.toUpperCase() === "BUY" || t.side?.toUpperCase() === "COVER").length;
+  const sells = trades.filter((t) => t.side?.toUpperCase() === "SELL" || t.side?.toUpperCase() === "SHORT").length;
 
   return (
     <div className="flex flex-col h-full text-[10px] font-mono tabular-nums">
@@ -392,7 +276,7 @@ function LiveTransactions() {
             <span className="w-1.5 h-1.5 rounded-full bg-terminal-positive animate-pulse" />
             <span className="text-[9px] text-terminal-text-faint uppercase tracking-wider">Live Feed</span>
           </div>
-          <span className="text-[9px] text-terminal-text-faint">{txns.length} txns</span>
+          <span className="text-[9px] text-terminal-text-faint">{trades.length} txns</span>
         </div>
         <div className="flex items-baseline gap-2 mt-1">
           <span className="text-lg font-bold text-terminal-text-primary">
@@ -406,7 +290,7 @@ function LiveTransactions() {
       <div className="grid grid-cols-3 gap-1 px-2 py-1 border-b border-terminal-border/50 text-[8px]">
         <div>
           <div className="text-terminal-text-faint">Fills</div>
-          <div className="text-terminal-text-primary">{filled.length}</div>
+          <div className="text-terminal-text-primary">{trades.length}</div>
         </div>
         <div>
           <div className="text-terminal-text-faint">B / S</div>
@@ -417,8 +301,10 @@ function LiveTransactions() {
           </div>
         </div>
         <div>
-          <div className="text-terminal-text-faint">Avg Lat</div>
-          <div className="text-terminal-text-primary">{avgLatency.toFixed(1)}ms</div>
+          <div className="text-terminal-text-faint">Avg Slip</div>
+          <div className="text-terminal-text-primary">
+            {trades.length ? (trades.reduce((s, t) => s + (t.slippage_bps || 0), 0) / trades.length).toFixed(1) : "0"}bps
+          </div>
         </div>
       </div>
 
@@ -433,44 +319,53 @@ function LiveTransactions() {
 
       {/* Scrollable transaction rows */}
       <div ref={scrollRef} className="flex-1 overflow-auto">
-        {txns.map((tx) => (
-          <div
-            key={tx.id}
-            className={`flex items-center px-2 py-[3px] border-b border-terminal-border/10 transition-colors duration-700 ${
-              tx.fillType === "REJECTED" ? "opacity-40" : ""
-            } ${flashId === tx.id ? "bg-terminal-accent/10" : "hover:bg-white/[0.02]"}`}
-          >
-            <span className="w-[52px] text-terminal-text-faint text-[9px]">{tx.time.slice(0, 8)}</span>
-            <span className="w-[38px] text-terminal-accent font-semibold text-[9px]">{tx.ticker}</span>
-            <span className={`w-[30px] font-semibold text-[8px] ${
-              tx.side === "BUY" || tx.side === "COVER" ? "text-terminal-positive" : "text-terminal-negative"
-            }`}>
-              {tx.side}
-            </span>
-            <span className="w-[32px] text-right text-terminal-text-muted text-[9px]">{tx.qty}</span>
-            <span className="flex-1 text-right text-terminal-text-primary text-[9px]">${tx.price.toFixed(2)}</span>
+        {trades.length === 0 && (
+          <div style={{color: "var(--muted)", fontSize: 12, padding: 20, textAlign: "center"}}>
+            Waiting for data...
           </div>
-        ))}
+        )}
+        {trades.map((tx, i) => {
+          const isBuy = tx.side?.toUpperCase() === "BUY" || tx.side?.toUpperCase() === "COVER";
+          return (
+            <div
+              key={i}
+              onClick={() => onTickerSelect(tx.ticker)}
+              className={`flex items-center px-2 py-[3px] border-b border-terminal-border/10 transition-colors duration-700 cursor-pointer ${
+                flashIdx === i ? "bg-terminal-accent/10" : "hover:bg-white/[0.02]"
+              }`}
+            >
+              <span className="w-[52px] text-terminal-text-faint text-[9px]">{fmtTime(tx.timestamp).slice(0, 8)}</span>
+              <span className="w-[38px] text-terminal-accent font-semibold text-[9px]">{tx.ticker}</span>
+              <span className={`w-[30px] font-semibold text-[8px] ${
+                isBuy ? "text-terminal-positive" : "text-terminal-negative"
+              }`}>
+                {tx.side?.toUpperCase()}
+              </span>
+              <span className="w-[32px] text-right text-terminal-text-muted text-[9px]">{tx.quantity}</span>
+              <span className="flex-1 text-right text-terminal-text-primary text-[9px]">${tx.fill_price.toFixed(2)}</span>
+            </div>
+          );
+        })}
       </div>
 
       {/* Bottom detail strip */}
       <div className="px-2 py-1.5 border-t border-terminal-border">
         <div className="grid grid-cols-3 gap-1 text-[8px]">
           <div>
-            <div className="text-terminal-text-faint">Venues</div>
+            <div className="text-terminal-text-faint">Routing</div>
             <div className="text-terminal-text-primary truncate">
-              {Array.from(new Set(txns.slice(0, 20).map(t => t.venue))).slice(0, 3).join(", ")}
+              {Array.from(new Set(trades.slice(0, 20).map(t => t.routing_strategy).filter(Boolean))).slice(0, 3).join(", ") || "--"}
             </div>
           </div>
           <div>
             <div className="text-terminal-text-faint">Signals</div>
             <div className="text-terminal-accent truncate">
-              {Array.from(new Set(txns.slice(0, 20).map(t => t.signal))).slice(0, 2).join(", ")}
+              {Array.from(new Set(trades.slice(0, 20).map(t => t.signal_type).filter(Boolean))).slice(0, 2).join(", ") || "--"}
             </div>
           </div>
           <div>
             <div className="text-terminal-text-faint">Fill Rate</div>
-            <div className="text-terminal-positive">{txns.length ? ((filled.length / txns.length) * 100).toFixed(1) : 0}%</div>
+            <div className="text-terminal-positive">100%</div>
           </div>
         </div>
       </div>
@@ -478,13 +373,13 @@ function LiveTransactions() {
       {/* Mini activity spark */}
       <div className="px-2 pb-1.5 h-[32px]">
         <div className="flex items-end gap-[1px] h-full">
-          {txns.slice(0, 40).map((tx, i) => {
-            const maxQ = Math.max(...txns.slice(0, 40).map(t => t.qty), 1);
-            const h = (tx.qty / maxQ) * 100;
-            const isBuy = tx.side === "BUY" || tx.side === "COVER";
+          {trades.slice(0, 40).map((tx, i) => {
+            const maxQ = Math.max(...trades.slice(0, 40).map(t => t.quantity), 1);
+            const h = (tx.quantity / maxQ) * 100;
+            const isBuy = tx.side?.toUpperCase() === "BUY" || tx.side?.toUpperCase() === "COVER";
             return (
               <div
-                key={tx.id + i}
+                key={i}
                 className="flex-1 rounded-sm"
                 style={{
                   height: `${Math.max(h, 5)}%`,
@@ -503,29 +398,35 @@ function LiveTransactions() {
 
 function OrderDistributionChart() {
   const { data: distData } = useEngineQuery<{ distribution: Array<{ name: string; value: number; color: string }> }>("/risk/order-distribution", { refetchInterval: 10000 });
-  const chartData = distData?.distribution?.length ? distData.distribution : ORDER_DISTRIBUTION;
+  const chartData = distData?.distribution || [];
 
   return (
     <div className="h-full flex flex-col">
       <div className="flex-1 relative">
-        <ResponsiveContainer width="100%" height="100%">
-          <PieChart>
-            <Pie
-              data={chartData}
-              cx="50%"
-              cy="50%"
-              innerRadius="55%"
-              outerRadius="80%"
-              paddingAngle={2}
-              dataKey="value"
-              stroke="none"
-            >
-              {chartData.map((entry, i) => (
-                <Cell key={i} fill={entry.color} />
-              ))}
-            </Pie>
-          </PieChart>
-        </ResponsiveContainer>
+        {chartData.length === 0 ? (
+          <div style={{color: "var(--muted)", fontSize: 12, padding: 20, textAlign: "center"}}>
+            Waiting for data...
+          </div>
+        ) : (
+          <ResponsiveContainer width="100%" height="100%">
+            <PieChart>
+              <Pie
+                data={chartData}
+                cx="50%"
+                cy="50%"
+                innerRadius="55%"
+                outerRadius="80%"
+                paddingAngle={2}
+                dataKey="value"
+                stroke="none"
+              >
+                {chartData.map((entry, i) => (
+                  <Cell key={i} fill={entry.color} />
+                ))}
+              </Pie>
+            </PieChart>
+          </ResponsiveContainer>
+        )}
         {/* Center text */}
         <div className="absolute inset-0 flex flex-col items-center justify-center">
           <span className="text-lg font-bold text-terminal-text-primary font-mono">25%</span>
@@ -546,72 +447,125 @@ function OrderDistributionChart() {
   );
 }
 
-// ═══════════ LIQUIDITY CHART ═══════════
+// ═══════════ MARKET DATA CHARTS (Liquidity, Spread, Depth) ═══════════
 
-function LiquidityChart() {
-  const { data: liqApi } = useEngineQuery<{ liquidity: Array<{ time: string; bid: number; ask: number }> }>("/execution/liquidity-data", { refetchInterval: 30000 });
-  const data = liqApi?.liquidity?.length ? liqApi.liquidity : useMemo(generateLiquidityData, []);
+interface MarketDataProps {
+  selectedTicker: string;
+}
+
+function LiquidityChart({ selectedTicker }: MarketDataProps) {
+  const { data: marketData } = useEngineQuery<{
+    quote: { price: number; bid: number; ask: number; spread: number; volume: number };
+    ohlcv: Array<{ date: string; open: number; high: number; low: number; close: number; volume: number }>;
+    depth: Array<{ price: string; bidDepth: number; askDepth: number }>;
+    spread_history: Array<{ time: string; spread: number }>;
+    source: string;
+    degraded?: boolean;
+  }>(`/execution/market-data?ticker=${selectedTicker}`, { refetchInterval: 10000 });
+
+  // Derive liquidity from ohlcv volume data
+  const data = useMemo(() => {
+    if (!marketData?.ohlcv?.length) return [];
+    return marketData.ohlcv.map((bar) => ({
+      time: bar.date,
+      bid: bar.volume * bar.close * 0.5,
+      ask: bar.volume * bar.close * 0.5,
+    }));
+  }, [marketData]);
+
   return (
     <div className="h-full">
-      <ResponsiveContainer width="100%" height="100%">
-        <AreaChart data={data} margin={{ top: 4, right: 4, bottom: 4, left: 4 }}>
-          <defs>
-            <linearGradient id="bidGrad" x1="0" y1="0" x2="0" y2="1">
-              <stop offset="0%" stopColor="#00d4aa" stopOpacity={0.3} />
-              <stop offset="100%" stopColor="#00d4aa" stopOpacity={0} />
-            </linearGradient>
-            <linearGradient id="askGrad" x1="0" y1="0" x2="0" y2="1">
-              <stop offset="0%" stopColor="#f85149" stopOpacity={0.2} />
-              <stop offset="100%" stopColor="#f85149" stopOpacity={0} />
-            </linearGradient>
-          </defs>
-          <Area type="monotone" dataKey="bid" stroke="#00d4aa" strokeWidth={1} fill="url(#bidGrad)" />
-          <Area type="monotone" dataKey="ask" stroke="#f85149" strokeWidth={1} fill="url(#askGrad)" />
-        </AreaChart>
-      </ResponsiveContainer>
+      {data.length === 0 ? (
+        <div style={{color: "var(--muted)", fontSize: 12, padding: 20, textAlign: "center"}}>
+          Waiting for data...
+        </div>
+      ) : (
+        <ResponsiveContainer width="100%" height="100%">
+          <AreaChart data={data} margin={{ top: 4, right: 4, bottom: 4, left: 4 }}>
+            <defs>
+              <linearGradient id="bidGrad" x1="0" y1="0" x2="0" y2="1">
+                <stop offset="0%" stopColor="#00d4aa" stopOpacity={0.3} />
+                <stop offset="100%" stopColor="#00d4aa" stopOpacity={0} />
+              </linearGradient>
+              <linearGradient id="askGrad" x1="0" y1="0" x2="0" y2="1">
+                <stop offset="0%" stopColor="#f85149" stopOpacity={0.2} />
+                <stop offset="100%" stopColor="#f85149" stopOpacity={0} />
+              </linearGradient>
+            </defs>
+            <Area type="monotone" dataKey="bid" stroke="#00d4aa" strokeWidth={1} fill="url(#bidGrad)" />
+            <Area type="monotone" dataKey="ask" stroke="#f85149" strokeWidth={1} fill="url(#askGrad)" />
+          </AreaChart>
+        </ResponsiveContainer>
+      )}
     </div>
   );
 }
 
-// ═══════════ SPREAD CHART ═══════════
+function SpreadChart({ selectedTicker }: MarketDataProps) {
+  const { data: marketData } = useEngineQuery<{
+    quote: { price: number; bid: number; ask: number; spread: number; volume: number };
+    ohlcv: Array<{ date: string; open: number; high: number; low: number; close: number; volume: number }>;
+    depth: Array<{ price: string; bidDepth: number; askDepth: number }>;
+    spread_history: Array<{ time: string; spread: number }>;
+    source: string;
+    degraded?: boolean;
+  }>(`/execution/market-data?ticker=${selectedTicker}`, { refetchInterval: 10000 });
 
-function SpreadChart() {
-  const { data: spreadApi } = useEngineQuery<{ spreads: Array<{ time: string; spread: number }> }>("/execution/spread-data", { refetchInterval: 30000 });
-  const data = spreadApi?.spreads?.length ? spreadApi.spreads : useMemo(generateSpreadData, []);
+  const data = marketData?.spread_history || [];
+
   return (
     <div className="h-full">
-      <ResponsiveContainer width="100%" height="100%">
-        <LineChart data={data} margin={{ top: 4, right: 4, bottom: 4, left: 4 }}>
-          <Line type="monotone" dataKey="spread" stroke="#58a6ff" strokeWidth={1} dot={false} />
-        </LineChart>
-      </ResponsiveContainer>
+      {data.length === 0 ? (
+        <div style={{color: "var(--muted)", fontSize: 12, padding: 20, textAlign: "center"}}>
+          Waiting for data...
+        </div>
+      ) : (
+        <ResponsiveContainer width="100%" height="100%">
+          <LineChart data={data} margin={{ top: 4, right: 4, bottom: 4, left: 4 }}>
+            <Line type="monotone" dataKey="spread" stroke="#58a6ff" strokeWidth={1} dot={false} />
+          </LineChart>
+        </ResponsiveContainer>
+      )}
     </div>
   );
 }
 
-// ═══════════ DEPTH CHART ═══════════
+function DepthChart({ selectedTicker }: MarketDataProps) {
+  const { data: marketData } = useEngineQuery<{
+    quote: { price: number; bid: number; ask: number; spread: number; volume: number };
+    ohlcv: Array<{ date: string; open: number; high: number; low: number; close: number; volume: number }>;
+    depth: Array<{ price: string; bidDepth: number; askDepth: number }>;
+    spread_history: Array<{ time: string; spread: number }>;
+    source: string;
+    degraded?: boolean;
+  }>(`/execution/market-data?ticker=${selectedTicker}`, { refetchInterval: 10000 });
 
-function DepthChart() {
-  const { data: depthApi } = useEngineQuery<{ depth: Array<{ price: string; bidDepth: number; askDepth: number }> }>("/execution/depth-data", { refetchInterval: 30000 });
-  const data = depthApi?.depth?.length ? depthApi.depth : useMemo(generateDepthData, []);
+  const data = marketData?.depth || [];
+
   return (
     <div className="h-full">
-      <ResponsiveContainer width="100%" height="100%">
-        <AreaChart data={data} margin={{ top: 4, right: 4, bottom: 4, left: 4 }}>
-          <defs>
-            <linearGradient id="depthBid" x1="0" y1="0" x2="0" y2="1">
-              <stop offset="0%" stopColor="#3fb950" stopOpacity={0.4} />
-              <stop offset="100%" stopColor="#3fb950" stopOpacity={0} />
-            </linearGradient>
-            <linearGradient id="depthAsk" x1="0" y1="0" x2="0" y2="1">
-              <stop offset="0%" stopColor="#f85149" stopOpacity={0.4} />
-              <stop offset="100%" stopColor="#f85149" stopOpacity={0} />
-            </linearGradient>
-          </defs>
-          <Area type="stepAfter" dataKey="bidDepth" stroke="#3fb950" strokeWidth={1} fill="url(#depthBid)" />
-          <Area type="stepAfter" dataKey="askDepth" stroke="#f85149" strokeWidth={1} fill="url(#depthAsk)" />
-        </AreaChart>
-      </ResponsiveContainer>
+      {data.length === 0 ? (
+        <div style={{color: "var(--muted)", fontSize: 12, padding: 20, textAlign: "center"}}>
+          Waiting for data...
+        </div>
+      ) : (
+        <ResponsiveContainer width="100%" height="100%">
+          <AreaChart data={data} margin={{ top: 4, right: 4, bottom: 4, left: 4 }}>
+            <defs>
+              <linearGradient id="depthBid" x1="0" y1="0" x2="0" y2="1">
+                <stop offset="0%" stopColor="#3fb950" stopOpacity={0.4} />
+                <stop offset="100%" stopColor="#3fb950" stopOpacity={0} />
+              </linearGradient>
+              <linearGradient id="depthAsk" x1="0" y1="0" x2="0" y2="1">
+                <stop offset="0%" stopColor="#f85149" stopOpacity={0.4} />
+                <stop offset="100%" stopColor="#f85149" stopOpacity={0} />
+              </linearGradient>
+            </defs>
+            <Area type="stepAfter" dataKey="bidDepth" stroke="#3fb950" strokeWidth={1} fill="url(#depthBid)" />
+            <Area type="stepAfter" dataKey="askDepth" stroke="#f85149" strokeWidth={1} fill="url(#depthAsk)" />
+          </AreaChart>
+        </ResponsiveContainer>
+      )}
     </div>
   );
 }
@@ -622,7 +576,7 @@ function RiskPanel() {
   const { data: riskData } = useEngineQuery<RiskPortfolio>("/risk/portfolio", { refetchInterval: 5000 });
   const { data: portData } = useEngineQuery<PortfolioLive>("/portfolio/live", { refetchInterval: 5000 });
   const { data: alertsData } = useEngineQuery<{ alerts: Array<{ name: string; value: string; severity: string }> }>("/risk/alerts", { refetchInterval: 10000 });
-  const riskAlerts = alertsData?.alerts?.length ? alertsData.alerts : TOP_RISKS;
+  const riskAlerts = alertsData?.alerts || [];
 
   const beta = riskData?.current_beta ?? 0;
   const targetBeta = riskData?.target_beta ?? 0;
@@ -698,6 +652,11 @@ function RiskPanel() {
         <div className="text-[9px] text-terminal-text-muted font-semibold tracking-wider uppercase mb-1">
           TOP RISKS <span className="text-terminal-text-faint ml-2">{corridor}</span>
         </div>
+        {riskAlerts.length === 0 && (
+          <div style={{color: "var(--muted)", fontSize: 12, padding: "8px 0", textAlign: "center"}}>
+            Waiting for data...
+          </div>
+        )}
         {riskAlerts.map((r, i) => (
           <div key={i} className="flex items-center gap-2 py-0.5">
             <span className="text-terminal-text-faint">{i === 0 ? "▲" : "○"}</span>
@@ -724,44 +683,51 @@ function RiskPanel() {
 
 function PnlTimeChart() {
   const { data: pnlApi } = useEngineQuery<{ series: Array<{ time: string; value: number }> }>("/portfolio/pnl-series", { refetchInterval: 10000 });
-  const data = pnlApi?.series?.length ? pnlApi.series : useMemo(generatePnlData, []);
+  const data = pnlApi?.series || [];
+
   return (
     <div className="h-full flex flex-col">
       <div className="flex-1">
-        <ResponsiveContainer width="100%" height="100%">
-          <AreaChart data={data} margin={{ top: 8, right: 8, bottom: 4, left: 8 }}>
-            <defs>
-              <linearGradient id="pnlGrad" x1="0" y1="0" x2="0" y2="1">
-                <stop offset="0%" stopColor="#00d4aa" stopOpacity={0.3} />
-                <stop offset="100%" stopColor="#00d4aa" stopOpacity={0.02} />
-              </linearGradient>
-            </defs>
-            <XAxis
-              dataKey="time"
-              tick={{ fontSize: 8, fill: "#484f58" }}
-              axisLine={{ stroke: "#1e2633" }}
-              tickLine={false}
-              interval={9}
-            />
-            <YAxis
-              tick={{ fontSize: 8, fill: "#484f58" }}
-              axisLine={false}
-              tickLine={false}
-              width={35}
-            />
-            <Area type="monotone" dataKey="value" stroke="#00d4aa" strokeWidth={1.5} fill="url(#pnlGrad)" />
-            <Tooltip
-              contentStyle={{
-                background: "#0d1117",
-                border: "1px solid #1e2633",
-                borderRadius: 4,
-                fontSize: 10,
-                fontFamily: "JetBrains Mono",
-                color: "#e6edf3",
-              }}
-            />
-          </AreaChart>
-        </ResponsiveContainer>
+        {data.length === 0 ? (
+          <div style={{color: "var(--muted)", fontSize: 12, padding: 20, textAlign: "center"}}>
+            Waiting for data...
+          </div>
+        ) : (
+          <ResponsiveContainer width="100%" height="100%">
+            <AreaChart data={data} margin={{ top: 8, right: 8, bottom: 4, left: 8 }}>
+              <defs>
+                <linearGradient id="pnlGrad" x1="0" y1="0" x2="0" y2="1">
+                  <stop offset="0%" stopColor="#00d4aa" stopOpacity={0.3} />
+                  <stop offset="100%" stopColor="#00d4aa" stopOpacity={0.02} />
+                </linearGradient>
+              </defs>
+              <XAxis
+                dataKey="time"
+                tick={{ fontSize: 8, fill: "#484f58" }}
+                axisLine={{ stroke: "#1e2633" }}
+                tickLine={false}
+                interval={9}
+              />
+              <YAxis
+                tick={{ fontSize: 8, fill: "#484f58" }}
+                axisLine={false}
+                tickLine={false}
+                width={35}
+              />
+              <Area type="monotone" dataKey="value" stroke="#00d4aa" strokeWidth={1.5} fill="url(#pnlGrad)" />
+              <Tooltip
+                contentStyle={{
+                  background: "#0d1117",
+                  border: "1px solid #1e2633",
+                  borderRadius: 4,
+                  fontSize: 10,
+                  fontFamily: "JetBrains Mono",
+                  color: "#e6edf3",
+                }}
+              />
+            </AreaChart>
+          </ResponsiveContainer>
+        )}
       </div>
       {/* Decomposition bars */}
       <div className="px-2 pb-1 flex items-center gap-3 text-[8px] font-mono">
@@ -786,39 +752,47 @@ function PnlTimeChart() {
 // ═══════════ EXECUTION TABLE ═══════════
 
 function ExecutionTable() {
-  const { data: tcaApi } = useEngineQuery<{ trades: Array<{ ticker: string; quantity: number; fill_price: number; slippage: number; side: string }>; summary: { fill_rate: number; avg_slippage: number; total_trades: number } }>("/execution/tca", { refetchInterval: 10000 });
+  const { data: tobData } = useEngineQuery<{
+    positions: Array<{
+      ticker: string;
+      last_price: number;
+      bid: number;
+      ask: number;
+      spread: number;
+      spread_bps: number;
+      position_qty: number;
+      position_value: number;
+      unrealized_pnl: number;
+    }>;
+  }>("/execution/top-of-book", { refetchInterval: 10000 });
 
-  const executions = useMemo(() => {
-    if (!tcaApi?.trades?.length) return EXECUTIONS;
-    return tcaApi.trades.slice(0, 6).map((t) => ({
-      pair: t.ticker,
-      ctrl: t.quantity,
-      sens: Math.round(t.fill_price),
-      status: t.fill_price * t.quantity * (t.slippage || 0.001),
-      positive: t.side?.toUpperCase() !== "SELL",
-    }));
-  }, [tcaApi]);
+  const positions = tobData?.positions || [];
 
   return (
     <div className="flex flex-col h-full text-[10px] font-mono tabular-nums">
       {/* Header */}
       <div className="flex items-center px-2 py-1 text-[8px] text-terminal-text-faint uppercase tracking-wider border-b border-terminal-border/50">
         <span className="w-[70px]">Pair</span>
-        <span className="w-[55px] text-right">Ctrl</span>
-        <span className="w-[45px] text-right">Sens</span>
-        <span className="flex-1 text-right">Status</span>
+        <span className="w-[55px] text-right">Bid</span>
+        <span className="w-[45px] text-right">Ask</span>
+        <span className="flex-1 text-right">Unr. PnL</span>
       </div>
       <div className="flex-1 overflow-auto">
-        {executions.map((e, i) => (
+        {positions.length === 0 && (
+          <div style={{color: "var(--muted)", fontSize: 12, padding: 20, textAlign: "center"}}>
+            Waiting for data...
+          </div>
+        )}
+        {positions.slice(0, 6).map((p, i) => (
           <div
             key={i}
             className="flex items-center px-2 py-1.5 border-b border-terminal-border/20 hover:bg-white/[0.02]"
           >
-            <span className="w-[70px] text-terminal-text-primary font-medium">{e.pair}</span>
-            <span className="w-[55px] text-right text-terminal-text-muted">{e.ctrl}</span>
-            <span className="w-[45px] text-right text-terminal-text-muted">{e.sens}</span>
-            <span className={`flex-1 text-right font-medium ${e.positive ? "text-terminal-positive" : "text-terminal-negative"}`}>
-              {e.positive ? "+" : ""}{e.status.toFixed(2)}
+            <span className="w-[70px] text-terminal-text-primary font-medium">{p.ticker}</span>
+            <span className="w-[55px] text-right text-terminal-text-muted">{p.bid?.toFixed(2) ?? "--"}</span>
+            <span className="w-[45px] text-right text-terminal-text-muted">{p.ask?.toFixed(2) ?? "--"}</span>
+            <span className={`flex-1 text-right font-medium ${p.unrealized_pnl >= 0 ? "text-terminal-positive" : "text-terminal-negative"}`}>
+              {p.unrealized_pnl >= 0 ? "+" : ""}{p.unrealized_pnl?.toFixed(2) ?? "--"}
             </span>
           </div>
         ))}
@@ -848,6 +822,8 @@ function ExecutionTable() {
 // ═══════════ MAIN LIVE DASHBOARD ═══════════
 
 export default function LiveDashboard() {
+  const [selectedTicker, setSelectedTicker] = useState<string>("SPY");
+
   return (
     <div className="h-full flex flex-col" data-testid="live-dashboard">
       {/* Main 3-column resizable layout */}
@@ -860,7 +836,7 @@ export default function LiveDashboard() {
           {/* Left column: Live Transactions */}
           <div className="h-full p-[1px]">
             <DashboardPanel title="LIVE TRANSACTIONS" className="h-full" noPadding>
-              <LiveTransactions />
+              <LiveTransactions onTickerSelect={setSelectedTicker} />
             </DashboardPanel>
           </div>
 
@@ -908,21 +884,21 @@ export default function LiveDashboard() {
             <DashboardPanel
               title="LIQUIDITY"
               className="flex-1"
-              headerRight={<span className="text-[8px] text-terminal-accent tabular-nums font-mono">88,888</span>}
+              headerRight={<span className="text-[8px] text-terminal-accent tabular-nums font-mono">{selectedTicker}</span>}
               noPadding
             >
-              <LiquidityChart />
+              <LiquidityChart selectedTicker={selectedTicker} />
             </DashboardPanel>
             <DashboardPanel
               title="SPREAD"
               className="flex-1"
-              headerRight={<span className="text-[8px] text-terminal-blue font-mono">ESFT</span>}
+              headerRight={<span className="text-[8px] text-terminal-blue font-mono">{selectedTicker}</span>}
               noPadding
             >
-              <SpreadChart />
+              <SpreadChart selectedTicker={selectedTicker} />
             </DashboardPanel>
             <DashboardPanel title="DEPTH" className="flex-1" noPadding>
-              <DepthChart />
+              <DepthChart selectedTicker={selectedTicker} />
             </DashboardPanel>
             <DashboardPanel title="EXECUTION" className="flex-[1.3]" noPadding>
               <ExecutionTable />

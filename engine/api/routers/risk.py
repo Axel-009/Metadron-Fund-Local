@@ -2,6 +2,11 @@
 Risk router — RISK tab
 Wraps: BetaCorridor, DecisionMatrix, OptionsEngine
 """
+# BROKER SWAP NOTE: This router accesses broker via _get_broker() which
+# tries ExecutionEngine (AlpacaBroker) with PaperBroker fallback.
+# Risk metrics use broker._perf_tracker for daily returns (Sharpe, Sortino, etc.)
+# Risk alerts use BetaCorridor + OptionsEngine (broker-independent).
+# When adding IBKR: ensure _perf_tracker is populated with daily NAV snapshots.
 from fastapi import APIRouter
 from datetime import datetime
 import logging
@@ -184,6 +189,26 @@ async def risk_alerts():
         if not alerts:
             alerts.append({"name": "No Active Alerts", "value": "System nominal", "severity": "low"})
 
+        # Always include portfolio risk context even when no alerts fire
+        try:
+            broker = _get_broker()
+            summary = broker.get_portfolio_summary()
+            dd = broker.get_drawdown() if hasattr(broker, "get_drawdown") else {}
+            # Add context alerts for key metrics
+            max_dd = dd.get("max_drawdown", 0)
+            if max_dd > 0.15:
+                alerts.append({"name": "Drawdown Warning", "value": f"{max_dd*100:.1f}% from peak", "severity": "high"})
+            elif max_dd > 0.08:
+                alerts.append({"name": "Drawdown Elevated", "value": f"{max_dd*100:.1f}% from peak", "severity": "medium"})
+
+            nav = summary.get("nav", 0)
+            if nav > 0:
+                gross_exp = summary.get("gross_exposure", 0)
+                if gross_exp > 0.9:
+                    alerts.append({"name": "High Gross Exposure", "value": f"{gross_exp*100:.0f}%", "severity": "high"})
+        except Exception:
+            pass
+
         return {"alerts": alerts, "timestamp": datetime.utcnow().isoformat()}
     except Exception as e:
         logger.error(f"risk/alerts error: {e}")
@@ -209,7 +234,8 @@ async def order_distribution():
         # Count signal types as order distribution
         type_counts: dict[str, int] = {}
         for t in trades:
-            sig = t.signal_type.value if hasattr(t.signal_type, "value") else str(getattr(t, "signal_type", "UNKNOWN"))
+            raw_sig = t.get("signal_type", "UNKNOWN") if isinstance(t, dict) else getattr(t, "signal_type", "UNKNOWN")
+            sig = raw_sig.value if hasattr(raw_sig, "value") else str(raw_sig)
             type_counts[sig] = type_counts.get(sig, 0) + 1
 
         total = sum(type_counts.values()) or 1
@@ -331,14 +357,21 @@ async def risk_fills():
         trades = eng.broker.get_trade_history()[-20:]
         fills = []
         for t in trades:
+            ts = t.get("fill_timestamp", "") if isinstance(t, dict) else getattr(t, "fill_timestamp", "")
+            time_str = ts.strftime("%H:%M:%S") if hasattr(ts, "strftime") else str(ts)[:8] if ts else ""
+            raw_side = t.get("side", "") if isinstance(t, dict) else getattr(t, "side", "")
+            side_str = raw_side.value if hasattr(raw_side, "value") else str(raw_side)
+            raw_sig = t.get("signal_type", "") if isinstance(t, dict) else getattr(t, "signal_type", "")
+            sig_str = raw_sig.value if hasattr(raw_sig, "value") else str(raw_sig)
+            fill_price = t.get("fill_price", 0) if isinstance(t, dict) else getattr(t, "fill_price", 0)
             fills.append({
-                "time": t.fill_timestamp.strftime("%H:%M:%S") if hasattr(t, "fill_timestamp") and t.fill_timestamp else "",
-                "pair": getattr(t, "ticker", ""),
-                "side": t.side.value if hasattr(t.side, "value") else str(getattr(t, "side", "")),
-                "qty": getattr(t, "quantity", 0),
-                "price": getattr(t, "fill_price", 0),
-                "status": "FILLED" if getattr(t, "fill_price", 0) > 0 else "NO FILL",
-                "strategy": t.signal_type.value if hasattr(t.signal_type, "value") else str(getattr(t, "signal_type", "")),
+                "time": time_str,
+                "pair": t.get("ticker", "") if isinstance(t, dict) else getattr(t, "ticker", ""),
+                "side": side_str,
+                "qty": t.get("quantity", 0) if isinstance(t, dict) else getattr(t, "quantity", 0),
+                "price": fill_price,
+                "status": "FILLED" if fill_price and fill_price > 0 else "NO FILL",
+                "strategy": sig_str,
             })
         return {"fills": fills, "timestamp": datetime.utcnow().isoformat()}
     except Exception as e:
@@ -469,7 +502,8 @@ async def risk_liquidity_scoring():
         positions = broker.get_all_positions()
         scoring = []
         for ticker, pos in positions.items():
-            vol = getattr(pos, "avg_volume", 0) or 0
+            # TODO: Add avg_volume field to Position dataclass or fetch from OpenBB cache
+            vol = getattr(pos, "avg_volume", None) or getattr(pos, "volume", None) or 0
             price = getattr(pos, "current_price", 0) or 1
             qty = abs(getattr(pos, "quantity", 0))
             # Simple liquidity score: higher volume = more liquid

@@ -1,10 +1,20 @@
 """
 Execution router — FUTURES, TCA tabs
 Wraps: ExecutionEngine, L7UnifiedExecutionSurface, WondertraderEngine, DecisionMatrix
+
+# BROKER SWAP NOTES:
+# - Market data (quotes, OHLCV, depth) comes from OpenBB, not the broker
+# - Trade execution goes through L7 → broker.place_order()
+# - Trade history comes from broker.get_trade_history() (returns list[dict])
+# - To add IBKR: wire L7._execute_equity() and ExecutionEngine.__init__()
+# - L2 depth requires paid data: Polygon (OpenBB provider="polygon") or IBKR reqMktDepth
+# - Current depth is synthesized from OHLCV via MicroPriceEngine
 """
-from fastapi import APIRouter
+from fastapi import APIRouter, Query
 from datetime import datetime
 import logging
+
+from engine.data.openbb_data import get_quote, get_prices
 
 logger = logging.getLogger("metadron-api.execution")
 router = APIRouter()
@@ -157,10 +167,8 @@ async def l7_status():
         if l7 is None:
             return {"status": "not_available", "timestamp": datetime.utcnow().isoformat()}
         state = {}
-        if hasattr(l7, "get_status"):
-            state = l7.get_status()
-        elif hasattr(l7, "status"):
-            state = l7.status()
+        if hasattr(l7, "get_execution_summary"):
+            state = l7.get_execution_summary()
         return {**(state if isinstance(state, dict) else {"data": str(state)}), "timestamp": datetime.utcnow().isoformat()}
     except Exception as e:
         logger.error(f"execution/l7/status error: {e}")
@@ -202,19 +210,45 @@ async def tca_metrics():
         records = []
 
         for t in trades:
-            slippage = getattr(t, "slippage", 0) or 0
-            total_slippage += abs(slippage)
-            if getattr(t, "status", "") == "FILLED" or hasattr(t, "fill_price"):
-                filled += 1
+            # trade history returns list[dict] — use dict access
+            if isinstance(t, dict):
+                slippage = t.get("slippage", 0) or 0
+                status_val = t.get("status", "")
+                fill_price = t.get("fill_price", 0) or 0
+                ticker = t.get("ticker", "")
+                side_raw = t.get("side", "")
+                side = side_raw.value if hasattr(side_raw, "value") else str(side_raw)
+                quantity = t.get("quantity", 0)
+                sig_raw = t.get("signal_type", "")
+                signal_type = sig_raw.value if hasattr(sig_raw, "value") else str(sig_raw)
+                ts_raw = t.get("fill_timestamp", "")
+                timestamp = ts_raw.isoformat() if hasattr(ts_raw, "isoformat") else str(ts_raw)
+                if status_val == "FILLED" or fill_price:
+                    filled += 1
+            else:
+                slippage = getattr(t, "slippage", 0) or 0
+                status_val = getattr(t, "status", "")
+                fill_price = getattr(t, "fill_price", 0) or 0
+                ticker = getattr(t, "ticker", "")
+                side_raw = getattr(t, "side", "")
+                side = side_raw.value if hasattr(side_raw, "value") else str(side_raw)
+                quantity = getattr(t, "quantity", 0)
+                sig_raw = getattr(t, "signal_type", "")
+                signal_type = sig_raw.value if hasattr(sig_raw, "value") else str(sig_raw)
+                ts_raw = getattr(t, "fill_timestamp", None)
+                timestamp = ts_raw.isoformat() if ts_raw and hasattr(ts_raw, "isoformat") else str(ts_raw or "")
+                if status_val == "FILLED" or fill_price:
+                    filled += 1
 
+            total_slippage += abs(slippage)
             records.append({
-                "ticker": getattr(t, "ticker", ""),
-                "side": t.side.value if hasattr(t.side, "value") else str(getattr(t, "side", "")),
-                "quantity": getattr(t, "quantity", 0),
-                "fill_price": getattr(t, "fill_price", 0),
+                "ticker": ticker,
+                "side": side,
+                "quantity": quantity,
+                "fill_price": fill_price,
                 "slippage": slippage,
-                "signal_type": t.signal_type.value if hasattr(t.signal_type, "value") else str(getattr(t, "signal_type", "")),
-                "timestamp": t.fill_timestamp.isoformat() if hasattr(t, "fill_timestamp") and t.fill_timestamp else "",
+                "signal_type": signal_type,
+                "timestamp": timestamp,
             })
 
         summary = {
@@ -231,19 +265,18 @@ async def tca_metrics():
 
 
 @router.get("/spread-data")
-async def spread_data():
+async def spread_data(ticker: str = Query("SPY", description="Ticker symbol")):
     """Bid-ask spread estimates from L1 data layer (OpenBB price data → high-low range proxy).
 
     Fits in system: L1 Data → L7 Execution surface uses these for slippage estimation.
     """
     try:
-        from engine.data.openbb_data import get_prices
         from datetime import timedelta
         import numpy as np
 
         end = datetime.utcnow().strftime("%Y-%m-%d")
         start = (datetime.utcnow() - timedelta(days=5)).strftime("%Y-%m-%d")
-        df = get_prices("SPY", start=start, end=end, interval="1d")
+        df = get_prices(ticker, start=start, end=end, interval="1d")
 
         spreads = []
         if not df.empty:
@@ -263,26 +296,25 @@ async def spread_data():
                     spread_bps = (hl_range / float(close.iloc[i])) * 100 if float(close.iloc[i]) > 0 else 0
                     spreads.append({"time": str(i), "spread": round(spread_bps, 4)})
 
-        return {"spreads": spreads, "timestamp": datetime.utcnow().isoformat()}
+        return {"spreads": spreads, "ticker": ticker, "timestamp": datetime.utcnow().isoformat()}
     except Exception as e:
         logger.error(f"execution/spread-data error: {e}")
         return {"spreads": [], "error": str(e)}
 
 
 @router.get("/depth-data")
-async def depth_data():
+async def depth_data(ticker: str = Query("SPY", description="Ticker symbol")):
     """Market depth from L1 data layer (OpenBB volume profile → depth proxy).
 
     Fits in system: L1 Data → L7 ExchangeCore ring buffer uses depth for order matching.
     """
     try:
-        from engine.data.openbb_data import get_prices
         from datetime import timedelta
         import numpy as np
 
         end = datetime.utcnow().strftime("%Y-%m-%d")
         start = (datetime.utcnow() - timedelta(days=30)).strftime("%Y-%m-%d")
-        df = get_prices("SPY", start=start, end=end)
+        df = get_prices(ticker, start=start, end=end)
 
         depth = []
         if not df.empty:
@@ -308,25 +340,24 @@ async def depth_data():
                     else:
                         depth.append({"price": f"{level:.0f}", "bidDepth": 0, "askDepth": float(near)})
 
-        return {"depth": depth, "timestamp": datetime.utcnow().isoformat()}
+        return {"depth": depth, "ticker": ticker, "timestamp": datetime.utcnow().isoformat()}
     except Exception as e:
         logger.error(f"execution/depth-data error: {e}")
         return {"depth": [], "error": str(e)}
 
 
 @router.get("/liquidity-data")
-async def liquidity_data():
+async def liquidity_data(ticker: str = Query("SPY", description="Ticker symbol")):
     """Bid-ask liquidity from L1 data layer (OpenBB volume → bid/ask estimate).
 
     Fits in system: L1 Data → L7 WonderTrader micro-price uses liquidity for execution routing.
     """
     try:
-        from engine.data.openbb_data import get_prices
         from datetime import timedelta
 
         end = datetime.utcnow().strftime("%Y-%m-%d")
         start = (datetime.utcnow() - timedelta(days=30)).strftime("%Y-%m-%d")
-        df = get_prices("SPY", start=start, end=end)
+        df = get_prices(ticker, start=start, end=end)
 
         liq = []
         if not df.empty:
@@ -351,7 +382,7 @@ async def liquidity_data():
                         "ask": v * 0.52,  # ~52% sell volume estimate
                     })
 
-        return {"liquidity": liq, "timestamp": datetime.utcnow().isoformat()}
+        return {"liquidity": liq, "ticker": ticker, "timestamp": datetime.utcnow().isoformat()}
     except Exception as e:
         logger.error(f"execution/liquidity-data error: {e}")
         return {"liquidity": [], "error": str(e)}
@@ -370,14 +401,21 @@ async def venue_comparison():
         from collections import defaultdict
         venue_stats: dict[str, dict] = defaultdict(lambda: {"fills": 0, "total_slippage": 0.0, "total_latency": 0.0})
 
-        # Get unique tickers for FMP quote benchmark
-        trade_tickers = list(set(getattr(t, "ticker", "") for t in trades if getattr(t, "ticker", "")))
+        # Get unique tickers for FMP quote benchmark — dict access since get_trade_history() returns list[dict]
+        trade_tickers = []
+        for t in trades:
+            if isinstance(t, dict):
+                tk = t.get("ticker", "")
+            else:
+                tk = getattr(t, "ticker", "")
+            if tk:
+                trade_tickers.append(tk)
+        trade_tickers = list(set(trade_tickers))
 
         # Fetch FMP bid/ask quotes for benchmarking
         fmp_quotes = {}
         if trade_tickers:
             try:
-                from engine.data.openbb_data import get_quote
                 quotes = get_quote(trade_tickers[:20])  # Top 20 tickers
                 for q in quotes:
                     sym = q.get("symbol", "")
@@ -391,19 +429,26 @@ async def venue_comparison():
                 pass
 
         for t in trades:
-            venue = getattr(t, "venue", "ENGINE") or "ENGINE"
-            ticker = getattr(t, "ticker", "")
-            fill_price = getattr(t, "fill_price", 0)
+            if isinstance(t, dict):
+                venue = t.get("venue", "ENGINE") or "ENGINE"
+                ticker = t.get("ticker", "")
+                fill_price = t.get("fill_price", 0) or 0
+                slippage = abs(t.get("slippage", 0) or 0)
+                latency = t.get("latency_ms", 0) or 0
+            else:
+                venue = getattr(t, "venue", "ENGINE") or "ENGINE"
+                ticker = getattr(t, "ticker", "")
+                fill_price = getattr(t, "fill_price", 0) or 0
+                slippage = abs(getattr(t, "slippage", 0) or 0)
+                latency = getattr(t, "latency_ms", 0) or 0
 
             # Calculate slippage vs FMP mid-price
-            slippage = abs(getattr(t, "slippage", 0) or 0)
             if ticker in fmp_quotes and fill_price > 0:
                 fmp = fmp_quotes[ticker]
                 mid = (fmp["bid"] + fmp["ask"]) / 2 if fmp["bid"] and fmp["ask"] else 0
                 if mid > 0:
                     slippage = abs(fill_price - mid) / mid * 10000  # bps
 
-            latency = getattr(t, "latency_ms", 0) or 0
             venue_stats[venue]["fills"] += 1
             venue_stats[venue]["total_slippage"] += slippage
             venue_stats[venue]["total_latency"] += latency
@@ -441,9 +486,17 @@ async def algo_comparison():
         algo_stats: dict[str, dict] = defaultdict(lambda: {"trades": 0, "total_slippage": 0.0, "total_pnl": 0.0})
 
         for t in trades:
-            sig = t.signal_type.value if hasattr(t.signal_type, "value") else str(getattr(t, "signal_type", "UNKNOWN"))
-            slippage = abs(getattr(t, "slippage", 0) or 0)
-            pnl = getattr(t, "realized_pnl", 0) or 0
+            if isinstance(t, dict):
+                sig_raw = t.get("signal_type", "UNKNOWN")
+                sig = sig_raw.value if hasattr(sig_raw, "value") else str(sig_raw)
+                slippage = abs(t.get("slippage", 0) or 0)
+                pnl = t.get("realized_pnl", 0) or 0
+            else:
+                sig_raw = getattr(t, "signal_type", "UNKNOWN")
+                sig = sig_raw.value if hasattr(sig_raw, "value") else str(sig_raw)
+                slippage = abs(getattr(t, "slippage", 0) or 0)
+                pnl = getattr(t, "realized_pnl", 0) or 0
+
             algo_stats[sig]["trades"] += 1
             algo_stats[sig]["total_slippage"] += slippage
             algo_stats[sig]["total_pnl"] += pnl
@@ -475,15 +528,20 @@ async def nav_history():
         broker = eng.broker
         trades = broker.get_trade_history()[-500:]
 
-        # Build daily NAV points from trade P&L
+        # Build daily NAV points from trade P&L — dict access since get_trade_history() returns list[dict]
         from collections import defaultdict
         daily_pnl: dict[str, float] = defaultdict(float)
         for t in trades:
-            ts = t.fill_timestamp if hasattr(t, "fill_timestamp") and t.fill_timestamp else None
-            if not ts:
+            if isinstance(t, dict):
+                ts_raw = t.get("fill_timestamp", None)
+                pnl = t.get("realized_pnl", 0) or 0
+            else:
+                ts_raw = getattr(t, "fill_timestamp", None)
+                pnl = getattr(t, "realized_pnl", 0) or 0
+
+            if not ts_raw:
                 continue
-            day = ts.strftime("%Y-%m-%d") if hasattr(ts, "strftime") else str(ts)[:10]
-            pnl = getattr(t, "realized_pnl", 0) or 0
+            day = ts_raw.strftime("%Y-%m-%d") if hasattr(ts_raw, "strftime") else str(ts_raw)[:10]
             daily_pnl[day] += pnl
 
         state = broker.get_portfolio_summary()
@@ -501,3 +559,431 @@ async def nav_history():
     except Exception as e:
         logger.error(f"execution/nav-history error: {e}")
         return {"history": [], "error": str(e)}
+
+
+@router.get("/market-data")
+async def market_data(ticker: str = Query(..., description="Ticker symbol")):
+    """Unified market data for a selected ticker.
+
+    Returns quote (bid/ask/last/spread), recent OHLCV, and synthesized
+    depth from MicroPriceEngine. For real L2 depth, a paid Polygon or
+    Alpaca market data subscription is required.
+
+    BROKER SWAP NOTE: Quote data comes from OpenBB (get_quote), not the broker.
+    Depth is synthesized from OHLCV via MicroPriceEngine. To get real L2 depth
+    with IBKR, call ibkr.reqMktDepth() instead of MicroPriceEngine.
+    """
+    try:
+        from datetime import timedelta
+
+        # --- Quote: bid/ask/last/spread via OpenBB ---
+        quote_data = {}
+        degraded = False
+        last_price = None
+
+        try:
+            quotes = get_quote([ticker])
+            if quotes:
+                q = quotes[0]
+                bid = q.get("bid") or q.get("bid_price")
+                ask = q.get("ask") or q.get("ask_price")
+                last = q.get("price") or q.get("last_price") or q.get("last")
+                spread = (ask - bid) if (ask and bid) else None
+                spread_bps = (spread / ((ask + bid) / 2) * 10000) if (spread and ask and bid and (ask + bid) > 0) else None
+                quote_data = {
+                    "bid": bid,
+                    "ask": ask,
+                    "last": last,
+                    "spread": round(spread, 4) if spread is not None else None,
+                    "spread_bps": round(spread_bps, 2) if spread_bps is not None else None,
+                    "volume": q.get("volume"),
+                    "open": q.get("open"),
+                    "high": q.get("high"),
+                    "low": q.get("low"),
+                    "prev_close": q.get("previous_close") or q.get("prev_close"),
+                }
+                last_price = last or bid or ask
+        except Exception as qe:
+            logger.warning(f"market-data: get_quote failed for {ticker}: {qe}")
+            degraded = True
+
+        # --- Recent OHLCV (5d, 1h bars) ---
+        ohlcv_bars = []
+        df = None
+        try:
+            end = datetime.utcnow().strftime("%Y-%m-%d")
+            start = (datetime.utcnow() - timedelta(days=5)).strftime("%Y-%m-%d")
+            df = get_prices(ticker, period="5d", interval="1h")
+            if df is None or df.empty:
+                # fallback: explicit date range
+                df = get_prices(ticker, start=start, end=end, interval="1d")
+        except Exception as pe:
+            logger.warning(f"market-data: get_prices failed for {ticker}: {pe}")
+            df = None
+
+        if df is not None and not df.empty:
+            try:
+                # Handle MultiIndex columns (field, ticker) or flat columns
+                if hasattr(df.columns, "levels"):
+                    close_s = df["Close"].iloc[:, 0] if "Close" in df.columns.get_level_values(0) else None
+                    open_s = df["Open"].iloc[:, 0] if "Open" in df.columns.get_level_values(0) else None
+                    high_s = df["High"].iloc[:, 0] if "High" in df.columns.get_level_values(0) else None
+                    low_s = df["Low"].iloc[:, 0] if "Low" in df.columns.get_level_values(0) else None
+                    vol_s = df["Volume"].iloc[:, 0] if "Volume" in df.columns.get_level_values(0) else None
+                else:
+                    close_s = df.get("Close") or df.get("close")
+                    open_s = df.get("Open") or df.get("open")
+                    high_s = df.get("High") or df.get("high")
+                    low_s = df.get("Low") or df.get("low")
+                    vol_s = df.get("Volume") or df.get("volume")
+
+                if close_s is not None:
+                    for i in range(len(close_s)):
+                        bar = {
+                            "time": str(close_s.index[i]) if hasattr(close_s, "index") else str(i),
+                            "close": float(close_s.iloc[i]),
+                            "open": float(open_s.iloc[i]) if open_s is not None else None,
+                            "high": float(high_s.iloc[i]) if high_s is not None else None,
+                            "low": float(low_s.iloc[i]) if low_s is not None else None,
+                            "volume": float(vol_s.iloc[i]) if vol_s is not None else None,
+                        }
+                        ohlcv_bars.append(bar)
+                    # Use last close as fallback price if quote failed
+                    if degraded and last_price is None and ohlcv_bars:
+                        last_price = ohlcv_bars[-1]["close"]
+                        quote_data = {
+                            "bid": None,
+                            "ask": None,
+                            "last": last_price,
+                            "spread": None,
+                            "spread_bps": None,
+                        }
+            except Exception as parse_e:
+                logger.warning(f"market-data: OHLCV parse failed for {ticker}: {parse_e}")
+
+        # --- Depth: synthesize from OHLCV via MicroPriceEngine ---
+        depth_levels = []
+        spread_history = []
+        if df is not None and not df.empty:
+            try:
+                from engine.execution.execution_engine import MicroPriceEngine
+                mpe = MicroPriceEngine()
+
+                # Need flat DataFrame for MicroPriceEngine.estimate()
+                flat_df = df
+                if hasattr(df.columns, "levels"):
+                    # Flatten MultiIndex to simple column names
+                    try:
+                        flat_df = df.xs(ticker, axis=1, level=1) if ticker in df.columns.get_level_values(1) else df
+                    except Exception:
+                        flat_df = df
+
+                est = mpe.estimate(ticker, flat_df)
+
+                # Build synthetic L2-style depth from micro-price estimates
+                if est.mid_price > 0:
+                    step = est.mid_price * 0.001  # 0.1% per level
+                    for i in range(10):
+                        bid_level = est.bid_proxy - i * step
+                        ask_level = est.ask_proxy + i * step
+                        # Volume decays with distance from mid
+                        decay = 1.0 / (1 + i * 0.5)
+                        depth_levels.append({
+                            "price": round(bid_level, 4),
+                            "side": "bid",
+                            "size": round(1000 * decay, 0),
+                        })
+                        depth_levels.append({
+                            "price": round(ask_level, 4),
+                            "side": "ask",
+                            "size": round(1000 * decay, 0),
+                        })
+
+                    # Spread history from OHLCV bars (last N bars)
+                    if ohlcv_bars:
+                        for bar in ohlcv_bars[-20:]:
+                            h = bar.get("high")
+                            l = bar.get("low")
+                            c = bar.get("close")
+                            if h and l and c and c > 0:
+                                bps = ((h - l) / c) * 10000 * 0.1
+                                spread_history.append({
+                                    "time": bar["time"],
+                                    "spread_bps": round(bps, 2),
+                                })
+
+            except Exception as mpe_e:
+                logger.warning(f"market-data: MicroPriceEngine failed for {ticker}: {mpe_e}")
+
+        # Degrade gracefully — never return empty
+        if not quote_data and last_price is None:
+            quote_data = {"bid": None, "ask": None, "last": None, "spread": None, "spread_bps": None}
+            degraded = True
+
+        return {
+            "ticker": ticker,
+            "quote": quote_data,
+            "ohlcv": ohlcv_bars[-50:] if ohlcv_bars else [],
+            "depth": depth_levels,
+            "spread_history": spread_history,
+            "source": "openbb+micro_price",
+            "degraded": degraded,
+            "timestamp": datetime.utcnow().isoformat(),
+        }
+    except Exception as e:
+        logger.error(f"execution/market-data error: {e}")
+        return {
+            "ticker": ticker,
+            "quote": {"bid": None, "ask": None, "last": None, "spread": None, "spread_bps": None},
+            "ohlcv": [],
+            "depth": [],
+            "spread_history": [],
+            "source": "openbb+micro_price",
+            "degraded": True,
+            "error": str(e),
+            "timestamp": datetime.utcnow().isoformat(),
+        }
+
+
+@router.get("/l7/blotter")
+async def l7_blotter(limit: int = Query(100, ge=1, le=500)):
+    """Live trade blotter from L7 execution surface.
+
+    Returns filled orders from L7's _filled_orders deque, which captures
+    all orders routed through the unified execution surface (Alpaca + paper mirror).
+
+    BROKER SWAP NOTE: L7 routes through whatever broker is configured.
+    The blotter reflects fills from the active broker. When switching to IBKR,
+    L7._execute_equity() needs an IBKR execution path added.
+    """
+    try:
+        l7 = _get_l7()
+        broker_type = "unknown"
+
+        trades = []
+
+        # --- Primary path: L7 _filled_orders deque ---
+        if l7 is not None and hasattr(l7, "_filled_orders") and l7._filled_orders:
+            try:
+                broker_type = "l7"
+                # _filled_orders is a deque of L7Order dataclasses
+                filled = list(l7._filled_orders)[-limit:]
+                for order in filled:
+                    if isinstance(order, dict):
+                        trades.append(order)
+                    else:
+                        # L7Order dataclass — convert to dict
+                        tca = getattr(order, "tca_snapshot", None)
+                        tca_dict = {}
+                        if tca is not None:
+                            if isinstance(tca, dict):
+                                tca_dict = tca
+                            elif hasattr(tca, "__dict__"):
+                                tca_dict = tca.__dict__
+
+                        side_raw = getattr(order, "side", "")
+                        pt_raw = getattr(order, "product_type", "")
+                        route_raw = getattr(order, "routing_strategy", "")
+                        urg_raw = getattr(order, "urgency", "")
+                        sig_raw = getattr(order, "signal_type", "")
+                        ts_raw = getattr(order, "timestamp", None)
+
+                        trades.append({
+                            "ticker": getattr(order, "ticker", ""),
+                            "side": side_raw.value if hasattr(side_raw, "value") else str(side_raw),
+                            "quantity": getattr(order, "quantity", 0),
+                            "fill_price": getattr(order, "fill_price", 0),
+                            "arrival_price": getattr(order, "arrival_price", 0),
+                            "slippage_bps": getattr(order, "slippage_bps", 0),
+                            "implementation_shortfall": getattr(order, "implementation_shortfall", 0),
+                            "market_impact_bps": getattr(order, "market_impact_bps", 0),
+                            "signal_type": sig_raw.value if hasattr(sig_raw, "value") else str(sig_raw),
+                            "product_type": pt_raw.value if hasattr(pt_raw, "value") else str(pt_raw),
+                            "routing_strategy": route_raw.value if hasattr(route_raw, "value") else str(route_raw),
+                            "urgency": urg_raw.value if hasattr(urg_raw, "value") else str(urg_raw),
+                            "timestamp": ts_raw.isoformat() if ts_raw and hasattr(ts_raw, "isoformat") else str(ts_raw or ""),
+                            "tca_snapshot": tca_dict,
+                        })
+            except Exception as l7e:
+                logger.warning(f"l7/blotter: L7 _filled_orders parse failed: {l7e}")
+                trades = []
+
+        # --- Fallback: broker.get_trade_history() ---
+        if not trades:
+            try:
+                eng = _get_exec()
+                broker = eng.broker
+                broker_type = type(broker).__name__
+                raw = broker.get_trade_history()[-limit:]
+                for t in raw:
+                    if isinstance(t, dict):
+                        trades.append({
+                            "ticker": t.get("ticker", ""),
+                            "side": t.get("side", ""),
+                            "quantity": t.get("quantity", 0),
+                            "fill_price": t.get("fill_price", 0),
+                            "arrival_price": t.get("arrival_price", t.get("fill_price", 0)),
+                            "slippage_bps": t.get("slippage_bps", t.get("slippage", 0)),
+                            "implementation_shortfall": t.get("implementation_shortfall", 0),
+                            "market_impact_bps": t.get("market_impact_bps", 0),
+                            "signal_type": t.get("signal_type", ""),
+                            "product_type": t.get("product_type", "EQUITY"),
+                            "routing_strategy": t.get("routing_strategy", "SMART"),
+                            "urgency": t.get("urgency", "MEDIUM"),
+                            "timestamp": str(t.get("fill_timestamp", t.get("timestamp", ""))),
+                            "tca_snapshot": t.get("tca_snapshot", {}),
+                        })
+                    else:
+                        side_raw = getattr(t, "side", "")
+                        sig_raw = getattr(t, "signal_type", "")
+                        ts_raw = getattr(t, "fill_timestamp", None)
+                        trades.append({
+                            "ticker": getattr(t, "ticker", ""),
+                            "side": side_raw.value if hasattr(side_raw, "value") else str(side_raw),
+                            "quantity": getattr(t, "quantity", 0),
+                            "fill_price": getattr(t, "fill_price", 0),
+                            "arrival_price": getattr(t, "fill_price", 0),
+                            "slippage_bps": getattr(t, "slippage", 0),
+                            "implementation_shortfall": 0,
+                            "market_impact_bps": 0,
+                            "signal_type": sig_raw.value if hasattr(sig_raw, "value") else str(sig_raw),
+                            "product_type": "EQUITY",
+                            "routing_strategy": "SMART",
+                            "urgency": "MEDIUM",
+                            "timestamp": ts_raw.isoformat() if ts_raw and hasattr(ts_raw, "isoformat") else str(ts_raw or ""),
+                            "tca_snapshot": {},
+                        })
+            except Exception as fe:
+                logger.warning(f"l7/blotter: broker fallback failed: {fe}")
+                broker_type = "error"
+
+        # Never return empty list
+        if not trades:
+            return {
+                "trades": [],
+                "source": "no_fills_yet",
+                "broker": broker_type,
+                "timestamp": datetime.utcnow().isoformat(),
+            }
+
+        return {
+            "trades": trades,
+            "source": "l7_filled_orders" if broker_type == "l7" else f"broker_{broker_type}",
+            "broker": broker_type,
+            "count": len(trades),
+            "timestamp": datetime.utcnow().isoformat(),
+        }
+    except Exception as e:
+        logger.error(f"execution/l7/blotter error: {e}")
+        return {
+            "trades": [],
+            "source": "error",
+            "broker": "unknown",
+            "error": str(e),
+            "timestamp": datetime.utcnow().isoformat(),
+        }
+
+
+@router.get("/top-of-book")
+async def top_of_book():
+    """Top-of-book quotes for every position in the portfolio.
+
+    Fetches real-time(ish) bid/ask/last for each held ticker via OpenBB get_quote().
+    Used by the LIVE dashboard execution quality table.
+
+    BROKER SWAP NOTE: Uses OpenBB for quotes regardless of broker.
+    For IBKR real-time quotes, could switch to ibkr.reqMktData() per ticker.
+    """
+    try:
+        # Get held positions from broker
+        broker = None
+        try:
+            eng = _get_exec()
+            broker = eng.broker
+        except Exception:
+            try:
+                from engine.execution.paper_broker import PaperBroker
+                broker = PaperBroker()
+            except Exception:
+                pass
+
+        if broker is None:
+            return {
+                "positions": [],
+                "note": "broker_unavailable",
+                "timestamp": datetime.utcnow().isoformat(),
+            }
+
+        positions_map = broker.get_all_positions()
+
+        if not positions_map:
+            return {
+                "positions": [],
+                "note": "no_open_positions",
+                "timestamp": datetime.utcnow().isoformat(),
+            }
+
+        tickers = list(positions_map.keys())
+
+        # Bulk fetch quotes for all held tickers (one API call)
+        quote_map = {}
+        try:
+            raw_quotes = get_quote(tickers)
+            for q in raw_quotes:
+                sym = q.get("symbol", "") or q.get("ticker", "")
+                if sym:
+                    quote_map[sym] = q
+        except Exception as qe:
+            logger.warning(f"top-of-book: get_quote failed: {qe}")
+
+        result_positions = []
+        for ticker, pos in positions_map.items():
+            # Position fields — pos is a Position dataclass
+            qty = getattr(pos, "quantity", 0) if not isinstance(pos, dict) else pos.get("quantity", 0)
+            avg_cost = getattr(pos, "avg_cost", 0) if not isinstance(pos, dict) else pos.get("avg_cost", 0)
+            unrealized_pnl = getattr(pos, "unrealized_pnl", 0) if not isinstance(pos, dict) else pos.get("unrealized_pnl", 0)
+
+            # Quote fields
+            q = quote_map.get(ticker, {})
+            bid = q.get("bid") or q.get("bid_price")
+            ask = q.get("ask") or q.get("ask_price")
+            last = q.get("price") or q.get("last_price") or q.get("last")
+
+            # Compute spread
+            spread = None
+            spread_bps = None
+            if bid is not None and ask is not None:
+                spread = round(ask - bid, 4)
+                mid = (ask + bid) / 2
+                if mid > 0:
+                    spread_bps = round(spread / mid * 10000, 2)
+
+            # Position value at last price
+            price_for_value = last or ask or bid or avg_cost or 0
+            position_value = round(qty * price_for_value, 2) if price_for_value else None
+
+            result_positions.append({
+                "ticker": ticker,
+                "last_price": last,
+                "bid": bid,
+                "ask": ask,
+                "spread": spread,
+                "spread_bps": spread_bps,
+                "position_qty": qty,
+                "position_value": position_value,
+                "avg_cost": avg_cost,
+                "unrealized_pnl": unrealized_pnl,
+            })
+
+        return {
+            "positions": result_positions,
+            "count": len(result_positions),
+            "timestamp": datetime.utcnow().isoformat(),
+        }
+    except Exception as e:
+        logger.error(f"execution/top-of-book error: {e}")
+        return {
+            "positions": [],
+            "error": str(e),
+            "timestamp": datetime.utcnow().isoformat(),
+        }

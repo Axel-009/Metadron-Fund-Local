@@ -1,3 +1,10 @@
+# BROKER SWAP NOTE: This router accesses broker via _get_broker() which
+# tries ExecutionEngine (default: AlpacaBroker) and falls back to PaperBroker.
+# Trade records are dict-shaped (from broker.get_trade_history()).
+# When adding IBKR/Tradier: ensure get_trade_history() returns list[dict]
+# with keys: ticker, side, quantity, fill_price, fill_timestamp, signal_type,
+# order_type, status, reason, stop_loss, take_profit, spread_bps, impact_bps
+
 """
 Portfolio router — LIVE, ALLOC, TXLOG tabs
 Wraps: PaperBroker, AlpacaBroker, AlphaOptimizer, BetaCorridor
@@ -16,6 +23,7 @@ _alpha = None
 _beta = None
 
 
+# TODO: migrate to engine.api.shared.get_broker() once shared singleton is deployed
 def _get_broker():
     global _broker
     if _broker is None:
@@ -104,15 +112,19 @@ async def portfolio_trades(limit: int = Query(50, ge=1, le=500)):
         trades = broker.get_trade_history()[-limit:]
         result = []
         for t in trades:
+            # Trade records are dicts from both PaperBroker and AlpacaBroker
+            ts = t.get("fill_timestamp", "")
+            if hasattr(ts, "isoformat"):
+                ts = ts.isoformat()
             result.append({
-                "id": str(t.id) if hasattr(t, "id") else "",
-                "ticker": t.ticker if hasattr(t, "ticker") else "",
-                "side": t.side.value if hasattr(t.side, "value") else str(getattr(t, "side", "")),
-                "quantity": t.quantity if hasattr(t, "quantity") else 0,
-                "fill_price": t.fill_price if hasattr(t, "fill_price") else 0,
-                "signal_type": t.signal_type.value if hasattr(t.signal_type, "value") else str(getattr(t, "signal_type", "")),
-                "timestamp": t.fill_timestamp.isoformat() if hasattr(t, "fill_timestamp") and t.fill_timestamp else "",
-                "reason": t.reason if hasattr(t, "reason") else "",
+                "id": str(t.get("id", "")),
+                "ticker": t.get("ticker", ""),
+                "side": t.get("side", ""),
+                "quantity": t.get("quantity", 0),
+                "fill_price": t.get("fill_price", 0),
+                "signal_type": t.get("signal_type", ""),
+                "timestamp": ts,
+                "reason": t.get("reason", ""),
             })
         return {"trades": result, "timestamp": datetime.utcnow().isoformat()}
     except Exception as e:
@@ -302,6 +314,34 @@ async def portfolio_pnl_series():
     """Intraday P&L time-series from trade history."""
     try:
         broker = _get_broker()
+
+        # Try Alpaca portfolio history first (real brokerage PnL)
+        if hasattr(broker, "get_portfolio_history"):
+            try:
+                hist = broker.get_portfolio_history(period="1D", timeframe="15Min")
+                if hist and hasattr(hist, "timestamp"):
+                    timestamps = hist.timestamp or []
+                    equity = hist.equity or []
+                    if timestamps and equity and len(timestamps) == len(equity):
+                        base = equity[0] if equity[0] else 0
+                        series = []
+                        for ts_val, eq_val in zip(timestamps, equity):
+                            if ts_val is None or eq_val is None:
+                                continue
+                            # Format timestamp
+                            if hasattr(ts_val, "isoformat"):
+                                t_str = ts_val.isoformat()
+                            else:
+                                t_str = str(ts_val)
+                            # Express as P&L relative to start of period
+                            pnl_val = round(float(eq_val) - float(base), 2)
+                            series.append({"time": t_str, "value": pnl_val})
+                        if series:
+                            return {"series": series, "timestamp": datetime.utcnow().isoformat()}
+            except Exception:
+                pass  # Fall through to trade-based PnL
+
+        # Trade-based PnL computation (dict access fix)
         trades = broker.get_trade_history()[-500:]
         if not trades:
             return {"series": [], "timestamp": datetime.utcnow().isoformat()}
@@ -311,11 +351,23 @@ async def portfolio_pnl_series():
         buckets: dict[str, float] = defaultdict(float)
         cumulative = 0
         for t in reversed(trades):
-            ts = t.fill_timestamp if hasattr(t, "fill_timestamp") and t.fill_timestamp else None
+            # Trade records are dicts from both PaperBroker and AlpacaBroker
+            ts = t.get("fill_timestamp", None)
             if not ts:
                 continue
-            bucket = ts.strftime("%H:%M") if hasattr(ts, "strftime") else str(ts)[:5]
-            pnl = getattr(t, "realized_pnl", 0) or (t.fill_price * t.quantity * (1 if str(getattr(t, "side", "")).upper() in ("SELL", "SHORT") else -1)) * 0.001
+            if hasattr(ts, "isoformat"):
+                ts_str = ts.isoformat()
+            else:
+                ts_str = str(ts)
+            bucket = ts_str[11:16] if len(ts_str) >= 16 else ts_str[:5]  # "HH:MM"
+            fill_price = t.get("fill_price", 0) or 0
+            quantity = t.get("quantity", 0) or 0
+            side = t.get("side", "") or ""
+            realized_pnl = t.get("realized_pnl", None)
+            if realized_pnl is not None:
+                pnl = realized_pnl
+            else:
+                pnl = fill_price * quantity * (1 if str(side).upper() in ("SELL", "SHORT") else -1) * 0.001
             cumulative += pnl
             buckets[bucket] = cumulative
 
