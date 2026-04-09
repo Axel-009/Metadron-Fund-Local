@@ -1230,6 +1230,91 @@ class OptionsEngine:
         self.regime = regime
         self.hedge_mgr.update_regime(regime)
 
+    # -- vol surface export --------------------------------------------------
+
+    def get_vol_surface(self) -> Dict[str, object]:
+        """Return the implied-vol surface as a grid for the frontend.
+
+        Attempts to build from live OpenBB options chains first (CBOE provider).
+        Falls back to the synthesised VolatilitySurface if chains unavailable.
+
+        Returns
+        -------
+        dict  {"grid": [{"strike": float, "expiry": int, "iv": float}, ...],
+               "source": "openbb" | "synthetic",
+               "spot": float | None}
+        """
+        grid: List[Dict[str, object]] = []
+        source = "synthetic"
+
+        # --- Tier 1: live options chains via OpenBB / CBOE --------------------
+        try:
+            from engine.data.openbb_data import get_options_chains, get_adj_close
+            ticker = "SPY"  # benchmark surface
+            chains = get_options_chains(ticker)
+            if not chains.empty and len(chains) >= 20:
+                spot_df = get_adj_close(ticker, period="5d")
+                spot = float(spot_df.iloc[-1]) if not spot_df.empty else self._last_spot or 500.0
+
+                # Compute days-to-expiry from expiration column
+                import pandas as pd
+                from datetime import datetime
+                now = datetime.utcnow()
+                if "expiration" in chains.columns:
+                    chains["dte"] = (pd.to_datetime(chains["expiration"]) - now).dt.days
+                elif "dte" in chains.columns:
+                    pass  # already present
+                else:
+                    raise ValueError("No expiration/dte column in chains")
+
+                # Bucket into standard expiry bins
+                expiry_bins = [7, 30, 60, 90, 180]
+                strike_col = "strike" if "strike" in chains.columns else None
+                iv_col = next((c for c in ["impliedVolatility", "implied_volatility", "iv"] if c in chains.columns), None)
+
+                if strike_col and iv_col:
+                    chains["moneyness"] = chains[strike_col] / spot
+                    for exp_target in expiry_bins:
+                        # Find chains closest to this expiry
+                        margin = max(5, exp_target * 0.3)
+                        bucket = chains[(chains["dte"] >= exp_target - margin) & (chains["dte"] <= exp_target + margin)]
+                        if bucket.empty:
+                            continue
+                        # Sample at standard moneyness levels
+                        for m in [0.85, 0.90, 0.95, 0.97, 1.00, 1.03, 1.05, 1.10, 1.15]:
+                            closest = bucket.iloc[(bucket["moneyness"] - m).abs().argsort()[:1]]
+                            if not closest.empty:
+                                iv_val = float(closest[iv_col].iloc[0])
+                                if 0.01 < iv_val < 3.0:  # sanity check
+                                    grid.append({"strike": round(m, 2), "expiry": exp_target, "iv": round(iv_val, 4)})
+
+                    if len(grid) >= 15:  # reasonable surface coverage
+                        source = "openbb"
+        except Exception:
+            pass  # fall through to synthetic
+
+        # --- Tier 2: synthesised from VolatilitySurface -----------------------
+        if source == "synthetic":
+            grid = []
+            if self.vol_surface is not None:
+                strikes = [0.85, 0.90, 0.95, 0.97, 1.00, 1.03, 1.05, 1.10, 1.15]
+                expiries = [7, 30, 60, 90, 180]
+                for exp in expiries:
+                    for k in strikes:
+                        iv = self.vol_surface.interpolate_vol(exp, k)
+                        grid.append({"strike": round(k, 2), "expiry": exp, "iv": round(iv, 4)})
+            else:
+                # Last resort: basic smile model
+                strikes = [0.85, 0.90, 0.95, 0.97, 1.00, 1.03, 1.05, 1.10, 1.15]
+                expiries = [7, 30, 60, 90, 180]
+                for exp in expiries:
+                    for k in strikes:
+                        base_iv = 0.20 + 0.05 * (exp / 365)
+                        smile = 0.03 * (k - 1.0) ** 2 * 100
+                        grid.append({"strike": round(k, 2), "expiry": exp, "iv": round(base_iv + smile, 4)})
+
+        return {"grid": grid, "source": source, "spot": self._last_spot or None}
+
     # -- hedge requirements -------------------------------------------------
 
     def compute_hedge_requirements(
