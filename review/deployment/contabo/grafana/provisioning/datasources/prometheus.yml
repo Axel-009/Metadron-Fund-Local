@@ -1,0 +1,29 @@
+# =============================================================================
+# Grafana Datasource Provisioning — Prometheus
+# =============================================================================
+# This file is automatically loaded by Grafana at startup.
+# Datasource will be created/updated; manual UI configuration is not required.
+#
+# Grafana docs: https://grafana.com/docs/grafana/latest/administration/provisioning/#data-sources
+# =============================================================================
+
+apiVersion: 1
+
+datasources:
+  - name:      'Prometheus'
+    type:      'prometheus'
+    access:    'proxy'          # Grafana server proxies requests to Prometheus
+    url:       'http://localhost:9090'
+    isDefault: true             # This is the default datasource for all dashboards
+
+    # JSON data options for Prometheus datasource
+    jsonData:
+      httpMethod:              'POST'    # POST is more efficient for complex PromQL
+      timeInterval:            '15s'    # Must match Prometheus scrape_interval
+      queryTimeout:            '60s'
+      exemplarTraceIdDestinations: []
+      incrementalQuerying:     true     # Enables incremental PromQL queries (Grafana 9+)
+      incrementalQueryOverlapWindow: '10m'
+
+    # Persist the datasource — prevent accidental deletion via UI
+    editable: false

@@ -1,0 +1,26 @@
+# =============================================================================
+# Grafana Dashboard Provisioning Provider
+# =============================================================================
+# Grafana reads this file at startup and monitors the specified path for
+# JSON dashboard files. New dashboards dropped into the folder are loaded
+# automatically — no restart required (folder is polled every updateIntervalSeconds).
+#
+# Grafana docs: https://grafana.com/docs/grafana/latest/administration/provisioning/#dashboards
+# =============================================================================
+
+apiVersion: 1
+
+providers:
+  - name:            'Metadron Dashboards'
+    orgId:           1
+    folder:          'Metadron'        # Folder name shown in Grafana UI
+    folderUid:       'metadron'        # Stable UID for folder (avoids duplicates on restart)
+    type:            'file'
+    disableDeletion: false             # Allow deletion of dashboards via UI
+    editable:        true              # Allow editing dashboards via UI
+    updateIntervalSeconds: 30          # Poll interval for new/changed JSON files
+    allowUiUpdates:  true              # Allow saving UI edits back to JSON (dev mode)
+
+    options:
+      path:          '/var/lib/grafana/dashboards'
+      foldersFromFilesStructure: false  # All JSON files in path go into the same folder

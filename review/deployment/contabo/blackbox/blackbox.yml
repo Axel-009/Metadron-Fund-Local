@@ -1,0 +1,91 @@
+# =============================================================================
+# Blackbox Exporter Configuration — Metadron Monitoring Stack
+# =============================================================================
+# The blackbox exporter probes endpoints from the outside:
+#   - HTTP/HTTPS probes test website availability and SSL cert validity
+#   - TCP probes test port-level reachability (service listening check)
+#
+# Prometheus relabels the target URL into __param_target and points scrapes
+# at this exporter. See prometheus.yml blackbox-http / blackbox-tcp jobs.
+#
+# Docs: https://github.com/prometheus/blackbox_exporter/blob/master/CONFIGURATION.md
+# =============================================================================
+
+modules:
+
+  # ---------------------------------------------------------------------------
+  # HTTP 2xx — Tests that a URL returns a 2xx/3xx response
+  # Used for: https://metadroncapital.com, https://metadroncapital.com/terminal/
+  # ---------------------------------------------------------------------------
+  http_2xx:
+    prober:  http
+    timeout: 10s
+    http:
+      method:              GET
+      follow_redirects:    true
+      preferred_ip_protocol: ip4       # Force IPv4 (avoids IPv6 issues on some VPSes)
+      valid_status_codes:
+        - 200
+        - 301
+        - 302
+        - 304
+      valid_http_versions:
+        - 'HTTP/1.1'
+        - 'HTTP/2.0'
+      # TLS configuration — verify SSL by default
+      tls_config:
+        insecure_skip_verify: false
+      # Custom headers — mimic a browser to avoid bot-detection returning 403
+      headers:
+        User-Agent: "MetadronBlackboxProbe/1.0"
+        Accept: "text/html,application/xhtml+xml"
+      # Check for specific content in the response body (optional — remove if not needed)
+      # fail_if_body_not_matches_regexp:
+      #   - "Metadron"  # Verify the correct site is returned
+
+  # ---------------------------------------------------------------------------
+  # HTTP 2xx with SSL certificate check (alias — same config, explicit name)
+  # Grafana/Prometheus use probe_ssl_earliest_cert_expiry from this module
+  # ---------------------------------------------------------------------------
+  http_2xx_ssl:
+    prober:  http
+    timeout: 10s
+    http:
+      method:              GET
+      follow_redirects:    true
+      preferred_ip_protocol: ip4
+      valid_status_codes:  []          # Empty = any 2xx
+      tls_config:
+        insecure_skip_verify: false    # Must be false to get cert expiry metrics
+
+  # ---------------------------------------------------------------------------
+  # TCP Connect — Tests that a port is open and accepting connections
+  # Used for: 10.0.0.1:5000, 10.0.0.1:8001, 10.0.0.1:8002
+  # ---------------------------------------------------------------------------
+  tcp_connect:
+    prober:  tcp
+    timeout: 5s
+    tcp:
+      preferred_ip_protocol: ip4
+
+  # ---------------------------------------------------------------------------
+  # TCP Connect with TLS — For ports that expect TLS at the transport level
+  # ---------------------------------------------------------------------------
+  tcp_connect_tls:
+    prober:  tcp
+    timeout: 5s
+    tcp:
+      preferred_ip_protocol: ip4
+      tls: true
+      tls_config:
+        insecure_skip_verify: false
+
+  # ---------------------------------------------------------------------------
+  # ICMP — Ping probe (requires CAP_NET_RAW or root, disabled by default)
+  # Uncomment if you add ICMP probes to Prometheus config
+  # ---------------------------------------------------------------------------
+  # icmp:
+  #   prober: icmp
+  #   timeout: 5s
+  #   icmp:
+  #     preferred_ip_protocol: ip4

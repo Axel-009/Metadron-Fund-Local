@@ -1,0 +1,95 @@
+# =============================================================================
+# Systemd unit: metadron-pm2.service
+# Purpose:      Keep the PM2 process manager running as the `metadron` user.
+#               PM2 itself manages all Node.js and Python child processes
+#               (Express :5000, FastAPI :8001, LLM Bridge :8002,
+#                Air-LLM :8003, Qwen :7860, MiroFish :5001/:5174).
+#
+# Installation:
+#   sudo cp metadron-pm2.service /etc/systemd/system/
+#   sudo systemctl daemon-reload
+#   sudo systemctl enable metadron-pm2
+#   sudo systemctl start  metadron-pm2
+#
+# First-time PM2 save (run as metadron user BEFORE enabling this unit):
+#   su - metadron
+#   pm2 start ecosystem.config.cjs --env production
+#   pm2 save          # writes ~/.pm2/dump.pm2 — the dump resurrect reads
+#   exit
+# =============================================================================
+
+[Unit]
+Description=Metadron Capital — PM2 Process Manager
+Documentation=https://pm2.keymetrics.io/
+# Start after the network stack is fully up (important for outbound API calls)
+After=network-online.target
+Wants=network-online.target
+# If WireGuard is managed by systemd, ensure it's up before PM2
+# (uncomment if wg-quick@wg0.service exists):
+# After=wg-quick@wg0.service
+
+[Service]
+# ---------------------------------------------------------------------------
+# Run as the application user — never run PM2 as root in production
+# ---------------------------------------------------------------------------
+Type=forking
+User=metadron
+Group=metadron
+
+# Working directory where ecosystem.config.cjs lives
+WorkingDirectory=/opt/metadron
+
+# ---------------------------------------------------------------------------
+# Environment
+# ---------------------------------------------------------------------------
+# Ensure nvm / system node is on PATH for the metadron user
+Environment=HOME=/home/metadron
+Environment=PATH=/home/metadron/.nvm/versions/node/v20.19.0/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+# Load production env vars — adjust path if using dotenv-vault or similar
+EnvironmentFile=/opt/metadron/.env.production
+
+# ---------------------------------------------------------------------------
+# PID file — PM2 writes this so systemd can track the daemon
+# The path must be writable by the `metadron` user.
+# ---------------------------------------------------------------------------
+PIDFile=/home/metadron/.pm2/pm2.pid
+
+# ---------------------------------------------------------------------------
+# Start / Stop / Reload
+# ---------------------------------------------------------------------------
+# `pm2 resurrect` re-loads all processes saved with `pm2 save`
+ExecStart=/home/metadron/.nvm/versions/node/v20.19.0/bin/pm2 resurrect
+
+# Graceful restart: send SIGINT to all children before killing the daemon
+ExecReload=/home/metadron/.nvm/versions/node/v20.19.0/bin/pm2 reload all
+
+# `pm2 kill` stops the daemon and all child processes cleanly
+ExecStop=/home/metadron/.nvm/versions/node/v20.19.0/bin/pm2 kill
+
+# ---------------------------------------------------------------------------
+# Restart policy
+# ---------------------------------------------------------------------------
+Restart=always
+RestartSec=10s
+
+# Give processes enough time to shut down gracefully (LLM servers can be slow)
+TimeoutStopSec=60s
+TimeoutStartSec=120s
+
+# ---------------------------------------------------------------------------
+# Resource limits
+# ---------------------------------------------------------------------------
+# GEX44 has 64 GB RAM; set a soft limit to leave headroom for the OS
+LimitNOFILE=65536
+LimitNPROC=32768
+
+# ---------------------------------------------------------------------------
+# Logging
+# ---------------------------------------------------------------------------
+# PM2 writes its own logs to ~/.pm2/logs/; systemd captures daemon stderr
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=metadron-pm2
+
+[Install]
+WantedBy=multi-user.target

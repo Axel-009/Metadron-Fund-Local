@@ -1,0 +1,217 @@
+# =============================================================================
+# Alertmanager Configuration — Metadron Monitoring Stack
+# =============================================================================
+# Routing logic:
+#   critical  → Slack (#alerts-critical) + Email
+#   warning   → Slack (#alerts-warning)
+#   info      → Email only
+#
+# Inhibit rules:
+#   A critical alert for a given alertname suppresses warnings for the same
+#   alertname, avoiding duplicate noise.
+# =============================================================================
+
+global:
+  # Default SMTP settings — fill in with actual credentials
+  smtp_smarthost:   'smtp.gmail.com:587'
+  smtp_from:        'alerts@metadroncapital.com'
+  smtp_auth_username: 'alerts@metadroncapital.com'
+  smtp_auth_password: '<SMTP_APP_PASSWORD>'  # Use Gmail App Password or SMTP relay
+  smtp_require_tls: true
+
+  # Default Slack API URL (used if webhook_url not set per-receiver)
+  # slack_api_url: 'https://hooks.slack.com/services/...'
+
+  # How long to wait before resending alerts if they haven't been resolved
+  resolve_timeout: 5m
+
+# =============================================================================
+# Templates
+# =============================================================================
+templates:
+  - '/etc/alertmanager/templates/*.tmpl'
+
+# =============================================================================
+# Routing Tree
+# =============================================================================
+route:
+  # Default receiver (catches everything not matched below)
+  receiver: 'email'
+
+  # Group alerts by these labels to reduce noise
+  group_by: ['alertname', 'severity', 'job']
+
+  # Wait this long before sending the first alert in a group
+  group_wait: 30s
+
+  # How long to wait before sending a notification about new alerts added
+  # to a group that has already been notified
+  group_interval: 5m
+
+  # How long to wait before re-sending an already-fired alert
+  repeat_interval: 4h
+
+  routes:
+    # -------------------------------------------------------------------------
+    # CRITICAL alerts → Slack #alerts-critical + Email
+    # -------------------------------------------------------------------------
+    - match:
+        severity: critical
+      receiver: 'slack-and-email'
+      group_wait:      15s    # Faster notification for critical alerts
+      repeat_interval: 1h    # Re-notify every hour until resolved
+      continue: false
+
+    # -------------------------------------------------------------------------
+    # WARNING alerts → Slack #alerts-warning only
+    # -------------------------------------------------------------------------
+    - match:
+        severity: warning
+      receiver: 'slack-warnings'
+      group_wait:      30s
+      repeat_interval: 4h
+      continue: false
+
+    # -------------------------------------------------------------------------
+    # INFO alerts → Email only (non-urgent)
+    # -------------------------------------------------------------------------
+    - match:
+        severity: info
+      receiver: 'email'
+      group_wait:      5m    # Batch info alerts — less urgent
+      repeat_interval: 24h
+      continue: false
+
+# =============================================================================
+# Inhibit Rules
+# =============================================================================
+inhibit_rules:
+  # A critical alert suppresses warnings with the same alertname.
+  # This prevents double-alerting when, e.g., EngineAPIDown (critical)
+  # and a derivative warning fire simultaneously.
+  - source_match:
+      severity: 'critical'
+    target_match:
+      severity: 'warning'
+    equal: ['alertname', 'job', 'instance']
+
+  # Any alert suppresses info alerts for the same target
+  - source_match_re:
+      severity: 'critical|warning'
+    target_match:
+      severity: 'info'
+    equal: ['alertname', 'instance']
+
+# =============================================================================
+# Receivers
+# =============================================================================
+receivers:
+
+  # ---------------------------------------------------------------------------
+  # Email Receiver
+  # ---------------------------------------------------------------------------
+  - name: 'email'
+    email_configs:
+      - to: 'ops@metadroncapital.com'
+        send_resolved: true
+        headers:
+          Subject: '[Metadron] {{ .GroupLabels.alertname }} — {{ .Status | toUpper }}'
+        html: |
+          {{ range .Alerts }}
+          <b>{{ .Labels.alertname }}</b> [{{ .Labels.severity | toUpper }}]<br/>
+          <b>Summary:</b> {{ .Annotations.summary }}<br/>
+          <b>Description:</b> {{ .Annotations.description }}<br/>
+          {{ if .Annotations.runbook }}<b>Runbook:</b> <a href="{{ .Annotations.runbook }}">{{ .Annotations.runbook }}</a><br/>{{ end }}
+          <b>Started:</b> {{ .StartsAt.Format "2006-01-02 15:04:05 UTC" }}<br/>
+          <hr/>
+          {{ end }}
+
+  # ---------------------------------------------------------------------------
+  # Slack — Critical alerts channel
+  # ---------------------------------------------------------------------------
+  - name: 'slack-critical'
+    slack_configs:
+      - api_url: '<SLACK_WEBHOOK_URL_CRITICAL>'  # Replace with your Slack Incoming Webhook
+        channel:  '#alerts-critical'
+        username: 'Metadron Alertmanager'
+        icon_emoji: ':rotating_light:'
+        send_resolved: true
+        title: '{{ if eq .Status "firing" }}:red_circle: CRITICAL{{ else }}:white_check_mark: RESOLVED{{ end }} — {{ .GroupLabels.alertname }}'
+        text: |
+          {{ range .Alerts }}
+          *{{ .Annotations.summary }}*
+          {{ .Annotations.description }}
+          {{ if .Annotations.runbook }}:book: <{{ .Annotations.runbook }}|Runbook>{{ end }}
+          *Started:* {{ .StartsAt.Format "2006-01-02 15:04:05 UTC" }}
+          {{ end }}
+        color: '{{ if eq .Status "firing" }}danger{{ else }}good{{ end }}'
+
+  # ---------------------------------------------------------------------------
+  # Slack — Warning alerts channel
+  # ---------------------------------------------------------------------------
+  - name: 'slack-warnings'
+    slack_configs:
+      - api_url: '<SLACK_WEBHOOK_URL_WARNINGS>'  # Replace with your Slack Incoming Webhook
+        channel:  '#alerts-warning'
+        username: 'Metadron Alertmanager'
+        icon_emoji: ':warning:'
+        send_resolved: true
+        title: '{{ if eq .Status "firing" }}:warning: WARNING{{ else }}:white_check_mark: RESOLVED{{ end }} — {{ .GroupLabels.alertname }}'
+        text: |
+          {{ range .Alerts }}
+          *{{ .Annotations.summary }}*
+          {{ .Annotations.description }}
+          {{ if .Annotations.runbook }}:book: <{{ .Annotations.runbook }}|Runbook>{{ end }}
+          {{ end }}
+        color: '{{ if eq .Status "firing" }}warning{{ else }}good{{ end }}'
+
+  # ---------------------------------------------------------------------------
+  # Slack + Email combined (for critical alerts)
+  # ---------------------------------------------------------------------------
+  - name: 'slack-and-email'
+    slack_configs:
+      - api_url: '<SLACK_WEBHOOK_URL_CRITICAL>'
+        channel:  '#alerts-critical'
+        username: 'Metadron Alertmanager'
+        icon_emoji: ':rotating_light:'
+        send_resolved: true
+        title: '{{ if eq .Status "firing" }}:red_circle: CRITICAL{{ else }}:white_check_mark: RESOLVED{{ end }} — {{ .GroupLabels.alertname }}'
+        text: |
+          {{ range .Alerts }}
+          *{{ .Annotations.summary }}*
+          {{ .Annotations.description }}
+          {{ if .Annotations.runbook }}:book: <{{ .Annotations.runbook }}|Runbook>{{ end }}
+          *Started:* {{ .StartsAt.Format "2006-01-02 15:04:05 UTC" }}
+          {{ end }}
+        color: '{{ if eq .Status "firing" }}danger{{ else }}good{{ end }}'
+    email_configs:
+      - to: 'ops@metadroncapital.com'
+        send_resolved: true
+        headers:
+          Subject: '[CRITICAL] {{ .GroupLabels.alertname }} — {{ .Status | toUpper }}'
+
+  # ---------------------------------------------------------------------------
+  # Telegram Receiver (via webhook)
+  # Uses Alertmanager's webhook receiver + a small relay bot.
+  # Alternatively, use the community alertmanager-bot:
+  #   https://github.com/metalmatze/alertmanager-bot
+  #
+  # To use directly: POST to Telegram Bot API via webhook_configs
+  # Replace BOT_TOKEN and CHAT_ID with your values.
+  # ---------------------------------------------------------------------------
+  - name: 'telegram'
+    webhook_configs:
+      - url: 'http://localhost:8080/telegram/alert'   # Local Telegram relay service
+        send_resolved: true
+        # The relay service should forward to:
+        # https://api.telegram.org/bot<BOT_TOKEN>/sendMessage
+        # with chat_id: <CHAT_ID>
+        #
+        # BOT_TOKEN: <TELEGRAM_BOT_TOKEN>       # e.g. 123456:ABC-DEF1234ghIkl...
+        # CHAT_ID:   <TELEGRAM_CHAT_ID>         # e.g. -100123456789 (group) or 123456 (DM)
+        #
+        # Alternatively, use alertmanager-telegram-bot Docker image:
+        # docker run -e TELEGRAM_TOKEN=<BOT_TOKEN> -e TELEGRAM_CHAT_ID=<CHAT_ID> \
+        #   metalmatze/alertmanager-bot:latest
+        http_config:
+          bearer_token: '<RELAY_SERVICE_AUTH_TOKEN>'

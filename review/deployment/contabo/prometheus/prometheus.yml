@@ -1,0 +1,182 @@
+# =============================================================================
+# Prometheus Configuration — Metadron Monitoring Stack
+# Deployed on: Contabo VPS (4 vCPU, 8GB RAM, Ubuntu 22.04)
+# Monitors:    Hetzner GEX44 trading server via WireGuard VPN (10.0.0.1)
+# =============================================================================
+
+global:
+  scrape_interval:     15s   # How frequently to scrape targets
+  evaluation_interval: 15s   # How frequently to evaluate rules
+  scrape_timeout:      10s   # Timeout for individual scrape requests
+
+  # Labels added to any time series or alerts when communicating with external systems
+  external_labels:
+    cluster: 'metadron-prod'
+    monitor: 'contabo-monitoring'
+
+# =============================================================================
+# Alertmanager Configuration
+# =============================================================================
+alerting:
+  alertmanagers:
+    - static_configs:
+        - targets:
+            - 'localhost:9093'
+      timeout: 10s
+
+# =============================================================================
+# Rule Files — Alert and Recording Rules
+# =============================================================================
+rule_files:
+  - '/etc/prometheus/rules/*.yml'
+
+# =============================================================================
+# Scrape Configurations
+# =============================================================================
+scrape_configs:
+
+  # ---------------------------------------------------------------------------
+  # Prometheus self-monitoring
+  # ---------------------------------------------------------------------------
+  - job_name: 'prometheus'
+    static_configs:
+      - targets: ['localhost:9090']
+        labels:
+          host: 'contabo'
+          env:  'monitoring'
+
+  # ---------------------------------------------------------------------------
+  # Hetzner GEX44 — System Metrics (node_exporter)
+  # Exposes: CPU, RAM, disk, network, load average, filesystem
+  # ---------------------------------------------------------------------------
+  - job_name: 'node-gex44'
+    static_configs:
+      - targets: ['10.0.0.1:9100']
+        labels:
+          host:     'gex44'
+          env:      'prod'
+          location: 'hetzner'
+          role:     'trading-server'
+    relabel_configs:
+      - source_labels: [__address__]
+        target_label:  instance
+        replacement:   'gex44'
+
+  # ---------------------------------------------------------------------------
+  # Contabo VPS — Local Self-Monitoring (node_exporter)
+  # Ensures the monitoring box itself is tracked
+  # ---------------------------------------------------------------------------
+  - job_name: 'node-local'
+    static_configs:
+      - targets: ['localhost:9100']
+        labels:
+          host:     'contabo'
+          env:      'monitoring'
+          location: 'contabo'
+          role:     'monitoring-server'
+    relabel_configs:
+      - source_labels: [__address__]
+        target_label:  instance
+        replacement:   'contabo'
+
+  # ---------------------------------------------------------------------------
+  # NGINX — HTTP Server Metrics (nginx-prometheus-exporter)
+  # Exposes: active connections, requests/s, handled/accepts, reading/writing
+  # ---------------------------------------------------------------------------
+  - job_name: 'nginx'
+    static_configs:
+      - targets: ['10.0.0.1:9113']
+        labels:
+          host:     'gex44'
+          env:      'prod'
+          location: 'hetzner'
+
+  # ---------------------------------------------------------------------------
+  # PM2 — Process Manager Metrics (pm2-prometheus-exporter)
+  # Exposes: per-process CPU, memory, uptime, restart count, status
+  # ---------------------------------------------------------------------------
+  - job_name: 'pm2'
+    static_configs:
+      - targets: ['10.0.0.1:9209']
+        labels:
+          host: 'gex44'
+          env:  'prod'
+    # Increase scrape interval for PM2 — metrics change slowly
+    scrape_interval: 30s
+
+  # ---------------------------------------------------------------------------
+  # Engine API — Custom Trading Metrics (Prometheus-format endpoint)
+  # Exposes: NAV, PnL, cube signals, regime state, trade counts, latency
+  # ---------------------------------------------------------------------------
+  - job_name: 'engine-api'
+    metrics_path: '/api/engine/metrics'
+    static_configs:
+      - targets: ['10.0.0.1:8001']
+        labels:
+          host:      'gex44'
+          env:       'prod'
+          component: 'trading-engine'
+    # Faster scrape for trading metrics — time-sensitive
+    scrape_interval: 10s
+    scrape_timeout:  8s
+
+  # ---------------------------------------------------------------------------
+  # NVIDIA GPU — GPU Metrics (nvidia_gpu_exporter)
+  # Exposes: utilization %, memory used/total, temperature, power draw
+  # Only active if the GEX44 has a GPU; alerts will handle absent metrics
+  # ---------------------------------------------------------------------------
+  - job_name: 'gpu'
+    static_configs:
+      - targets: ['10.0.0.1:9835']
+        labels:
+          host:      'gex44'
+          env:       'prod'
+          component: 'gpu'
+    # GPU metrics change at ~1Hz — 15s is sufficient
+    scrape_interval: 15s
+
+  # ---------------------------------------------------------------------------
+  # Blackbox Exporter — HTTP Probes (http_2xx module)
+  # Tests: external website availability, SSL cert validity, redirect chains
+  # ---------------------------------------------------------------------------
+  - job_name: 'blackbox-http'
+    metrics_path: '/probe'
+    params:
+      module: ['http_2xx']
+    static_configs:
+      - targets:
+          - 'https://metadroncapital.com'
+          - 'https://metadroncapital.com/terminal/'
+    relabel_configs:
+      # Move the target URL into the `instance` label for readability
+      - source_labels: [__address__]
+        target_label:  __param_target
+      - source_labels: [__param_target]
+        target_label:  instance
+      # Point scrape at the local blackbox exporter
+      - target_label: __address__
+        replacement:  'localhost:9115'
+    scrape_interval: 60s
+
+  # ---------------------------------------------------------------------------
+  # Blackbox Exporter — TCP Probes (tcp_connect module)
+  # Tests: port-level reachability for key GEX44 services over WireGuard
+  # Port 5000 = Frontend, 8001 = Engine API, 8002 = WebSocket/secondary API
+  # ---------------------------------------------------------------------------
+  - job_name: 'blackbox-tcp'
+    metrics_path: '/probe'
+    params:
+      module: ['tcp_connect']
+    static_configs:
+      - targets:
+          - '10.0.0.1:5000'
+          - '10.0.0.1:8001'
+          - '10.0.0.1:8002'
+    relabel_configs:
+      - source_labels: [__address__]
+        target_label:  __param_target
+      - source_labels: [__param_target]
+        target_label:  instance
+      - target_label: __address__
+        replacement:  'localhost:9115'
+    scrape_interval: 30s

@@ -1,0 +1,312 @@
+# =============================================================================
+# Docker Compose — Metadron Monitoring Stack
+# Host: Contabo VPS (4 vCPU, 8GB RAM, Ubuntu 22.04)
+# =============================================================================
+# Services:
+#   - prometheus       :9090   Metrics collection & alerting engine
+#   - grafana          :3000   Visualization & dashboards
+#   - alertmanager     :9093   Alert routing (Slack, Email, Telegram)
+#   - blackbox_exporter:9115   HTTP/TCP/ICMP probes
+#   - node_exporter    :9100   Host system metrics (host network mode)
+#   - uptime-kuma      :3001   Uptime monitoring & status page
+#   - netdata          :19999  Real-time system monitoring
+#
+# Usage:
+#   docker compose up -d
+#   docker compose logs -f prometheus
+#   docker compose pull && docker compose up -d  (update all images)
+#
+# Data persistence:
+#   All persistent data is stored in named Docker volumes under /var/lib/docker/volumes/
+#   To backup: docker run --rm -v monitoring_prometheus-data:/data -v $(pwd):/backup \
+#              alpine tar czf /backup/prometheus-backup.tar.gz -C /data .
+# =============================================================================
+
+version: '3.9'
+
+# =============================================================================
+# Shared network — all containers communicate on this bridge network
+# =============================================================================
+networks:
+  monitoring:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.20.0.0/24
+
+# =============================================================================
+# Named volumes for persistent data
+# =============================================================================
+volumes:
+  prometheus-data:
+    driver: local
+  grafana-data:
+    driver: local
+  alertmanager-data:
+    driver: local
+  uptime-kuma-data:
+    driver: local
+  netdata-config:
+    driver: local
+  netdata-lib:
+    driver: local
+  netdata-cache:
+    driver: local
+
+# =============================================================================
+# Services
+# =============================================================================
+services:
+
+  # ---------------------------------------------------------------------------
+  # Prometheus — Metrics collection, storage, alerting
+  # ---------------------------------------------------------------------------
+  prometheus:
+    image: prom/prometheus:latest
+    container_name: prometheus
+    restart: unless-stopped
+    ports:
+      - '127.0.0.1:9090:9090'   # Bind to localhost only — expose via NGINX if needed
+    volumes:
+      # Main config
+      - ./prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      # Alert rules directory (all .yml files in this dir are loaded)
+      - ./prometheus/rules:/etc/prometheus/rules:ro
+      # Persistent TSDB storage (15-day retention by default)
+      - prometheus-data:/prometheus
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+      - '--storage.tsdb.retention.time=30d'          # 30 days of metrics
+      - '--storage.tsdb.retention.size=10GB'         # Max storage size
+      - '--web.enable-lifecycle'                      # Enable /-/reload endpoint
+      - '--web.enable-admin-api'                     # Enable admin API (for snapshot/delete)
+      - '--web.console.libraries=/usr/share/prometheus/console_libraries'
+      - '--web.console.templates=/usr/share/prometheus/consoles'
+      - '--alertmanager.notification-queue-capacity=10000'
+    networks:
+      - monitoring
+    depends_on:
+      - alertmanager
+      - blackbox_exporter
+    healthcheck:
+      test: ['CMD', 'wget', '--quiet', '--tries=1', '--spider', 'http://localhost:9090/-/healthy']
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+    labels:
+      - "com.metadron.service=prometheus"
+      - "com.metadron.env=monitoring"
+
+  # ---------------------------------------------------------------------------
+  # Grafana — Dashboards & visualization
+  # ---------------------------------------------------------------------------
+  grafana:
+    image: grafana/grafana-oss:latest
+    container_name: grafana
+    restart: unless-stopped
+    ports:
+      - '127.0.0.1:3000:3000'   # Bind to localhost — proxied via NGINX
+    volumes:
+      # Auto-provisioned datasources
+      - ./grafana/provisioning/datasources:/etc/grafana/provisioning/datasources:ro
+      # Auto-provisioned dashboard providers
+      - ./grafana/provisioning/dashboards:/etc/grafana/provisioning/dashboards:ro
+      # Dashboard JSON files (loaded by the provider above)
+      - ./grafana/dashboards:/var/lib/grafana/dashboards:ro
+      # Persistent Grafana database (users, sessions, annotations)
+      - grafana-data:/var/lib/grafana
+    environment:
+      # Admin credentials — CHANGE BEFORE DEPLOYING
+      GF_SECURITY_ADMIN_USER:     'admin'
+      GF_SECURITY_ADMIN_PASSWORD: '${GRAFANA_ADMIN_PASSWORD:-changeme_NOW}'
+
+      # Server settings
+      GF_SERVER_DOMAIN:          'monitor.metadroncapital.com'
+      GF_SERVER_ROOT_URL:        'https://monitor.metadroncapital.com'
+      GF_SERVER_SERVE_FROM_SUB_PATH: 'false'
+
+      # Disable sign-up (monitoring-only deployment)
+      GF_USERS_ALLOW_SIGN_UP:    'false'
+
+      # Anonymous access — disable for production
+      GF_AUTH_ANONYMOUS_ENABLED: 'false'
+
+      # Enable unified alerting (Grafana 9+ native alerts)
+      GF_ALERTING_ENABLED:        'false'
+      GF_UNIFIED_ALERTING_ENABLED: 'true'
+
+      # Plugin installation (optional — uncomment to auto-install)
+      # GF_INSTALL_PLUGINS: 'grafana-clock-panel,grafana-simple-json-datasource'
+
+      # Log level
+      GF_LOG_LEVEL: 'warn'
+
+      # Database — default SQLite is fine for single-node deployments
+      # For HA deployments, switch to Postgres:
+      # GF_DATABASE_TYPE: 'postgres'
+      # GF_DATABASE_HOST: 'postgres:5432'
+    networks:
+      - monitoring
+    depends_on:
+      - prometheus
+    healthcheck:
+      test: ['CMD-SHELL', 'wget --quiet --tries=1 --spider http://localhost:3000/api/health || exit 1']
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+    labels:
+      - "com.metadron.service=grafana"
+
+  # ---------------------------------------------------------------------------
+  # Alertmanager — Alert routing (Slack, Email, Telegram)
+  # ---------------------------------------------------------------------------
+  alertmanager:
+    image: prom/alertmanager:latest
+    container_name: alertmanager
+    restart: unless-stopped
+    ports:
+      - '127.0.0.1:9093:9093'
+    volumes:
+      - ./alertmanager/alertmanager.yml:/etc/alertmanager/alertmanager.yml:ro
+      - alertmanager-data:/alertmanager
+    command:
+      - '--config.file=/etc/alertmanager/alertmanager.yml'
+      - '--storage.path=/alertmanager'
+      - '--web.external-url=http://localhost:9093'
+      - '--cluster.listen-address='   # Disable clustering (single-node)
+    networks:
+      - monitoring
+    healthcheck:
+      test: ['CMD', 'wget', '--quiet', '--tries=1', '--spider', 'http://localhost:9093/-/healthy']
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 20s
+    labels:
+      - "com.metadron.service=alertmanager"
+
+  # ---------------------------------------------------------------------------
+  # Blackbox Exporter — HTTP/TCP probes
+  # ---------------------------------------------------------------------------
+  blackbox_exporter:
+    image: prom/blackbox-exporter:latest
+    container_name: blackbox_exporter
+    restart: unless-stopped
+    ports:
+      - '127.0.0.1:9115:9115'
+    volumes:
+      - ./blackbox/blackbox.yml:/etc/blackbox_exporter/config.yml:ro
+    command:
+      - '--config.file=/etc/blackbox_exporter/config.yml'
+    networks:
+      - monitoring
+    # Blackbox needs to reach external URLs (metadroncapital.com)
+    # and internal WireGuard addresses (10.0.0.1:*)
+    dns:
+      - 1.1.1.1
+      - 8.8.8.8
+    healthcheck:
+      test: ['CMD', 'wget', '--quiet', '--tries=1', '--spider', 'http://localhost:9115/-/healthy']
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    labels:
+      - "com.metadron.service=blackbox_exporter"
+
+  # ---------------------------------------------------------------------------
+  # Node Exporter — Host system metrics (Contabo VPS self-monitoring)
+  # Uses host network mode to accurately report host-level metrics.
+  # IMPORTANT: Do NOT bind-mount /proc or /sys as docker volumes — use
+  # the built-in host namespaces via the runtime flags below.
+  # ---------------------------------------------------------------------------
+  node_exporter:
+    image: prom/node-exporter:latest
+    container_name: node_exporter
+    restart: unless-stopped
+    # Host network mode — required for accurate network interface stats
+    network_mode: host
+    pid: host
+    volumes:
+      # Mount host filesystems read-only for node_exporter to read
+      - /proc:/host/proc:ro
+      - /sys:/host/sys:ro
+      - /:/host/rootfs:ro
+    command:
+      - '--path.procfs=/host/proc'
+      - '--path.rootfs=/host/rootfs'
+      - '--path.sysfs=/host/sys'
+      - '--collector.filesystem.mount-points-exclude=^/(sys|proc|dev|host|etc)($$|/)'
+      - '--collector.netdev.device-exclude=^(veth|docker|br-).*'
+      - '--collector.diskstats.device-exclude=^(dm-|loop)'
+      # Enable textfile collector for custom metrics (optional)
+      - '--collector.textfile.directory=/var/lib/node_exporter/textfile_collector'
+    labels:
+      - "com.metadron.service=node_exporter"
+
+  # ---------------------------------------------------------------------------
+  # Uptime Kuma — Uptime monitoring & public status page
+  # ---------------------------------------------------------------------------
+  uptime-kuma:
+    image: louislam/uptime-kuma:latest
+    container_name: uptime-kuma
+    restart: unless-stopped
+    ports:
+      - '127.0.0.1:3001:3001'
+    volumes:
+      - uptime-kuma-data:/app/data
+    networks:
+      - monitoring
+    # Uptime Kuma needs to probe external URLs and internal WireGuard addresses
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    healthcheck:
+      test: ['CMD-SHELL', 'wget --quiet --tries=1 --spider http://localhost:3001 || exit 1']
+      interval: 60s
+      timeout: 30s
+      retries: 3
+      start_period: 60s
+    labels:
+      - "com.metadron.service=uptime-kuma"
+
+  # ---------------------------------------------------------------------------
+  # Netdata — Real-time per-second system monitoring
+  # Provides rich system visibility complementing Prometheus's longer retention.
+  # Access via SSH tunnel or internal proxy only.
+  # ---------------------------------------------------------------------------
+  netdata:
+    image: netdata/netdata:latest
+    container_name: netdata
+    hostname: contabo-monitoring   # Appears as this hostname in Netdata UI
+    restart: unless-stopped
+    ports:
+      - '127.0.0.1:19999:19999'   # Bind localhost only — access via SSH tunnel
+    cap_add:
+      - SYS_PTRACE
+      - SYS_ADMIN
+    security_opt:
+      - apparmor:unconfined
+    volumes:
+      - netdata-config:/etc/netdata
+      - netdata-lib:/var/lib/netdata
+      - netdata-cache:/var/cache/netdata
+      # Host mounts for system metrics
+      - /etc/passwd:/host/etc/passwd:ro
+      - /etc/group:/host/etc/group:ro
+      - /proc:/host/proc:ro
+      - /sys:/host/sys:ro
+      - /etc/os-release:/host/etc/os-release:ro
+      # Docker socket for container monitoring
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    environment:
+      NETDATA_CLAIM_TOKEN:  ''              # Set for Netdata Cloud (optional)
+      NETDATA_CLAIM_URL:    ''              # Set for Netdata Cloud (optional)
+      NETDATA_CLAIM_ROOMS:  ''
+      DOCKER_HOST:          'unix:///var/run/docker.sock'
+    networks:
+      - monitoring
+    pid: host
+    labels:
+      - "com.metadron.service=netdata"

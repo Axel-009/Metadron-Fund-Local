@@ -1,0 +1,372 @@
+# =============================================================================
+# Alert Rules — Metadron Trading Platform
+# =============================================================================
+# These rules are evaluated by Prometheus every 15s (evaluation_interval).
+# Labels:
+#   severity: critical | warning | info
+#   team:     ops | trading
+# =============================================================================
+
+groups:
+
+  # ===========================================================================
+  # Service Availability
+  # ===========================================================================
+  - name: service_availability
+    rules:
+
+      # -----------------------------------------------------------------------
+      # Engine API Down
+      # The trading engine is the core revenue-generating process. Any outage
+      # is critical. Fires after 1 minute to avoid flapping on brief restarts.
+      # -----------------------------------------------------------------------
+      - alert: EngineAPIDown
+        expr: up{job="engine-api"} == 0
+        for: 1m
+        labels:
+          severity: critical
+          team:     ops
+        annotations:
+          summary:     "Trading Engine API is DOWN on {{ $labels.instance }}"
+          description: >
+            The Engine API ({{ $labels.instance }}) has been unreachable for
+            more than 1 minute. Prometheus cannot scrape /api/engine/metrics.
+            This likely means the trading engine process has crashed or the
+            WireGuard tunnel is broken. Immediate action required.
+          runbook:     "https://wiki.metadroncapital.com/runbooks/engine-api-down"
+
+      # -----------------------------------------------------------------------
+      # Express Frontend Down
+      # Matches PM2 instances whose name contains 'express' (case-insensitive).
+      # -----------------------------------------------------------------------
+      - alert: ExpressFrontendDown
+        expr: up{job="pm2", instance=~".*express.*"} == 0
+        for: 1m
+        labels:
+          severity: critical
+          team:     ops
+        annotations:
+          summary:     "Express frontend process is DOWN ({{ $labels.instance }})"
+          description: >
+            The Express frontend PM2 process on {{ $labels.instance }} has been
+            down for over 1 minute. Users cannot access the terminal interface.
+          runbook:     "https://wiki.metadroncapital.com/runbooks/express-down"
+
+      # -----------------------------------------------------------------------
+      # NGINX Down
+      # -----------------------------------------------------------------------
+      - alert: NginxDown
+        expr: up{job="nginx"} == 0
+        for: 1m
+        labels:
+          severity: critical
+          team:     ops
+        annotations:
+          summary:     "NGINX is DOWN on {{ $labels.instance }}"
+          description: >
+            The nginx-prometheus-exporter on {{ $labels.instance }}:9113 has
+            been unreachable for 1 minute. NGINX may have crashed or the
+            exporter process itself has failed.
+          runbook:     "https://wiki.metadroncapital.com/runbooks/nginx-down"
+
+      # -----------------------------------------------------------------------
+      # Website / HTTP Probe Down
+      # -----------------------------------------------------------------------
+      - alert: WebsiteDown
+        expr: probe_success{job="blackbox-http"} == 0
+        for: 2m
+        labels:
+          severity: critical
+          team:     ops
+        annotations:
+          summary:     "Website unreachable: {{ $labels.instance }}"
+          description: >
+            Blackbox HTTP probe for {{ $labels.instance }} has been failing for
+            2 minutes. The site may be down, SSL may have expired, or Cloudflare
+            may be blocking the probe. Check probe_http_status_code for details.
+          runbook:     "https://wiki.metadroncapital.com/runbooks/website-down"
+
+  # ===========================================================================
+  # System Resources — GEX44 (node-gex44 job)
+  # ===========================================================================
+  - name: system_resources
+    rules:
+
+      # -----------------------------------------------------------------------
+      # High CPU Usage
+      # Computes non-idle CPU across all cores. Fires if idle < 15% for 5m,
+      # meaning CPU utilization > 85%.
+      # -----------------------------------------------------------------------
+      - alert: HighCPU
+        expr: >
+          (
+            1 - avg by (instance) (
+              rate(node_cpu_seconds_total{job="node-gex44", mode="idle"}[5m])
+            )
+          ) * 100 > 85
+        for: 5m
+        labels:
+          severity: warning
+          team:     ops
+        annotations:
+          summary:     "High CPU usage on {{ $labels.instance }} ({{ $value | humanize }}%)"
+          description: >
+            CPU utilization on {{ $labels.instance }} has been above 85% for
+            5 minutes (current: {{ $value | printf "%.1f" }}%). This may indicate
+            a runaway process or heavy ML/computation workload.
+          runbook:     "https://wiki.metadroncapital.com/runbooks/high-cpu"
+
+      # -----------------------------------------------------------------------
+      # High Memory Usage
+      # Fires when available RAM drops below 10% of total.
+      # -----------------------------------------------------------------------
+      - alert: HighMemory
+        expr: >
+          (
+            node_memory_MemAvailable_bytes{job="node-gex44"}
+            / node_memory_MemTotal_bytes{job="node-gex44"}
+          ) * 100 < 10
+        for: 2m
+        labels:
+          severity: critical
+          team:     ops
+        annotations:
+          summary:     "Critical memory pressure on {{ $labels.instance }}"
+          description: >
+            Available memory on {{ $labels.instance }} is below 10% of total
+            ({{ $value | printf "%.1f" }}% available). OOM kills may be imminent.
+            Check for memory leaks in trading engine or data processing jobs.
+          runbook:     "https://wiki.metadroncapital.com/runbooks/high-memory"
+
+      # -----------------------------------------------------------------------
+      # Disk Space Low
+      # Fires when any filesystem has less than 10% available.
+      # Excludes tmpfs, devtmpfs (pseudo-filesystems).
+      # -----------------------------------------------------------------------
+      - alert: DiskFull
+        expr: >
+          (
+            node_filesystem_avail_bytes{job="node-gex44", fstype!~"tmpfs|devtmpfs"}
+            / node_filesystem_size_bytes{job="node-gex44", fstype!~"tmpfs|devtmpfs"}
+          ) * 100 < 10
+        for: 5m
+        labels:
+          severity: critical
+          team:     ops
+        annotations:
+          summary:     "Low disk space on {{ $labels.instance }} ({{ $labels.mountpoint }})"
+          description: >
+            Filesystem {{ $labels.mountpoint }} on {{ $labels.instance }} has
+            only {{ $value | printf "%.1f" }}% space remaining. Trading logs,
+            market data, or model checkpoints may be filling the disk.
+          runbook:     "https://wiki.metadroncapital.com/runbooks/disk-full"
+
+  # ===========================================================================
+  # PM2 Process Health
+  # ===========================================================================
+  - name: pm2_health
+    rules:
+
+      # -----------------------------------------------------------------------
+      # PM2 Process Crashing / Restarting Frequently
+      # Fires if any PM2 process has restarted more than 5 times in 5 minutes.
+      # Uses increase() which works on monotonic restart counters.
+      # -----------------------------------------------------------------------
+      - alert: PM2ProcessCrashing
+        expr: >
+          increase(
+            pm2_restart_count_total[5m]
+          ) > 5
+        for: 0m
+        labels:
+          severity: warning
+          team:     ops
+        annotations:
+          summary:     "PM2 process {{ $labels.name }} is crash-looping"
+          description: >
+            PM2 process '{{ $labels.name }}' on {{ $labels.instance }} has
+            restarted {{ $value | printf "%.0f" }} times in the last 5 minutes.
+            This indicates an application crash loop. Check logs with:
+            pm2 logs {{ $labels.name }} --err
+          runbook:     "https://wiki.metadroncapital.com/runbooks/pm2-crash-loop"
+
+  # ===========================================================================
+  # Trading / Engine API Metrics
+  # ===========================================================================
+  - name: trading_health
+    rules:
+
+      # -----------------------------------------------------------------------
+      # High API Latency
+      # Fires when p95 API response time exceeds 5 seconds for 3 minutes.
+      # Uses histogram_quantile on the metadron_api_duration_seconds histogram.
+      # -----------------------------------------------------------------------
+      - alert: HighAPILatency
+        expr: >
+          histogram_quantile(
+            0.95,
+            rate(metadron_api_duration_seconds_bucket{job="engine-api"}[5m])
+          ) > 5
+        for: 3m
+        labels:
+          severity: warning
+          team:     trading
+        annotations:
+          summary:     "High API latency on Engine API (p95 = {{ $value | printf \"%.2f\" }}s)"
+          description: >
+            The 95th percentile API response time on the Engine API has been
+            above 5 seconds for 3 minutes. Current p95: {{ $value | printf "%.2f" }}s.
+            This may indicate database slowdown, heavy computation, or external
+            data feed issues.
+          runbook:     "https://wiki.metadroncapital.com/runbooks/high-api-latency"
+
+      # -----------------------------------------------------------------------
+      # Cube Signal Score Stale
+      # Fires when the Cube signal score metric has not been updated in 10 mins.
+      # Uses time() - <timestamp_metric> to detect staleness.
+      # The engine must expose metadron_cube_signal_last_update_timestamp_seconds.
+      # -----------------------------------------------------------------------
+      - alert: CubeSignalStale
+        expr: >
+          (
+            time() - metadron_cube_signal_last_update_timestamp_seconds{job="engine-api"}
+          ) > 600
+        for: 0m
+        labels:
+          severity: warning
+          team:     trading
+        annotations:
+          summary:     "Cube signal score has not been updated for >10 minutes"
+          description: >
+            The Cube signal score last updated
+            {{ $value | humanizeDuration }} ago. This may indicate that the
+            signal computation pipeline has stalled or that OpenBB data feeds
+            are not delivering fresh data.
+          runbook:     "https://wiki.metadroncapital.com/runbooks/cube-signal-stale"
+
+      # -----------------------------------------------------------------------
+      # No Trades Executed (Market Hours)
+      # Fires when zero trades have been executed in the last 1 hour.
+      # Annotated as 'info' — may be expected on low-signal days.
+      # Market hours check: UTC 13:30–20:00 Mon–Fri (US market hours).
+      # PromQL time functions use UTC.
+      # -----------------------------------------------------------------------
+      - alert: NoTradesExecuted
+        expr: >
+          increase(metadron_trades_total{job="engine-api"}[1h]) == 0
+          and
+          (
+            (hour() >= 13 and hour() < 20)
+            and
+            (day_of_week() >= 1 and day_of_week() <= 5)
+          )
+        for: 0m
+        labels:
+          severity: info
+          team:     trading
+        annotations:
+          summary:     "No trades executed in the past hour during market hours"
+          description: >
+            metadron_trades_total has not increased in the last hour during
+            active US market hours (UTC 13:30–20:00). This may be expected on
+            low-signal days but warrants review of the execution pipeline.
+          runbook:     "https://wiki.metadroncapital.com/runbooks/no-trades"
+
+      # -----------------------------------------------------------------------
+      # OpenBB Error Rate High
+      # Fires when OpenBB data-fetch errors exceed 0.1 errors/second (6/min).
+      # -----------------------------------------------------------------------
+      - alert: OpenBBErrors
+        expr: >
+          rate(metadron_openbb_errors_total{job="engine-api"}[5m]) > 0.1
+        for: 0m
+        labels:
+          severity: warning
+          team:     trading
+        annotations:
+          summary:     "Elevated OpenBB error rate: {{ $value | printf \"%.3f\" }} errors/s"
+          description: >
+            The OpenBB data integration is producing errors at
+            {{ $value | printf "%.3f" }} errors/s (>0.1 threshold).
+            Signal quality may be degraded. Check OpenBB API keys and
+            upstream data provider status.
+          runbook:     "https://wiki.metadroncapital.com/runbooks/openbb-errors"
+
+  # ===========================================================================
+  # GPU Metrics (nvidia_gpu_exporter)
+  # ===========================================================================
+  - name: gpu_health
+    rules:
+
+      # -----------------------------------------------------------------------
+      # GPU Memory High
+      # Fires when GPU VRAM utilization exceeds 90% for 5 minutes.
+      # Metric names from nvidia_gpu_exporter (v0.1+):
+      #   nvidia_smi_memory_used_bytes, nvidia_smi_memory_total_bytes
+      # -----------------------------------------------------------------------
+      - alert: GPUMemoryHigh
+        expr: >
+          (
+            nvidia_smi_memory_used_bytes{job="gpu"}
+            / nvidia_smi_memory_total_bytes{job="gpu"}
+          ) * 100 > 90
+        for: 5m
+        labels:
+          severity: warning
+          team:     ops
+        annotations:
+          summary:     "GPU VRAM usage high: {{ $value | printf \"%.1f\" }}% on {{ $labels.instance }}"
+          description: >
+            GPU {{ $labels.gpu }} on {{ $labels.instance }} is using
+            {{ $value | printf "%.1f" }}% of VRAM. OOM errors may cause model
+            inference to fail. Consider reducing batch size or offloading data.
+          runbook:     "https://wiki.metadroncapital.com/runbooks/gpu-memory-high"
+
+      # -----------------------------------------------------------------------
+      # GPU Temperature High
+      # nvidia_smi_temperature_gpu returns degrees Celsius.
+      # Fires after 2 minutes above 85°C (throttling typically begins at ~83°C).
+      # -----------------------------------------------------------------------
+      - alert: GPUTempHigh
+        expr: >
+          nvidia_smi_temperature_gpu{job="gpu"} > 85
+        for: 2m
+        labels:
+          severity: critical
+          team:     ops
+        annotations:
+          summary:     "GPU temperature critical: {{ $value }}°C on {{ $labels.instance }}"
+          description: >
+            GPU {{ $labels.gpu }} on {{ $labels.instance }} has been above 85°C
+            for 2 minutes (current: {{ $value }}°C). Thermal throttling may be
+            impacting performance. Check server airflow and cooling.
+          runbook:     "https://wiki.metadroncapital.com/runbooks/gpu-temp-high"
+
+  # ===========================================================================
+  # SSL Certificate Expiry
+  # ===========================================================================
+  - name: ssl_certificates
+    rules:
+
+      # -----------------------------------------------------------------------
+      # SSL Cert Expiring Soon
+      # probe_ssl_earliest_cert_expiry returns the expiry as a Unix timestamp.
+      # Fires if any probed certificate expires within 7 days.
+      # -----------------------------------------------------------------------
+      - alert: SSLCertExpiry
+        expr: >
+          (
+            probe_ssl_earliest_cert_expiry{job="blackbox-http"}
+            - time()
+          ) / 86400 < 7
+        for: 0m
+        labels:
+          severity: warning
+          team:     ops
+        annotations:
+          summary:     "SSL cert expiring in < 7 days for {{ $labels.instance }}"
+          description: >
+            The SSL certificate for {{ $labels.instance }} expires in
+            {{ $value | printf "%.1f" }} days. Renew via Cloudflare or Let's
+            Encrypt before expiry to avoid service disruption.
+          runbook:     "https://wiki.metadroncapital.com/runbooks/ssl-expiry"
