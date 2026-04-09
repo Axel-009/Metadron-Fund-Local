@@ -3,83 +3,15 @@ import { ResizableDashboard } from "@/components/resizable-panel";
 import { useState, useEffect, useMemo } from "react";
 import { useEngineQuery, type RiskGreeks, type BetaState } from "@/hooks/use-engine-api";
 
-const GREEKS = [
-  { name: "Delta", value: 0.72, label: "Δ", color: "#00d4aa" },
-  { name: "Gamma", value: 0.034, label: "Γ", color: "#58a6ff" },
-  { name: "Theta", value: -42.15, label: "Θ", color: "#f85149" },
-  { name: "Vega", value: 18.67, label: "ν", color: "#bc8cff" },
-  { name: "Rho", value: 5.23, label: "ρ", color: "#d29922" },
-];
+// Static fallbacks removed — all data from live API endpoints
 
-const METRICS = [
-  { name: "Sharpe Ratio", value: "1.82", status: "good" },
-  { name: "Sortino Ratio", value: "2.45", status: "good" },
-  { name: "Max Drawdown", value: "-8.78%", status: "warning" },
-  { name: "Calmar Ratio", value: "1.55", status: "good" },
-  { name: "Information Ratio", value: "0.94", status: "neutral" },
-  { name: "Treynor Ratio", value: "12.3%", status: "good" },
-];
 
-const FILLS = [
-  { time: "14:32:18", pair: "AAPL", side: "BUY", qty: 500, price: 189.45, status: "FILLED", strategy: "Momentum" },
-  { time: "14:31:45", pair: "MSFT", side: "SELL", qty: 200, price: 420.12, status: "FILLED", strategy: "Mean Reversion" },
-  { time: "14:30:22", pair: "NVDA", side: "BUY", qty: 100, price: 875.30, status: "FILLED", strategy: "Growth" },
-  { time: "14:29:55", pair: "AMZN", side: "BUY", qty: 300, price: 185.67, status: "PARTIAL", strategy: "Quality" },
-  { time: "14:28:10", pair: "GOOGL", side: "SELL", qty: 150, price: 155.89, status: "FILLED", strategy: "Pairs Trade" },
-  { time: "14:27:30", pair: "META", side: "BUY", qty: 250, price: 505.78, status: "NO FILL", strategy: "Momentum" },
-  { time: "14:25:12", pair: "JPM", side: "SELL", qty: 400, price: 198.34, status: "FILLED", strategy: "Event-Driven" },
-];
 
-const LIQUIDITY_RISK = [
-  { asset: "AAPL", score: 95, adv: "62.3M", spread: "0.01%", impact: "Low" },
-  { asset: "NVDA", score: 92, adv: "45.1M", spread: "0.02%", impact: "Low" },
-  { asset: "MSFT", score: 94, adv: "28.7M", spread: "0.01%", impact: "Low" },
-  { asset: "BTC/USD", score: 78, adv: "18.2B", spread: "0.05%", impact: "Medium" },
-  { asset: "SMCI", score: 55, adv: "8.4M", spread: "0.15%", impact: "High" },
-  { asset: "ARM", score: 62, adv: "12.1M", spread: "0.08%", impact: "Medium" },
-];
 
-const OPTIONS_POSITIONS = [
-  { ticker: "AAPL", type: "PUT", strike: 185, expiry: "May-17", qty: -10, delta: -0.38, gamma: 0.021, theta: -8.45, vega: 12.30, premium: 4.20, mktVal: -4200, pnl: 820, strategy: "Protective Put" },
-  { ticker: "AAPL", type: "CALL", strike: 195, expiry: "May-17", qty: 10, delta: 0.31, gamma: 0.018, theta: -7.20, vega: 10.85, premium: 3.15, mktVal: 3150, pnl: -480, strategy: "Covered Call" },
-  { ticker: "MSFT", type: "PUT", strike: 410, expiry: "Jun-21", qty: -5, delta: -0.42, gamma: 0.015, theta: -6.80, vega: 9.40, premium: 8.50, mktVal: -4250, pnl: 1250, strategy: "Collar" },
-  { ticker: "MSFT", type: "CALL", strike: 435, expiry: "Jun-21", qty: 5, delta: 0.28, gamma: 0.012, theta: -5.60, vega: 8.20, premium: 6.20, mktVal: 3100, pnl: -620, strategy: "Collar" },
-  { ticker: "NVDA", type: "CALL", strike: 900, expiry: "Apr-19", qty: 20, delta: 0.55, gamma: 0.008, theta: -18.40, vega: 22.10, premium: 15.80, mktVal: 31600, pnl: 8940, strategy: "Momentum" },
-  { ticker: "NVDA", type: "PUT", strike: 840, expiry: "Apr-19", qty: -20, delta: -0.22, gamma: 0.006, theta: -12.30, vega: 15.40, premium: 8.60, mktVal: -17200, pnl: 3200, strategy: "Spread" },
-  { ticker: "JPM", type: "CALL", strike: 200, expiry: "May-17", qty: 15, delta: 0.48, gamma: 0.019, theta: -4.20, vega: 6.80, premium: 5.40, mktVal: 8100, pnl: 1350, strategy: "Covered Call" },
-  { ticker: "SPY", type: "PUT", strike: 520, expiry: "May-31", qty: -30, delta: -0.35, gamma: 0.012, theta: -9.80, vega: 18.60, premium: 7.80, mktVal: -23400, pnl: 4800, strategy: "Protective Put" },
-  { ticker: "QQQ", type: "CALL", strike: 450, expiry: "May-31", qty: 25, delta: 0.52, gamma: 0.014, theta: -11.20, vega: 20.40, premium: 9.20, mktVal: 23000, pnl: 5750, strategy: "Straddle" },
-  { ticker: "QQQ", type: "PUT", strike: 450, expiry: "May-31", qty: 25, delta: -0.48, gamma: 0.014, theta: -10.80, vega: 20.40, premium: 8.80, mktVal: 22000, pnl: 4500, strategy: "Straddle" },
-  { ticker: "XOM", type: "PUT", strike: 112, expiry: "Jun-21", qty: -8, delta: -0.44, gamma: 0.022, theta: -3.60, vega: 5.20, premium: 3.80, mktVal: -3040, pnl: 960, strategy: "Spread" },
-  { ticker: "META", type: "CALL", strike: 520, expiry: "May-17", qty: 10, delta: 0.41, gamma: 0.016, theta: -13.50, vega: 16.80, premium: 11.40, mktVal: 11400, pnl: 2280, strategy: "Butterfly" },
-];
 
-const AGG_GREEKS = {
-  delta: OPTIONS_POSITIONS.reduce((s, o) => s + o.delta * o.qty, 0),
-  gamma: OPTIONS_POSITIONS.reduce((s, o) => s + o.gamma * Math.abs(o.qty), 0),
-  theta: OPTIONS_POSITIONS.reduce((s, o) => s + o.theta * Math.abs(o.qty), 0),
-  vega: OPTIONS_POSITIONS.reduce((s, o) => s + o.vega * Math.abs(o.qty), 0),
-  totalPnl: OPTIONS_POSITIONS.reduce((s, o) => s + o.pnl, 0),
-};
 
-const FUTURES_POSITIONS = [
-  { contract: "ESM25", desc: "S&P 500 Jun", side: "LONG", qty: 4, entry: 5248.50, last: 5282.75, pnl: 34250, margin: 45000, notional: 1320688, pctNav: 1.03 },
-  { contract: "NQM25", desc: "Nasdaq 100 Jun", side: "LONG", qty: 2, entry: 18240.00, last: 18415.50, pnl: 17550, margin: 22000, notional: 736620, pctNav: 0.57 },
-  { contract: "CLK25", desc: "Crude Oil May", side: "SHORT", qty: -3, entry: 84.20, last: 82.45, pnl: 5250, margin: 7500, notional: 247350, pctNav: 0.19 },
-  { contract: "GCM25", desc: "Gold Jun", side: "LONG", qty: 2, entry: 2285.40, last: 2318.80, pnl: 6680, margin: 15000, notional: 463760, pctNav: 0.36 },
-  { contract: "ZBM25", desc: "30Y T-Bond Jun", side: "SHORT", qty: -5, entry: 118.12, last: 117.28, pnl: 4375, margin: 12500, notional: 586400, pctNav: 0.46 },
-];
 
-const MARGIN_INFO = {
-  regT: 4250000,
-  portfolioMargin: 2840000,
-  marginUsed: 2840000,
-  marginAvailable: 7160000,
-  maintenanceMargin: 2130000,
-  utilizationPct: 28.4,
-  buyingPower: 14320000,
-  sma: 3250000,
-};
+
 
 export default function RiskPortfolio() {
   // ─── Engine API ─────────────────────────────────────
@@ -94,29 +26,26 @@ export default function RiskPortfolio() {
   const { data: liqScoringApi } = useEngineQuery<{ scoring: Array<{ asset: string; score: number; adv: string; spread: string; impact: string }> }>("/risk/liquidity-scoring", { refetchInterval: 30000 });
 
   // Override Greeks from API when available
-  const greeks = useMemo(() => {
-    if (!greeksData) return GREEKS;
-    return [
-      { name: "Delta", value: greeksData.delta ?? GREEKS[0].value, label: "Δ", color: "#00d4aa" },
-      { name: "Gamma", value: greeksData.gamma ?? GREEKS[1].value, label: "Γ", color: "#58a6ff" },
-      { name: "Theta", value: greeksData.theta ?? GREEKS[2].value, label: "Θ", color: "#f85149" },
-      { name: "Vega", value: greeksData.vega ?? GREEKS[3].value, label: "ν", color: "#bc8cff" },
-      { name: "Rho", value: greeksData.rho ?? GREEKS[4].value, label: "ρ", color: "#d29922" },
-    ];
-  }, [greeksData]);
+  const greeks = useMemo(() => [
+    { name: "Delta", value: greeksData?.delta ?? 0, label: "Δ", color: "#00d4aa" },
+    { name: "Gamma", value: greeksData?.gamma ?? 0, label: "Γ", color: "#58a6ff" },
+    { name: "Theta", value: greeksData?.theta ?? 0, label: "Θ", color: "#f85149" },
+    { name: "Vega", value: greeksData?.vega ?? 0, label: "ν", color: "#bc8cff" },
+    { name: "Rho", value: greeksData?.rho ?? 0, label: "ρ", color: "#d29922" },
+  ], [greeksData]);
 
   // VaR from beta analytics
-  const varValue = (betaData?.analytics as Record<string, number>)?.var_pct ?? 1.22;
-  const cvarValue = (betaData?.analytics as Record<string, number>)?.cvar_pct ?? 2.15;
+  const varValue = (betaData?.analytics as Record<string, number>)?.var_pct ?? 0;
+  const cvarValue = (betaData?.analytics as Record<string, number>)?.cvar_pct ?? 0;
 
   // Wire all remaining static data to API
-  const metrics = metricsApi?.metrics?.length ? metricsApi.metrics : METRICS;
-  const fills = fillsApi?.fills?.length ? fillsApi.fills : FILLS;
-  const liquidityRisk = liqScoringApi?.scoring?.length ? liqScoringApi.scoring : LIQUIDITY_RISK;
-  const optionsPositions = optionsApi?.positions?.length ? optionsApi.positions as typeof OPTIONS_POSITIONS : OPTIONS_POSITIONS;
-  const aggGreeks = optionsApi?.aggregate ?? AGG_GREEKS;
-  const futuresPositions = futuresApi?.positions?.length ? futuresApi.positions as typeof FUTURES_POSITIONS : FUTURES_POSITIONS;
-  const marginInfo = marginApi?.margin ?? MARGIN_INFO;
+  const metrics = metricsApi?.metrics || [];
+  const fills = fillsApi?.fills || [];
+  const liquidityRisk = liqScoringApi?.scoring || [];
+  const optionsPositions = optionsApi?.positions || [];
+  const aggGreeks = optionsApi?.aggregate ?? { delta: 0, gamma: 0, theta: 0, vega: 0, totalPnl: 0 };
+  const futuresPositions = futuresApi?.positions || [];
+  const marginInfo = marginApi?.margin ?? { used: 0, available: 0, maintenance: 0, equity: 0 };
 
   return (
     <div className="h-full flex flex-col gap-[2px] p-[2px] overflow-auto" data-testid="risk-portfolio">
@@ -178,6 +107,11 @@ export default function RiskPortfolio() {
       {/* Portfolio Metrics */}
       <DashboardPanel title="PORTFOLIO METRICS">
         <div className="grid grid-cols-2 gap-2">
+          {metrics.length === 0 && (
+            <div style={{color: "var(--muted)", fontSize: 11, padding: "16px", textAlign: "center", opacity: 0.7, gridColumn: "1 / -1"}}>
+              Risk metrics loading — awaiting engine computation...
+            </div>
+          )}
           {metrics.map((m, i) => (
             <div key={i} className="border border-terminal-border/50 rounded p-2">
               <div className="text-[8px] text-terminal-text-faint uppercase tracking-wider">{m.name}</div>
@@ -207,6 +141,11 @@ export default function RiskPortfolio() {
               </tr>
             </thead>
             <tbody>
+              {fills.length === 0 && (
+                <tr><td colSpan={7} style={{color: "var(--muted)", fontSize: 11, padding: "16px", textAlign: "center", opacity: 0.7}}>
+                  No fills yet — trade executions will appear here.
+                </td></tr>
+              )}
               {fills.map((f, i) => (
                 <tr key={i} className="border-b border-terminal-border/20 hover:bg-white/[0.02]">
                   <td className="px-2 py-1.5 text-terminal-text-faint">{f.time}</td>
@@ -241,6 +180,11 @@ export default function RiskPortfolio() {
               </tr>
             </thead>
             <tbody>
+              {liquidityRisk.length === 0 && (
+                <tr><td colSpan={5} style={{color: "var(--muted)", fontSize: 11, padding: "16px", textAlign: "center", opacity: 0.7}}>
+                  Liquidity scoring loading — awaiting position data...
+                </td></tr>
+              )}
               {liquidityRisk.map((l, i) => (
                 <tr key={i} className="border-b border-terminal-border/20">
                   <td className="px-2 py-1.5 text-terminal-text-primary">{l.asset}</td>
@@ -295,6 +239,11 @@ export default function RiskPortfolio() {
               </tr>
             </thead>
             <tbody>
+              {optionsPositions.length === 0 && (
+                <tr><td colSpan={10} style={{color: "var(--muted)", fontSize: 11, padding: "16px", textAlign: "center", opacity: 0.7}}>
+                  No options positions — will populate from broker.
+                </td></tr>
+              )}
               {optionsPositions.map((o, i) => (
                 <tr key={i} className="border-b border-terminal-border/20 hover:bg-white/[0.02]">
                   <td className="px-2 py-1 text-terminal-accent font-medium">{o.ticker}</td>
@@ -343,6 +292,11 @@ export default function RiskPortfolio() {
               </tr>
             </thead>
             <tbody>
+              {futuresPositions.length === 0 && (
+                <tr><td colSpan={8} style={{color: "var(--muted)", fontSize: 11, padding: "16px", textAlign: "center", opacity: 0.7}}>
+                  No futures positions — will populate from broker.
+                </td></tr>
+              )}
               {futuresPositions.map((f, i) => (
                 <tr key={i} className="border-b border-terminal-border/20 hover:bg-white/[0.02]">
                   <td className="px-2 py-1.5 text-terminal-accent font-bold">{f.contract}</td>
