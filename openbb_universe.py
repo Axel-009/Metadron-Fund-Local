@@ -757,9 +757,9 @@ def get_news(
 
     def _fetch():
         if symbol:
-            result = obb.news.company(symbol=symbol, limit=limit, provider="benzinga")
+            result = obb.news.company(symbol=symbol, limit=limit, provider="fmp")
         else:
-            result = obb.news.world(limit=limit, provider="benzinga")
+            result = obb.news.world(limit=limit, provider="fmp")
         return result.to_dataframe()
 
     return _retry_with_backoff(_fetch)
