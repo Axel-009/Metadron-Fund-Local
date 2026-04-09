@@ -157,7 +157,7 @@ class NewsEngine:
     Data flow (single source of truth for all news on the platform):
         newsfilter.io (primary, real-time)
             ↓ fallback
-        OpenBB get_world_news() / get_company_news() (Tiingo free tier)
+        OpenBB get_world_news() / get_company_news() (FMP provider — configured key)
             ↓ consumed by
         /macro/news, /signals/news/live, EventDrivenEngine, CVREngine
     """

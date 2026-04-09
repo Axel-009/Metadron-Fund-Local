@@ -865,9 +865,14 @@ def get_insider_trading(
 def get_company_news(
     ticker: str,
     limit: int = 20,
-    provider: str = "tiingo",
+    provider: str = "fmp",
 ) -> pd.DataFrame:
-    """Fetch company news via OpenBB (Tiingo, Benzinga, FMP, etc.)."""
+    """Fetch company news via OpenBB.
+
+    Default provider changed from Tiingo to FMP because FMP_API_KEY is the
+    only configured key. Tiingo free tier may work for some calls via OpenBB
+    but FMP is the reliable primary. Benzinga requires a paid key (not configured).
+    """
     if not _openbb_available:
         return pd.DataFrame()
     try:
@@ -884,9 +889,14 @@ def get_company_news(
 
 def get_world_news(
     limit: int = 30,
-    provider: str = "tiingo",
+    provider: str = "fmp",
 ) -> pd.DataFrame:
-    """Fetch world/market news via OpenBB."""
+    """Fetch world/market news via OpenBB.
+
+    Default provider changed from Tiingo to FMP because FMP_API_KEY is the
+    only configured key. Tiingo may still work for some calls via OpenBB
+    free tier but FMP is the guaranteed primary source.
+    """
     if not _openbb_available:
         return pd.DataFrame()
     try:
