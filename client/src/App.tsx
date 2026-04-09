@@ -5,6 +5,7 @@ import { QueryClientProvider } from "@tanstack/react-query";
 import { Toaster } from "@/components/ui/toaster";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { useEffect, useState, useRef, useCallback } from "react";
+import { useEngineQuery } from "@/hooks/use-engine-api";
 import { StatusBadge } from "@/components/status-badge";
 import NotFound from "@/pages/not-found";
 import LiveDashboard from "@/pages/live-dashboard";
@@ -342,6 +343,53 @@ function AppHeader() {
   );
 }
 
+// ═══════════ PROVIDER WARNING BANNER ═══════════
+function ProviderWarningBanner() {
+  const { data } = useEngineQuery<{
+    status: string;
+    providers: Record<string, { configured: boolean; live: boolean; error: string | null }>;
+  }>("/health/providers", { refetchInterval: 60000 });
+
+  if (!data || data.status === "ok") return null;
+
+  const fmp = data.providers?.fmp;
+  const openbb = data.providers?.openbb;
+  const isCritical = data.status === "critical";
+
+  let message = "";
+  if (fmp && !fmp.configured) {
+    message = "FMP_API_KEY not configured — market data, news, and fundamentals are unavailable.";
+  } else if (fmp && !fmp.live) {
+    message = `FMP API degraded — ${fmp.error || "quotes returning empty. Key may be expired or rate-limited."}`.replace(/\.$/, '') + '.';
+  } else if (openbb && !openbb.live) {
+    message = "OpenBB SDK unavailable — data pipeline offline.";
+  } else {
+    message = "One or more data providers are degraded. Check /health/providers for details.";
+  }
+
+  return (
+    <div
+      className="flex items-center gap-2 px-3 py-1.5 text-[10px] font-medium tracking-wide flex-shrink-0"
+      style={{
+        background: isCritical
+          ? "rgba(248, 113, 113, 0.12)"
+          : "rgba(210, 153, 34, 0.10)",
+        borderBottom: isCritical
+          ? "1px solid rgba(248, 113, 113, 0.3)"
+          : "1px solid rgba(210, 153, 34, 0.25)",
+        color: isCritical ? "#fca5a5" : "#d29922",
+      }}
+    >
+      <span style={{ fontSize: 12 }}>{isCritical ? "⚠" : "●"}</span>
+      <span style={{ textTransform: "uppercase", letterSpacing: "0.08em" }}>
+        {isCritical ? "CRITICAL" : "DEGRADED"}
+      </span>
+      <span style={{ color: "#7d8590", margin: "0 4px" }}>—</span>
+      <span style={{ color: "#8b949e" }}>{message}</span>
+    </div>
+  );
+}
+
 // ═══════════ ROUTER ═══════════
 function AppRouter() {
   return (
@@ -385,6 +433,7 @@ function App() {
         <Router hook={useHashLocation}>
           <div className="h-screen flex flex-col bg-terminal-bg overflow-hidden">
             <AppHeader />
+            <ProviderWarningBanner />
             <main className="flex-1 overflow-hidden">
               <AppRouter />
             </main>
