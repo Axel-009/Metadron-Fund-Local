@@ -78,6 +78,101 @@ async def health():
     }
 
 
+@app.get("/api/engine/health/providers")
+async def health_providers():
+    """Check all external API provider keys and their live status.
+
+    Returns per-provider: configured (key exists), live (test call succeeded),
+    and error details if the test failed. The frontend terminal should poll
+    this and surface a visible warning banner if FMP goes stale.
+    """
+    import os
+    results = {}
+    overall = "ok"
+
+    # ── FMP (critical — sole equity/fundamental/news data provider) ────
+    fmp_key = os.environ.get("FMP_API_KEY", "")
+    fmp_status = {"configured": bool(fmp_key), "live": False, "error": None}
+    if fmp_key:
+        try:
+            from engine.data.openbb_data import get_quote
+            quotes = get_quote(["SPY"])
+            fmp_status["live"] = bool(quotes and len(quotes) > 0)
+            if not fmp_status["live"]:
+                fmp_status["error"] = "get_quote returned empty — key may be expired or rate-limited"
+                overall = "degraded"
+        except Exception as e:
+            fmp_status["error"] = str(e)
+            overall = "degraded"
+    else:
+        fmp_status["error"] = "FMP_API_KEY not set"
+        overall = "critical"
+    results["fmp"] = fmp_status
+
+    # ── Alpaca (trading — optional if paper-only) ─────────────────────
+    alpaca_key = os.environ.get("ALPACA_API_KEY", "")
+    alpaca_secret = os.environ.get("ALPACA_SECRET_KEY", "")
+    alpaca_status = {"configured": bool(alpaca_key and alpaca_secret), "live": False, "error": None}
+    if alpaca_key and alpaca_secret:
+        try:
+            from alpaca.trading.client import TradingClient
+            client = TradingClient(alpaca_key, alpaca_secret, paper=True)
+            acct = client.get_account()
+            alpaca_status["live"] = bool(acct)
+        except ImportError:
+            alpaca_status["error"] = "alpaca-py not installed"
+        except Exception as e:
+            alpaca_status["error"] = str(e)
+    else:
+        alpaca_status["error"] = "ALPACA_API_KEY or ALPACA_SECRET_KEY not set"
+    results["alpaca"] = alpaca_status
+
+    # ── Anthropic (LLM — optional) ────────────────────────────────────
+    anthropic_key = os.environ.get("ANTHROPIC_API_KEY", "")
+    results["anthropic"] = {
+        "configured": bool(anthropic_key),
+        "live": None,  # not tested (costs money)
+        "error": None if anthropic_key else "ANTHROPIC_API_KEY not set",
+    }
+
+    # ── OpenBB SDK ─────────────────────────────────────────────────────
+    openbb_status = {"configured": True, "live": False, "error": None}
+    try:
+        from engine.data.openbb_data import _openbb_available
+        openbb_status["live"] = _openbb_available
+        if not _openbb_available:
+            openbb_status["error"] = "OpenBB SDK not installed or failed to initialize"
+            overall = "degraded"
+    except Exception as e:
+        openbb_status["error"] = str(e)
+    results["openbb"] = openbb_status
+
+    # ── newsfilter.io (optional real-time news) ───────────────────────
+    newsfilter_status = {"configured": False, "live": False, "error": None}
+    try:
+        import socketio  # noqa: F401
+        newsfilter_status["configured"] = True
+        # Check if NewsEngine has an active connection
+        try:
+            from engine.signals.news_engine import NewsEngine
+            ne = NewsEngine()
+            if ne._newsfilter and ne._newsfilter.is_connected:
+                newsfilter_status["live"] = True
+            else:
+                newsfilter_status["error"] = "WebSocket not connected (FMP news fallback active)"
+        except Exception:
+            newsfilter_status["error"] = "NewsEngine not initialized"
+    except ImportError:
+        newsfilter_status["error"] = "python-socketio not installed (FMP news fallback active)"
+    results["newsfilter"] = newsfilter_status
+
+    return {
+        "status": overall,
+        "providers": results,
+        "timestamp": datetime.utcnow().isoformat(),
+    }
+
+
 @app.exception_handler(Exception)
 async def global_exception_handler(request, exc):
     logger.error(f"Unhandled error: {exc}", exc_info=True)
