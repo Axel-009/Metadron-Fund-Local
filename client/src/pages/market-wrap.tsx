@@ -3,175 +3,11 @@ import { ResizableDashboard } from "@/components/resizable-panel";
 import { useState, useEffect, useRef, useMemo } from "react";
 import { useEngineQuery, type MarketWrapData, type MacroSnapshot } from "@/hooks/use-engine-api";
 
-const SECTORS = [
-  { name: "Technology", daily: 1.8, weekly: 3.2, monthly: 5.4, color: "#00d4aa" },
-  { name: "Healthcare", daily: 0.6, weekly: 1.1, monthly: 2.3, color: "#3fb950" },
-  { name: "Financials", daily: -0.3, weekly: 0.8, monthly: 1.9, color: "#58a6ff" },
-  { name: "Energy", daily: -1.2, weekly: -2.1, monthly: -3.8, color: "#f85149" },
-  { name: "Consumer Disc.", daily: 0.9, weekly: 1.5, monthly: 3.1, color: "#4ecdc4" },
-  { name: "Consumer Stap.", daily: 0.2, weekly: 0.4, monthly: 1.0, color: "#d29922" },
-  { name: "Industrials", daily: 0.4, weekly: 0.9, monthly: 2.0, color: "#bc8cff" },
-  { name: "Materials", daily: -0.5, weekly: -0.8, monthly: -1.2, color: "#f0883e" },
-  { name: "Utilities", daily: -0.1, weekly: 0.3, monthly: 0.7, color: "#7d8590" },
-  { name: "Real Estate", daily: -0.7, weekly: -1.3, monthly: -2.1, color: "#da3633" },
-  { name: "Comm. Svcs.", daily: 1.2, weekly: 2.4, monthly: 4.1, color: "#58a6ff" },
-];
-
+// TODO: Wire to /cube/state regime probabilities when available
 const SCENARIOS = [
   { label: "BASE", prob: "60%", desc: "Soft landing, gradual disinflation. Fed cuts 2x in 2026. SPX +8-12% YoY.", color: "#00d4aa" },
   { label: "BULL", prob: "25%", desc: "AI-driven productivity boom. Strong earnings revisions upward. SPX +18-22%.", color: "#3fb950" },
   { label: "BEAR", prob: "15%", desc: "Recession triggered by credit event. Earnings -15%. SPX -20-25%.", color: "#f85149" },
-];
-
-const NEWS = [
-  { time: "14:32", headline: "Fed minutes show split on rate path, dovish lean", source: "FOMC" },
-  { time: "13:45", headline: "AAPL announces $110B buyback, largest in history", source: "Earnings" },
-  { time: "12:20", headline: "China PMI below 50 for third consecutive month", source: "Macro" },
-  { time: "11:05", headline: "10Y Treasury yield breaks above 4.35% resistance", source: "Rates" },
-  { time: "10:15", headline: "NVDA guidance beats by 12%, AI capex acceleration", source: "Earnings" },
-  { time: "09:30", headline: "Initial claims at 210K, labor market remains tight", source: "Labor" },
-];
-
-const FED_EVENTS = [
-  { date: "Apr 15", event: "Fed Waller speech on inflation outlook" },
-  { date: "Apr 22", event: "Beige Book release" },
-  { date: "May 1", event: "FOMC Decision — rate hold expected" },
-  { date: "May 3", event: "NFP April report" },
-  { date: "May 14", event: "CPI April release" },
-];
-
-const EARNINGS = [
-  { date: "Apr 8", ticker: "TSLA", type: "Earnings", est: "$0.45" },
-  { date: "Apr 10", ticker: "JPM", type: "Earnings", est: "$4.12" },
-  { date: "Apr 12", ticker: "UNH", type: "Earnings", est: "$6.75" },
-  { date: "Apr 14", ticker: "MSFT", type: "Ex-Div", est: "$0.75" },
-  { date: "Apr 15", ticker: "BAC", type: "Earnings", est: "$0.82" },
-];
-
-// ── Live news feed data ──
-const INITIAL_LIVE_NEWS = [
-  {
-    id: 1,
-    timestamp: "2m ago",
-    source: "Bloomberg",
-    headline: "NVDA surges on record AI chip demand — Blackwell GPU orders double sequentially",
-    tickers: ["NVDA"],
-    sentiment: "bullish" as const,
-    category: "hot" as const,
-  },
-  {
-    id: 2,
-    timestamp: "7m ago",
-    source: "Reuters",
-    headline: "Fed signals potential rate cut in June — meeting minutes reveal dovish shift in tone",
-    tickers: ["SPY", "QQQ", "TLT"],
-    sentiment: "bullish" as const,
-    category: "top" as const,
-  },
-  {
-    id: 3,
-    timestamp: "15m ago",
-    source: "CNBC",
-    headline: "JPMorgan beats Q1 earnings estimates by 8%, raises full-year NII guidance above consensus",
-    tickers: ["JPM"],
-    sentiment: "bullish" as const,
-    category: "top" as const,
-  },
-  {
-    id: 4,
-    timestamp: "23m ago",
-    source: "WSJ",
-    headline: "Tesla recalls 500K vehicles over full-self-driving autopilot lateral control concerns",
-    tickers: ["TSLA"],
-    sentiment: "bearish" as const,
-    category: "breaking" as const,
-  },
-  {
-    id: 5,
-    timestamp: "31m ago",
-    source: "Reuters",
-    headline: "Oil drops 2.3% as OPEC+ weighs surprise production increase at April emergency meeting",
-    tickers: ["XOM", "CL"],
-    sentiment: "bearish" as const,
-    category: "top" as const,
-  },
-  {
-    id: 6,
-    timestamp: "44m ago",
-    source: "Bloomberg",
-    headline: "Microsoft Azure cloud revenue accelerates to +31% YoY — beats Copilot adoption targets",
-    tickers: ["MSFT"],
-    sentiment: "bullish" as const,
-    category: "hot" as const,
-  },
-  {
-    id: 7,
-    timestamp: "1h ago",
-    source: "FT",
-    headline: "China manufacturing PMI contracts for third month, raising global growth slowdown fears",
-    tickers: ["XOM", "GLD"],
-    sentiment: "bearish" as const,
-    category: "top" as const,
-  },
-  {
-    id: 8,
-    timestamp: "1h ago",
-    source: "CNBC",
-    headline: "Apple reportedly in advanced talks to integrate Gemini AI into iOS 19 — partnership widening",
-    tickers: ["AAPL", "GOOGL"],
-    sentiment: "bullish" as const,
-    category: "hot" as const,
-  },
-  {
-    id: 9,
-    timestamp: "1h ago",
-    source: "Reuters",
-    headline: "Meta launches AI-powered ad optimization engine — click-through rates improve 18%",
-    tickers: ["META"],
-    sentiment: "bullish" as const,
-    category: "top" as const,
-  },
-  {
-    id: 10,
-    timestamp: "2h ago",
-    source: "Bloomberg",
-    headline: "10Y Treasury yield breaks 4.35% resistance, risk assets face headwind",
-    tickers: ["TLT", "SPY"],
-    sentiment: "bearish" as const,
-    category: "breaking" as const,
-  },
-  {
-    id: 11,
-    timestamp: "2h ago",
-    source: "WSJ",
-    headline: "Amazon AWS wins $4.2B DoD JEDI follow-on cloud contract, analyst upgrades issued",
-    tickers: ["AMZN"],
-    sentiment: "bullish" as const,
-    category: "hot" as const,
-  },
-  {
-    id: 12,
-    timestamp: "3h ago",
-    source: "FT",
-    headline: "Visa settles DOJ antitrust case for $100M, removes overhang on shares",
-    tickers: ["V"],
-    sentiment: "bullish" as const,
-    category: "top" as const,
-  },
-];
-
-// New headlines that arrive over time
-const INCOMING_HEADLINES = [
-  { source: "Bloomberg", headline: "UnitedHealth beats Q1 medical loss ratio estimates, cost pressures ease", tickers: ["UNH"], sentiment: "bullish" as const, category: "hot" as const },
-  { source: "Reuters", headline: "Google antitrust remedy trial begins — DOJ seeks search market structural changes", tickers: ["GOOGL"], sentiment: "bearish" as const, category: "breaking" as const },
-  { source: "CNBC", headline: "Exxon Permian Basin output exceeds 1.2M barrels/day, efficiency gains on target", tickers: ["XOM"], sentiment: "bullish" as const, category: "top" as const },
-  { source: "WSJ", headline: "Amazon Prime membership hits 250M globally, ad revenue up 23% YoY", tickers: ["AMZN"], sentiment: "bullish" as const, category: "hot" as const },
-  { source: "FT", headline: "US-China trade tensions flare — new 25% tariff on EV components proposed", tickers: ["TSLA", "SPY"], sentiment: "bearish" as const, category: "breaking" as const },
-  { source: "Bloomberg", headline: "Nvidia H200 allocation sold out through Q3 2026 — hyperscaler demand unprecedented", tickers: ["NVDA"], sentiment: "bullish" as const, category: "hot" as const },
-  { source: "Reuters", headline: "JPMorgan sees credit card delinquencies stabilizing — consumer resilience intact", tickers: ["JPM", "V"], sentiment: "bullish" as const, category: "top" as const },
-  { source: "CNBC", headline: "CPI March comes in at 3.1% YoY, slightly below 3.2% consensus estimate", tickers: ["SPY", "TLT", "QQQ"], sentiment: "bullish" as const, category: "breaking" as const },
-  { source: "WSJ", headline: "Meta AI assistant reaches 600M monthly users — monetization roadmap unveiled", tickers: ["META"], sentiment: "bullish" as const, category: "hot" as const },
-  { source: "Bloomberg", headline: "Apple Vision Pro 2 enters mass production — holiday 2026 launch confirmed", tickers: ["AAPL"], sentiment: "bullish" as const, category: "top" as const },
 ];
 
 const SENTIMENT_CONFIG = {
@@ -241,7 +77,7 @@ function injectScrollCSS() {
 
 // ── Live News Feed Component ──
 function LiveNewsFeed() {
-  const [news, setNews] = useState<LiveNewsItem[]>(INITIAL_LIVE_NEWS);
+  const [news, setNews] = useState<LiveNewsItem[]>([]);
   const [speed, setSpeed] = useState<1 | 2 | 3>(1);
   const [paused, setPaused] = useState(false);
   const [newIds, setNewIds] = useState<Set<number>>(new Set());
@@ -339,6 +175,11 @@ function LiveNewsFeed() {
 
         {/* Scrolling content — doubled for seamless loop */}
         <div className={scrollClass}>
+          {news.length === 0 ? (
+            <div style={{color: "var(--muted)", fontSize: 11, padding: "28px 16px", textAlign: "center", lineHeight: 1.6, opacity: 0.7}}>
+              Live news feed connecting — headlines will stream once the NewsEngine initializes.
+            </div>
+          ) : null}
           {[...news, ...news].map((item, idx) => {
             const sent = SENTIMENT_CONFIG[item.sentiment];
             const cat = CATEGORY_CONFIG[item.category];
@@ -394,7 +235,7 @@ export default function MarketWrap() {
 
   // Wire NEWS from API
   const news = useMemo(() => {
-    if (!newsApi?.news?.length) return NEWS;
+    if (!newsApi?.news?.length) return [];
     return newsApi.news.slice(0, 6).map((n) => ({
       time: (n.date || n.published || "").slice(11, 16) || "—",
       headline: n.title || n.headline || "",
@@ -404,7 +245,7 @@ export default function MarketWrap() {
 
   // Wire FED_EVENTS from calendar API (filter for Fed/central bank events)
   const fedEvents = useMemo(() => {
-    if (!calApi?.events?.length) return FED_EVENTS;
+    if (!calApi?.events?.length) return [];
     return calApi.events
       .filter((e) => {
         const ev = (e.event || e.name || "").toLowerCase();
@@ -419,7 +260,7 @@ export default function MarketWrap() {
 
   // Wire EARNINGS from calendar API
   const earnings = useMemo(() => {
-    if (!calApi?.events?.length) return EARNINGS;
+    if (!calApi?.events?.length) return [];
     return calApi.events
       .filter((e) => {
         const ev = (e.event || e.name || "").toLowerCase();
@@ -436,13 +277,13 @@ export default function MarketWrap() {
 
   // Override sectors from API when available
   const sectors = useMemo(() => {
-    if (!wrapData?.sectors?.length) return SECTORS;
+    if (!wrapData?.sectors?.length) return [];
     return wrapData.sectors.map((s) => ({
       name: s.sector,
       daily: s.return_1d * 100,
       weekly: s.return_1w * 100,
       monthly: s.return_1m * 100,
-      color: SECTORS.find((sec) => sec.name.toLowerCase().startsWith(s.sector.toLowerCase().slice(0, 4)))?.color ?? "#7d8590",
+      color: "#7d8590",
     }));
   }, [wrapData]);
 
@@ -477,6 +318,11 @@ export default function MarketWrap() {
             {/* GICS Sector Heatmap */}
             <DashboardPanel title="GICS SECTOR HEATMAP" className="flex-1">
               <div className="grid grid-cols-4 gap-1.5">
+                {sectors.length === 0 && (
+                  <div className="col-span-4 text-[10px] text-terminal-text-faint text-center py-6 opacity-70">
+                    Sector data loading — awaiting macro engine...
+                  </div>
+                )}
                 {sectors.map((s) => {
                   const intensity = Math.min(Math.abs(s.daily) / 2, 1);
                   const bg = s.daily >= 0
@@ -519,6 +365,11 @@ export default function MarketWrap() {
             {/* CVR News */}
             <DashboardPanel title="CVR NEWS" className="flex-1">
               <div className="space-y-1.5">
+                {news.length === 0 && (
+                  <div className="text-[10px] text-terminal-text-faint text-center py-4 opacity-70">
+                    News feed loading — requires Tiingo API key...
+                  </div>
+                )}
                 {news.map((n, i) => (
                   <div key={i} className="flex gap-2 text-[9px]">
                     <span className="text-terminal-text-faint font-mono flex-shrink-0 w-10">{n.time}</span>
@@ -532,6 +383,11 @@ export default function MarketWrap() {
             {/* Fed Calendar */}
             <DashboardPanel title="FED CALENDAR" className="flex-1">
               <div className="space-y-1.5">
+                {fedEvents.length === 0 && (
+                  <div className="text-[10px] text-terminal-text-faint text-center py-4 opacity-70">
+                    Calendar loading...
+                  </div>
+                )}
                 {fedEvents.map((e, i) => (
                   <div key={i} className="flex gap-2 text-[9px]">
                     <span className="text-terminal-warning font-mono flex-shrink-0 w-12">{e.date}</span>
@@ -553,6 +409,11 @@ export default function MarketWrap() {
       <div className="flex-shrink-0">
         <DashboardPanel title="INCOMING EVENTS">
           <div className="flex gap-3 overflow-x-auto pb-1">
+            {earnings.length === 0 && (
+              <div className="text-[10px] text-terminal-text-faint py-3 opacity-70">
+                Earnings calendar loading...
+              </div>
+            )}
             {earnings.map((e, i) => (
               <div key={i} className="flex-shrink-0 border border-terminal-border rounded p-2 min-w-[140px]">
                 <div className="flex items-center gap-2 text-[9px]">

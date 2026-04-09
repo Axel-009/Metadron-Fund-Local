@@ -260,6 +260,22 @@ class EventDrivenEngine:
         self.risk_free = risk_free
         self._result: Optional[EventAnalysisResult] = None
         self._analyzed = False
+        # Shared NewsEngine singleton — avoids creating a fresh instance per
+        # ticker during scan_live_events() (100 tickers × new NewsEngine is
+        # extremely inefficient and bypasses the router's warmed feed cache).
+        self._news_engine = None
+
+    def _get_news_engine(self):
+        """Return a cached NewsEngine instance (lazy-initialised once).
+
+        Using a singleton means the newsfilter.io WebSocket connection and
+        the 100-item feed deque are shared across all _scan_ticker_news()
+        calls in a single scan_live_events() sweep.
+        """
+        if self._news_engine is None:
+            from engine.signals.news_engine import NewsEngine
+            self._news_engine = NewsEngine()
+        return self._news_engine
 
     # -----------------------------------------------------------------------
     # Live Event Discovery — SEC 8-K filings + company news
@@ -327,10 +343,11 @@ class EventDrivenEngine:
         OpenBB provides structured data, NewsEngine adds real-time stream.
         """
         events = []
-        # Also check NewsEngine for real-time newsfilter.io data
+        # Also check NewsEngine for real-time newsfilter.io data.
+        # Uses the cached singleton instead of creating a fresh NewsEngine per
+        # ticker — prevents 100+ cold-start instantiations per scan sweep.
         try:
-            from engine.signals.news_engine import NewsEngine
-            ne = NewsEngine()
+            ne = self._get_news_engine()
             ne_items = ne.get_ticker_news(ticker, limit=5)
             for item in ne_items:
                 title = item.get("headline", "").lower()
@@ -399,9 +416,13 @@ class EventDrivenEngine:
                     })
                     break
 
-                # Check catalysts
+                # Check catalysts.
+                # EventCategory.CATALYST does not exist in the enum — map to
+                # the closest valid value: FDA/drug items become REGULATORY,
+                # all other catalysts (spinoff, activist, buyback…) become
+                # CAPITAL_STRUCTURE as a generic catch-all.
                 if any(kw in title for kw in self._CATALYST_KEYWORDS):
-                    cat = EventCategory.REGULATORY if "fda" in title or "drug" in title else EventCategory.CATALYST
+                    cat = EventCategory.REGULATORY if "fda" in title or "drug" in title else EventCategory.CAPITAL_STRUCTURE
                     events.append({
                         "type": cat,
                         "ticker": ticker,
@@ -438,9 +459,12 @@ class EventDrivenEngine:
                         "_date": date,
                     })
                     break
+                # EventCategory.DISTRESSED does not exist in the enum — the
+                # closest valid value for bankruptcy/restructuring events is
+                # EventCategory.RESTRUCTURING (credit events use CREDIT_EVENT).
                 if any(kw in title for kw in ["restructuring", "bankruptcy", "chapter 11"]):
                     events.append({
-                        "type": EventCategory.DISTRESSED,
+                        "type": EventCategory.RESTRUCTURING,
                         "ticker": ticker,
                         "notes": f"SEC 8-K: {row.get('title', title)}",
                         "_source": "SEC_8K",
@@ -713,7 +737,20 @@ class EventDrivenEngine:
     # Main Analysis
     # -----------------------------------------------------------------------
     def analyze(self, regime_multiplier: float = 1.0) -> EventAnalysisResult:
-        """Run full event-driven analysis on event catalog."""
+        """Run full event-driven analysis on event catalog.
+
+        Calls scan_live_events() first so the catalog is enriched with fresh
+        news/filings before analysis.  The seed LIVE_EVENTS remain as a
+        baseline even if the live scan returns nothing.
+        """
+        # Refresh the event catalog from live news and SEC 8-K filings before
+        # analysis.  Without this call analyze() only ever sees the stale
+        # hardcoded LIVE_EVENTS (closed deals: ATVI/MSFT, HZNP/AMGN, etc.).
+        try:
+            self.scan_live_events()
+        except Exception as e:
+            logger.warning("Event live scan failed (using seed catalog): %s", e)
+
         result = EventAnalysisResult()
         positions = []
         merger_arbs = []

@@ -269,6 +269,23 @@ class CVREngine:
         self.n_mc_paths = n_mc_paths
         self._results: Dict[str, CVRValuation] = {}
         self._analyzed = False
+        # Shared NewsEngine singleton — avoids creating a fresh instance per
+        # ticker during scan_for_cvr_events() (same efficiency problem as
+        # EventDrivenEngine).  The cached engine shares the newsfilter.io
+        # WebSocket connection and the 100-item feed deque.
+        self._news_engine = None
+
+    def _get_news_engine(self):
+        """Return a cached NewsEngine instance (lazy-initialised once).
+
+        Using a singleton means the newsfilter.io WebSocket connection and
+        the 100-item feed deque are shared across all _scan_news() calls
+        in a single scan_for_cvr_events() sweep.
+        """
+        if self._news_engine is None:
+            from engine.signals.news_engine import NewsEngine
+            self._news_engine = NewsEngine()
+        return self._news_engine
 
     # -----------------------------------------------------------------------
     # Model 1: Binary Option (risk-adjusted PV)
@@ -531,7 +548,21 @@ class CVREngine:
     # Main Analysis
     # -----------------------------------------------------------------------
     def analyze(self) -> Dict[str, CVRValuation]:
-        """Run full 5-model ensemble on CVR catalog."""
+        """Run full 5-model ensemble on CVR catalog.
+
+        Calls discover_and_refresh() first to update underlying prices and
+        discover new CVR instruments from live news/filings before running
+        the 5-model ensemble.  Without this the engine only ever values the
+        hardcoded CVR_CATALOG with static prices.
+        """
+        # Refresh CVR candidates from live news/filings and update prices.
+        # Wrapped in try/except so analysis always proceeds even when the
+        # data feeds are unavailable (no FMP/Alpaca key configured).
+        try:
+            self.discover_and_refresh()
+        except Exception as e:
+            logger.warning("CVR discovery failed (using static catalog): %s", e)
+
         self._results = {}
 
         for inst in self.catalog:
@@ -773,10 +804,11 @@ class CVREngine:
         Sources: OpenBB (FMP/Tiingo) + NewsEngine (newsfilter.io real-time).
         """
         events = []
-        # Enrich with NewsEngine (newsfilter.io) if available
+        # Enrich with NewsEngine (newsfilter.io) if available.
+        # Uses the cached singleton instead of creating a fresh NewsEngine per
+        # ticker — prevents 100+ cold-start instantiations per scan sweep.
         try:
-            from engine.signals.news_engine import NewsEngine
-            ne = NewsEngine()
+            ne = self._get_news_engine()
             for item in ne.get_ticker_news(ticker, limit=5):
                 title = item.get("headline", "").lower()
                 all_kw = self._MERGER_KEYWORDS + self._PHARMA_KEYWORDS + self._RESTRUCTURING_KEYWORDS

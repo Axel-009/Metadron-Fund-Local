@@ -158,24 +158,66 @@ async def event_signals():
     """Active event-driven signals: M&A arb, PEAD, catalysts."""
     try:
         ev = _get_event()
-        if hasattr(ev, "get_active_events"):
-            events = ev.get_active_events()
-        elif hasattr(ev, "scan"):
-            events = ev.scan()
+        # Use the real methods that exist on EventDrivenEngine.
+        # get_trading_signals() returns a dict keyed by ticker;
+        # get_top_ideas() returns a list of EventPosition objects.
+        # Neither get_active_events() nor scan() exist on this engine.
+        if hasattr(ev, "get_trading_signals"):
+            raw = ev.get_trading_signals()
+            # raw is Dict[ticker, {signal, event_type, expected_alpha_bps, ...}]
+            events = [
+                {
+                    "ticker": ticker,
+                    "event_type": data.get("event_type", ""),
+                    "signal": data.get("signal", ""),
+                    "expected_alpha_bps": data.get("expected_alpha_bps", 0),
+                    "conviction": data.get("conviction", 0),
+                    "kelly_fraction": data.get("kelly_fraction", 0),
+                    "holding_period_days": data.get("holding_period_days", 0),
+                    "stop_loss_pct": data.get("stop_loss_pct", 0),
+                    "notes": data.get("notes", ""),
+                }
+                for ticker, data in raw.items()
+            ]
+        elif hasattr(ev, "get_top_ideas"):
+            ideas = ev.get_top_ideas()
+            events = [
+                {
+                    "ticker": getattr(p, "ticker", ""),
+                    "event_type": getattr(p, "event_type", ""),
+                    "signal": getattr(p, "signal", ""),
+                    "expected_alpha_bps": getattr(p, "expected_alpha_bps", 0),
+                    "conviction": getattr(p, "conviction", 0),
+                    "kelly_fraction": getattr(p, "kelly_fraction", 0),
+                    "holding_period_days": getattr(p, "holding_period_days", 0),
+                    "stop_loss_pct": getattr(p, "stop_loss_pct", 0),
+                    "notes": getattr(p, "notes", ""),
+                }
+                for p in ideas
+            ]
+        elif hasattr(ev, "analyze"):
+            result_obj = ev.analyze()
+            events = []
+            if hasattr(result_obj, "positions"):
+                for p in result_obj.positions:
+                    events.append({
+                        "ticker": getattr(p, "ticker", ""),
+                        "event_type": str(getattr(p, "event_type", "")),
+                        "signal": str(getattr(p, "signal", "")),
+                        "expected_alpha_bps": getattr(p, "expected_alpha_bps", 0),
+                        "conviction": getattr(p, "conviction", 0),
+                        "kelly_fraction": getattr(p, "kelly_fraction", 0),
+                        "holding_period_days": getattr(p, "holding_period_days", 0),
+                        "stop_loss_pct": getattr(p, "stop_loss_pct", 0),
+                        "notes": getattr(p, "notes", ""),
+                    })
         else:
             events = []
 
-        result = []
-        for e in (events if isinstance(events, list) else []):
-            result.append({
-                "ticker": getattr(e, "ticker", ""),
-                "event_type": getattr(e, "event_type", ""),
-                "signal": getattr(e, "signal", ""),
-                "confidence": getattr(e, "confidence", 0),
-                "expected_return": getattr(e, "expected_return", 0),
-                "days_to_event": getattr(e, "days_to_event", 0),
-            })
-        return {"events": result, "timestamp": datetime.utcnow().isoformat()}
+        if not events:
+            return {"events": [], "status": "no_active_events",
+                    "timestamp": datetime.utcnow().isoformat()}
+        return {"events": events, "timestamp": datetime.utcnow().isoformat()}
     except Exception as e:
         logger.error(f"signals/events error: {e}")
         return {"events": [], "error": str(e)}
@@ -188,13 +230,21 @@ async def cvr_signals():
     """CVR valuation: 5-model, 4 live instruments."""
     try:
         cvr = _get_cvr()
-        if hasattr(cvr, "get_valuations"):
-            vals = cvr.get_valuations()
-        elif hasattr(cvr, "scan"):
-            vals = cvr.scan()
+        # Use the real methods that exist on CVREngine.
+        # Neither get_valuations() nor scan() exist on this engine.
+        if hasattr(cvr, "get_trading_signals"):
+            # Returns Dict[ticker, {signal, fair_value, market_price, ...}]
+            vals = cvr.get_trading_signals()
+        elif hasattr(cvr, "analyze"):
+            result = cvr.analyze()
+            vals = result if isinstance(result, dict) else {}
         else:
             vals = {}
-        return {**(vals if isinstance(vals, dict) else {"data": vals}), "timestamp": datetime.utcnow().isoformat()}
+
+        if not vals:
+            return {"valuations": {}, "status": "no_cvr_data",
+                    "timestamp": datetime.utcnow().isoformat()}
+        return {"valuations": vals, "timestamp": datetime.utcnow().isoformat()}
     except Exception as e:
         logger.error(f"signals/cvr error: {e}")
         return {"error": str(e)}
@@ -294,11 +344,24 @@ async def news_live_feed(limit: int = Query(20, ge=1, le=50)):
 
     Fits in system: L1 OpenBB News → L2 NewsEngine (sentiment + categorization)
     → WRAP tab LiveNewsFeed + EventDrivenEngine catalyst detection.
+
+    Uses the shared _get_news() singleton so EventDrivenEngine and CVREngine
+    benefit from the same already-warmed feed without re-instantiating.
     """
     try:
+        # Shared singleton — avoids cold-start on every request
         engine = _get_news()
         feed = engine.get_live_feed(limit=limit)
         summary = engine.get_sentiment_summary()
+        # Return explicit status when feed is empty (no Tiingo key or provider
+        # not configured) rather than a bare empty list that silently fails.
+        if not feed:
+            return {
+                "feed": [],
+                "status": "news_provider_not_configured",
+                "summary": summary,
+                "timestamp": datetime.utcnow().isoformat(),
+            }
         return {"feed": feed, "summary": summary, "timestamp": datetime.utcnow().isoformat()}
     except Exception as e:
         logger.error(f"signals/news/live error: {e}")
