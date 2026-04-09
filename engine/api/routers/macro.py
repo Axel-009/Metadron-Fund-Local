@@ -362,7 +362,8 @@ async def macro_news():
 
     The NewsEngine is the single news source for the entire platform.
     Primary: newsfilter.io WebSocket (10,000+ sources, real-time)
-    Fallback: OpenBB news (Tiingo/Benzinga/FMP)
+    Fallback: OpenBB news (Tiingo free tier — no key configured but
+    included in OpenBB's free access; Benzinga NOT available, no key)
 
     This endpoint feeds the WRAP tab news sidebar. The same NewsEngine
     singleton is shared with EventDrivenEngine and CVREngine so all

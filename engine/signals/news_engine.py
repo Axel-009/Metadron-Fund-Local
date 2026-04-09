@@ -139,10 +139,27 @@ class NewsEngine:
     """Live news intelligence engine.
 
     Primary: newsfilter.io WebSocket (10,000+ sources, real-time)
-    Fallback: OpenBB news (Tiingo, Benzinga, FMP)
+    Fallback: OpenBB news providers (see API KEY STATUS below)
 
     Fetches news, scores sentiment, categorizes urgency,
     and maintains a rolling feed for the WRAP tab.
+
+    API KEY STATUS (as of deployment):
+        - FMP_API_KEY:      CONFIGURED — primary data provider, used for quotes/fundamentals
+        - Tiingo:           NOT CONFIGURED — but included in OpenBB free tier, so some
+                            basic news may still flow through OpenBB's Tiingo provider
+                            without an explicit key. Acceptable as a fallback source.
+        - Benzinga:         NOT CONFIGURED — requires paid API key. OpenBB news calls
+                            with provider='benzinga' will silently return empty.
+        - newsfilter.io:    OPTIONAL — WebSocket primary. Works without API key for
+                            basic feed; premium key unlocks full real-time stream.
+
+    Data flow (single source of truth for all news on the platform):
+        newsfilter.io (primary, real-time)
+            ↓ fallback
+        OpenBB get_world_news() / get_company_news() (Tiingo free tier)
+            ↓ consumed by
+        /macro/news, /signals/news/live, EventDrivenEngine, CVREngine
     """
 
     def __init__(self):
