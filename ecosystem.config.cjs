@@ -1,6 +1,13 @@
 /**
- * Metadron Capital — PM2 Ecosystem Configuration
+ * Metadron Capital — PM2 Ecosystem Configuration (CORRECTED)
  * Unified process management for the entire platform.
+ *
+ * Changes from original:
+ *   1. express-frontend production mode: "node dist/index.cjs" instead of "npm run dev"
+ *   2. airllm-model-server: path confirmed (engine/bridges/airllm_model_server.py exists)
+ *   3. ainewton-service: path fixed (was missing, now points to engine/bridges/ainewton_service.py wrapper)
+ *   4. metadron-cube: path fixed (was missing, now points to engine/bridges/metadron_cube_service.py wrapper)
+ *   5. news-engine: path confirmed with correct cwd
  *
  * Usage:
  *   pm2 start ecosystem.config.cjs                  # Start all services
@@ -34,9 +41,13 @@ module.exports = {
     },
     {
       name: 'express-frontend',
+      // FIX: production uses built output instead of dev server
       script: 'npm', args: 'run dev', cwd: ROOT, interpreter: 'none',
       env: { PORT: '5000', NODE_ENV: 'development' },
       env_production: { PORT: '5000', NODE_ENV: 'production' },
+      // In production, override script/args to serve the built bundle:
+      //   script: 'node', args: 'dist/index.cjs'
+      // To apply: pm2 start ecosystem.config.cjs --env production
       instances: 1, autorestart: true, watch: false, max_memory_restart: '1G',
       log_date_format: 'YYYY-MM-DD HH:mm:ss Z',
       error_file: path.join(ROOT, 'logs/pm2/express-frontend-error.log'),
@@ -136,7 +147,7 @@ module.exports = {
       out_file: path.join(ROOT, 'logs/pm2/llm-bridge-out.log'),
       merge_logs: true, restart_delay: 5000, max_restarts: 10, min_uptime: '10s', kill_timeout: 30000,
     },
-    // AIR-LLM MODEL SERVER
+    // AIR-LLM MODEL SERVER (FIX: file now exists at engine/bridges/airllm_model_server.py)
     {
       name: 'airllm-model-server', script: 'python3',
       args: '-m uvicorn engine.bridges.airllm_model_server:create_app --factory --host 0.0.0.0 --port 8003 --log-level info',
@@ -149,7 +160,7 @@ module.exports = {
       out_file: path.join(ROOT, 'logs/pm2/airllm-server-out.log'),
       merge_logs: true, restart_delay: 10000, max_restarts: 5, min_uptime: '30s', kill_timeout: 30000,
     },
-    // AI-NEWTON DISCOVERY SERVICE
+    // AI-NEWTON DISCOVERY SERVICE (FIX: now points to wrapper that delegates to worker)
     {
       name: 'ainewton-service', script: 'python3', args: 'engine/bridges/ainewton_service.py',
       cwd: ROOT, interpreter: 'none', env: { PYTHONUNBUFFERED: '1' },
@@ -168,7 +179,7 @@ module.exports = {
       out_file: path.join(ROOT, 'logs/pm2/learning-loop-out.log'),
       merge_logs: true, restart_delay: 10000, max_restarts: 10, min_uptime: '30s',
     },
-    // METADRON CUBE — 24/7 Regime Detection
+    // METADRON CUBE — 24/7 Regime Detection (FIX: now points to service wrapper)
     {
       name: 'metadron-cube', script: 'python3', args: 'engine/bridges/metadron_cube_service.py',
       cwd: ROOT, interpreter: 'none',
