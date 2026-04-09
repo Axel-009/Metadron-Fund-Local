@@ -231,31 +231,90 @@ async def order_distribution():
 
 @router.get("/metrics")
 async def risk_metrics():
-    """Portfolio risk metrics: Sharpe, Sortino, Calmar, Information, Treynor."""
+    """Portfolio risk metrics: Sharpe, Sortino, Calmar, Information, Treynor.
+
+    All ratios are computed from actual daily returns (NAV series) via the
+    broker's PerformanceTracker.  No Sharpe-multiplier approximations.
+    """
     try:
+        import numpy as np
+
         beta = _get_beta()
-        analytics = beta.get_corridor_analytics()
+        broker = _get_broker()
         history = beta.get_history()
 
-        # Compute metrics from beta history
-        import numpy as np
+        # ── Pull real daily returns from the broker's NAV series ──────────
+        returns = np.array([], dtype=np.float64)
+        if hasattr(broker, "_perf_tracker"):
+            returns = broker._perf_tracker.get_daily_returns()
+
+        TRADING_DAYS = 252
+        daily_rf = 0.05 / TRADING_DAYS  # ~5 % risk-free default
+
+        # ── Sharpe ────────────────────────────────────────────────────────
+        if len(returns) >= 2:
+            excess = returns - daily_rf
+            sharpe = float(np.mean(excess) / np.std(excess, ddof=1) * np.sqrt(TRADING_DAYS))
+        else:
+            sharpe = 0.0
+
+        # ── Sortino (downside deviation uses only negative excess returns) ─
+        if len(returns) >= 2:
+            excess = returns - daily_rf
+            downside = excess[excess < 0]
+            downside_std = float(np.std(downside, ddof=1)) if len(downside) > 1 else 0.0
+            sortino = float(np.mean(excess) / downside_std * np.sqrt(TRADING_DAYS)) if downside_std > 0 else 0.0
+        else:
+            sortino = 0.0
+
+        # ── Max Drawdown (from running-max NAV) ───────────────────────────
+        dd_info = broker.get_drawdown() if hasattr(broker, "get_drawdown") else {}
+        max_dd = dd_info.get("max_drawdown", 0.0)        # fraction, e.g. 0.08
+        max_dd_pct = max_dd * 100                         # percentage for display
+
+        # ── Calmar (annualised return / max drawdown) ─────────────────────
+        if len(returns) >= 2 and max_dd > 0:
+            annualized_return = float(np.mean(returns) * TRADING_DAYS)
+            calmar = annualized_return / max_dd
+        else:
+            calmar = 0.0
+
+        # ── Information Ratio (excess return over benchmark / tracking err)
+        #    Benchmark = SPY returns via BetaCorridor history (Rm field).
+        if len(returns) >= 2 and history and len(history) >= 2:
+            bench_rets = np.array(
+                [h.Rm for h in history if hasattr(h, "Rm")], dtype=np.float64
+            )
+            # Align lengths (history may differ from daily NAV count)
+            min_len = min(len(returns), len(bench_rets))
+            if min_len >= 2:
+                port_tail = returns[-min_len:]
+                bench_tail = bench_rets[-min_len:]
+                active = port_tail - bench_tail
+                tracking_err = float(np.std(active, ddof=1))
+                info_ratio = float(np.mean(active) / tracking_err * np.sqrt(TRADING_DAYS)) if tracking_err > 0 else 0.0
+            else:
+                info_ratio = 0.0
+        else:
+            info_ratio = 0.0
+
+        # ── Treynor (annualised excess return / portfolio beta) ───────────
         betas = [h.current_beta for h in history if hasattr(h, "current_beta")] if history else []
+        avg_beta = float(np.mean(betas)) if betas else 0.0
+        if len(returns) >= 2 and avg_beta != 0:
+            annualized_excess = float((np.mean(returns) - daily_rf) * TRADING_DAYS)
+            treynor = annualized_excess / avg_beta
+        else:
+            treynor = 0.0
 
-        sharpe = float(analytics.get("sharpe", 0)) if isinstance(analytics, dict) else 0
-        sortino = sharpe * 1.3 if sharpe else 0  # Approximate from Sharpe
-        max_dd = float(analytics.get("max_drawdown", 0)) if isinstance(analytics, dict) else 0
-        calmar = abs(sharpe / max_dd) if max_dd and max_dd != 0 else 0
-        info_ratio = sharpe * 0.5 if sharpe else 0
-        treynor = sharpe * 0.08 if sharpe else 0
-        avg_beta = float(np.mean(betas)) if betas else 0
-
+        # ── Build response (same shape as before) ─────────────────────────
         metrics = [
-            {"name": "Sharpe Ratio", "value": f"{sharpe:.2f}", "status": "good" if sharpe > 1.5 else "warning" if sharpe > 0 else "bad"},
-            {"name": "Sortino Ratio", "value": f"{sortino:.2f}", "status": "good" if sortino > 2 else "warning" if sortino > 0 else "bad"},
-            {"name": "Max Drawdown", "value": f"{max_dd:.2f}%", "status": "warning" if max_dd < -5 else "good"},
-            {"name": "Calmar Ratio", "value": f"{calmar:.2f}", "status": "good" if calmar > 1 else "neutral"},
-            {"name": "Information Ratio", "value": f"{info_ratio:.2f}", "status": "good" if info_ratio > 0.5 else "neutral"},
-            {"name": "Treynor Ratio", "value": f"{treynor:.1f}%", "status": "good" if treynor > 0 else "bad"},
+            {"name": "Sharpe Ratio",      "value": f"{sharpe:.2f}",      "status": "good" if sharpe > 1.5 else "warning" if sharpe > 0 else "bad"},
+            {"name": "Sortino Ratio",     "value": f"{sortino:.2f}",     "status": "good" if sortino > 2 else "warning" if sortino > 0 else "bad"},
+            {"name": "Max Drawdown",      "value": f"{max_dd_pct:.2f}%", "status": "warning" if max_dd_pct > 5 else "good"},
+            {"name": "Calmar Ratio",      "value": f"{calmar:.2f}",      "status": "good" if calmar > 1 else "neutral"},
+            {"name": "Information Ratio", "value": f"{info_ratio:.2f}",  "status": "good" if info_ratio > 0.5 else "neutral"},
+            {"name": "Treynor Ratio",     "value": f"{treynor:.1f}%",    "status": "good" if treynor > 0 else "bad"},
         ]
         return {"metrics": metrics, "timestamp": datetime.utcnow().isoformat()}
     except Exception as e:
