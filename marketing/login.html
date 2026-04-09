@@ -2,6 +2,29 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8"/>
+<script>
+// Storage polyfill for sandboxed/static environments
+(function() {
+  function makeStorage() {
+    var data = {};
+    return {
+      getItem: function(key) { return data.hasOwnProperty(key) ? data[key] : null; },
+      setItem: function(key, val) { data[key] = String(val); },
+      removeItem: function(key) { delete data[key]; },
+      clear: function() { data = {}; },
+      get length() { return Object.keys(data).length; },
+      key: function(i) { return Object.keys(data)[i] || null; }
+    };
+  }
+  var names = ["local","session"];
+  names.forEach(function(prefix) {
+    var prop = prefix + "Storage";
+    try { window[prop].setItem("__t","1"); window[prop].removeItem("__t"); }
+    catch(e) { Object.defineProperty(window, prop, { value: makeStorage(), writable: true }); }
+  });
+})();
+</script>
+
 <meta name="viewport" content="width=device-width,initial-scale=1.0"/>
 <title>Investor Portal — Metadron Capital</title>
 <link rel="preconnect" href="https://fonts.googleapis.com"/>
@@ -21,9 +44,7 @@ html,body{height:100%;font-family:'DM Sans',sans-serif;background:var(--bg);colo
 ::selection{background:rgba(0,229,192,0.15);color:var(--accent);}
 
 body::before{
-  content:'';position:fixed;inset:0;
-  background-image:linear-gradient(var(--grid) 1px,transparent 1px),linear-gradient(90deg,var(--grid) 1px,transparent 1px);
-  background-size:56px 56px;pointer-events:none;z-index:0;
+  display:none;
 }
 
 /* ── Layout ── */

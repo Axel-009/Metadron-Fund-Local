@@ -2,6 +2,29 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8"/>
+<script>
+// Storage polyfill for sandboxed/static environments
+(function() {
+  function makeStorage() {
+    var data = {};
+    return {
+      getItem: function(key) { return data.hasOwnProperty(key) ? data[key] : null; },
+      setItem: function(key, val) { data[key] = String(val); },
+      removeItem: function(key) { delete data[key]; },
+      clear: function() { data = {}; },
+      get length() { return Object.keys(data).length; },
+      key: function(i) { return Object.keys(data)[i] || null; }
+    };
+  }
+  var names = ["local","session"];
+  names.forEach(function(prefix) {
+    var prop = prefix + "Storage";
+    try { window[prop].setItem("__t","1"); window[prop].removeItem("__t"); }
+    catch(e) { Object.defineProperty(window, prop, { value: makeStorage(), writable: true }); }
+  });
+})();
+</script>
+
 <meta name="viewport" content="width=device-width,initial-scale=1.0"/>
 <title>Metadron Capital</title>
 <link rel="preconnect" href="https://fonts.googleapis.com"/>
@@ -25,11 +48,9 @@ a{color:inherit;text-decoration:none;}
 ::-webkit-scrollbar-track{background:var(--bg);}
 ::-webkit-scrollbar-thumb{background:var(--border-b);border-radius:3px;}
 
-/* ── GLOBAL GRID OVERLAY ── */
+/* ── GLOBAL GRID OVERLAY (disabled) ── */
 body::before{
-  content:'';position:fixed;inset:0;
-  background-image:linear-gradient(var(--grid) 1px,transparent 1px),linear-gradient(90deg,var(--grid) 1px,transparent 1px);
-  background-size:56px 56px;pointer-events:none;z-index:0;
+  display:none;
 }
 
 
@@ -3467,10 +3488,7 @@ document.querySelectorAll('.fade-up').forEach(el=>io.observe(el));
       g.addColorStop(0,`rgba(79,172,254,${l.opacity*3})`); g.addColorStop(0.5,`rgba(79,172,254,${l.opacity})`); g.addColorStop(1,'rgba(0,229,192,0)');
       ctx.fillStyle=g; ctx.fillRect(l.x-l.width/2,0,l.width,H*0.7);
     });
-    ctx.strokeStyle='rgba(79,172,254,0.04)'; ctx.lineWidth=1;
-    const vp={x:W/2,y:H*0.45};
-    for(let i=0;i<20;i++){const x=(i/19)*W;ctx.beginPath();ctx.moveTo(vp.x,vp.y);ctx.lineTo(x,H);ctx.stroke();}
-    for(let j=0;j<8;j++){const y=vp.y+(H-vp.y)*(j/7);ctx.beginPath();ctx.moveTo(0,y);ctx.lineTo(W,y);ctx.stroke();}
+    /* perspective grid lines removed */
     officeParticles.forEach(p=>{
       p.x+=p.vx; p.y+=p.vy;
       if(p.y<-10){p.y=H+10;p.x=Math.random()*W;}
@@ -3485,11 +3503,7 @@ document.querySelectorAll('.fade-up').forEach(el=>io.observe(el));
         ctx.fillStyle=`hsla(${p.hue},90%,80%,${p.opacity*0.6})`; ctx.fill();
       }
     });
-    for(let s=0;s<12;s++){
-      const y=H*0.2+s*(H*0.65/12); const indent=s*(W*0.02);
-      ctx.strokeStyle='rgba(0,229,192,0.06)'; ctx.lineWidth=1;
-      ctx.beginPath(); ctx.moveTo(indent,y); ctx.lineTo(W-indent,y); ctx.stroke();
-    }
+    /* horizontal scan lines removed */
     const vig=ctx.createRadialGradient(W/2,H/2,H*0.25,W/2,H/2,H*0.85);
     vig.addColorStop(0,'rgba(0,0,0,0)'); vig.addColorStop(1,'rgba(0,0,0,0.45)');
     ctx.fillStyle=vig; ctx.fillRect(0,0,W,H);
