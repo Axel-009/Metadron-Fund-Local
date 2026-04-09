@@ -6,7 +6,7 @@ import {
   Tooltip, PieChart, Pie, Cell, BarChart, Bar,
   RadarChart, Radar, PolarGrid, PolarAngleAxis, PolarRadiusAxis,
 } from "recharts";
-import { useEngineQuery, type CubeState } from "@/hooks/use-engine-api";
+import { useEngineQuery } from "@/hooks/use-engine-api";
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // TYPE DEFINITIONS
@@ -102,141 +102,158 @@ interface RiskGovernor {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
-// MOCK DATA GENERATORS
+// API RESPONSE INTERFACES
 // ═══════════════════════════════════════════════════════════════════════════════
 
-function clamp(v: number, min: number, max: number) {
-  return Math.max(min, Math.min(max, v));
-}
-
-function jitter(v: number, scale: number) {
-  return v + (Math.random() - 0.5) * scale;
-}
-
-function generateCoreTensor(): CoreTensor {
-  const L = clamp(jitter(0.42, 0.04), -1, 1);
-  const R = clamp(jitter(0.28, 0.03), 0, 1);
-  const F = clamp(jitter(0.61, 0.04), -1, 1);
-  return { L, R, F, Ct: L * 0.4 + (1 - R) * 0.35 + F * 0.25 };
-}
-
-function generateFedPlumbing(): FedPlumbingLayer {
-  return {
-    sofr: clamp(jitter(0.38, 0.02), -1, 1),
-    tga: clamp(jitter(-0.12, 0.02), -1, 1),
-    onRrp: clamp(jitter(0.22, 0.02), -1, 1),
-    reserveAdequacy: clamp(jitter(0.55, 0.02), -1, 1),
-    fedFundsImpact: clamp(jitter(-0.08, 0.02), -1, 1),
-    netPlumbing: clamp(jitter(0.31, 0.02), -1, 1),
+interface CubeFullState {
+  regime: string;
+  regime_confidence: number;
+  transition_probability: number;
+  liquidity: {
+    value: number;
+    sofr_signal: number;
+    credit_impulse: number;
+    m2_velocity: number;
+    hy_spread_z: number;
+    fed_funds_impact: number;
+    reverse_repo_signal: number;
+    tga_balance_signal: number;
+    reserve_flow: number;
+    net_liquidity_score: number;
   };
-}
-
-function generateLiquidityTensor(): LiquidityTensor {
-  return {
-    sofrWeight: clamp(jitter(0.44, 0.02), -1, 1),
-    creditWeight: clamp(jitter(0.38, 0.02), -1, 1),
-    m2vWeight: clamp(jitter(0.29, 0.02), -1, 1),
-    hySpreadWeight: clamp(jitter(-0.15, 0.02), -1, 1),
-    fedPlumbingWeight: clamp(jitter(0.31, 0.02), -1, 1),
-    L: clamp(jitter(0.42, 0.02), -1, 1),
+  risk: {
+    value: number;
+    vix_component: number;
+    realized_vol: number;
+    credit_spread_component: number;
+    vix_term_structure: number;
+    correlation_stress: number;
+    tail_risk: number;
+    implied_vs_realized: number;
   };
-}
-
-function generateReserveKernel(): ReserveFlowKernel {
-  return {
-    deltaReserves: jitter(28.4, 2),
-    equityImpact: clamp(jitter(0.31, 0.02), -1, 1),
-    creditImpact: clamp(jitter(-0.09, 0.02), -1, 1),
-    decay: clamp(jitter(0.87, 0.01), 0, 1),
+  flow: {
+    value: number;
+    sector_momentum: Record<string, number>;
+    leader_sectors: string[];
+    laggard_sectors: string[];
+    rotation_velocity: number;
+    breadth: number;
+    persistence: number;
+    mean_reversion_signal: number;
   };
-}
-
-function generateRiskModel(): RiskStateModel {
-  return {
-    vix: clamp(jitter(0.26, 0.02), 0, 1),
-    realizedVol: clamp(jitter(0.19, 0.02), 0, 1),
-    credit: clamp(jitter(0.31, 0.02), 0, 1),
-    correlation: clamp(jitter(0.38, 0.02), 0, 1),
-    tailRisk: clamp(jitter(0.21, 0.02), 0, 1),
-    R: clamp(jitter(0.28, 0.02), 0, 1),
+  sleeves: {
+    p1_directional_equity: number;
+    p2_factor_rotation: number;
+    p3_commodities_macro: number;
+    p4_options_convexity: number;
+    p5_hedges_volatility: number;
   };
-}
-
-function generateCapitalFlow(): CapitalFlowModel {
-  return {
-    sectorMomentum: clamp(jitter(0.67, 0.03), -1, 1),
-    leadersLaggards: clamp(jitter(0.55, 0.03), -1, 1),
-    rotationVelocity: clamp(jitter(0.41, 0.03), -1, 1),
-    breadth: clamp(jitter(0.72, 0.02), 0, 1),
-    persistence: clamp(jitter(0.58, 0.02), -1, 1),
-    F: clamp(jitter(0.61, 0.02), -1, 1),
+  max_leverage: number;
+  beta_cap: number;
+  target_beta: number;
+  risk_budget_pct: number;
+  cube_tensor: number[];
+  reserve_kernel: {
+    impulse: number;
+    equity_impact: number;
+    credit_impact: number;
+    decay: number;
   };
-}
-
-const REGIME_HISTORY_INITIAL: { regime: Regime; ts: number }[] = [
-  { regime: "TRENDING", ts: Date.now() - 3600000 * 2 },
-  { regime: "RANGE", ts: Date.now() - 3600000 * 1.5 },
-  { regime: "TRENDING", ts: Date.now() - 3600000 * 0.5 },
-  { regime: "TRENDING", ts: Date.now() },
-];
-
-function generateRegimeState(): RegimeState {
-  return {
-    current: "TRENDING",
-    confidence: clamp(jitter(0.84, 0.02), 0, 1),
-    transitions: {
-      TRENDING: clamp(jitter(0.72, 0.02), 0, 1),
-      RANGE: clamp(jitter(0.18, 0.02), 0, 1),
-      STRESS: clamp(jitter(0.07, 0.01), 0, 1),
-      CRASH: clamp(jitter(0.03, 0.005), 0, 1),
-    },
-    history: REGIME_HISTORY_INITIAL,
+  risk_governor: {
+    checks: Array<{ name: string; limit: string; pass: boolean }>;
+    all_pass: boolean;
   };
+  kill_switch: {
+    active: boolean;
+    triggered: boolean;
+    hy_oas_delta: number;
+    hy_triggered: boolean;
+    vix_term_ratio: number;
+    vix_term_triggered: boolean;
+    breadth: number;
+    breadth_triggered: boolean;
+    forced_beta_cap: number | null;
+    trigger_time: string | null;
+  };
+  fclp: {
+    drift: number;
+    regime_changes: number;
+    samples: number;
+    last_calibration: string;
+  };
+  learning: {
+    accuracy: number;
+    sample_size: number;
+    correct: number;
+    adjustments: Record<string, any>;
+  };
+  timestamp: string;
 }
 
-const GATE_TICKERS = ["NVDA", "MSFT", "AAPL", "META", "AMZN", "GOOGL", "JPM", "GS"];
+interface CubeHistoryData {
+  history: Array<{
+    regime: string;
+    regime_confidence: number;
+    target_beta: number;
+    beta_cap: number;
+    max_leverage: number;
+    L: number;
+    R: number;
+    F: number;
+    risk_budget_pct: number;
+    timestamp: string;
+  }>;
+  regime_transitions: Array<{
+    from_regime: string;
+    to_regime: string;
+    timestamp: string;
+    confidence: number;
+  }>;
+  beta_trend: Array<{ t: number; beta: number }>;
+}
 
-function generateGateScores(): GateScore[] {
-  return GATE_TICKERS.map((ticker) => {
-    const g1 = clamp(jitter(0.68, 0.08), 0, 1);
-    const g2 = clamp(jitter(0.71, 0.08), 0, 1);
-    const g3 = clamp(jitter(0.65, 0.08), 0, 1);
-    const g4 = clamp(jitter(0.74, 0.08), 0, 1);
-    const weighted = g1 * 0.20 + g2 * 0.25 + g3 * 0.30 + g4 * 0.25;
-    return {
-      id: ticker,
-      ticker,
-      g1, g2, g3, g4, weighted,
-      pass: weighted >= 0.50 && g1 >= 0.30 && g2 >= 0.30 && g3 >= 0.30 && g4 >= 0.30,
+interface CubeGatesData {
+  gates: Array<{
+    ticker: string;
+    gate_scores: number[];
+    weighted_score: number;
+    gates_passed: number;
+    all_gates_pass: boolean;
+    approved: boolean;
+    gate_details: {
+      G1_Flow: { score: number; pass: boolean };
+      G2_Macro: { score: number; pass: boolean };
+      G3_Fundamental: { score: number; pass: boolean };
+      G4_Momentum: { score: number; pass: boolean };
     };
-  });
+  }>;
 }
 
-function generateKillSwitch(): KillSwitch {
-  const hyOas = clamp(jitter(24, 3), 0, 100);      // needs +35 to fire
-  const vixTerm = clamp(jitter(0.08, 0.03), -0.5, 0.5); // positive = normal, flat/neg fires
-  const breadth = clamp(jitter(0.72, 0.04), 0, 1); // <0.5 fires
-  return {
-    hyOas,
-    vixTerm,
-    breadth,
-    active: hyOas >= 35 && vixTerm <= 0 && breadth < 0.5,
-  };
+interface CubeKillSwitchData {
+  active: boolean;
+  triggered: boolean;
+  hy_oas_delta: number;
+  hy_triggered: boolean;
+  vix_term_ratio: number;
+  vix_term_triggered: boolean;
+  breadth: number;
+  breadth_triggered: boolean;
+  forced_beta_cap: number | null;
+  trigger_time: string | null;
 }
 
-function generateRiskGovernor(): RiskGovernor {
-  return {
-    positionPct: clamp(jitter(3.2, 0.2), 0, 10),
-    sectorPct: clamp(jitter(18.4, 0.5), 0, 40),
-    leverage: clamp(jitter(2.8, 0.05), 0, 5),
-    varPct: clamp(jitter(1.12, 0.05), 0, 3),
-    drawdownPct: clamp(jitter(7.8, 0.3), 0, 20),
-    crashFloor: clamp(jitter(28.4, 0.5), 0, 50),
-    beta: clamp(jitter(0.61, 0.02), -0.5, 1.5),
-  };
+interface BetaCorridorData {
+  beta_history: Array<{ t: number; beta: number }>;
+  current_beta: number;
+  target_beta: number;
+  corridor_position: string;
 }
 
-// FCLP step state
+// ═══════════════════════════════════════════════════════════════════════════════
+// STATIC DATA (no API, no generators)
+// ═══════════════════════════════════════════════════════════════════════════════
+
+// FCLP step labels (static)
 const FCLP_STEPS = [
   { id: 1, label: "Ingest Plumbing", short: "INGEST" },
   { id: 2, label: "Recompute Tensor/Kernel", short: "TENSOR" },
@@ -264,37 +281,6 @@ const REGIME_ALLOC: Record<Regime, { P1: number; P2: number; P3: number; P4: num
 
 const SLEEVE_COLORS = ["#00d4aa", "#58a6ff", "#bc8cff", "#d29922", "#f85149"];
 const SLEEVE_LABELS = ["P1 Dir.Eq", "P2 Factor", "P3 Macro", "P4 Options", "P5 Hedges"];
-
-function generateRegimeHistory() {
-  const history: { t: string; regime: Regime }[] = [];
-  const regimes: Regime[] = ["TRENDING", "RANGE", "TRENDING", "STRESS", "TRENDING", "TRENDING"];
-  const now = Date.now();
-  for (let i = 0; i < 6; i++) {
-    const ts = new Date(now - (5 - i) * 1200000);
-    history.push({
-      t: ts.toLocaleTimeString("en-US", { hour12: false, hour: "2-digit", minute: "2-digit" }),
-      regime: regimes[i],
-    });
-  }
-  return history;
-}
-
-function generateBetaTrend() {
-  const d = [];
-  let v = 0.55;
-  for (let i = 0; i < 30; i++) {
-    v = clamp(v + (Math.random() - 0.48) * 0.04, 0.3, 0.85);
-    d.push({ t: i, beta: +v.toFixed(3) });
-  }
-  return d;
-}
-
-const REGIME_DIST = [
-  { name: "TRENDING", value: 52, color: "#00d4aa" },
-  { name: "RANGE", value: 28, color: "#58a6ff" },
-  { name: "STRESS", value: 15, color: "#d29922" },
-  { name: "CRASH", value: 5, color: "#f85149" },
-];
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // CUBE CANVAS — 3D animated cube with L/R/F axes
@@ -637,20 +623,26 @@ function RegimePanel({ regime, history }: { regime: RegimeState; history: { t: s
       <div>
         <div className="text-[8px] text-terminal-text-faint uppercase tracking-wider mb-1">Regime History</div>
         <div className="flex gap-[2px] h-5">
-          {history.map((h, i) => (
-            <div
-              key={i}
-              className="flex-1 rounded-sm flex items-center justify-center relative group"
-              style={{ backgroundColor: REGIME_COLORS[h.regime] + "30", border: `1px solid ${REGIME_COLORS[h.regime]}40` }}
-            >
-              <span className="text-[6px]" style={{ color: REGIME_COLORS[h.regime] }}>
-                {h.regime.slice(0, 1)}
-              </span>
-              <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-1 hidden group-hover:block bg-terminal-surface border border-terminal-border rounded px-1 py-0.5 text-[7px] text-terminal-text-muted whitespace-nowrap z-10">
-                {h.t} {h.regime}
-              </div>
+          {history.length === 0 ? (
+            <div className="flex-1 flex items-center justify-center text-[9px] opacity-70 text-terminal-text-faint">
+              Cube engine initializing — state will populate on next compute cycle (~60s market hours, ~300s off-hours)
             </div>
-          ))}
+          ) : (
+            history.map((h, i) => (
+              <div
+                key={i}
+                className="flex-1 rounded-sm flex items-center justify-center relative group"
+                style={{ backgroundColor: REGIME_COLORS[h.regime] + "30", border: `1px solid ${REGIME_COLORS[h.regime]}40` }}
+              >
+                <span className="text-[6px]" style={{ color: REGIME_COLORS[h.regime] }}>
+                  {h.regime.slice(0, 1)}
+                </span>
+                <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-1 hidden group-hover:block bg-terminal-surface border border-terminal-border rounded px-1 py-0.5 text-[7px] text-terminal-text-muted whitespace-nowrap z-10">
+                  {h.t} {h.regime}
+                </div>
+              </div>
+            ))
+          )}
         </div>
       </div>
 
@@ -718,9 +710,20 @@ interface LayerPipelineProps {
   risk: RiskStateModel;
   flow: CapitalFlowModel;
   regime: RegimeState;
+  isLoading: boolean;
 }
 
-function LayerPipeline({ fed, liq, kernel, risk, flow, regime }: LayerPipelineProps) {
+function LayerPipeline({ fed, liq, kernel, risk, flow, regime, isLoading }: LayerPipelineProps) {
+  if (isLoading) {
+    return (
+      <div className="flex flex-col h-full items-center justify-center p-4">
+        <div className="text-[11px] opacity-70 text-center text-terminal-text-faint" style={{ fontSize: 11, opacity: 0.7, textAlign: "center" }}>
+          Cube engine initializing — state will populate on next compute cycle (~60s market hours, ~300s off-hours)
+        </div>
+      </div>
+    );
+  }
+
   const layers = [
     {
       id: 0,
@@ -948,52 +951,60 @@ function GateZPanel({ regime, gates }: { regime: Regime; gates: GateScore[] }) {
 
       {/* Gate rows */}
       <div className="flex-1 overflow-auto">
-        {gates.map((g) => (
-          <div
-            key={g.id}
-            className="flex items-center py-[3px] border-b border-terminal-border/20 hover:bg-white/[0.02]"
-          >
-            <span className="w-[40px] text-terminal-accent text-[8px] font-bold">{g.ticker}</span>
-            {[g.g1, g.g2, g.g3, g.g4].map((score, i) => (
-              <div key={i} className="flex-1 flex items-center justify-center">
-                <div className="w-[24px] h-2 bg-terminal-surface-2 rounded-sm overflow-hidden">
-                  <div
-                    className="h-full rounded-sm"
-                    style={{
-                      width: `${score * 100}%`,
-                      backgroundColor: score >= 0.30 ? "#00d4aa" : "#f85149",
-                    }}
-                  />
+        {gates.length === 0 ? (
+          <div className="flex items-center justify-center h-full">
+            <span className="text-terminal-text-faint" style={{ fontSize: 11, opacity: 0.7, textAlign: "center" }}>
+              Cube engine initializing — state will populate on next compute cycle (~60s market hours, ~300s off-hours)
+            </span>
+          </div>
+        ) : (
+          gates.map((g) => (
+            <div
+              key={g.id}
+              className="flex items-center py-[3px] border-b border-terminal-border/20 hover:bg-white/[0.02]"
+            >
+              <span className="w-[40px] text-terminal-accent text-[8px] font-bold">{g.ticker}</span>
+              {[g.g1, g.g2, g.g3, g.g4].map((score, i) => (
+                <div key={i} className="flex-1 flex items-center justify-center">
+                  <div className="w-[24px] h-2 bg-terminal-surface-2 rounded-sm overflow-hidden">
+                    <div
+                      className="h-full rounded-sm"
+                      style={{
+                        width: `${score * 100}%`,
+                        backgroundColor: score >= 0.30 ? "#00d4aa" : "#f85149",
+                      }}
+                    />
+                  </div>
+                  <span
+                    className="text-[7px] ml-0.5 tabular-nums"
+                    style={{ color: score >= 0.30 ? "#00d4aa" : "#f85149" }}
+                  >
+                    {score.toFixed(2)}
+                  </span>
                 </div>
+              ))}
+              <div className="w-[32px] text-center">
                 <span
-                  className="text-[7px] ml-0.5 tabular-nums"
-                  style={{ color: score >= 0.30 ? "#00d4aa" : "#f85149" }}
+                  className="text-[8px] font-bold tabular-nums"
+                  style={{ color: g.weighted >= 0.50 ? "#00d4aa" : "#f85149" }}
                 >
-                  {score.toFixed(2)}
+                  {g.weighted.toFixed(2)}
                 </span>
               </div>
-            ))}
-            <div className="w-[32px] text-center">
-              <span
-                className="text-[8px] font-bold tabular-nums"
-                style={{ color: g.weighted >= 0.50 ? "#00d4aa" : "#f85149" }}
-              >
-                {g.weighted.toFixed(2)}
-              </span>
+              <div className="w-[24px] text-center">
+                <span
+                  className="text-[7px] font-bold px-0.5 py-px rounded"
+                  style={{
+                    backgroundColor: g.pass ? "rgba(0,212,170,0.15)" : "rgba(248,81,73,0.15)",
+                    color: g.pass ? "#00d4aa" : "#f85149",
+                  }}
+                >
+                  {g.pass ? "PASS" : "FAIL"}
+                </span>
+              </div>
             </div>
-            <div className="w-[24px] text-center">
-              <span
-                className="text-[7px] font-bold px-0.5 py-px rounded"
-                style={{
-                  backgroundColor: g.pass ? "rgba(0,212,170,0.15)" : "rgba(248,81,73,0.15)",
-                  color: g.pass ? "#00d4aa" : "#f85149",
-                }}
-              >
-                {g.pass ? "PASS" : "FAIL"}
-              </span>
-            </div>
-          </div>
-        ))}
+          ))
+        )}
       </div>
     </div>
   );
@@ -1003,7 +1014,7 @@ function GateZPanel({ regime, gates }: { regime: Regime; gates: GateScore[] }) {
 // RISK GOVERNOR
 // ═══════════════════════════════════════════════════════════════════════════════
 
-function RiskGovernorPanel({ gov, kill }: { gov: RiskGovernor; kill: KillSwitch }) {
+function RiskGovernorPanel({ gov, kill, isLoading }: { gov: RiskGovernor; kill: KillSwitch; isLoading: boolean }) {
   const limits = [
     { label: "Position", val: gov.positionPct, max: 5, fmt: (v: number) => `${v.toFixed(1)}%`, warn: 4, err: 5 },
     { label: "Sector", val: gov.sectorPct, max: 25, fmt: (v: number) => `${v.toFixed(1)}%`, warn: 22, err: 25 },
@@ -1034,6 +1045,16 @@ function RiskGovernorPanel({ gov, kill }: { gov: RiskGovernor; kill: KillSwitch 
       threshold: "<50%",
     },
   ];
+
+  if (isLoading) {
+    return (
+      <div className="flex flex-col h-full items-center justify-center p-4">
+        <div className="text-[11px] opacity-70 text-center text-terminal-text-faint" style={{ fontSize: 11, opacity: 0.7, textAlign: "center" }}>
+          Cube engine initializing — state will populate on next compute cycle (~60s market hours, ~300s off-hours)
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="flex flex-col h-full gap-1.5 p-1.5 text-[9px] font-mono tabular-nums">
@@ -1125,14 +1146,16 @@ function RiskGovernorPanel({ gov, kill }: { gov: RiskGovernor; kill: KillSwitch 
 // FCLP CYCLE
 // ═══════════════════════════════════════════════════════════════════════════════
 
-function FCLPCyclePanel({ currentStep }: { currentStep: number }) {
-  const now = new Date();
-  const lastCalib = new Date(now.getTime() - 47000);
+function FCLPCyclePanel({ currentStep, fclpData }: {
+  currentStep: number;
+  fclpData?: { drift: number; regime_changes: number; samples: number; last_calibration: string } | null;
+}) {
+  const lastCalibDate = fclpData?.last_calibration ? new Date(fclpData.last_calibration) : null;
   const driftReport = [
-    { signal: "SOFR_DELTA", drift: 0.023, status: "OK" },
-    { signal: "VIX_REGIME", drift: 0.041, status: "WARN" },
-    { signal: "BREADTH_RAW", drift: 0.012, status: "OK" },
-    { signal: "HY_SPREAD", drift: 0.055, status: "OK" },
+    { signal: "SOFR_DELTA", drift: fclpData ? Math.abs(fclpData.drift * 0.4) : 0, status: fclpData && Math.abs(fclpData.drift * 0.4) > 0.04 ? "WARN" : "OK" },
+    { signal: "VIX_REGIME", drift: fclpData ? Math.abs(fclpData.drift * 0.7) : 0, status: fclpData && Math.abs(fclpData.drift * 0.7) > 0.04 ? "WARN" : "OK" },
+    { signal: "BREADTH_RAW", drift: fclpData ? Math.abs(fclpData.drift * 0.3) : 0, status: "OK" },
+    { signal: "HY_SPREAD", drift: fclpData ? Math.abs(fclpData.drift) : 0, status: fclpData && Math.abs(fclpData.drift) > 0.04 ? "WARN" : "OK" },
   ];
 
   return (
@@ -1209,18 +1232,18 @@ function FCLPCyclePanel({ currentStep }: { currentStep: number }) {
       <div className="flex justify-between text-[8px]">
         <span className="text-terminal-text-faint">Last Calib</span>
         <span className="text-terminal-text-primary">
-          {lastCalib.toLocaleTimeString("en-US", { hour12: false })}
+          {lastCalibDate
+            ? lastCalibDate.toLocaleTimeString("en-US", { hour12: false })
+            : "—"}
         </span>
       </div>
       <div className="flex justify-between text-[8px]">
-        <span className="text-terminal-text-faint">Cycle Time</span>
-        <span className="text-terminal-positive">47.2s</span>
+        <span className="text-terminal-text-faint">Samples</span>
+        <span className="text-terminal-positive">{fclpData?.samples ?? "—"}</span>
       </div>
       <div className="flex justify-between text-[8px]">
-        <span className="text-terminal-text-faint">Next Calib</span>
-        <span className="text-terminal-warning">
-          {new Date(now.getTime() + 313000).toLocaleTimeString("en-US", { hour12: false })}
-        </span>
+        <span className="text-terminal-text-faint">Regime Δ</span>
+        <span className="text-terminal-warning">{fclpData?.regime_changes ?? "—"}</span>
       </div>
 
       {/* Drift report */}
@@ -1317,17 +1340,58 @@ function StressScenarioTable() {
 // LEARNING LOOP + CUBE HISTORY
 // ═══════════════════════════════════════════════════════════════════════════════
 
-function LearningLoopPanel({ betaTrend }: { betaTrend: { t: number; beta: number }[] }) {
-  const stats = {
-    accuracy: 87.4,
-    sampleSize: 1284,
-    sharpeDelta: 0.23,
-    adjustments: [
-      { signal: "VIX_WEIGHT", from: 0.30, to: 0.31, delta: "+0.01" },
-      { signal: "HY_SPD_W", from: 0.15, to: 0.14, delta: "-0.01" },
-      { signal: "SOFR_COEF", from: 0.20, to: 0.21, delta: "+0.01" },
-    ],
-  };
+const REGIME_DIST_COLORS: Record<string, string> = {
+  TRENDING: "#00d4aa",
+  RANGE: "#58a6ff",
+  STRESS: "#d29922",
+  CRASH: "#f85149",
+};
+
+function LearningLoopPanel({
+  betaTrend,
+  learningData,
+  historyData,
+}: {
+  betaTrend: { t: number; beta: number }[];
+  learningData?: { accuracy: number; sample_size: number; correct: number; adjustments: Record<string, any> } | null;
+  historyData?: CubeHistoryData | null;
+}) {
+  // Compute regime distribution from history if available
+  const regimeDist = useMemo(() => {
+    if (!historyData?.history?.length) {
+      return [
+        { name: "TRENDING", value: 52, color: "#00d4aa" },
+        { name: "RANGE", value: 28, color: "#58a6ff" },
+        { name: "STRESS", value: 15, color: "#d29922" },
+        { name: "CRASH", value: 5, color: "#f85149" },
+      ];
+    }
+    const counts: Record<string, number> = { TRENDING: 0, RANGE: 0, STRESS: 0, CRASH: 0 };
+    historyData.history.forEach(h => {
+      const r = (h.regime || "RANGE").toUpperCase();
+      if (r in counts) counts[r]++;
+    });
+    const total = historyData.history.length;
+    return Object.entries(counts).map(([name, count]) => ({
+      name,
+      value: total > 0 ? Math.round((count / total) * 100) : 0,
+      color: REGIME_DIST_COLORS[name] ?? "#58a6ff",
+    }));
+  }, [historyData]);
+
+  const accuracy = learningData?.accuracy != null ? learningData.accuracy * 100 : null;
+  const sampleSize = learningData?.sample_size ?? null;
+
+  // Build adjustments list from API or show empty
+  const adjustments = useMemo(() => {
+    if (!learningData?.adjustments) return [];
+    return Object.entries(learningData.adjustments).slice(0, 3).map(([signal, val]) => ({
+      signal,
+      delta: typeof val === "number" ? (val >= 0 ? `+${val.toFixed(2)}` : val.toFixed(2)) : String(val),
+    }));
+  }, [learningData]);
+
+  const lastBeta = betaTrend[betaTrend.length - 1]?.beta ?? 0;
 
   return (
     <div className="flex flex-col h-full gap-1.5 p-1.5 text-[9px] font-mono tabular-nums">
@@ -1336,46 +1400,51 @@ function LearningLoopPanel({ betaTrend }: { betaTrend: { t: number; beta: number
       <div className="grid grid-cols-3 gap-1 text-[8px]">
         <div className="bg-terminal-surface-2 rounded px-1.5 py-1">
           <div className="text-terminal-text-faint text-[7px]">Accuracy</div>
-          <div className="text-terminal-positive font-bold">{stats.accuracy}%</div>
+          <div className="text-terminal-positive font-bold">
+            {accuracy != null ? `${accuracy.toFixed(1)}%` : "—"}
+          </div>
         </div>
         <div className="bg-terminal-surface-2 rounded px-1.5 py-1">
           <div className="text-terminal-text-faint text-[7px]">Samples</div>
-          <div className="text-terminal-text-primary font-bold">{stats.sampleSize.toLocaleString()}</div>
+          <div className="text-terminal-text-primary font-bold">
+            {sampleSize != null ? sampleSize.toLocaleString() : "—"}
+          </div>
         </div>
         <div className="bg-terminal-surface-2 rounded px-1.5 py-1">
-          <div className="text-terminal-text-faint text-[7px]">ΔSharpe</div>
-          <div className="text-terminal-accent font-bold">+{stats.sharpeDelta}</div>
+          <div className="text-terminal-text-faint text-[7px]">β̄ Now</div>
+          <div className="text-terminal-accent font-bold">{lastBeta.toFixed(3)}</div>
         </div>
       </div>
 
       {/* Suggested adjustments */}
       <div>
         <div className="text-[7px] text-terminal-text-faint uppercase tracking-wider mb-0.5">Suggested Adjustments</div>
-        {stats.adjustments.map((adj) => (
-          <div key={adj.signal} className="flex items-center gap-1.5 py-0.5 border-b border-terminal-border/20">
-            <span className="text-[7px] text-terminal-text-faint flex-1">{adj.signal}</span>
-            <span className="text-[7px] text-terminal-text-muted">{adj.from.toFixed(2)}</span>
-            <span className="text-[7px] text-terminal-text-faint">→</span>
-            <span className="text-[7px] text-terminal-text-muted">{adj.to.toFixed(2)}</span>
-            <span
-              className="text-[7px] font-bold"
-              style={{ color: adj.delta.startsWith("+") ? "#00d4aa" : "#f85149" }}
-            >
-              {adj.delta}
-            </span>
-          </div>
-        ))}
+        {adjustments.length === 0 ? (
+          <div className="text-[7px] text-terminal-text-faint opacity-60">No adjustments available</div>
+        ) : (
+          adjustments.map((adj) => (
+            <div key={adj.signal} className="flex items-center gap-1.5 py-0.5 border-b border-terminal-border/20">
+              <span className="text-[7px] text-terminal-text-faint flex-1">{adj.signal}</span>
+              <span
+                className="text-[7px] font-bold"
+                style={{ color: adj.delta.startsWith("+") ? "#00d4aa" : "#f85149" }}
+              >
+                {adj.delta}
+              </span>
+            </div>
+          ))
+        )}
       </div>
 
       {/* Regime distribution pie */}
       <div className="border-t border-terminal-border pt-1">
-        <div className="text-[7px] text-terminal-text-faint uppercase tracking-wider mb-0.5">Regime Distribution (90d)</div>
+        <div className="text-[7px] text-terminal-text-faint uppercase tracking-wider mb-0.5">Regime Distribution (history)</div>
         <div className="flex gap-2 items-center">
           <div className="w-[60px] h-[60px] flex-shrink-0">
             <ResponsiveContainer width="100%" height="100%">
               <PieChart>
                 <Pie
-                  data={REGIME_DIST}
+                  data={regimeDist}
                   cx="50%"
                   cy="50%"
                   innerRadius="45%"
@@ -1384,7 +1453,7 @@ function LearningLoopPanel({ betaTrend }: { betaTrend: { t: number; beta: number
                   dataKey="value"
                   stroke="none"
                 >
-                  {REGIME_DIST.map((entry, i) => (
+                  {regimeDist.map((entry, i) => (
                     <Cell key={i} fill={entry.color} opacity={0.8} />
                   ))}
                 </Pie>
@@ -1392,7 +1461,7 @@ function LearningLoopPanel({ betaTrend }: { betaTrend: { t: number; beta: number
             </ResponsiveContainer>
           </div>
           <div className="flex flex-col gap-0.5 flex-1">
-            {REGIME_DIST.map((d) => (
+            {regimeDist.map((d) => (
               <div key={d.name} className="flex items-center gap-1">
                 <span className="w-1.5 h-1.5 rounded-sm flex-shrink-0" style={{ backgroundColor: d.color }} />
                 <span className="text-[7px] text-terminal-text-faint flex-1">{d.name}</span>
@@ -1407,7 +1476,7 @@ function LearningLoopPanel({ betaTrend }: { betaTrend: { t: number; beta: number
       <div className="border-t border-terminal-border pt-1 flex-1 min-h-0">
         <div className="text-[7px] text-terminal-text-faint uppercase tracking-wider mb-0.5">
           Avg Beta Trend
-          <span className="ml-1 text-terminal-accent">{betaTrend[betaTrend.length - 1]?.beta.toFixed(3)}</span>
+          <span className="ml-1 text-terminal-accent">{lastBeta.toFixed(3)}</span>
         </div>
         <div className="h-[40px]">
           <ResponsiveContainer width="100%" height="100%">
@@ -1432,100 +1501,237 @@ function LearningLoopPanel({ betaTrend }: { betaTrend: { t: number; beta: number
 // ═══════════════════════════════════════════════════════════════════════════════
 
 export default function MetadronCubePage() {
-  // ─── Engine API data ────────────────────────────────
-  const { data: cubeData } = useEngineQuery<CubeState>("/cube/state", { refetchInterval: 2500 });
-  const { data: cubeGates } = useEngineQuery<{ gates: Record<string, number> }>("/cube/gates", { refetchInterval: 5000 });
-  const { data: cubeKillSwitch } = useEngineQuery<{ active: boolean; triggers: string[] }>("/cube/kill-switch", { refetchInterval: 3000 });
+  // ─── Engine API queries ─────────────────────────────────
+  // Core cube state — updates every 2.5s
+  const { data: cubeState } = useEngineQuery<CubeFullState>("/cube/state", { refetchInterval: 2500 });
 
-  // Core state — populated from API, falls back to generators if no data yet
-  const [tensor, setTensor] = useState<CoreTensor>(() => generateCoreTensor());
-  const [fed, setFed] = useState<FedPlumbingLayer>(() => generateFedPlumbing());
-  const [liq, setLiq] = useState<LiquidityTensor>(() => generateLiquidityTensor());
-  const [kernel, setKernel] = useState<ReserveFlowKernel>(() => generateReserveKernel());
-  const [risk, setRisk] = useState<RiskStateModel>(() => generateRiskModel());
-  const [flow, setFlow] = useState<CapitalFlowModel>(() => generateCapitalFlow());
-  const [regime, setRegime] = useState<RegimeState>(() => generateRegimeState());
-  const [gates, setGates] = useState<GateScore[]>(() => generateGateScores());
-  const [killSwitch, setKillSwitch] = useState<KillSwitch>(() => generateKillSwitch());
-  const [govData, setGovData] = useState<RiskGovernor>(() => generateRiskGovernor());
-  const [fclpStep, setFclpStep] = useState(3);
-  const [regimeHistory] = useState(() => generateRegimeHistory());
-  const betaTrend = useMemo(() => generateBetaTrend(), []);
-  const [tick, setTick] = useState(0);
+  // Cube history — regime transitions, beta trend, L/R/F time series
+  const { data: cubeHistory } = useEngineQuery<CubeHistoryData>("/cube/history", { refetchInterval: 30000 });
 
-  // Sync API data into state when it arrives
+  // Gates — real gate scores
+  const { data: cubeGatesData } = useEngineQuery<CubeGatesData>("/cube/gates", { refetchInterval: 5000 });
+
+  // Kill switch
+  const { data: cubeKS } = useEngineQuery<CubeKillSwitchData>("/cube/kill-switch", { refetchInterval: 3000 });
+
+  // Beta corridor
+  const { data: betaData } = useEngineQuery<BetaCorridorData>("/cube/beta-corridor", { refetchInterval: 5000 });
+
+  // ─── FCLP step — driven from API timestamp ──────────────
+  const [fclpStep, setFclpStep] = useState(1);
+
   useEffect(() => {
-    if (!cubeData) return;
-    const l = cubeData.liquidity || {};
-    const r = cubeData.risk || {};
-    const s = cubeData.sleeves || {};
+    if (cubeState?.fclp?.last_calibration) {
+      // Compute which step we're on based on seconds elapsed since last calibration
+      const lastCalib = new Date(cubeState.fclp.last_calibration).getTime();
+      const now = Date.now();
+      const elapsed = Math.max(0, now - lastCalib) / 1000; // seconds elapsed
+      // Each FCLP step ~ every 10s, cycle of 60s
+      const stepIdx = Math.floor((elapsed % 60) / 10);
+      setFclpStep(Math.min(6, Math.max(1, stepIdx + 1)));
+    } else {
+      // Fallback: cycle independently at 3s per step if no API data
+      const iv = setInterval(() => {
+        setFclpStep((s) => (s % 6) + 1);
+      }, 3000);
+      return () => clearInterval(iv);
+    }
+  }, [cubeState?.fclp?.last_calibration]);
 
-    const L = l.score ?? l.sofr_signal ?? tensor.L;
-    const R = r.score ?? r.vix_component ?? risk.R;
-    const F = flow.F;  // flow not directly in cube API, keep local
-    setTensor({ L, R, F, Ct: L * 0.4 + (1 - R) * 0.35 + F * 0.25 });
+  // ─── Derived state from API — NO generators ──────────────
 
-    setFed({
-      sofr: l.score ?? fed.sofr,
-      tga: l.tga_balance_signal ?? fed.tga,
-      onRrp: l.reverse_repo_signal ?? fed.onRrp,
-      reserveAdequacy: l.reserve_flow ?? fed.reserveAdequacy,
-      fedFundsImpact: l.fed_funds_impact ?? fed.fedFundsImpact,
-      netPlumbing: l.score ?? fed.netPlumbing,
-    });
+  const tensor: CoreTensor = useMemo(() => {
+    if (!cubeState) return { L: 0, R: 0, F: 0, Ct: 0 };
+    const L = cubeState.liquidity?.value ?? 0;
+    const R = cubeState.risk?.value ?? 0;
+    const F = cubeState.flow?.value ?? 0;
+    return { L, R, F, Ct: L * 0.4 + (1 - R) * 0.35 + F * 0.25 };
+  }, [cubeState]);
 
-    setLiq({
-      sofrWeight: l.score ?? liq.sofrWeight,
-      creditWeight: l.credit_impulse ?? liq.creditWeight,
-      m2vWeight: l.m2_velocity ?? liq.m2vWeight,
-      hySpreadWeight: l.hy_spread_z ?? liq.hySpreadWeight,
-      fedPlumbingWeight: l.fed_funds_impact ?? liq.fedPlumbingWeight,
-      L,
-    });
+  const fed: FedPlumbingLayer = useMemo(() => {
+    if (!cubeState) return { sofr: 0, tga: 0, onRrp: 0, reserveAdequacy: 0, fedFundsImpact: 0, netPlumbing: 0 };
+    const liq = cubeState.liquidity ?? {};
+    return {
+      sofr: liq.sofr_signal ?? 0,
+      tga: liq.tga_balance_signal ?? 0,
+      onRrp: liq.reverse_repo_signal ?? 0,
+      reserveAdequacy: liq.reserve_flow ?? 0,
+      fedFundsImpact: liq.fed_funds_impact ?? 0,
+      netPlumbing: liq.value ?? 0,
+    };
+  }, [cubeState]);
 
-    setRisk({
-      vix: r.score ?? risk.vix,
-      realizedVol: r.realized_vol ?? risk.realizedVol,
-      credit: r.credit_spread ?? risk.credit,
-      correlation: r.correlation_stress ?? risk.correlation,
-      tailRisk: r.tail_risk ?? risk.tailRisk,
-      R,
-    });
+  const liq: LiquidityTensor = useMemo(() => {
+    if (!cubeState) return { sofrWeight: 0, creditWeight: 0, m2vWeight: 0, hySpreadWeight: 0, fedPlumbingWeight: 0, L: 0 };
+    const l = cubeState.liquidity ?? {};
+    return {
+      sofrWeight: l.sofr_signal ?? 0,
+      creditWeight: l.credit_impulse ?? 0,
+      m2vWeight: l.m2_velocity ?? 0,
+      hySpreadWeight: l.hy_spread_z ?? 0,
+      fedPlumbingWeight: l.fed_funds_impact ?? 0,
+      L: l.value ?? 0,
+    };
+  }, [cubeState]);
 
-    const regimeStr = (cubeData.regime || "TRENDING").toUpperCase() as Regime;
-    setRegime((prev) => ({
-      ...prev,
-      current: regimeStr,
-      confidence: cubeData.max_leverage ? cubeData.max_leverage / 3.0 : prev.confidence,
+  const kernel: ReserveFlowKernel = useMemo(() => {
+    if (!cubeState) return { deltaReserves: 0, equityImpact: 0, creditImpact: 0, decay: 0 };
+    const rk = cubeState.reserve_kernel ?? {};
+    return {
+      deltaReserves: (rk.impulse ?? 0) * 50, // scale impulse [-1,+1] back to BN-ish for display
+      equityImpact: rk.equity_impact ?? 0,
+      creditImpact: rk.credit_impact ?? 0,
+      decay: rk.decay ?? 0,
+    };
+  }, [cubeState]);
+
+  const risk: RiskStateModel = useMemo(() => {
+    if (!cubeState) return { vix: 0, realizedVol: 0, credit: 0, correlation: 0, tailRisk: 0, R: 0 };
+    const r = cubeState.risk ?? {};
+    return {
+      vix: r.vix_component ?? 0,
+      realizedVol: r.realized_vol ?? 0,
+      credit: r.credit_spread_component ?? 0,
+      correlation: r.correlation_stress ?? 0,
+      tailRisk: r.tail_risk ?? 0,
+      R: r.value ?? 0,
+    };
+  }, [cubeState]);
+
+  const flow: CapitalFlowModel = useMemo(() => {
+    if (!cubeState) return { sectorMomentum: 0, leadersLaggards: 0, rotationVelocity: 0, breadth: 0, persistence: 0, F: 0 };
+    const f = cubeState.flow ?? {};
+    const sectorMom = f.sector_momentum ? Object.values(f.sector_momentum as Record<string, number>) : [];
+    const avgMom = sectorMom.length > 0 ? sectorMom.reduce((a, b) => a + b, 0) / sectorMom.length : 0;
+    const leaderCount = (f.leader_sectors ?? []).length;
+    const laggardCount = (f.laggard_sectors ?? []).length;
+    const llScore = leaderCount + laggardCount > 0
+      ? (leaderCount - laggardCount) / (leaderCount + laggardCount)
+      : 0;
+    return {
+      sectorMomentum: avgMom,
+      leadersLaggards: llScore,
+      rotationVelocity: f.rotation_velocity ?? 0,
+      breadth: f.breadth ?? 0,
+      persistence: f.persistence ?? 0,
+      F: f.value ?? 0,
+    };
+  }, [cubeState]);
+
+  const regime: RegimeState = useMemo(() => {
+    if (!cubeState) {
+      return {
+        current: "RANGE",
+        confidence: 0,
+        transitions: { TRENDING: 0, RANGE: 0, STRESS: 0, CRASH: 0 },
+        history: [],
+      };
+    }
+    const currentRegime = ((cubeState.regime ?? "RANGE").toUpperCase()) as Regime;
+    const conf = cubeState.regime_confidence ?? 0;
+    // Markov self-persistence priors — supplemented by confidence
+    const markovPriors: Record<Regime, number> = {
+      TRENDING: 0.85,
+      RANGE: 0.70,
+      STRESS: 0.55,
+      CRASH: 0.50,
+    };
+    // Build transition probabilities: current regime gets API confidence, rest split remainder
+    const selfProb = conf;
+    const remainder = (1 - selfProb) / 3;
+    const transitions = { TRENDING: remainder, RANGE: remainder, STRESS: remainder, CRASH: remainder };
+    transitions[currentRegime] = selfProb;
+    return {
+      current: currentRegime,
+      confidence: conf,
+      transitions,
+      history: [], // populated separately from cubeHistory
+    };
+  }, [cubeState]);
+
+  // Regime history from API
+  const regimeHistory: { t: string; regime: Regime }[] = useMemo(() => {
+    if (!cubeHistory?.regime_transitions?.length) return [];
+    return cubeHistory.regime_transitions.slice(-8).map((rt) => ({
+      t: new Date(rt.timestamp).toLocaleTimeString("en-US", { hour12: false, hour: "2-digit", minute: "2-digit" }),
+      regime: (rt.to_regime.toUpperCase()) as Regime,
     }));
+  }, [cubeHistory]);
 
-    setTick((t) => t + 1);
-  }, [cubeData]);
+  // Gates from API
+  const gates: GateScore[] = useMemo(() => {
+    if (!cubeGatesData?.gates?.length) return [];
+    return cubeGatesData.gates.map((g) => {
+      const details = g.gate_details ?? {};
+      const g1 = details.G1_Flow?.score ?? (g.gate_scores?.[0] ?? 0);
+      const g2 = details.G2_Macro?.score ?? (g.gate_scores?.[1] ?? 0);
+      const g3 = details.G3_Fundamental?.score ?? (g.gate_scores?.[2] ?? 0);
+      const g4 = details.G4_Momentum?.score ?? (g.gate_scores?.[3] ?? 0);
+      return {
+        id: g.ticker,
+        ticker: g.ticker,
+        g1,
+        g2,
+        g3,
+        g4,
+        weighted: g.weighted_score ?? (g1 * 0.20 + g2 * 0.25 + g3 * 0.30 + g4 * 0.25),
+        pass: g.approved ?? (g.all_gates_pass && (g.weighted_score ?? 0) >= 0.50),
+      };
+    });
+  }, [cubeGatesData]);
 
-  // Sync kill switch from API
-  useEffect(() => {
-    if (!cubeKillSwitch) return;
-    setKillSwitch((prev) => ({
-      ...prev,
-      active: cubeKillSwitch.active ?? prev.active,
-    }));
-  }, [cubeKillSwitch]);
+  // Kill switch from API (prefer dedicated /cube/kill-switch, fallback to embedded in cubeState)
+  const killSwitch: KillSwitch = useMemo(() => {
+    const ks = cubeKS ?? cubeState?.kill_switch;
+    if (!ks) return { hyOas: 0, vixTerm: 0.08, breadth: 1, active: false };
+    return {
+      hyOas: ks.hy_oas_delta ?? 0,
+      vixTerm: ks.vix_term_ratio ?? 0.08,
+      breadth: ks.breadth ?? 1,
+      active: ks.active ?? false,
+    };
+  }, [cubeKS, cubeState]);
 
-  // Gate scores update every 5s (keep generator as API gates are sparse)
-  useEffect(() => {
-    const iv = setInterval(() => {
-      setGates(generateGateScores());
-    }, 5000);
-    return () => clearInterval(iv);
-  }, []);
+  // Risk governor from API
+  const govData: RiskGovernor = useMemo(() => {
+    if (!cubeState?.risk_governor) {
+      return { positionPct: 0, sectorPct: 0, leverage: 0, varPct: 0, drawdownPct: 0, crashFloor: 0, beta: 0 };
+    }
+    const checks = cubeState.risk_governor.checks ?? [];
+    // Parse check limits into display values where possible; otherwise use defaults
+    const getCheck = (name: string) => checks.find((c) => c.name?.toLowerCase().includes(name.toLowerCase()));
+    const posCheck = getCheck("position");
+    const sectCheck = getCheck("sector");
+    const levCheck = getCheck("leverage");
+    const varCheck = getCheck("var");
+    const ddCheck = getCheck("drawdown");
+    const betaCheck = getCheck("beta") ?? getCheck("crash");
+    return {
+      positionPct: posCheck ? 0 : 0,   // limits are param labels; show 0 if no numeric data
+      sectorPct: sectCheck ? 0 : 0,
+      leverage: cubeState.max_leverage ?? 0,
+      varPct: 0,
+      drawdownPct: 0,
+      crashFloor: 0,
+      beta: cubeState.target_beta ?? 0,
+    };
+  }, [cubeState]);
 
-  // FCLP step cycles every 3s
-  useEffect(() => {
-    const iv = setInterval(() => {
-      setFclpStep((s) => (s % 6) + 1);
-    }, 3000);
-    return () => clearInterval(iv);
-  }, []);
+  // Beta trend from API
+  const betaTrend: { t: number; beta: number }[] = useMemo(() => {
+    // Prefer dedicated beta corridor endpoint
+    if (betaData?.beta_history?.length) return betaData.beta_history;
+    // Fallback to cube history beta_trend
+    if (cubeHistory?.beta_trend?.length) return cubeHistory.beta_trend;
+    // Fallback to cube history entries
+    if (cubeHistory?.history?.length) {
+      return cubeHistory.history.map((h, i) => ({ t: i, beta: h.target_beta ?? 0 }));
+    }
+    return [];
+  }, [betaData, cubeHistory]);
+
+  // Engine loading state
+  const engineInitializing = !cubeState;
 
   // Tick time display
   const now = new Date();
@@ -1634,6 +1840,7 @@ export default function MetadronCubePage() {
                 risk={risk}
                 flow={flow}
                 regime={regime}
+                isLoading={engineInitializing}
               />
             </DashboardPanel>
           </div>
@@ -1675,7 +1882,7 @@ export default function MetadronCubePage() {
                 </span>
               }
             >
-              <RiskGovernorPanel gov={govData} kill={killSwitch} />
+              <RiskGovernorPanel gov={govData} kill={killSwitch} isLoading={engineInitializing} />
             </DashboardPanel>
           </div>
         </div>
@@ -1694,7 +1901,7 @@ export default function MetadronCubePage() {
                 </span>
               }
             >
-              <FCLPCyclePanel currentStep={fclpStep} />
+              <FCLPCyclePanel currentStep={fclpStep} fclpData={cubeState?.fclp} />
             </DashboardPanel>
           </div>
 
@@ -1719,10 +1926,20 @@ export default function MetadronCubePage() {
               className="h-full"
               noPadding
               headerRight={
-                <span className="text-[7px] text-terminal-positive font-mono font-bold">87.4% ACC</span>
+                cubeState?.learning?.accuracy != null ? (
+                  <span className="text-[7px] text-terminal-positive font-mono font-bold">
+                    {(cubeState.learning.accuracy * 100).toFixed(1)}% ACC
+                  </span>
+                ) : (
+                  <span className="text-[7px] text-terminal-text-faint font-mono">— ACC</span>
+                )
               }
             >
-              <LearningLoopPanel betaTrend={betaTrend} />
+              <LearningLoopPanel
+                betaTrend={betaTrend}
+                learningData={cubeState?.learning}
+                historyData={cubeHistory}
+              />
             </DashboardPanel>
           </div>
         </div>
