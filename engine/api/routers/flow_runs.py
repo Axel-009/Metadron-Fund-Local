@@ -1,12 +1,3 @@
-"""
-Metadron Capital — API routes for FlowRun queries.
-
-Endpoints
----------
-GET /flow-runs       — list all flow runs
-GET /flow-runs/{id}  — get a single run including its trades
-"""
-
 import logging
 from typing import List
 
@@ -18,9 +9,9 @@ try:
 except ImportError:
     raise RuntimeError("FastAPI and SQLAlchemy are required.")
 
-from app.backend.models.database import get_db
-from app.backend.models.tables import FlowRun, Trade
-from app.backend.schemas.flows import FlowRunResponse, TradeResponse
+from engine.db.database import get_db
+from engine.db.tables import FlowRun, Trade
+from engine.db.schemas import FlowRunResponse, TradeResponse
 
 router = APIRouter()
 
