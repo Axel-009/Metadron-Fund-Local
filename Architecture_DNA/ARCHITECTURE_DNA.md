@@ -1878,3 +1878,155 @@ The frontend tab navigation is organized into 7 groups. Each group contains rela
 
 Defined in `client/src/App.tsx` as `TAB_GROUPS`. A flat `ALL_TABS` array is derived via `flatMap` for backward compatibility with pinning, routing, and navigation logic.
 
+---
+
+## Deployment & Infrastructure
+
+### Contabo VPS Specification
+
+| Component | Recommended |
+|-----------|-------------|
+| CPU | 12+ vCPU (AMD EPYC) |
+| RAM | 64 GB |
+| Disk | 800 GB NVMe |
+| Network | 400+ Mbit/s |
+| OS | Ubuntu 22.04 LTS |
+
+For GPU inference (Qwen 2.5-7B, Air-LLM): add Contabo GPU VPS or external GPU server.
+
+### Network Topology
+
+```
+                         ┌──────────────────┐
+                         │    INTERNET       │
+                         └────────┬─────────┘
+                                  │
+                         ┌────────┴─────────┐
+                         │  Nginx Reverse    │
+                         │  Proxy :80/:443   │
+                         │  (SSL/TLS)        │
+                         └────────┬─────────┘
+                                  │
+          ┌───────────────────────┼───────────────────────┐
+          │                       │                       │
+  ┌───────┴────────┐   ┌─────────┴────────┐   ┌─────────┴────────┐
+  │ Express+React  │   │ FastAPI Engine    │   │ Monitoring       │
+  │ Frontend :5000 │   │ API :8001         │   │ Prometheus :9090 │
+  └────────────────┘   │ /health /metrics  │   │ Grafana    :3000 │
+                       └─────────┬─────────┘   └──────────────────┘
+                                 │
+          ┌──────────────────────┼──────────────────────┐
+          │                      │                      │
+  ┌───────┴────────┐  ┌─────────┴────────┐  ┌──────────┴──────────┐
+  │ MiroFish :5001 │  │ LLM Bridge :8002 │  │ Platform            │
+  │ (Flask+Vue)    │  │ Air-LLM   :8003  │  │ Orchestrator        │
+  │ :5174 frontend │  │ Qwen      :7860  │  │ Live Loop + Crons   │
+  └────────────────┘  └──────────────────┘  └─────────────────────┘
+```
+
+### Port Map
+
+| Service | Port | Protocol | External |
+|---------|------|----------|----------|
+| Express + React Frontend | 5000 | HTTP | Via Nginx :443 `/` |
+| FastAPI Engine API | 8001 | HTTP | Via Nginx :443 `/api/engine/*` |
+| Prometheus | 9090 | HTTP | Direct (restrict in prod) |
+| Grafana | 3000 | HTTP | Direct or via Nginx |
+| MiroFish Backend | 5001 | HTTP | Internal only |
+| MiroFish Frontend | 5174 | HTTP | Internal only |
+| LLM Inference Bridge | 8002 | HTTP | Internal only |
+| Air-LLM Model Server | 8003 | HTTP | Internal only |
+| Qwen 2.5-7B Server | 7860 | HTTP | Internal only |
+| Redis | 6379 | TCP | Internal only |
+
+### Service Dependency Tree
+
+```
+redis (standalone)
+prometheus (standalone)
+node-exporter (standalone)
+  └─► backend (FastAPI) ← depends on redis (optional)
+       ├─► frontend (Express+React) ← depends on backend health
+       ├─► mirofish-backend (Flask)
+       ├─► llm-inference-bridge ← depends on backend
+       ├─► airllm-model-server
+       ├─► ainewton-service
+       ├─► metadron-cube (24/7 regime)
+       ├─► live-loop (09:30-16:00 ET)
+       ├─► learning-loop (continuous ML)
+       ├─► platform-orchestrator
+       ├─► market-open (cron 09:30 M-F)
+       ├─► market-close (cron 16:00 M-F)
+       └─► hourly-tasks (cron hourly)
+  grafana ← depends on prometheus health
+  nginx ← depends on frontend + backend + grafana
+```
+
+### Docker Compose Services
+
+| Service | Image/Build | Port | Health Check |
+|---------|-------------|------|-------------|
+| `frontend` | Node 20 (build from repo) | 5000 | `curl http://localhost:5000/` |
+| `backend` | Python 3.11 (build from repo) | 8001 | `curl http://localhost:8001/health` |
+| `prometheus` | `prom/prometheus:v2.51.0` | 9090 | `wget http://localhost:9090/-/healthy` |
+| `grafana` | `grafana/grafana:10.4.0` | 3000 | `wget http://localhost:3000/api/health` |
+| `redis` | `redis:7-alpine` | 6379 | `redis-cli ping` |
+| `node-exporter` | `prom/node-exporter:v1.7.0` | 9100 | — |
+| `nginx` | `nginx:1.25-alpine` | 80, 443 | `curl http://localhost/` |
+
+Volumes: `prometheus-data`, `grafana-data`, `redis-data` (persistent Docker volumes).
+
+### Prometheus Scrape Targets
+
+| Job | Target | Interval | Metrics |
+|-----|--------|----------|---------|
+| `prometheus` | `localhost:9090` | 15s | Self-monitoring |
+| `metadron-engine-api` | `localhost:8001/metrics` | 10s | 100+ metrics: portfolio, cube, trades, agents, TCA, macro |
+| `metadron-llm-bridge` | `localhost:8002/metrics` | 30s | LLM request counts, latency by backend |
+| `metadron-airllm` | `localhost:8003/metrics` | 30s | Air-LLM model inference |
+| `node-exporter` | `localhost:9100` | 15s | Host CPU, RAM, disk, network |
+| `metadron-frontend` | `localhost:5000/metrics` | 30s | Express request metrics |
+
+Alert rules: KillSwitchActive, DrawdownExceeded (>15%), DailyLossCircuitBreaker (>3% NAV), ScanCycleSlow (>300s), EngineAPIDown, AgentPermissionBlocksHigh (>10/min), VaRBreach (>$300K), CreditStressElevated (HY OAS >600bps).
+
+Retention: 30 days / 10 GB cap.
+
+### Grafana Dashboard Folders
+
+| Folder | Dashboards |
+|--------|-----------|
+| **Core** | Platform Overview, Signal Pipeline, Risk Dashboard |
+| **Allocation** | Portfolio Allocation, Cube Regime, Decision Matrix |
+| **Agents** | Agent Scorecard, Agent Herding, NanoClaw Permissions |
+| **Velocity** | Macro Indicators, Money Velocity, Fixed Income |
+| **Monitoring** | Infrastructure, TCA Execution, LLM Inference, Data Sources |
+
+### Environment Variables
+
+`ANTHROPIC_API_KEY`, `ALPACA_API_KEY`, `ALPACA_SECRET_KEY`, `ALPACA_PAPER_TRADE`, `OPENBB_TOKEN`, `ZEP_API_KEY`, `TRADIER_API_KEY`, `TRADIER_ACCOUNT_ID`, `TRADIER_ENVIRONMENT`, `ENGINE_API_PORT`, `PORT`, `NODE_ENV`, `FLASK_PORT`, `LLM_BRIDGE_PORT`, `AIRLLM_PORT`, `QWEN_MODEL_PATH`, `QWEN_SERVER_PORT`, `QWEN_GPU_DEVICES`, `AIRLLM_MODEL_PATH`, `AIRLLM_GPU_DEVICES`, `ANTHROPIC_MODEL`, `LLM_BRIDGE_URL`, `METADRON_MODE`, `METADRON_CUBE_MODE`, `PYTHONUNBUFFERED`, `GRAFANA_ADMIN_PASSWORD`
+
+### Startup Sequence
+
+```
+1. redis              ← Cache/pub-sub
+2. prometheus          ← Metrics collection
+3. node-exporter       ← Host metrics
+4. backend (FastAPI)   ← Engine API + /metrics
+5. frontend (Express)  ← React SPA + proxy
+6. grafana             ← Visualization
+7. nginx               ← Reverse proxy + SSL
+8. PM2 services:       ← mirofish, llm-bridge, live-loop, cube, learning-loop, etc.
+```
+
+### Key Health Check URLs
+
+| Service | URL | Expected |
+|---------|-----|----------|
+| Engine API | `http://localhost:8001/health` | `{"status": "ok"}` |
+| Frontend | `http://localhost:5000/` | 200 OK |
+| Prometheus | `http://localhost:9090/-/healthy` | "Healthy" |
+| Grafana | `http://localhost:3000/api/health` | `{"database": "ok"}` |
+| Redis | `redis-cli ping` | `PONG` |
+
+Full deployment guide: see `DEPLOYMENT.md` at repository root.
+

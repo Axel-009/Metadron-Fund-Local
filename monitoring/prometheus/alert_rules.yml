@@ -1,0 +1,114 @@
+groups:
+  - name: metadron_critical
+    rules:
+      - alert: KillSwitchActive
+        expr: metadron_cube_regime{regime_name="CRASH"} == 1
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Kill Switch ACTIVE — MetadronCube in CRASH regime"
+          description: "The MetadronCube has entered CRASH regime. All positions should be de-risked to beta <= 0.35."
+
+      - alert: DrawdownExceeded
+        expr: (1 - metadron_portfolio_nav / metadron_portfolio_nav offset 1d) > 0.15
+        for: 5m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Portfolio drawdown exceeds 15%"
+          description: "NAV has declined more than 15% from the previous day."
+
+      - alert: DailyLossCircuitBreaker
+        expr: metadron_portfolio_pnl_daily < -0.03 * metadron_portfolio_nav
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Daily loss circuit breaker triggered (>3% NAV)"
+          description: "Daily P&L loss exceeds 3% of NAV. Risk gate G3 should halt new trades."
+
+  - name: metadron_performance
+    rules:
+      - alert: ScanCycleSlow
+        expr: metadron_api_duration_seconds{endpoint="/api/engine/pipeline/run"} > 300
+        for: 3m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Signal pipeline scan cycle exceeds 300 seconds"
+          description: "Full pipeline run taking >5 minutes. Check data source timeouts or CPU."
+
+      - alert: EngineAPIDown
+        expr: metadron_engine_up == 0
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Metadron Engine API is DOWN"
+          description: "FastAPI engine API not responding."
+
+      - alert: OpenBBErrorSpike
+        expr: rate(metadron_openbb_errors_total[5m]) > 0.1
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "OpenBB data error rate is elevated"
+          description: "More than 0.1 errors/sec from OpenBB."
+
+  - name: metadron_agents
+    rules:
+      - alert: AgentPermissionBlocksHigh
+        expr: rate(metadron_agents_enforcement_events{severity="critical"}[1m]) > 10
+        for: 2m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Agent permission blocks exceed 10/min"
+          description: "Agents are being blocked at an elevated rate."
+
+      - alert: AgentHerdingRisk
+        expr: metadron_agents_herding_risk > 0.8
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Agent herding risk is elevated (>0.8)"
+          description: "Agents converging on similar positions."
+
+  - name: metadron_infrastructure
+    rules:
+      - alert: PM2RestartSpike
+        expr: increase(metadron_pm2_process_restarts[10m]) > 3
+        for: 1m
+        labels:
+          severity: warning
+        annotations:
+          summary: "PM2 process {{ $labels.process }} restarted 3+ times in 10 minutes"
+          description: "Investigate logs for crash loops."
+
+      - alert: HighMemoryUsage
+        expr: metadron_pm2_process_memory_bytes > 4e9
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "PM2 process {{ $labels.process }} using >4GB RAM"
+
+      - alert: CreditStressElevated
+        expr: metadron_fi_hy_oas > 600
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "HY OAS spread above 600bps — credit stress"
+
+      - alert: VaRBreach
+        expr: metadron_mc_var95 > 300000
+        for: 5m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Monte Carlo VaR 95% exceeds $300K limit"
+          description: "Portfolio VaR breached $300K on $20M NAV."
