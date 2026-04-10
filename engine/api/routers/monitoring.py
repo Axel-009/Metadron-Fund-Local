@@ -199,6 +199,7 @@ async def engines_health():
             ("L6", "ResearchBots", "engine.agents.research_bots"),
             ("L6", "PatternRecognition", "engine.signals.pattern_recognition"),
             ("L7", "L7Execution", "engine.execution.l7_unified_execution_surface"),
+            ("L4", "FuturesEngine", "engine.api.routers.futures"),
             ("MON", "AnomalyDetector", "engine.monitoring.anomaly_detector"),
         ]
 

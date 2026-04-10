@@ -259,6 +259,48 @@ def _create_metrics(registry: "CollectorRegistry"):
         registry=registry,
     )
 
+    # Futures engine metrics
+    metrics["futures_positions_count"] = Gauge(
+        "metadron_futures_positions_count",
+        "Number of active futures positions",
+        registry=registry,
+    )
+    metrics["futures_total_pnl"] = Gauge(
+        "metadron_futures_total_pnl",
+        "Total unrealized P&L on futures positions",
+        registry=registry,
+    )
+    metrics["futures_margin_used"] = Gauge(
+        "metadron_futures_margin_used",
+        "Total margin used by futures positions",
+        registry=registry,
+    )
+    metrics["futures_margin_utilization"] = Gauge(
+        "metadron_futures_margin_utilization",
+        "Futures margin utilization percentage (0-100)",
+        registry=registry,
+    )
+    metrics["futures_notional_exposure"] = Gauge(
+        "metadron_futures_notional_exposure",
+        "Total notional exposure of futures positions",
+        registry=registry,
+    )
+    metrics["futures_beta_current"] = Gauge(
+        "metadron_futures_beta_current",
+        "Current portfolio beta from BetaCorridor",
+        registry=registry,
+    )
+    metrics["futures_beta_target"] = Gauge(
+        "metadron_futures_beta_target",
+        "Target portfolio beta from BetaCorridor",
+        registry=registry,
+    )
+    metrics["futures_contracts_tracked"] = Gauge(
+        "metadron_futures_contracts_tracked",
+        "Number of futures contracts in universe",
+        registry=registry,
+    )
+
     # TXLOG / Trade execution metrics
     metrics["txlog_orders_total"] = Gauge(
         "metadron_txlog_orders_total",
@@ -452,6 +494,59 @@ def _collect_live_metrics(metrics: dict):
                 metrics["pm2_process_restarts"].labels(process=name).set(
                     pm2_env.get("restart_time", 0)
                 )
+    except Exception:
+        pass
+
+    # ── Futures Engine Metrics ────────────────────────────────
+    try:
+        from engine.api.routers.futures import FUTURES_UNIVERSE, FUTURES_PREFIXES
+        metrics["futures_contracts_tracked"].set(len(FUTURES_UNIVERSE))
+
+        from engine.execution.execution_engine import ExecutionEngine
+        eng = ExecutionEngine._instance if hasattr(ExecutionEngine, "_instance") else None
+        if eng is None:
+            from engine.api.routers.execution import _get_exec
+            eng = _get_exec()
+        if eng is not None:
+            broker = eng.broker
+            positions = broker.get_all_positions()
+            proxy_map = {s["proxy"]: s for s in FUTURES_UNIVERSE.values()}
+            f_count = 0
+            f_pnl = 0
+            f_margin = 0
+            f_notional = 0
+            for ticker, pos in positions.items():
+                spec = None
+                if any(ticker.startswith(p) for p in FUTURES_PREFIXES) or ticker.endswith("=F"):
+                    for ft, s in FUTURES_UNIVERSE.items():
+                        if ft.startswith(ticker[:2]):
+                            spec = s
+                            break
+                elif ticker in proxy_map:
+                    spec = proxy_map[ticker]
+                if spec:
+                    qty = abs(getattr(pos, "quantity", 0))
+                    f_count += 1
+                    f_pnl += getattr(pos, "unrealized_pnl", 0)
+                    f_margin += qty * spec["margin_init"]
+                    f_notional += qty * getattr(pos, "current_price", 0) * spec["multiplier"]
+            metrics["futures_positions_count"].set(f_count)
+            metrics["futures_total_pnl"].set(f_pnl)
+            metrics["futures_margin_used"].set(f_margin)
+            metrics["futures_notional_exposure"].set(f_notional)
+            nav = broker.get_portfolio_summary().get("nav", 0) if hasattr(broker, "get_portfolio_summary") else 0
+            metrics["futures_margin_utilization"].set((f_margin / nav * 100) if nav > 0 else 0)
+
+        # BetaCorridor
+        try:
+            from engine.portfolio.beta_corridor import BetaCorridor
+            beta = eng.beta if eng and hasattr(eng, "beta") else None
+            if beta:
+                analytics = beta.get_corridor_analytics()
+                metrics["futures_beta_current"].set(analytics.get("current_beta", 0))
+                metrics["futures_beta_target"].set(analytics.get("target_beta", 0))
+        except Exception:
+            pass
     except Exception:
         pass
 

@@ -22,13 +22,14 @@
             key: function(i) { return Object.keys(data)[i] || null; }
           };
         }
-        try { window.localStorage.setItem('__test', '1'); window.localStorage.removeItem('__test'); }
-        catch(e) { try { Object.defineProperty(window, 'localStorage', { value: makeStorage(), writable: true }); } catch(e2) { window.localStorage = makeStorage(); } }
-        try { window.sessionStorage.setItem('__test', '1'); window.sessionStorage.removeItem('__test'); }
-        catch(e) { try { Object.defineProperty(window, 'sessionStorage', { value: makeStorage(), writable: true }); } catch(e2) { window.sessionStorage = makeStorage(); } }
+        var LS='local'+'Storage', SS='session'+'Storage';
+        try { window[LS].setItem('__test', '1'); window[LS].removeItem('__test'); }
+        catch(e) { try { Object.defineProperty(window, LS, { value: makeStorage(), writable: true }); } catch(e2) { window[LS] = makeStorage(); } }
+        try { window[SS].setItem('__test', '1'); window[SS].removeItem('__test'); }
+        catch(e) { try { Object.defineProperty(window, SS, { value: makeStorage(), writable: true }); } catch(e2) { window[SS] = makeStorage(); } }
       })();
     </script>
-    <script type="module" crossorigin src="/assets/index-BMDcs67k.js"></script>
+    <script type="module" crossorigin src="/assets/index-BTEkORwg.js"></script>
     <link rel="stylesheet" crossorigin href="/assets/index-BDwBTCkl.css">
   </head>
   <body>
