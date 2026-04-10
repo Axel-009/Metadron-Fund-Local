@@ -173,29 +173,88 @@ def main():
     except Exception as e:
         print(f"  Conviction override: {e}")
 
-    # Platinum Report (close variant)
+    # ─── REPORT GENERATION (all 8 report types) ──────────────
+    datestamp = datetime.now().strftime('%Y%m%d')
+
+    def _save_report(name: str, log_subdir: str, content: str):
+        """Persist report to logs/<subdir>/ and print."""
+        d = Path(f"logs/{log_subdir}")
+        d.mkdir(parents=True, exist_ok=True)
+        path = d / f"close_{datestamp}.txt"
+        path.write_text(content)
+        print(f"  [{name}] saved -> {path}")
+
+    # 1. Platinum Report
     try:
         from engine.monitoring.platinum_report import PlatinumReportGenerator
         plat_gen = PlatinumReportGenerator()
         plat_report = plat_gen.generate_close_report()
         print(plat_report)
-        log_dir = Path("logs/platinum")
-        log_dir.mkdir(parents=True, exist_ok=True)
-        (log_dir / f"close_{datetime.now().strftime('%Y%m%d')}.txt").write_text(plat_report)
+        _save_report("Platinum Report", "platinum", plat_report)
     except Exception as e:
         print(f"  Platinum report: {e}")
 
-    # Portfolio Analytics Report (close variant)
+    # 2. Daily P&L Report — handled by generate_close_report() call below
+
+    # 3. Portfolio Analytics Report
     try:
         from engine.monitoring.portfolio_report import PortfolioReportGenerator
         port_gen = PortfolioReportGenerator()
         port_report = port_gen.generate_close_report()
         print(port_report)
-        log_dir = Path("logs/portfolio")
-        log_dir.mkdir(parents=True, exist_ok=True)
-        (log_dir / f"close_{datetime.now().strftime('%Y%m%d')}.txt").write_text(port_report)
+        _save_report("Portfolio Analytics", "portfolio", port_report)
     except Exception as e:
         print(f"  Portfolio report: {e}")
+
+    # 4. Risk Dashboard Report
+    try:
+        from engine.monitoring.risk_report import RiskReportGenerator
+        risk_gen = RiskReportGenerator()
+        risk_report = risk_gen.generate()
+        print(risk_report)
+        _save_report("Risk Dashboard", "risk", risk_report)
+    except Exception as e:
+        print(f"  Risk report: {e}")
+
+    # 5. Execution Quality Report
+    try:
+        from engine.execution.execution_engine import ExecutionEngine
+        exec_eng = ExecutionEngine()
+        exec_report = exec_eng.format_execution_report() if hasattr(exec_eng, "format_execution_report") else "Execution report unavailable"
+        print(exec_report)
+        _save_report("Execution Quality", "execution", exec_report)
+    except Exception as e:
+        print(f"  Execution report: {e}")
+
+    # 6. Monthly Investor Letter
+    try:
+        from engine.monitoring.investor_report import InvestorReportGenerator
+        inv_gen = InvestorReportGenerator()
+        inv_report = inv_gen.generate()
+        print(inv_report)
+        _save_report("Monthly Investor", "investor", inv_report)
+    except Exception as e:
+        print(f"  Investor report: {e}")
+
+    # 7. Compliance Report
+    try:
+        from engine.monitoring.compliance_report import ComplianceReportGenerator
+        comp_gen = ComplianceReportGenerator()
+        comp_report = comp_gen.generate()
+        print(comp_report)
+        _save_report("Compliance Report", "compliance", comp_report)
+    except Exception as e:
+        print(f"  Compliance report: {e}")
+
+    # 8. ML Model Report
+    try:
+        from engine.monitoring.learning_loop import LearningLoop
+        ll = LearningLoop()
+        ml_report = ll.format_learning_report() if hasattr(ll, "format_learning_report") else "ML model report unavailable"
+        print(ml_report)
+        _save_report("ML Model Report", "ml-model", ml_report)
+    except Exception as e:
+        print(f"  ML model report: {e}")
 
     # Memory/Session EOD summary
     try:

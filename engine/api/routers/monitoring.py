@@ -94,26 +94,80 @@ async def reports_list():
 
 @router.get("/reports/generate")
 async def generate_report(report_type: str = Query("platinum")):
-    """Generate a report on demand."""
+    """Generate a report on demand.
+
+    Supported types: platinum, daily, portfolio, risk, execution,
+    investor, compliance, ml-model.
+    """
     try:
+        result = None
+        log_dir = None
+
         if report_type == "platinum":
-            from engine.monitoring.platinum_report import PlatinumReport
-            pr = PlatinumReport()
-            result = pr.generate() if hasattr(pr, "generate") else "Not available"
-        elif report_type == "portfolio":
-            from engine.monitoring.portfolio_report import PortfolioReport
-            pr = PortfolioReport()
-            result = pr.generate() if hasattr(pr, "generate") else "Not available"
+            from engine.monitoring.platinum_report import PlatinumReportGenerator
+            gen = PlatinumReportGenerator()
+            result = gen.generate_close_report() if hasattr(gen, "generate_close_report") else str(gen.generate() if hasattr(gen, "generate") else "Not available")
+            log_dir = PROJECT_ROOT / "logs" / "platinum"
+
         elif report_type == "daily":
-            from engine.monitoring.daily_report import DailyReport
-            dr = DailyReport()
-            result = dr.generate() if hasattr(dr, "generate") else "Not available"
+            from engine.monitoring.daily_report import generate_close_report, save_report
+            report_dict = generate_close_report({})
+            path = save_report(report_dict)
+            result = f"Daily report generated: {path}"
+            log_dir = None  # save_report already writes
+
+        elif report_type == "portfolio":
+            from engine.monitoring.portfolio_report import PortfolioReportGenerator
+            gen = PortfolioReportGenerator()
+            result = gen.generate_close_report() if hasattr(gen, "generate_close_report") else "Not available"
+            log_dir = PROJECT_ROOT / "logs" / "portfolio"
+
+        elif report_type == "risk":
+            from engine.monitoring.risk_report import RiskReportGenerator
+            gen = RiskReportGenerator()
+            result = gen.generate()
+            log_dir = PROJECT_ROOT / "logs" / "risk"
+
+        elif report_type == "execution":
+            from engine.execution.execution_engine import ExecutionEngine
+            eng = ExecutionEngine()
+            result = eng.format_execution_report() if hasattr(eng, "format_execution_report") else "Not available"
+            log_dir = PROJECT_ROOT / "logs" / "execution"
+
+        elif report_type == "investor":
+            from engine.monitoring.investor_report import InvestorReportGenerator
+            gen = InvestorReportGenerator()
+            result = gen.generate()
+            log_dir = PROJECT_ROOT / "logs" / "investor"
+
+        elif report_type == "compliance":
+            from engine.monitoring.compliance_report import ComplianceReportGenerator
+            gen = ComplianceReportGenerator()
+            result = gen.generate()
+            log_dir = PROJECT_ROOT / "logs" / "compliance"
+
+        elif report_type == "ml-model":
+            try:
+                from engine.monitoring.learning_loop import LearningLoop
+                ll = LearningLoop()
+                result = ll.format_learning_report() if hasattr(ll, "format_learning_report") else "Not available"
+            except Exception:
+                result = "ML model report: learning loop unavailable"
+            log_dir = PROJECT_ROOT / "logs" / "ml-model"
+
         else:
-            return {"error": f"Unknown report type: {report_type}"}
+            return {"error": f"Unknown report type: {report_type}", "valid_types": ["platinum", "daily", "portfolio", "risk", "execution", "investor", "compliance", "ml-model"]}
+
+        # Persist to log directory
+        if log_dir and result:
+            log_dir.mkdir(parents=True, exist_ok=True)
+            fname = f"{report_type}_{datetime.utcnow().strftime('%Y%m%d_%H%M%S')}.txt"
+            (log_dir / fname).write_text(result if isinstance(result, str) else str(result))
 
         return {
             "report_type": report_type,
             "content": result if isinstance(result, str) else str(result),
+            "status": "generated",
             "timestamp": datetime.utcnow().isoformat(),
         }
     except Exception as e:

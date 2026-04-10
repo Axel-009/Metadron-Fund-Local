@@ -204,30 +204,65 @@ def main():
     except Exception as e:
         print(f"  Sector tracker: {e}")
 
-    # Platinum Report
+    # ─── REPORT GENERATION (all 8 report types) ──────────────
+    datestamp = datetime.now().strftime('%Y%m%d')
+
+    def _save_report(name: str, log_subdir: str, content: str):
+        d = Path(f"logs/{log_subdir}")
+        d.mkdir(parents=True, exist_ok=True)
+        path = d / f"open_{datestamp}.txt"
+        path.write_text(content)
+        print(f"  [{name}] saved -> {path}")
+
+    # 1. Platinum Report
     try:
         from engine.monitoring.platinum_report import PlatinumReportGenerator
         plat_gen = PlatinumReportGenerator()
         plat_report = plat_gen.generate_open_report()
         print(plat_report)
-        # Save to logs
-        log_dir = Path("logs/platinum")
-        log_dir.mkdir(parents=True, exist_ok=True)
-        (log_dir / f"open_{datetime.now().strftime('%Y%m%d')}.txt").write_text(plat_report)
+        _save_report("Platinum Report", "platinum", plat_report)
     except Exception as e:
         print(f"  Platinum report: {e}")
 
-    # Portfolio Analytics Report
+    # 3. Portfolio Analytics Report
     try:
         from engine.monitoring.portfolio_report import PortfolioReportGenerator
         port_gen = PortfolioReportGenerator()
         port_report = port_gen.generate_open_report()
         print(port_report)
-        log_dir = Path("logs/portfolio")
-        log_dir.mkdir(parents=True, exist_ok=True)
-        (log_dir / f"open_{datetime.now().strftime('%Y%m%d')}.txt").write_text(port_report)
+        _save_report("Portfolio Analytics", "portfolio", port_report)
     except Exception as e:
         print(f"  Portfolio report: {e}")
+
+    # 4. Risk Dashboard Report
+    try:
+        from engine.monitoring.risk_report import RiskReportGenerator
+        risk_gen = RiskReportGenerator()
+        risk_report = risk_gen.generate()
+        print(risk_report)
+        _save_report("Risk Dashboard", "risk", risk_report)
+    except Exception as e:
+        print(f"  Risk report: {e}")
+
+    # 7. Compliance Report
+    try:
+        from engine.monitoring.compliance_report import ComplianceReportGenerator
+        comp_gen = ComplianceReportGenerator()
+        comp_report = comp_gen.generate()
+        print(comp_report)
+        _save_report("Compliance Report", "compliance", comp_report)
+    except Exception as e:
+        print(f"  Compliance report: {e}")
+
+    # 8. ML Model Report
+    try:
+        from engine.monitoring.learning_loop import LearningLoop
+        ll = LearningLoop()
+        ml_report = ll.format_learning_report() if hasattr(ll, "format_learning_report") else "ML model report unavailable"
+        print(ml_report)
+        _save_report("ML Model Report", "ml-model", ml_report)
+    except Exception as e:
+        print(f"  ML model report: {e}")
 
     # Memory/Session status
     try:
