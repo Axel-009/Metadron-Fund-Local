@@ -225,16 +225,20 @@ async def openbb_fred(series_id: str = Query(...)):
                         r[k] = v.item()
             return {"data": records, "series_id": series_id, "timestamp": datetime.utcnow().isoformat()}
         return {"data": df if isinstance(df, (list, dict)) else str(df), "series_id": series_id, "timestamp": datetime.utcnow().isoformat()}
-
-        if hasattr(data, "to_dict"):
-            records = data.reset_index().to_dict(orient="records")
-            for r in records:
-                for k, v in r.items():
-                    if hasattr(v, "isoformat"):
-                        r[k] = v.isoformat()
-            return {"data": records, "series_id": series_id, "timestamp": datetime.utcnow().isoformat()}
-
-        return {"data": data if isinstance(data, (list, dict)) else str(data), "series_id": series_id, "timestamp": datetime.utcnow().isoformat()}
     except Exception as e:
         logger.error(f"universe/openbb/fred error: {e}")
         return {"data": [], "error": str(e)}
+
+
+@router.get("/openbb/fundamentals")
+async def openbb_fundamentals(ticker: str = Query(...)):
+    """Get fundamental data for a ticker via OpenBB."""
+    try:
+        from engine.data.openbb_data import get_fundamentals
+        data = get_fundamentals(ticker)
+        if not data:
+            return {"ticker": ticker, "error": "No fundamental data", "timestamp": datetime.utcnow().isoformat()}
+        return {"ticker": ticker, "fundamentals": data, "timestamp": datetime.utcnow().isoformat()}
+    except Exception as e:
+        logger.error(f"universe/openbb/fundamentals error: {e}")
+        return {"ticker": ticker, "error": str(e)}

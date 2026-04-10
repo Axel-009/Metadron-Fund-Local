@@ -706,41 +706,72 @@ function SecurityListPanel({
 // ═══════════ SCREENER ═══════════
 
 function Screener() {
+  const [filter, setFilter] = useState("");
+
+  const { data: univData } = useEngineQuery<{ securities: Array<{ ticker: string; name: string; sector: string; pe_ratio: number; momentum_3m: number; quality_tier: string }> }>("/universe/securities?limit=50", { refetchInterval: 60000 });
+
+  const rows = useMemo(() => {
+    const source: Array<{ ticker: string; name: string; sector: string; pe: number; signal: string; score: string }> =
+      univData?.securities?.length
+        ? univData.securities.map((s) => {
+            const mom = s.momentum_3m ?? 0;
+            const signal = mom > 0.05 ? "BUY" : mom < -0.05 ? "SELL" : "HOLD";
+            return {
+              ticker: s.ticker,
+              name: s.name,
+              sector: s.sector,
+              pe: s.pe_ratio ?? 0,
+              signal,
+              score: s.quality_tier ?? "?",
+            };
+          })
+        : SCREENER_RESULTS.map((s) => ({
+            ticker: s.ticker,
+            name: s.name,
+            sector: s.sector,
+            pe: s.pe,
+            signal: s.signal,
+            score: String(s.score),
+          }));
+
+    if (!filter.trim()) return source;
+    const f = filter.toLowerCase();
+    return source.filter((s) => s.ticker.toLowerCase().includes(f) || s.sector.toLowerCase().includes(f));
+  }, [univData, filter]);
+
   return (
     <div className="h-full flex flex-col text-[10px] font-mono">
       <div className="flex items-center px-2 py-1.5 gap-2 border-b border-terminal-border/50 flex-shrink-0">
         <input
           type="text"
+          value={filter}
+          onChange={(e) => setFilter(e.target.value)}
           placeholder="Filter by ticker, sector..."
           className="flex-1 bg-terminal-bg border border-terminal-border/50 rounded px-2 py-0.5 text-[10px] text-terminal-text-primary placeholder:text-terminal-text-faint outline-none focus:border-terminal-accent/50"
         />
-        <span className="text-terminal-text-faint text-[8px]">{SCREENER_RESULTS.length} results</span>
+        <span className="text-terminal-text-faint text-[8px]">{rows.length} results</span>
       </div>
       <div className="flex items-center px-2 py-1 text-[8px] text-terminal-text-faint uppercase tracking-wider border-b border-terminal-border/30">
         <span className="w-[50px]">Ticker</span>
         <span className="flex-1">Name</span>
         <span className="w-[80px]">Sector</span>
         <span className="w-[45px] text-right">P/E</span>
-        <span className="w-[40px] text-right">RSI</span>
-        <span className="w-[45px] text-right">Signal</span>
+        <span className="w-[50px] text-right">Signal</span>
         <span className="w-[35px] text-right">Score</span>
       </div>
       <div className="flex-1 overflow-auto">
-        {SCREENER_RESULTS.map((s) => (
+        {rows.map((s) => (
           <div key={s.ticker} className="flex items-center px-2 py-1.5 border-b border-terminal-border/10 hover:bg-white/[0.02]">
             <span className="w-[50px] text-terminal-accent font-semibold">{s.ticker}</span>
             <span className="flex-1 text-terminal-text-muted truncate pr-2">{s.name}</span>
             <span className="w-[80px] text-terminal-text-faint truncate">{s.sector}</span>
-            <span className="w-[45px] text-right tabular-nums">{s.pe > 0 ? s.pe.toFixed(1) : "—"}</span>
-            <span className={`w-[40px] text-right tabular-nums ${s.rsi > 70 ? "text-terminal-negative" : s.rsi < 30 ? "text-terminal-positive" : ""}`}>
-              {s.rsi}
-            </span>
-            <span className={`w-[45px] text-right font-semibold ${
+            <span className="w-[45px] text-right tabular-nums">{typeof s.pe === "number" && s.pe > 0 ? s.pe.toFixed(1) : "—"}</span>
+            <span className={`w-[50px] text-right font-semibold ${
               s.signal === "BUY" ? "text-terminal-positive" : s.signal === "SELL" ? "text-terminal-negative" : "text-terminal-text-muted"
             }`}>
               {s.signal}
             </span>
-            <span className={`w-[35px] text-right tabular-nums ${s.score >= 70 ? "text-terminal-positive" : s.score <= 40 ? "text-terminal-negative" : "text-terminal-text-muted"}`}>
+            <span className="w-[35px] text-right tabular-nums text-terminal-text-muted">
               {s.score}
             </span>
           </div>
@@ -752,21 +783,112 @@ function Screener() {
 
 // ═══════════ COMMAND LINE ═══════════
 
+const CMD_HELP = [
+  "  Available commands:",
+  "    stocks/quote TICKER          — live quote for a ticker",
+  "    economy/fred SERIES_ID       — FRED economic series (e.g. GDP, UNRATE)",
+  "    stocks/search QUERY          — search securities by name/ticker",
+  "    portfolio/holdings           — current portfolio positions",
+  "    universe/sectors             — sector breakdown with momentum",
+  "    help                         — show this message",
+];
+
+function formatJsonOutput(data: unknown, maxLines = 20): string[] {
+  try {
+    const lines: string[] = [];
+    const flat = (obj: unknown, prefix = "", depth = 0): void => {
+      if (depth > 4) return;
+      if (Array.isArray(obj)) {
+        obj.slice(0, 10).forEach((item, i) => flat(item, `[${i}] `, depth + 1));
+        if (obj.length > 10) lines.push(`  ... (${obj.length - 10} more)`);
+      } else if (obj !== null && typeof obj === "object") {
+        Object.entries(obj as Record<string, unknown>).forEach(([k, v]) => {
+          if (v !== null && typeof v === "object" && !Array.isArray(v)) {
+            lines.push(`  ${prefix}${k}:`);
+            flat(v, "  ", depth + 1);
+          } else if (Array.isArray(v)) {
+            lines.push(`  ${prefix}${k}: [${(v as unknown[]).slice(0, 3).map(x => JSON.stringify(x)).join(", ")}${v.length > 3 ? ` ... +${v.length - 3}` : ""}]`);
+          } else {
+            lines.push(`  ${prefix}${k}: ${v}`);
+          }
+        });
+      } else {
+        lines.push(`  ${prefix}${obj}`);
+      }
+    };
+    flat(data);
+    return lines.slice(0, maxLines);
+  } catch {
+    return [`  ${JSON.stringify(data).slice(0, 200)}`];
+  }
+}
+
 function CommandLine() {
   const [cmd, setCmd] = useState("");
   const [history, setHistory] = useState<string[]>([
-    "> economy/fred --series GDP,UNRATE,CPIAUCSL",
-    "  GDP: $27.36T (+2.8% QoQ)  |  UNRATE: 3.7%  |  CPI: 3.2% YoY",
-    "> stocks/candle AAPL --ma 20,50 --volume",
-    "  Loaded 252 bars for AAPL. SMA20=187.34 SMA50=182.12. Last: 189.45 (+0.65%)",
-    "> portfolio/holdings --sort weight",
-    "  12 positions | NAV $128,450,320 | Top: AAPL 8.5%, MSFT 7.8%, NVDA 6.2%",
+    "> economy/fred GDP",
+    "  [Type a command or 'help' to see available commands]",
   ]);
+  const historyEndRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    historyEndRef.current?.scrollIntoView({ behavior: "smooth" });
+  }, [history]);
+
+  const runCommand = useCallback(async (raw: string) => {
+    const trimmed = raw.trim();
+    if (!trimmed) return;
+
+    const appendLines = (lines: string[]) =>
+      setHistory((prev) => [...prev, `> ${trimmed}`, ...lines]);
+
+    if (trimmed === "help" || trimmed === "?") {
+      appendLines(CMD_HELP);
+      return;
+    }
+
+    // Parse: command arg1 [arg2] [--flag value]
+    const parts = trimmed.split(/\s+/);
+    const command = parts[0];
+    const arg1 = parts[1] ?? "";
+
+    let url: string | null = null;
+
+    if (command === "stocks/quote" && arg1) {
+      url = `/api/engine/universe/openbb/quote?ticker=${encodeURIComponent(arg1.toUpperCase())}`;
+    } else if (command === "economy/fred" && arg1) {
+      url = `/api/engine/universe/openbb/fred?series_id=${encodeURIComponent(arg1.toUpperCase())}`;
+    } else if (command === "stocks/search" && arg1) {
+      url = `/api/engine/universe/openbb/search?query=${encodeURIComponent(arg1)}`;
+    } else if (command === "portfolio/holdings") {
+      url = `/api/engine/portfolio/positions`;
+    } else if (command === "universe/sectors") {
+      url = `/api/engine/universe/sectors`;
+    } else {
+      appendLines([`  Unknown command: "${command}". Type 'help' for available commands.`]);
+      return;
+    }
+
+    appendLines([`  Fetching ${url}...`]);
+
+    try {
+      const res = await fetch(url);
+      if (!res.ok) {
+        setHistory((prev) => [...prev, `  Error: HTTP ${res.status} ${res.statusText}`]);
+        return;
+      }
+      const data = await res.json();
+      const lines = formatJsonOutput(data);
+      setHistory((prev) => [...prev, ...lines]);
+    } catch (err) {
+      setHistory((prev) => [...prev, `  Error: ${err instanceof Error ? err.message : String(err)}`]);
+    }
+  }, []);
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     if (!cmd.trim()) return;
-    setHistory((prev) => [...prev, `> ${cmd}`, `  Processing: ${cmd}...`]);
+    runCommand(cmd);
     setCmd("");
   };
 
@@ -774,10 +896,15 @@ function CommandLine() {
     <div className="h-full flex flex-col font-mono text-[10px]">
       <div className="flex-1 overflow-auto p-2">
         {history.map((line, i) => (
-          <div key={i} className={`py-0.5 ${line.startsWith(">") ? "text-terminal-accent" : "text-terminal-text-muted"}`}>
+          <div key={i} className={`py-0.5 ${
+            line.startsWith(">") ? "text-terminal-accent" :
+            line.includes("Error:") ? "text-terminal-negative" :
+            "text-terminal-text-muted"
+          }`}>
             {line}
           </div>
         ))}
+        <div ref={historyEndRef} />
       </div>
       <form onSubmit={handleSubmit} className="flex items-center border-t border-terminal-border/50 px-2 py-1">
         <span className="text-terminal-accent mr-2">OpenBB &gt;</span>
@@ -785,9 +912,112 @@ function CommandLine() {
           value={cmd}
           onChange={(e) => setCmd(e.target.value)}
           className="flex-1 bg-transparent outline-none text-terminal-text-primary placeholder:text-terminal-text-faint"
-          placeholder="stocks/candle AAPL --ma 20,50"
+          placeholder="stocks/quote AAPL  |  economy/fred GDP  |  help"
         />
       </form>
+    </div>
+  );
+}
+
+// ═══════════ ASSET DETAIL PANEL ═══════════
+
+function AssetDetailPanel({
+  selectedTicker,
+  selectedData,
+  isFmpResult,
+  extraWatchlist,
+  onAddToWatchlist,
+}: {
+  selectedTicker: string;
+  selectedData: SecurityItem;
+  isFmpResult: boolean;
+  extraWatchlist: string[];
+  onAddToWatchlist: (ticker: string) => void;
+}) {
+  // Live quote — 15s refresh
+  const { data: quoteData } = useEngineQuery<{ ticker: string; price: number; change: number; change_pct: number; error?: string }>(
+    `/universe/openbb/quote?ticker=${selectedTicker}`,
+    { refetchInterval: 15000 }
+  );
+
+  // Fundamentals — 5 min refresh
+  const { data: fundData } = useEngineQuery<{ ticker: string; fundamentals: Record<string, unknown>; error?: string }>(
+    `/universe/openbb/fundamentals?ticker=${selectedTicker}`,
+    { refetchInterval: 300000 }
+  );
+
+  const fund = fundData?.fundamentals ?? {};
+
+  // Live price values — fall back to selectedData if API unavailable
+  const livePrice = quoteData?.price ?? selectedData.price;
+  const liveChange = quoteData?.change ?? selectedData.chg;
+  const liveChangePct = quoteData?.change_pct ?? selectedData.pct;
+
+  const pe = fund.pe_ratio ?? fund.pe ?? fund.forwardPE ?? "28.4";
+  const eps = fund.eps ?? fund.epsTrailingTwelveMonths ?? "6.67";
+  const beta = fund.beta ?? "1.24";
+  const divYield = fund.dividend_yield ?? fund.dividendYield
+    ? `${((Number(fund.dividend_yield ?? fund.dividendYield)) * 100).toFixed(2)}%`
+    : "0.52%";
+  const high52 = fund.fifty_two_week_high ?? fund.fiftyTwoWeekHigh ?? (+selectedData.price * 1.15).toFixed(2);
+  const low52 = fund.fifty_two_week_low ?? fund.fiftyTwoWeekLow ?? (+selectedData.price * 0.72).toFixed(2);
+
+  return (
+    <div className="p-2 text-[10px] font-mono space-y-2">
+      <div className="text-center pb-2 border-b border-terminal-border/30">
+        <div className="text-terminal-accent text-sm font-semibold">{selectedData.ticker}</div>
+        <div className="text-xl tabular-nums text-terminal-text-primary">{livePrice.toFixed(2)}</div>
+        <div className={`text-xs tabular-nums ${liveChange >= 0 ? "text-terminal-positive" : "text-terminal-negative"}`}>
+          {liveChange >= 0 ? "+" : ""}{liveChange.toFixed(2)} ({liveChangePct >= 0 ? "+" : ""}{liveChangePct.toFixed(2)}%)
+        </div>
+        {/* Holding / Watchlist / FMP badge */}
+        <div className="mt-1.5 flex flex-col items-center gap-1.5">
+          {selectedData.isHolding ? (
+            <span className="px-1.5 py-0.5 rounded text-[7px] font-semibold bg-terminal-accent/15 text-terminal-accent border border-terminal-accent/30">
+              ◆ PORTFOLIO HOLDING
+            </span>
+          ) : isFmpResult ? (
+            <span className="px-1.5 py-0.5 rounded text-[7px] font-semibold bg-[#bc8cff]/15 text-[#bc8cff] border border-[#bc8cff]/30">
+              ○ FMP UNIVERSE
+            </span>
+          ) : (
+            <span className="px-1.5 py-0.5 rounded text-[7px] font-semibold bg-[#58a6ff]/15 text-[#58a6ff] border border-[#58a6ff]/30">
+              ○ WATCHLIST
+            </span>
+          )}
+          {isFmpResult && !extraWatchlist.includes(selectedTicker) && (
+            <button
+              onClick={() => onAddToWatchlist(selectedTicker)}
+              data-testid="button-add-fmp-to-watchlist"
+              className="flex items-center gap-1 px-2 py-0.5 rounded text-[7px] font-semibold bg-[#bc8cff]/10 text-[#bc8cff] border border-[#bc8cff]/30 hover:bg-[#bc8cff]/20 transition-colors"
+            >
+              + ADD TO WATCHLIST
+            </button>
+          )}
+          {isFmpResult && extraWatchlist.includes(selectedTicker) && (
+            <span className="px-1.5 py-0.5 rounded text-[7px] font-semibold bg-terminal-accent/15 text-terminal-accent border border-terminal-accent/30">
+              ✓ ADDED TO WATCHLIST
+            </span>
+          )}
+        </div>
+      </div>
+      {[
+        ["Mkt Cap", selectedData.mktCap],
+        ["Volume", selectedData.vol],
+        ["P/E", typeof pe === "number" ? pe.toFixed(2) : String(pe)],
+        ["EPS", typeof eps === "number" ? eps.toFixed(2) : String(eps)],
+        ["Div Yield", divYield],
+        ["Beta", typeof beta === "number" ? beta.toFixed(2) : String(beta)],
+        ["52W High", typeof high52 === "number" ? high52.toFixed(2) : String(high52)],
+        ["52W Low", typeof low52 === "number" ? low52.toFixed(2) : String(low52)],
+        ["Avg Vol", "58.2M"],
+        ["Float", "15.2B"],
+      ].map(([k, v]) => (
+        <div key={k} className="flex justify-between">
+          <span className="text-terminal-text-faint">{k}</span>
+          <span className="text-terminal-text-primary tabular-nums">{v}</span>
+        </div>
+      ))}
     </div>
   );
 }
@@ -883,57 +1113,13 @@ export default function OpenBBTerminal() {
           {rightPanel === "screener" ? (
             <Screener />
           ) : (
-            <div className="p-2 text-[10px] font-mono space-y-2">
-              <div className="text-center pb-2 border-b border-terminal-border/30">
-                <div className="text-terminal-accent text-sm font-semibold">{selectedData.ticker}</div>
-                <div className="text-xl tabular-nums text-terminal-text-primary">{selectedData.price.toFixed(2)}</div>
-                <div className={`text-xs tabular-nums ${selectedData.chg >= 0 ? "text-terminal-positive" : "text-terminal-negative"}`}>
-                  {selectedData.chg >= 0 ? "+" : ""}{selectedData.chg.toFixed(2)} ({selectedData.pct >= 0 ? "+" : ""}{selectedData.pct.toFixed(2)}%)
-                </div>
-                {/* Holding / Watchlist / FMP badge */}
-                <div className="mt-1.5 flex flex-col items-center gap-1.5">
-                  {selectedData.isHolding ? (
-                    <span className="px-1.5 py-0.5 rounded text-[7px] font-semibold bg-terminal-accent/15 text-terminal-accent border border-terminal-accent/30">
-                      ◆ PORTFOLIO HOLDING
-                    </span>
-                  ) : isFmpResult ? (
-                    <span className="px-1.5 py-0.5 rounded text-[7px] font-semibold bg-[#bc8cff]/15 text-[#bc8cff] border border-[#bc8cff]/30">
-                      ○ FMP UNIVERSE
-                    </span>
-                  ) : (
-                    <span className="px-1.5 py-0.5 rounded text-[7px] font-semibold bg-[#58a6ff]/15 text-[#58a6ff] border border-[#58a6ff]/30">
-                      ○ WATCHLIST
-                    </span>
-                  )}
-                  {isFmpResult && !extraWatchlist.includes(selectedTicker) && (
-                    <button
-                      onClick={() => handleAddToWatchlist(selectedTicker)}
-                      data-testid="button-add-fmp-to-watchlist"
-                      className="flex items-center gap-1 px-2 py-0.5 rounded text-[7px] font-semibold bg-[#bc8cff]/10 text-[#bc8cff] border border-[#bc8cff]/30 hover:bg-[#bc8cff]/20 transition-colors"
-                    >
-                      + ADD TO WATCHLIST
-                    </button>
-                  )}
-                  {isFmpResult && extraWatchlist.includes(selectedTicker) && (
-                    <span className="px-1.5 py-0.5 rounded text-[7px] font-semibold bg-terminal-accent/15 text-terminal-accent border border-terminal-accent/30">
-                      ✓ ADDED TO WATCHLIST
-                    </span>
-                  )}
-                </div>
-              </div>
-              {[
-                ["Mkt Cap", selectedData.mktCap], ["Volume", selectedData.vol],
-                ["P/E", "28.4"], ["EPS", "6.67"],
-                ["Div Yield", "0.52%"], ["Beta", "1.24"],
-                ["52W High", (+selectedData.price * 1.15).toFixed(2)], ["52W Low", (+selectedData.price * 0.72).toFixed(2)],
-                ["Avg Vol", "58.2M"], ["Float", "15.2B"],
-              ].map(([k, v]) => (
-                <div key={k} className="flex justify-between">
-                  <span className="text-terminal-text-faint">{k}</span>
-                  <span className="text-terminal-text-primary tabular-nums">{v}</span>
-                </div>
-              ))}
-            </div>
+            <AssetDetailPanel
+              selectedTicker={selectedTicker}
+              selectedData={selectedData}
+              isFmpResult={isFmpResult}
+              extraWatchlist={extraWatchlist}
+              onAddToWatchlist={handleAddToWatchlist}
+            />
           )}
         </DashboardPanel>
           </ResizableDashboard>

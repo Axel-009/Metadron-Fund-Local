@@ -10,9 +10,25 @@
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;700&display=swap" rel="stylesheet">
     <script>
       // Storage polyfill for sandboxed environments
-      (function(){var L='local',S='session',T='Storage';function m(){var d={};return{getItem:function(k){return d.hasOwnProperty(k)?d[k]:null},setItem:function(k,v){d[k]=String(v)},removeItem:function(k){delete d[k]},clear:function(){d={}},get length(){return Object.keys(d).length},key:function(i){return Object.keys(d)[i]||null}}}[L+T,S+T].forEach(function(n){try{window[n].setItem('_t','1');window[n].removeItem('_t')}catch(e){try{Object.defineProperty(window,n,{value:m(),writable:true})}catch(e2){window[n]=m()}}})})();
+      (function() {
+        function makeStorage() {
+          var data = {};
+          return {
+            getItem: function(key) { return data.hasOwnProperty(key) ? data[key] : null; },
+            setItem: function(key, val) { data[key] = String(val); },
+            removeItem: function(key) { delete data[key]; },
+            clear: function() { data = {}; },
+            get length() { return Object.keys(data).length; },
+            key: function(i) { return Object.keys(data)[i] || null; }
+          };
+        }
+        try { window.localStorage.setItem('__test', '1'); window.localStorage.removeItem('__test'); }
+        catch(e) { try { Object.defineProperty(window, 'localStorage', { value: makeStorage(), writable: true }); } catch(e2) { window.localStorage = makeStorage(); } }
+        try { window.sessionStorage.setItem('__test', '1'); window.sessionStorage.removeItem('__test'); }
+        catch(e) { try { Object.defineProperty(window, 'sessionStorage', { value: makeStorage(), writable: true }); } catch(e2) { window.sessionStorage = makeStorage(); } }
+      })();
     </script>
-    <script type="module" crossorigin src="/assets/index-C_VTdzrA.js"></script>
+    <script type="module" crossorigin src="/assets/index-DLxYIEfj.js"></script>
     <link rel="stylesheet" crossorigin href="/assets/index-BDwBTCkl.css">
   </head>
   <body>
