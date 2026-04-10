@@ -487,6 +487,38 @@ def _create_metrics(registry: "CollectorRegistry"):
         registry=registry,
     )
 
+    # ─── ETF Dashboard Metrics ─────────────────────────────────────
+    metrics["etf_positions_count"] = Gauge(
+        "metadron_etf_positions_count",
+        "Number of ETF positions held",
+        registry=registry,
+    )
+    metrics["etf_total_market_value"] = Gauge(
+        "metadron_etf_total_market_value",
+        "Total market value of ETF holdings",
+        registry=registry,
+    )
+    metrics["etf_unrealized_pnl"] = Gauge(
+        "metadron_etf_unrealized_pnl",
+        "Total unrealized P&L on ETF positions",
+        registry=registry,
+    )
+    metrics["etf_categories_active"] = Gauge(
+        "metadron_etf_categories_active",
+        "Number of ETF categories with positions",
+        registry=registry,
+    )
+    metrics["etf_portfolio_weight"] = Gauge(
+        "metadron_etf_portfolio_weight",
+        "ETF allocation as percentage of total portfolio NAV",
+        registry=registry,
+    )
+    metrics["etf_tracked_total"] = Gauge(
+        "metadron_etf_tracked_total",
+        "Total number of ETFs in tracking universe",
+        registry=registry,
+    )
+
     # ─── Quant Strategy Engine Metrics ─────────────────────────────
     metrics["quant_strategies_active"] = Gauge(
         "metadron_quant_strategies_active",
@@ -794,6 +826,58 @@ def _collect_live_metrics(metrics: dict):
             metrics["strat_engine_health"].labels(engine="TCAEngine").set(1)
     except Exception:
         metrics["strat_engine_health"].labels(engine="TCAEngine").set(0)
+
+    # ── ETF Dashboard Metrics ──────────────────────────────────
+    try:
+        from engine.data.universe_engine import ALL_ETFS
+        metrics["etf_tracked_total"].set(len(ALL_ETFS))
+
+        from engine.execution.execution_engine import ExecutionEngine
+        eng_etf = ExecutionEngine._instance if hasattr(ExecutionEngine, "_instance") else None
+        if eng_etf is None:
+            from engine.api.routers.execution import _get_exec
+            eng_etf = _get_exec()
+        if eng_etf is not None:
+            broker_etf = eng_etf.broker
+            positions_etf = broker_etf.get_all_positions()
+            etf_set = set(ALL_ETFS)
+            etf_count = 0
+            etf_mv = 0
+            etf_pnl = 0
+            cats = set()
+            from engine.data.universe_engine import (
+                SECTOR_ETFS, FACTOR_ETFS, COMMODITY_ETFS, FIXED_INCOME_ETFS,
+                VOLATILITY_ETFS, INTERNATIONAL_ETFS, INDEX_ETFS, THEMATIC_ETFS,
+            )
+            cat_map = {}
+            for n, t in SECTOR_ETFS.items(): cat_map[t] = "Sector"
+            for n, t in FACTOR_ETFS.items(): cat_map[t] = "Factor"
+            for n, t in COMMODITY_ETFS.items(): cat_map[t] = "Commodity"
+            for n, t in FIXED_INCOME_ETFS.items(): cat_map[t] = "Bond"
+            for n, t in VOLATILITY_ETFS.items(): cat_map[t] = "Volatility"
+            for n, t in INTERNATIONAL_ETFS.items(): cat_map[t] = "International"
+            for n, t in INDEX_ETFS.items(): cat_map[t] = "Equity"
+            for n, t in THEMATIC_ETFS.items(): cat_map[t] = "Thematic"
+
+            for ticker, pos in (positions_etf.items() if isinstance(positions_etf, dict) else []):
+                if ticker not in etf_set:
+                    continue
+                qty = getattr(pos, "quantity", 0)
+                price = getattr(pos, "current_price", 0)
+                etf_count += 1
+                etf_mv += qty * price
+                etf_pnl += getattr(pos, "unrealized_pnl", 0)
+                cats.add(cat_map.get(ticker, "Other"))
+
+            metrics["etf_positions_count"].set(etf_count)
+            metrics["etf_total_market_value"].set(etf_mv)
+            metrics["etf_unrealized_pnl"].set(etf_pnl)
+            metrics["etf_categories_active"].set(len(cats))
+            nav_etf = broker_etf.get_portfolio_summary().get("nav", 0) if hasattr(broker_etf, "get_portfolio_summary") else 0
+            metrics["etf_portfolio_weight"].set((etf_mv / nav_etf * 100) if nav_etf > 0 else 0)
+        metrics["strat_engine_health"].labels(engine="ETFDashboard").set(1)
+    except Exception:
+        metrics["strat_engine_health"].labels(engine="ETFDashboard").set(0)
 
     # ── Reconciliation Metrics ─────────────────────────────────
     try:

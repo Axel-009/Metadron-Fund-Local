@@ -5,79 +5,76 @@ import {
 } from "recharts";
 import { useEngineQuery } from "@/hooks/use-engine-api";
 
-// ═══════════ MOCK DATA ═══════════
+// ═══════════ TYPES ═══════════
 
-const ETF_HOLDINGS = [
-  { ticker: "SPY",  name: "SPDR S&P 500 ETF Trust",            aum: 521.4, er: 0.0945, category: "Equity",    qty: 12400, avgEntry: 478.22, last: 521.08, chg:  0.38, pnl:  531248, weight: 12.8, strategy: "Core"    },
-  { ticker: "QQQ",  name: "Invesco QQQ Trust",                  aum: 244.1, er: 0.20,   category: "Equity",    qty:  8200, avgEntry: 412.50, last: 466.31, chg:  0.71, pnl:  441342, weight:  9.2, strategy: "Core"    },
-  { ticker: "IWM",  name: "iShares Russell 2000 ETF",           aum:  52.3, er: 0.19,   category: "Equity",    qty:  6100, avgEntry: 194.80, last: 201.44, chg: -0.22, pnl:   40504, weight:  3.1, strategy: "Tactical"},
-  { ticker: "EFA",  name: "iShares MSCI EAFE ETF",              aum:  62.8, er: 0.32,   category: "Equity",    qty:  9800, avgEntry:  72.15, last:  78.32, chg:  0.14, pnl:   60466, weight:  3.9, strategy: "Core"    },
-  { ticker: "EEM",  name: "iShares MSCI Emerging Markets ETF",  aum:  16.9, er: 0.68,   category: "Equity",    qty:  7500, avgEntry:  38.90, last:  42.17, chg: -0.43, pnl:   24525, weight:  2.0, strategy: "Tactical"},
-  { ticker: "AGG",  name: "iShares Core U.S. Aggregate Bond",   aum:  99.1, er: 0.03,   category: "Bond",      qty: 14200, avgEntry:  96.40, last:  95.11, chg:  0.08, pnl:  -18318, weight:  4.4, strategy: "Core"    },
-  { ticker: "TLT",  name: "iShares 20+ Year Treasury Bond ETF", aum:  33.8, er: 0.15,   category: "Bond",      qty:  8900, avgEntry:  92.10, last:  88.43, chg:  0.22, pnl:  -32663, weight:  2.5, strategy: "Hedge"   },
-  { ticker: "HYG",  name: "iShares iBoxx High Yield Corp Bond", aum:  13.2, er: 0.49,   category: "Bond",      qty:  6400, avgEntry:  77.80, last:  76.92, chg: -0.11, pnl:   -5632, weight:  1.6, strategy: "Income"  },
-  { ticker: "GLD",  name: "SPDR Gold Shares",                   aum:  57.9, er: 0.40,   category: "Commodity", qty:  4100, avgEntry: 191.20, last: 230.44, chg:  0.55, pnl:  160884, weight:  3.0, strategy: "Hedge"   },
-  { ticker: "USO",  name: "United States Oil Fund",             aum:   1.2, er: 0.83,   category: "Commodity", qty:  3200, avgEntry:  68.40, last:  71.18, chg: -1.24, pnl:    8896, weight:  0.7, strategy: "Tactical"},
-  { ticker: "XLK",  name: "Technology Select Sector SPDR Fund", aum: 214.2, er: 0.09,   category: "Sector",    qty:  5800, avgEntry: 182.30, last: 218.47, chg:  0.84, pnl:  209786, weight:  4.0, strategy: "Core"    },
-  { ticker: "XLF",  name: "Financial Select Sector SPDR Fund",  aum:  44.2, er: 0.09,   category: "Sector",    qty:  8900, avgEntry:  40.10, last:  45.82, chg:  0.29, pnl:   50908, weight:  1.3, strategy: "Tactical"},
-  { ticker: "XLE",  name: "Energy Select Sector SPDR Fund",     aum:  32.1, er: 0.09,   category: "Sector",    qty:  5400, avgEntry:  87.20, last:  90.11, chg: -0.67, pnl:   15714, weight:  1.5, strategy: "Tactical"},
-  { ticker: "XLV",  name: "Health Care Select Sector SPDR Fund",aum:  40.8, er: 0.09,   category: "Sector",    qty:  4700, avgEntry: 136.80, last: 139.24, chg:  0.12, pnl:   11468, weight:  2.1, strategy: "Core"    },
-  { ticker: "ARKK", name: "ARK Innovation ETF",                 aum:   6.8, er: 0.75,   category: "Thematic",  qty:  3100, avgEntry:  51.20, last:  49.38, chg: -2.14, pnl:   -5642, weight:  0.5, strategy: "Tactical"},
-  { ticker: "VWO",  name: "Vanguard FTSE Emerging Markets ETF", aum:  62.1, er: 0.08,   category: "Equity",    qty:  9100, avgEntry:  40.50, last:  43.82, chg: -0.18, pnl:   30212, weight:  1.3, strategy: "Core"    },
-  { ticker: "LQD",  name: "iShares iBoxx IG Corp Bond ETF",     aum:  27.4, er: 0.14,   category: "Bond",      qty:  6200, avgEntry: 107.30, last: 108.44, chg:  0.09, pnl:    7068, weight:  2.1, strategy: "Income"  },
-  { ticker: "IBIT", name: "iShares Bitcoin Trust ETF",          aum:  41.2, er: 0.25,   category: "Thematic",  qty:  2800, avgEntry:  34.20, last:  55.84, chg:  3.18, pnl:   60592, weight:  0.5, strategy: "Tactical"},
-];
+interface EtfHolding {
+  ticker: string;
+  name: string;
+  category: string;
+  quantity: number;
+  avg_cost: number;
+  current_price: number;
+  change_pct: number;
+  unrealized_pnl: number;
+  market_value: number;
+  weight: number;
+}
+
+interface SectorEntry {
+  ticker: string;
+  name: string;
+  price: number;
+  change_pct: number;
+}
+
+interface FlowEntry {
+  ticker: string;
+  name: string;
+  flow: number;
+  direction: string;
+  weekly_return: number;
+  monthly_return: number;
+}
+
+interface MoverEntry {
+  ticker: string;
+  name: string;
+  category: string;
+  price: number;
+  change_pct: number;
+}
+
+interface CategoryEntry {
+  category: string;
+  count: number;
+  market_value: number;
+  pnl: number;
+  weight: number;
+}
+
+interface EtfSummary {
+  etf_positions: number;
+  total_etfs_tracked: number;
+  etf_market_value: number;
+  etf_unrealized_pnl: number;
+  etf_weight_of_portfolio: number;
+  categories_active: number;
+  portfolio_nav: number;
+}
+
+// ═══════════ CONSTANTS ═══════════
 
 const CATEGORY_COLORS: Record<string, string> = {
-  Equity:    "#00d4aa",
-  Bond:      "#3b82f6",
-  Commodity: "#d29922",
-  Sector:    "#a855f7",
-  Thematic:  "#f85149",
+  Equity:        "#00d4aa",
+  Bond:          "#3b82f6",
+  Commodity:     "#d29922",
+  Sector:        "#a855f7",
+  Thematic:      "#f85149",
+  Factor:        "#22d3ee",
+  Volatility:    "#ec4899",
+  International: "#84cc16",
+  Other:         "#6b7280",
 };
-
-const STRATEGY_COLORS: Record<string, string> = {
-  Core:    "#00d4aa",
-  Tactical:"#d29922",
-  Hedge:   "#3b82f6",
-  Income:  "#3fb950",
-};
-
-const SECTOR_ETFS = [
-  { ticker:"XLK",  name:"Tech",        chg:  0.84 },
-  { ticker:"XLF",  name:"Financials",  chg:  0.29 },
-  { ticker:"XLE",  name:"Energy",      chg: -0.67 },
-  { ticker:"XLV",  name:"Healthcare",  chg:  0.12 },
-  { ticker:"XLI",  name:"Industrials", chg:  0.33 },
-  { ticker:"XLY",  name:"Cons Disc",   chg:  1.02 },
-  { ticker:"XLP",  name:"Cons Stpls",  chg: -0.08 },
-  { ticker:"XLU",  name:"Utilities",   chg: -0.41 },
-  { ticker:"XLRE", name:"Real Estate", chg: -0.55 },
-  { ticker:"XLB",  name:"Materials",   chg:  0.19 },
-  { ticker:"XLC",  name:"Comm Svcs",   chg:  0.63 },
-  { ticker:"XME",  name:"Metals",      chg: -0.92 },
-];
-
-const ETF_FLOWS = [
-  { ticker:"SPY",  flow:  1842.3, dir:"in"  },
-  { ticker:"QQQ",  flow:   923.7, dir:"in"  },
-  { ticker:"IBIT", flow:   447.2, dir:"in"  },
-  { ticker:"GLD",  flow:   312.8, dir:"in"  },
-  { ticker:"IWM",  flow:    88.4, dir:"in"  },
-  { ticker:"LQD",  flow:    41.2, dir:"in"  },
-  { ticker:"HYG",  flow:    67.9, dir:"in"  },
-  { ticker:"USO",  flow:   -55.8, dir:"out" },
-  { ticker:"EEM",  flow:  -144.7, dir:"out" },
-  { ticker:"TLT",  flow:  -234.1, dir:"out" },
-  { ticker:"ARKK", flow:  -178.6, dir:"out" },
-  { ticker:"XLE",  flow:   -92.3, dir:"out" },
-];
-
-function getCategoryData() {
-  const map: Record<string, number> = {};
-  ETF_HOLDINGS.forEach(h => { map[h.category] = (map[h.category] || 0) + h.weight; });
-  return Object.entries(map).map(([name, value]) => ({ name, value: +value.toFixed(1) }));
-}
 
 const TOOLTIP_STYLE = {
   backgroundColor: "#0d1117",
@@ -91,42 +88,79 @@ const TOOLTIP_STYLE = {
 const fmtN = (n: number, d = 2) =>
   n.toLocaleString("en-US", { minimumFractionDigits: d, maximumFractionDigits: d });
 
-export default function ETFDashboard() {
-  // ─── Engine API ─────────────────────────────────────
-  const { data: sectorData } = useEngineQuery<{ sectors: Array<{ sector: string; count: number; momentum: number }> }>("/universe/sectors", { refetchInterval: 30000 });
-  const { data: posData } = useEngineQuery<{ positions: Array<{ ticker: string; quantity: number; avg_cost: number; current_price: number; unrealized_pnl: number; sector: string }> }>("/portfolio/positions", { refetchInterval: 15000 });
-  const { data: indicesApi } = useEngineQuery<{ indices: Array<{ ticker: string; price: number; change: number }> }>("/portfolio/indices", { refetchInterval: 15000 });
+const fmtDollar = (n: number) => {
+  if (Math.abs(n) >= 1e6) return `$${(n / 1e6).toFixed(1)}M`;
+  if (Math.abs(n) >= 1e3) return `$${(n / 1e3).toFixed(1)}K`;
+  return `$${n.toFixed(0)}`;
+};
 
-  // Wire sector ETFs from indices API
-  const sectorEtfs = useMemo(() => {
-    if (!indicesApi?.indices?.length) return SECTOR_ETFS;
-    const map = new Map(indicesApi.indices.map((i) => [i.ticker, i]));
-    return SECTOR_ETFS.map((s) => {
-      const api = map.get(s.ticker);
-      return api ? { ...s, chg: api.change } : s;
-    });
-  }, [indicesApi]);
+// ═══════════ COMPONENT ═══════════
+
+export default function ETFDashboard() {
+  // ─── Live API hooks (all from /etf router) ─────────────────
+  const { data: holdingsApi } = useEngineQuery<{
+    holdings: EtfHolding[];
+    total_positions: number;
+    total_market_value: number;
+  }>("/etf/holdings", { refetchInterval: 15000 });
+
+  const { data: sectorApi } = useEngineQuery<{
+    sectors: SectorEntry[];
+  }>("/etf/sector-heatmap", { refetchInterval: 30000 });
+
+  const { data: flowsApi } = useEngineQuery<{
+    flows: FlowEntry[];
+  }>("/etf/flows", { refetchInterval: 60000 });
+
+  const { data: moversApi } = useEngineQuery<{
+    top_movers: MoverEntry[];
+    bottom_movers: MoverEntry[];
+  }>("/etf/movers", { refetchInterval: 30000 });
+
+  const { data: catApi } = useEngineQuery<{
+    categories: CategoryEntry[];
+  }>("/etf/categories", { refetchInterval: 30000 });
+
+  const { data: summaryApi } = useEngineQuery<EtfSummary>(
+    "/etf/summary", { refetchInterval: 15000 },
+  );
+
+  // ─── Derived state ────────────────────────────────────────
+  const holdings = holdingsApi?.holdings ?? [];
+  const sectors = sectorApi?.sectors ?? [];
+  const flows = flowsApi?.flows ?? [];
+  const topMovers = moversApi?.top_movers ?? [];
+  const botMovers = moversApi?.bottom_movers ?? [];
+  const categories = catApi?.categories ?? [];
+  const summary = summaryApi ?? null;
 
   const [sortKey, setSortKey] = useState<string>("weight");
   const [sortDir, setSortDir] = useState<1 | -1>(-1);
 
   const sorted = useMemo(() => {
-    return [...ETF_HOLDINGS].sort((a, b) => {
+    return [...holdings].sort((a, b) => {
       const av = (a as unknown as Record<string, number | string>)[sortKey];
       const bv = (b as unknown as Record<string, number | string>)[sortKey];
       if (typeof av === "number" && typeof bv === "number") return sortDir * (av - bv);
       return sortDir * String(av).localeCompare(String(bv));
     });
-  }, [sortKey, sortDir]);
+  }, [holdings, sortKey, sortDir]);
 
   const toggleSort = (k: string) => {
     if (k === sortKey) setSortDir(d => (d === 1 ? -1 : 1));
     else { setSortKey(k); setSortDir(-1); }
   };
 
-  const topMovers = [...ETF_HOLDINGS].sort((a, b) => b.chg - a.chg).slice(0, 5);
-  const botMovers = [...ETF_HOLDINGS].sort((a, b) => a.chg - b.chg).slice(0, 5);
-  const catData = getCategoryData();
+  // Category pie data
+  const pieData = useMemo(() => {
+    if (categories.length > 0) {
+      return categories.map(c => ({ name: c.category, value: c.weight }));
+    }
+    // Derive from holdings
+    const map: Record<string, number> = {};
+    holdings.forEach(h => { map[h.category] = (map[h.category] || 0) + h.weight; });
+    return Object.entries(map).map(([name, value]) => ({ name, value: +value.toFixed(1) }));
+  }, [categories, holdings]);
 
   const colHdr = (k: string, label: string) => (
     <th
@@ -137,112 +171,29 @@ export default function ETFDashboard() {
     </th>
   );
 
+  const loading = !holdingsApi;
+
   return (
-    <div className="h-full grid gap-1 p-1 overflow-hidden" style={{ gridTemplateColumns: "1fr 200px", gridTemplateRows: "1fr 190px" }}>
-      {/* ─── Main Holdings Table (top-left) ─── */}
-      <DashboardPanel
-        title="PORTFOLIO ETF HOLDINGS"
-        noPadding
-        headerRight={<span className="text-[9px] text-terminal-text-muted">{ETF_HOLDINGS.length} positions</span>}
-      >
-        <div className="overflow-auto h-full">
-          <table className="w-full text-[10px] font-mono border-collapse">
-            <thead className="sticky top-0 bg-terminal-surface z-10">
-              <tr className="border-b border-terminal-border">
-                <th className="text-terminal-text-muted text-[9px] tracking-widest text-left px-2 py-1">TICKER</th>
-                <th className="text-terminal-text-muted text-[9px] tracking-widest text-left px-1 py-1">NAME</th>
-                {colHdr("aum",      "AUM $B")}
-                {colHdr("er",       "ER%")}
-                <th className="text-terminal-text-muted text-[9px] tracking-widest px-1 py-1">CAT</th>
-                {colHdr("qty",      "QTY")}
-                {colHdr("avgEntry", "AVG")}
-                {colHdr("last",     "LAST")}
-                {colHdr("chg",      "CHG%")}
-                {colHdr("pnl",      "UNRLZD P&L")}
-                {colHdr("weight",   "WT%")}
-                <th className="text-terminal-text-muted text-[9px] tracking-widest px-1 py-1">STRAT</th>
-              </tr>
-            </thead>
-            <tbody>
-              {sorted.map((h, i) => (
-                <tr key={h.ticker} className={`border-b border-terminal-border hover:bg-[#161b22] transition-colors ${i % 2 === 0 ? "" : "bg-[#0d1117]"}`}>
-                  <td className="px-2 py-0.5 text-terminal-accent font-bold">{h.ticker}</td>
-                  <td className="px-1 py-0.5 text-terminal-text-primary max-w-[180px] truncate">{h.name}</td>
-                  <td className="px-1 py-0.5 text-terminal-text-primary text-right">{fmtN(h.aum, 1)}</td>
-                  <td className="px-1 py-0.5 text-terminal-text-muted text-right">{h.er.toFixed(2)}</td>
-                  <td className="px-1 py-0.5 text-right">
-                    <span className="px-1 rounded text-[8px]" style={{ backgroundColor: CATEGORY_COLORS[h.category] + "22", color: CATEGORY_COLORS[h.category] }}>
-                      {h.category}
-                    </span>
-                  </td>
-                  <td className="px-1 py-0.5 text-terminal-text-primary text-right">{h.qty.toLocaleString()}</td>
-                  <td className="px-1 py-0.5 text-terminal-text-muted text-right">{fmtN(h.avgEntry)}</td>
-                  <td className="px-1 py-0.5 text-terminal-text-primary text-right">{fmtN(h.last)}</td>
-                  <td className={`px-1 py-0.5 text-right font-bold ${h.chg >= 0 ? "text-terminal-positive" : "text-terminal-negative"}`}>
-                    {h.chg >= 0 ? "+" : ""}{h.chg.toFixed(2)}%
-                  </td>
-                  <td className={`px-1 py-0.5 text-right ${h.pnl >= 0 ? "text-terminal-positive" : "text-terminal-negative"}`}>
-                    {h.pnl >= 0 ? "+$" : "-$"}{Math.abs(h.pnl).toLocaleString()}
-                  </td>
-                  <td className="px-1 py-0.5 text-terminal-text-primary text-right">{h.weight.toFixed(1)}</td>
-                  <td className="px-1 py-0.5 text-right">
-                    <span className="px-1 rounded text-[8px]" style={{ backgroundColor: STRATEGY_COLORS[h.strategy] + "22", color: STRATEGY_COLORS[h.strategy] }}>
-                      {h.strategy}
-                    </span>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      </DashboardPanel>
+    <div className="h-full grid gap-1 p-1 overflow-hidden" style={{ gridTemplateColumns: "1fr 200px", gridTemplateRows: "auto 1fr 190px" }}>
 
-      {/* ─── Right Column (spans both rows) ─── */}
-      <div className="row-span-2 flex flex-col gap-1">
-        {/* Category Allocation Donut */}
-        <DashboardPanel title="CATEGORY ALLOC" className="flex-none" style={{ height: "230px" }}>
-          <ResponsiveContainer width="100%" height={120}>
-            <PieChart>
-              <Pie data={catData} dataKey="value" innerRadius={30} outerRadius={52} paddingAngle={2} startAngle={90} endAngle={450}>
-                {catData.map(entry => (
-                  <Cell key={entry.name} fill={CATEGORY_COLORS[entry.name]} />
-                ))}
-              </Pie>
-              <Tooltip contentStyle={TOOLTIP_STYLE} formatter={(v: number) => [`${v.toFixed(1)}%`, ""]} />
-            </PieChart>
-          </ResponsiveContainer>
-          <div className="space-y-0.5">
-            {catData.map(c => (
-              <div key={c.name} className="flex items-center justify-between">
-                <div className="flex items-center gap-1">
-                  <div className="w-1.5 h-1.5 rounded-full flex-shrink-0" style={{ backgroundColor: CATEGORY_COLORS[c.name] }} />
-                  <span className="text-[9px] text-terminal-text-muted">{c.name}</span>
-                </div>
-                <span className="text-[10px] font-mono text-terminal-text-primary">{c.value.toFixed(1)}%</span>
-              </div>
-            ))}
-          </div>
-        </DashboardPanel>
-
-        {/* ETF Flow Monitor */}
-        <DashboardPanel title="ETF FLOW MONITOR" className="flex-1">
-          <div className="space-y-1">
-            {ETF_FLOWS.map(f => (
-              <div key={f.ticker} className="flex items-center gap-1">
-                <span className="text-[10px] font-mono text-terminal-accent w-9 flex-shrink-0">{f.ticker}</span>
-                <div className="flex-1 relative h-2.5 rounded overflow-hidden bg-[#161b22]">
-                  <div
-                    className="absolute top-0 h-full rounded"
-                    style={{
-                      width: `${Math.min(100, (Math.abs(f.flow) / 2000) * 100)}%`,
-                      backgroundColor: f.dir === "in" ? "#3fb950" : "#f85149",
-                      left: f.dir === "in" ? "0" : "auto",
-                      right: f.dir === "out" ? "0" : "auto",
-                    }}
-                  />
-                </div>
-                <span className={`text-[9px] font-mono w-16 text-right flex-shrink-0 ${f.dir === "in" ? "text-terminal-positive" : "text-terminal-negative"}`}>
-                  {f.dir === "in" ? "+" : "-"}${Math.abs(f.flow).toFixed(0)}M
+      {/* ─── Summary Strip (top, full width) ─── */}
+      <div className="col-span-2">
+        <DashboardPanel title="ETF PORTFOLIO OVERVIEW" noPadding>
+          <div className="flex items-center gap-4 px-3 py-1.5 overflow-x-auto">
+            {[
+              { label: "POSITIONS", value: summary?.etf_positions ?? holdings.length, fmt: (v: number) => String(v) },
+              { label: "TRACKED", value: summary?.total_etfs_tracked ?? 0, fmt: (v: number) => String(v) },
+              { label: "MKT VALUE", value: summary?.etf_market_value ?? holdingsApi?.total_market_value ?? 0, fmt: fmtDollar },
+              { label: "UNRLZD P&L", value: summary?.etf_unrealized_pnl ?? 0, fmt: fmtDollar, colored: true },
+              { label: "PORT WT%", value: summary?.etf_weight_of_portfolio ?? 0, fmt: (v: number) => `${v.toFixed(1)}%` },
+              { label: "CATEGORIES", value: summary?.categories_active ?? categories.length, fmt: (v: number) => String(v) },
+            ].map(s => (
+              <div key={s.label} className="flex flex-col items-center min-w-[70px]">
+                <span className="text-[8px] text-terminal-text-muted tracking-widest">{s.label}</span>
+                <span className={`text-[13px] font-mono font-bold ${
+                  s.colored ? (s.value >= 0 ? "text-terminal-positive" : "text-terminal-negative") : "text-terminal-text-primary"
+                }`}>
+                  {loading ? "—" : s.fmt(s.value)}
                 </span>
               </div>
             ))}
@@ -250,55 +201,191 @@ export default function ETFDashboard() {
         </DashboardPanel>
       </div>
 
+      {/* ─── Main Holdings Table ─── */}
+      <DashboardPanel
+        title="ETF HOLDINGS"
+        noPadding
+        headerRight={<span className="text-[9px] text-terminal-text-muted">{holdings.length} positions</span>}
+      >
+        {loading ? (
+          <div className="flex items-center justify-center h-full text-terminal-text-muted text-xs">Loading ETF data...</div>
+        ) : holdings.length === 0 ? (
+          <div className="flex items-center justify-center h-full text-terminal-text-muted text-xs">No ETF positions — tracking {summary?.total_etfs_tracked ?? 0} ETFs</div>
+        ) : (
+          <div className="overflow-auto h-full">
+            <table className="w-full text-[10px] font-mono border-collapse">
+              <thead className="sticky top-0 bg-terminal-surface z-10">
+                <tr className="border-b border-terminal-border">
+                  <th className="text-terminal-text-muted text-[9px] tracking-widest text-left px-2 py-1">TICKER</th>
+                  <th className="text-terminal-text-muted text-[9px] tracking-widest text-left px-1 py-1">NAME</th>
+                  <th className="text-terminal-text-muted text-[9px] tracking-widest px-1 py-1">CAT</th>
+                  {colHdr("quantity", "QTY")}
+                  {colHdr("avg_cost", "AVG")}
+                  {colHdr("current_price", "LAST")}
+                  {colHdr("change_pct", "CHG%")}
+                  {colHdr("unrealized_pnl", "UNRLZD P&L")}
+                  {colHdr("market_value", "MKT VAL")}
+                  {colHdr("weight", "WT%")}
+                </tr>
+              </thead>
+              <tbody>
+                {sorted.map((h, i) => (
+                  <tr key={h.ticker} className={`border-b border-terminal-border hover:bg-[#161b22] transition-colors ${i % 2 === 0 ? "" : "bg-[#0d1117]"}`}>
+                    <td className="px-2 py-0.5 text-terminal-accent font-bold">{h.ticker}</td>
+                    <td className="px-1 py-0.5 text-terminal-text-primary max-w-[180px] truncate">{h.name}</td>
+                    <td className="px-1 py-0.5 text-right">
+                      <span className="px-1 rounded text-[8px]" style={{ backgroundColor: (CATEGORY_COLORS[h.category] ?? "#6b7280") + "22", color: CATEGORY_COLORS[h.category] ?? "#6b7280" }}>
+                        {h.category}
+                      </span>
+                    </td>
+                    <td className="px-1 py-0.5 text-terminal-text-primary text-right">{h.quantity.toLocaleString()}</td>
+                    <td className="px-1 py-0.5 text-terminal-text-muted text-right">{fmtN(h.avg_cost)}</td>
+                    <td className="px-1 py-0.5 text-terminal-text-primary text-right">{fmtN(h.current_price)}</td>
+                    <td className={`px-1 py-0.5 text-right font-bold ${h.change_pct >= 0 ? "text-terminal-positive" : "text-terminal-negative"}`}>
+                      {h.change_pct >= 0 ? "+" : ""}{h.change_pct.toFixed(2)}%
+                    </td>
+                    <td className={`px-1 py-0.5 text-right ${h.unrealized_pnl >= 0 ? "text-terminal-positive" : "text-terminal-negative"}`}>
+                      {h.unrealized_pnl >= 0 ? "+$" : "-$"}{Math.abs(h.unrealized_pnl).toLocaleString()}
+                    </td>
+                    <td className="px-1 py-0.5 text-terminal-text-primary text-right">{fmtDollar(h.market_value)}</td>
+                    <td className="px-1 py-0.5 text-terminal-text-primary text-right">{h.weight.toFixed(1)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </DashboardPanel>
+
+      {/* ─── Right Column (spans rows 2+3) ─── */}
+      <div className="row-span-2 flex flex-col gap-1">
+        {/* Category Allocation Donut */}
+        <DashboardPanel title="CATEGORY ALLOC" className="flex-none" style={{ height: "230px" }}>
+          {pieData.length === 0 ? (
+            <div className="flex items-center justify-center h-full text-terminal-text-muted text-[10px]">No data</div>
+          ) : (
+            <>
+              <ResponsiveContainer width="100%" height={120}>
+                <PieChart>
+                  <Pie data={pieData} dataKey="value" innerRadius={30} outerRadius={52} paddingAngle={2} startAngle={90} endAngle={450}>
+                    {pieData.map(entry => (
+                      <Cell key={entry.name} fill={CATEGORY_COLORS[entry.name] ?? "#6b7280"} />
+                    ))}
+                  </Pie>
+                  <Tooltip contentStyle={TOOLTIP_STYLE} formatter={(v: number) => [`${v.toFixed(1)}%`, ""]} />
+                </PieChart>
+              </ResponsiveContainer>
+              <div className="space-y-0.5">
+                {pieData.map(c => (
+                  <div key={c.name} className="flex items-center justify-between">
+                    <div className="flex items-center gap-1">
+                      <div className="w-1.5 h-1.5 rounded-full flex-shrink-0" style={{ backgroundColor: CATEGORY_COLORS[c.name] ?? "#6b7280" }} />
+                      <span className="text-[9px] text-terminal-text-muted">{c.name}</span>
+                    </div>
+                    <span className="text-[10px] font-mono text-terminal-text-primary">{c.value.toFixed(1)}%</span>
+                  </div>
+                ))}
+              </div>
+            </>
+          )}
+        </DashboardPanel>
+
+        {/* ETF Flow Monitor */}
+        <DashboardPanel title="ETF FLOW MONITOR" className="flex-1">
+          {flows.length === 0 ? (
+            <div className="flex items-center justify-center h-full text-terminal-text-muted text-[10px]">Loading flows...</div>
+          ) : (
+            <div className="space-y-1 overflow-y-auto">
+              {flows.slice(0, 14).map(f => {
+                const maxFlow = Math.max(...flows.map(fl => fl.flow), 1);
+                return (
+                  <div key={f.ticker} className="flex items-center gap-1">
+                    <span className="text-[10px] font-mono text-terminal-accent w-9 flex-shrink-0">{f.ticker}</span>
+                    <div className="flex-1 relative h-2.5 rounded overflow-hidden bg-[#161b22]">
+                      <div
+                        className="absolute top-0 h-full rounded"
+                        style={{
+                          width: `${Math.min(100, (f.flow / maxFlow) * 100)}%`,
+                          backgroundColor: f.direction === "in" ? "#3fb950" : "#f85149",
+                          left: f.direction === "in" ? "0" : "auto",
+                          right: f.direction === "out" ? "0" : "auto",
+                        }}
+                      />
+                    </div>
+                    <span className={`text-[9px] font-mono w-16 text-right flex-shrink-0 ${f.direction === "in" ? "text-terminal-positive" : "text-terminal-negative"}`}>
+                      {f.direction === "in" ? "+" : "-"}{f.weekly_return.toFixed(2)}%
+                    </span>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </DashboardPanel>
+      </div>
+
       {/* ─── Bottom Row: Sector Heatmap + Movers ─── */}
       <div className="grid gap-1" style={{ gridTemplateColumns: "1fr 1fr" }}>
         {/* Sector Heatmap */}
         <DashboardPanel title="SECTOR ETF HEATMAP" noPadding>
-          <div className="grid grid-cols-4 gap-0.5 p-1.5 h-full">
-            {sectorEtfs.map(s => {
-              const intensity = Math.min(Math.abs(s.chg) / 2, 1);
-              const bg = s.chg >= 0
-                ? `rgba(63,185,80,${0.10 + intensity * 0.35})`
-                : `rgba(248,81,73,${0.10 + intensity * 0.35})`;
-              const col = s.chg >= 0 ? "#3fb950" : "#f85149";
-              return (
-                <div key={s.ticker} className="rounded flex flex-col items-center justify-center p-1 cursor-default" style={{ backgroundColor: bg, border: `1px solid ${col}33` }}>
-                  <span className="text-[9px] font-mono font-bold" style={{ color: col }}>{s.ticker}</span>
-                  <span className="text-[8px] text-terminal-text-muted leading-tight">{s.name}</span>
-                  <span className="text-[9px] font-mono font-bold" style={{ color: col }}>{s.chg >= 0 ? "+" : ""}{s.chg.toFixed(2)}%</span>
-                </div>
-              );
-            })}
-          </div>
+          {sectors.length === 0 ? (
+            <div className="flex items-center justify-center h-full text-terminal-text-muted text-[10px]">Loading sectors...</div>
+          ) : (
+            <div className="grid grid-cols-4 gap-0.5 p-1.5 h-full">
+              {sectors.map(s => {
+                const intensity = Math.min(Math.abs(s.change_pct) / 2, 1);
+                const bg = s.change_pct >= 0
+                  ? `rgba(63,185,80,${0.10 + intensity * 0.35})`
+                  : `rgba(248,81,73,${0.10 + intensity * 0.35})`;
+                const col = s.change_pct >= 0 ? "#3fb950" : "#f85149";
+                return (
+                  <div key={s.ticker} className="rounded flex flex-col items-center justify-center p-1 cursor-default" style={{ backgroundColor: bg, border: `1px solid ${col}33` }}>
+                    <span className="text-[9px] font-mono font-bold" style={{ color: col }}>{s.ticker}</span>
+                    <span className="text-[8px] text-terminal-text-muted leading-tight">{s.name}</span>
+                    <span className="text-[9px] font-mono font-bold" style={{ color: col }}>{s.change_pct >= 0 ? "+" : ""}{s.change_pct.toFixed(2)}%</span>
+                  </div>
+                );
+              })}
+            </div>
+          )}
         </DashboardPanel>
 
         {/* Top/Bottom Movers */}
         <div className="grid gap-1" style={{ gridTemplateRows: "1fr 1fr" }}>
           <DashboardPanel title="TOP MOVERS TODAY" noPadding>
-            <table className="w-full text-[10px] font-mono">
-              <tbody>
-                {topMovers.map(m => (
-                  <tr key={m.ticker} className="border-b border-terminal-border">
-                    <td className="px-2 py-0.5 text-terminal-accent font-bold">{m.ticker}</td>
-                    <td className="px-1 py-0.5 text-terminal-text-muted text-[9px] truncate">{m.name.split(" ").slice(0,3).join(" ")}</td>
-                    <td className="px-2 py-0.5 text-terminal-positive text-right font-bold">+{m.chg.toFixed(2)}%</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
+            {topMovers.length === 0 ? (
+              <div className="flex items-center justify-center h-full text-terminal-text-muted text-[10px]">Loading...</div>
+            ) : (
+              <table className="w-full text-[10px] font-mono">
+                <tbody>
+                  {topMovers.map(m => (
+                    <tr key={m.ticker} className="border-b border-terminal-border">
+                      <td className="px-2 py-0.5 text-terminal-accent font-bold">{m.ticker}</td>
+                      <td className="px-1 py-0.5 text-terminal-text-muted text-[9px] truncate">{m.name}</td>
+                      <td className="px-1 py-0.5 text-terminal-text-primary text-right">${m.price.toFixed(2)}</td>
+                      <td className="px-2 py-0.5 text-terminal-positive text-right font-bold">+{m.change_pct.toFixed(2)}%</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            )}
           </DashboardPanel>
           <DashboardPanel title="BOTTOM MOVERS TODAY" noPadding>
-            <table className="w-full text-[10px] font-mono">
-              <tbody>
-                {botMovers.map(m => (
-                  <tr key={m.ticker} className="border-b border-terminal-border">
-                    <td className="px-2 py-0.5 text-terminal-accent font-bold">{m.ticker}</td>
-                    <td className="px-1 py-0.5 text-terminal-text-muted text-[9px] truncate">{m.name.split(" ").slice(0,3).join(" ")}</td>
-                    <td className="px-2 py-0.5 text-terminal-negative text-right font-bold">{m.chg.toFixed(2)}%</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
+            {botMovers.length === 0 ? (
+              <div className="flex items-center justify-center h-full text-terminal-text-muted text-[10px]">Loading...</div>
+            ) : (
+              <table className="w-full text-[10px] font-mono">
+                <tbody>
+                  {botMovers.map(m => (
+                    <tr key={m.ticker} className="border-b border-terminal-border">
+                      <td className="px-2 py-0.5 text-terminal-accent font-bold">{m.ticker}</td>
+                      <td className="px-1 py-0.5 text-terminal-text-muted text-[9px] truncate">{m.name}</td>
+                      <td className="px-1 py-0.5 text-terminal-text-primary text-right">${m.price.toFixed(2)}</td>
+                      <td className="px-2 py-0.5 text-terminal-negative text-right font-bold">{m.change_pct.toFixed(2)}%</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            )}
           </DashboardPanel>
         </div>
       </div>
