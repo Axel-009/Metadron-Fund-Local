@@ -37,7 +37,9 @@ from engine.api.routers import (
     backtest,
     chat,
     velocity,
-    allocation,
+    flows,
+    flow_runs,
+    api_keys,
 )
 from engine.bridges.prometheus_metrics import create_metrics_router
 
@@ -84,7 +86,9 @@ app.include_router(archive.router, prefix="/api/engine/archive", tags=["Archive"
 app.include_router(backtest.router, prefix="/api/engine/backtest", tags=["Backtest"])
 app.include_router(chat.router, prefix="/api/chat", tags=["Chat"])
 app.include_router(velocity.router, prefix="/api/engine/velocity", tags=["Velocity"])
-app.include_router(allocation.router, prefix="/api/engine/allocation", tags=["Allocation"])
+app.include_router(flows.router, prefix="/api/engine/flows", tags=["Flows"])
+app.include_router(flow_runs.router, prefix="/api/engine/flow-runs", tags=["FlowRuns"])
+app.include_router(api_keys.router, prefix="/api/engine/api-keys", tags=["ApiKeys"])
 
 # ─── Prometheus metrics (scraped by Contabo monitoring stack) ──────
 _metrics_router = create_metrics_router(app)
