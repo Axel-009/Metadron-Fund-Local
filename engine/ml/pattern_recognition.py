@@ -1265,6 +1265,24 @@ class MarketRegimeIdentifier:
 # 8. Pattern Recognition Engine (Master Orchestrator)
 # ---------------------------------------------------------------------------
 
+def _dir_label(d) -> str:
+    """Normalise Direction enum / string to 'Bullish' | 'Bearish' | 'Neutral'."""
+    if d is None:
+        return "Neutral"
+    s = d.value if hasattr(d, "value") else str(d)
+    s = s.upper()
+    if s in ("LONG", "BULLISH", "BUY"):
+        return "Bullish"
+    if s in ("SHORT", "BEARISH", "SELL"):
+        return "Bearish"
+    return "Neutral"
+
+
+# Alias so the router can import as ``PatternRecognition``
+# (the router historically used that name)
+PatternRecognition = None  # set after class definition below
+
+
 class PatternRecognitionEngine:
     """
     Master class that orchestrates all sub-engines and provides a unified
@@ -1584,8 +1602,103 @@ class PatternRecognitionEngine:
             "days": days,
         }
 
+    def analyze(self, ticker: str, period: str = "1y") -> Dict:
+        """Convenience method: fetch OHLCV data for *ticker* and run the full
+        pattern-recognition scan.  Returns a JSON-serialisable dict.
+
+        This is the primary entry point used by the API router
+        ``/ml/patterns?ticker=SPY``.
+        """
+        df = get_prices(ticker, period=period)
+        if df is None or (hasattr(df, "empty") and df.empty) or len(df) < 30:
+            return {"ticker": ticker, "patterns": [], "error": "insufficient_data"}
+
+        raw = self.scan_ticker(df, ticker)
+
+        # ── Flatten into a UI-friendly pattern list ──
+        patterns: List[Dict] = []
+
+        for cp in raw.get("chart_patterns", []):
+            patterns.append({
+                "pattern": str(cp.get("pattern", "")),
+                "asset": ticker,
+                "confidence": float(cp.get("confidence", 0)),
+                "timeframe": "1D",
+                "direction": _dir_label(cp.get("direction")),
+            })
+
+        for candle in raw.get("candlestick", []):
+            patterns.append({
+                "pattern": str(candle.get("pattern", "")),
+                "asset": ticker,
+                "confidence": float(candle.get("confidence", 0)),
+                "timeframe": "1D",
+                "direction": _dir_label(candle.get("direction")),
+            })
+
+        # Add momentum-derived signals as pseudo-patterns
+        rsi_div = raw.get("rsi_divergence")
+        if rsi_div and rsi_div.get("confidence", 0) > 0:
+            patterns.append({
+                "pattern": "RSI Divergence",
+                "asset": ticker,
+                "confidence": float(rsi_div.get("confidence", 0)),
+                "timeframe": "1D",
+                "direction": _dir_label(rsi_div.get("direction")),
+            })
+
+        macd_div = raw.get("macd_divergence")
+        if macd_div and macd_div.get("confidence", 0) > 0:
+            patterns.append({
+                "pattern": "MACD Divergence",
+                "asset": ticker,
+                "confidence": float(macd_div.get("confidence", 0)),
+                "timeframe": "1D",
+                "direction": _dir_label(macd_div.get("direction")),
+            })
+
+        bb = raw.get("bb_squeeze")
+        if bb:
+            patterns.append({
+                "pattern": "Bollinger Squeeze",
+                "asset": ticker,
+                "confidence": 0.4,
+                "timeframe": "1D",
+                "direction": "Neutral",
+            })
+
+        # Sort by confidence desc, keep top 8
+        patterns.sort(key=lambda p: p["confidence"], reverse=True)
+        patterns = patterns[:8]
+
+        # Conviction signal summary
+        sig = raw.get("conviction_signal")
+        conviction = None
+        if sig and hasattr(sig, "confidence"):
+            conviction = {
+                "level": sig.conviction_level.value if hasattr(sig, "conviction_level") else "LOW",
+                "confidence": round(sig.confidence, 4),
+                "direction": sig.direction.value if hasattr(sig, "direction") else "LONG",
+                "entry": round(sig.entry_price, 4) if hasattr(sig, "entry_price") else None,
+                "stop": round(sig.stop_loss, 4) if hasattr(sig, "stop_loss") else None,
+                "target": round(sig.target, 4) if hasattr(sig, "target") else None,
+                "rr": round(sig.reward_risk, 2) if hasattr(sig, "reward_risk") else None,
+            }
+
+        return {
+            "ticker": ticker,
+            "patterns": patterns,
+            "regime": raw.get("regime", {}),
+            "factor_scores": raw.get("factor_scores", {}),
+            "conviction": conviction,
+        }
+
     def reset(self) -> None:
         """Clear all cached results and signals."""
         self.conviction_engine.clear()
         self._scan_results.clear()
         self._rv_results.clear()
+
+
+# Alias for backward-compatible import from the API router
+PatternRecognition = PatternRecognitionEngine
