@@ -1,13 +1,3 @@
-"""
-Metadron Capital — API key management endpoints.
-
-Endpoints
----------
-POST   /api-keys       — create a new API key
-GET    /api-keys       — list all keys (metadata only)
-DELETE /api-keys/{id}  — revoke (soft-delete) a key
-"""
-
 import hashlib
 import logging
 import secrets
@@ -21,9 +11,9 @@ try:
 except ImportError:
     raise RuntimeError("FastAPI and SQLAlchemy are required.")
 
-from app.backend.models.database import get_db
-from app.backend.models.tables import ApiKey
-from app.backend.schemas.flows import ApiKeyCreate
+from engine.db.database import get_db
+from engine.db.tables import ApiKey
+from engine.db.schemas import ApiKeyCreate
 
 router = APIRouter()
 
