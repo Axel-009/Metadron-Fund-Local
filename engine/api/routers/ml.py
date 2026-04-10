@@ -279,29 +279,138 @@ async def classifier_tiers():
 
 # ─── STRAT tab ─────────────────────────────────────────────
 
+_cube_instance = None
+_exec_engine = None
+
+
+def _get_cube():
+    """Singleton MetadronCube."""
+    global _cube_instance
+    if _cube_instance is None:
+        from engine.signals.metadron_cube import MetadronCube
+        _cube_instance = MetadronCube()
+    return _cube_instance
+
+
+def _get_exec_engine():
+    """Singleton ExecutionEngine for strategy perf."""
+    global _exec_engine
+    if _exec_engine is None:
+        from engine.execution.execution_engine import ExecutionEngine
+        _exec_engine = ExecutionEngine()
+    return _exec_engine
+
+
+def _read_cube_cache() -> dict | None:
+    """Read cube state from the MetadronCubeService disk cache."""
+    import json
+    from pathlib import Path
+    cache_path = Path(__file__).resolve().parent.parent.parent.parent / "data" / "cube_state_cache.json"
+    if cache_path.exists():
+        try:
+            with open(cache_path) as f:
+                return json.load(f)
+        except Exception:
+            pass
+    return None
+
+
 @router.get("/strategy/config")
 async def strategy_config():
-    """Current pipeline strategy configuration."""
+    """Live pipeline strategy configuration from MetadronCube.
+
+    Reads from the cube state cache (written by MetadronCubeService),
+    falls back to instantiating MetadronCube + MacroEngine directly.
+    Uses real REGIME_PARAMS from metadron_cube module.
+    """
     try:
+        from engine.signals.metadron_cube import REGIME_PARAMS, SleeveAllocation, CubeRegime
+
+        # --- current regime + live state ---
+        cached = _read_cube_cache()
+        current_regime = None
+        live_state = {}
+
+        if cached:
+            current_regime = cached.get("regime", "RANGE")
+            live_state = {
+                "current_regime": current_regime,
+                "regime_confidence": cached.get("regime_confidence", 0),
+                "max_leverage": cached.get("max_leverage", 0),
+                "beta_cap": cached.get("beta_cap", 0),
+                "target_beta": cached.get("target_beta", 0),
+                "liquidity": cached.get("liquidity", 0),
+                "risk": cached.get("risk", 0),
+                "flow": cached.get("flow", 0),
+                "sleeve_allocation": cached.get("sleeves", {}),
+                "cache_timestamp": cached.get("timestamp"),
+            }
+        else:
+            # Fallback: compute directly
+            try:
+                cube = _get_cube()
+                last = cube.get_last()
+                if not last:
+                    from engine.signals.macro_engine import MacroEngine, MacroSnapshot
+                    try:
+                        me = MacroEngine()
+                        snap = me.get_snapshot()
+                    except Exception:
+                        snap = MacroSnapshot()
+                    last = cube.compute(snap)
+
+                current_regime = last.regime.value if hasattr(last.regime, "value") else str(last.regime)
+                live_state = {
+                    "current_regime": current_regime,
+                    "regime_confidence": last.regime_confidence,
+                    "max_leverage": last.max_leverage,
+                    "beta_cap": last.beta_cap,
+                    "target_beta": last.target_beta,
+                    "liquidity": last.liquidity.value,
+                    "risk": last.risk.value,
+                    "flow": last.flow.value,
+                    "sleeve_allocation": last.sleeves.as_dict() if hasattr(last.sleeves, "as_dict") else {},
+                    "cache_timestamp": None,
+                }
+            except Exception as cube_err:
+                logger.warning(f"Cube fallback failed: {cube_err}")
+                current_regime = "RANGE"
+                live_state = {"current_regime": "RANGE", "regime_confidence": 0}
+
+        # --- Regime params from real module constants ---
+        regime_params = {}
+        for regime_enum, params in REGIME_PARAMS.items():
+            key = regime_enum.value if hasattr(regime_enum, "value") else str(regime_enum)
+            regime_params[key] = {
+                "max_leverage": params["max_leverage"],
+                "beta_cap": params["beta_cap"],
+                "beta_burst": params["beta_burst"],
+                "equity_pct": params.get("equity_pct", 0),
+                "hedge_pct": params.get("hedge_pct", 0),
+                "tail_spend_pct_wk": params.get("tail_spend_pct_wk", 0),
+                "crash_floor": params.get("crash_floor", 0),
+                "theta_budget_daily": params.get("theta_budget_daily", 0),
+            }
+
+        # --- Pipeline stages (real system layers) ---
+        pipeline_stages = [
+            {"id": "L0_FedPlumbing", "label": "Fed Plumbing", "type": "input", "desc": "SOFR, TGA, ON-RRP, reserves"},
+            {"id": "L1_Liquidity", "label": "Liquidity Tensor", "type": "process", "desc": "L(t) — aggregate liquidity [-1, +1]"},
+            {"id": "L2_Reserve", "label": "Reserve Flow", "type": "process", "desc": "TVP: ΔReserves → ΔSector β"},
+            {"id": "L3_Risk", "label": "Risk State", "type": "decision", "desc": "VIX + vol + credit + skew → R(t)"},
+            {"id": "L4_Flow", "label": "Capital Flow", "type": "process", "desc": "Sector momentum, rotation velocity"},
+            {"id": "L5_Regime", "label": "Regime Engine", "type": "decision", "desc": "HMM+RL → TRENDING/RANGE/STRESS/CRASH"},
+            {"id": "L6_GateZ", "label": "Gate-Z Allocator", "type": "process", "desc": "5-sleeve capital allocation"},
+            {"id": "L7_GateLogic", "label": "4-Gate Entry", "type": "decision", "desc": "Flow → Macro → Fundamentals → Momentum"},
+            {"id": "L8_KillSwitch", "label": "Kill Switch", "type": "decision", "desc": "HY OAS / VIX / breadth circuit breaker"},
+            {"id": "L9_RiskGov", "label": "Risk Governor", "type": "decision", "desc": "β target, VaR, gross limit enforcement"},
+            {"id": "L10_Execution", "label": "Execution Engine", "type": "output", "desc": "Order routing + trade execution"},
+        ]
+
         return {
-            "pipeline_stages": [
-                "L1_Universe", "L2_Macro", "L2_Cube", "L2_Signals",
-                "L3_Alpha", "L4_Beta", "L5_Decision", "L5_Execution",
-                "L6_Agents", "L7_HFT",
-            ],
-            "regime_params": {
-                "TRENDING": {"leverage": 3.0, "beta_cap": 0.65, "beta_burst": 0.70},
-                "RANGE": {"leverage": 2.5, "beta_cap": 0.45, "beta_burst": 0.55},
-                "STRESS": {"leverage": 1.5, "beta_cap": 0.15, "beta_burst": 0.20},
-                "CRASH": {"leverage": 0.8, "beta_cap": -0.20, "beta_burst": -0.10},
-            },
-            "sleeve_allocation": {
-                "p1_directional_equity": 0.40,
-                "p2_factor_rotation": 0.10,
-                "p3_commodities_macro": 0.10,
-                "p4_options_convexity": 0.25,
-                "p5_hedges_volatility": 0.10,
-            },
+            **live_state,
+            "pipeline_stages": pipeline_stages,
+            "regime_params": regime_params,
             "timestamp": datetime.utcnow().isoformat(),
         }
     except Exception as e:
@@ -314,10 +423,10 @@ async def strategy_performance():
     """Live strategy performance from ExecutionEngine pipeline.
 
     Fits in system: L5 ExecutionEngine → broker trade history → strategy attribution.
+    Uses singleton ExecutionEngine to preserve state across calls.
     """
     try:
-        from engine.execution.execution_engine import ExecutionEngine
-        eng = ExecutionEngine()
+        eng = _get_exec_engine()
         broker = eng.broker
         trades = broker.get_trade_history()[-500:]
         state = broker.get_portfolio_summary()
@@ -509,6 +618,162 @@ async def ml_stress_tests():
     except Exception as e:
         logger.error(f"ml/stress-tests error: {e}")
         return {"tests": [], "error": str(e)}
+
+
+@router.get("/strategy/signals")
+async def strategy_signals():
+    """Aggregated strategy intelligence — connects ALL engines for STRAT tab.
+
+    Full pipeline:
+        MetadronCube (regime) → VolatilitySurface → StatArbEngine (pairs/mean reversion)
+        → MLVoteEnsemble (10-tier) → DecisionMatrix (6-gate) → execution signals
+
+    Returns a unified view of:
+        1. Vol surface summary + anomalies
+        2. Active stat-arb pairs + mean reversion signals
+        3. ML ensemble tier votes
+        4. Decision matrix gate scores
+    """
+    result = {"timestamp": datetime.utcnow().isoformat()}
+
+    # --- 1. Volatility Surface ---
+    try:
+        from engine.execution.options_engine import OptionsEngine, VolatilitySurface
+        import numpy as np
+        cached = _read_cube_cache()
+        vix = cached.get("risk", 0.2) * 100 if cached else 20.0
+        # Build synthesised surface from VIX
+        vs = VolatilitySurface(vix=max(vix, 10), hist_vol_30d=0.15, hist_vol_90d=0.14)
+        result["vol_surface"] = {
+            "atm_1m": round(vs.get_atm_vol("1M"), 4),
+            "atm_3m": round(vs.get_atm_vol("3M"), 4),
+            "atm_6m": round(vs.get_atm_vol("6M"), 4),
+            "atm_1y": round(vs.get_atm_vol("1Y"), 4),
+            "skew_25d_1m": round(vs.skew_25d("1M"), 4),
+            "skew_25d_3m": round(vs.skew_25d("3M"), 4),
+            "term_spread": round(vs.term_spread(), 4),
+            "anomalies": vs.detect_anomalies(),
+            "surface": vs.surface,
+        }
+    except Exception as e:
+        logger.warning(f"strategy/signals vol_surface: {e}")
+        result["vol_surface"] = {"error": str(e)}
+
+    # --- 2. Stat Arb Pairs + Mean Reversion ---
+    try:
+        from engine.signals.stat_arb_engine import StatArbEngine
+        sa = StatArbEngine()
+        signals = sa.get_trading_signals()
+        active = sa.get_active_trades()
+        port_beta = sa.compute_portfolio_beta()
+        pairs_summary = []
+        for p in sa._pairs[:20]:
+            pairs_summary.append({
+                "pair": f"{p.ticker_a}/{p.ticker_b}",
+                "ticker_a": p.ticker_a,
+                "ticker_b": p.ticker_b,
+                "zscore": round(getattr(p, "spread_zscore", 0), 3),
+                "half_life": getattr(p, "half_life", 0),
+                "status": p.status.value if hasattr(p.status, "value") else str(getattr(p, "status", "")),
+            })
+        result["stat_arb"] = {
+            "n_pairs": sa.n_pairs,
+            "active_trades": len(active),
+            "portfolio_beta": port_beta,
+            "signals": signals[:10],
+            "pairs": pairs_summary,
+        }
+    except Exception as e:
+        logger.warning(f"strategy/signals stat_arb: {e}")
+        result["stat_arb"] = {"error": str(e)}
+
+    # --- 3. ML Ensemble (10-tier vote) ---
+    try:
+        eng = _get_exec_engine()
+        ensemble = eng.ensemble if hasattr(eng, "ensemble") else None
+        ensemble_data = {}
+        if ensemble:
+            ensemble_data["tier_weights"] = getattr(ensemble, "TIER_WEIGHTS", {})
+            # Get recent vote history
+            vote_hist = getattr(ensemble, "_vote_history", {})
+            recent_votes = {}
+            for ticker, votes in list(vote_hist.items())[:10]:
+                if votes:
+                    latest = votes[-1]
+                    recent_votes[ticker] = {
+                        "score": latest.get("score", 0),
+                        "signal": latest.get("signal", "HOLD"),
+                        "timestamp": latest.get("timestamp", ""),
+                    }
+            ensemble_data["recent_votes"] = recent_votes
+            ensemble_data["n_tickers_voted"] = len(vote_hist)
+        result["ml_ensemble"] = ensemble_data
+    except Exception as e:
+        logger.warning(f"strategy/signals ml_ensemble: {e}")
+        result["ml_ensemble"] = {"error": str(e)}
+
+    # --- 4. Decision Matrix Gates ---
+    try:
+        from engine.execution.decision_matrix import DecisionMatrix, GATE_CONFIGS
+        cached = _read_cube_cache()
+        regime = cached.get("regime", "RANGE") if cached else "RANGE"
+        max_lev = cached.get("max_leverage", 2.5) if cached else 2.5
+        dm = DecisionMatrix(regime=regime, max_leverage=max_lev)
+        # Gate configuration
+        gates = []
+        for gate_name, cfg in GATE_CONFIGS.items():
+            gates.append({
+                "gate": gate_name,
+                "weight": cfg.get("weight", 0),
+                "threshold": cfg.get("threshold", 0),
+            })
+        result["decision_matrix"] = {
+            "regime": regime,
+            "max_leverage": max_lev,
+            "gates": gates,
+            "approved": dm._approved_count,
+            "rejected": dm._rejected_count,
+        }
+    except Exception as e:
+        logger.warning(f"strategy/signals decision_matrix: {e}")
+        result["decision_matrix"] = {"error": str(e)}
+
+    # --- 5. Macro Engine Regime Context ---
+    try:
+        cached = _read_cube_cache()
+        if cached:
+            result["regime_context"] = {
+                "current": cached.get("regime", "RANGE"),
+                "confidence": cached.get("regime_confidence", 0),
+                "liquidity": cached.get("liquidity", 0),
+                "risk": cached.get("risk", 0),
+                "flow": cached.get("flow", 0),
+                "target_beta": cached.get("target_beta", 0),
+                "max_leverage": cached.get("max_leverage", 0),
+            }
+        else:
+            try:
+                cube = _get_cube()
+                last = cube.get_last()
+                if last:
+                    result["regime_context"] = {
+                        "current": last.regime.value if hasattr(last.regime, "value") else str(last.regime),
+                        "confidence": last.regime_confidence,
+                        "liquidity": last.liquidity.value,
+                        "risk": last.risk.value,
+                        "flow": last.flow.value,
+                        "target_beta": last.target_beta,
+                        "max_leverage": last.max_leverage,
+                    }
+                else:
+                    result["regime_context"] = {"current": "RANGE", "confidence": 0}
+            except Exception:
+                result["regime_context"] = {"current": "RANGE", "confidence": 0}
+    except Exception as e:
+        logger.warning(f"strategy/signals regime_context: {e}")
+        result["regime_context"] = {"error": str(e)}
+
+    return result
 
 
 @router.get("/vol-surface")

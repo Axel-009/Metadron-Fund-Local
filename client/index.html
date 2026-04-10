@@ -8,6 +8,26 @@
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;700&display=swap" rel="stylesheet">
+    <script>
+      // Storage polyfill for sandboxed environments
+      (function() {
+        function makeStorage() {
+          var data = {};
+          return {
+            getItem: function(key) { return data.hasOwnProperty(key) ? data[key] : null; },
+            setItem: function(key, val) { data[key] = String(val); },
+            removeItem: function(key) { delete data[key]; },
+            clear: function() { data = {}; },
+            get length() { return Object.keys(data).length; },
+            key: function(i) { return Object.keys(data)[i] || null; }
+          };
+        }
+        try { window.localStorage.setItem('__test', '1'); window.localStorage.removeItem('__test'); }
+        catch(e) { try { Object.defineProperty(window, 'localStorage', { value: makeStorage(), writable: true }); } catch(e2) { window.localStorage = makeStorage(); } }
+        try { window.sessionStorage.setItem('__test', '1'); window.sessionStorage.removeItem('__test'); }
+        catch(e) { try { Object.defineProperty(window, 'sessionStorage', { value: makeStorage(), writable: true }); } catch(e2) { window.sessionStorage = makeStorage(); } }
+      })();
+    </script>
   </head>
   <body>
     <div id="root"></div>
