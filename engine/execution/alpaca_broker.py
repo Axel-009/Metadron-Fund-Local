@@ -918,9 +918,6 @@ class AlpacaBroker:
             logger.error("Failed to fetch Alpaca orders: status=%s", getattr(e, "status_code", "unknown"))
             return []
 
-    def get_orders(self) -> list[dict]:
-        """Alpaca method."""
-        return self.get_orders()
 
     def cancel_order(self, order_id: str) -> dict:
         """Cancel an order on Alpaca by its order ID."""

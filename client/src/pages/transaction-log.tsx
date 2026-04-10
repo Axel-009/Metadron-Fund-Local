@@ -1,95 +1,64 @@
-import { useState, useEffect, useMemo } from "react";
+import { useState, useMemo } from "react";
 import { DashboardPanel } from "@/components/dashboard-panel";
-import { useEngineQuery, type TradeRecord } from "@/hooks/use-engine-api";
+import { useEngineQuery } from "@/hooks/use-engine-api";
 
-// ═══════════ SIMULATED TRANSACTION DATA ═══════════
+// ═══════════ TYPES ═══════════
+
+interface OrderRecord {
+  id: string;
+  ticker: string;
+  side: string;
+  qty: number;
+  price: number;
+  notional: number;
+  fill_type: string;
+  order_type: string;
+  status: string;
+  submitted_at: string;
+  filled_at: string;
+  signal_type: string;
+}
+
+interface BlotterRecord {
+  ticker: string;
+  side: string;
+  quantity: number;
+  fill_price: number;
+  arrival_price: number;
+  slippage_bps: number;
+  implementation_shortfall: number;
+  market_impact_bps: number;
+  signal_type: string;
+  product_type: string;
+  routing_strategy: string;
+  urgency: string;
+  timestamp: string;
+  tca_snapshot: Record<string, unknown>;
+}
 
 interface Transaction {
   id: string;
   time: string;
   ticker: string;
-  side: "BUY" | "SELL" | "SHORT" | "COVER";
+  side: string;
   qty: number;
   price: number;
   notional: number;
-  fillType: "FULL" | "PARTIAL" | "REJECTED";
+  fillType: string;
   venue: string;
   signalType: string;
   latencyMs: number;
   slippageBps: number;
-  // Fundamentals
-  pe: number;
-  eps: number;
-  mktCap: string;
-  sector: string;
-  divYield: number;
-  beta: number;
-}
-
-const SECTORS = ["Technology", "Financials", "Healthcare", "Consumer Disc.", "Energy", "Industrials", "Materials", "Utilities", "Real Estate", "Comm. Svcs."];
-const VENUES = ["ARCA", "NYSE", "NASDAQ", "BATS", "IEX", "EDGX", "DARK"];
-const SIGNALS = ["ML_AGENT", "MICRO_PRICE", "RV_PAIR", "SOCIAL", "CVR", "EVENT", "QUALITY", "DRL_AGENT", "MOMENTUM", "TFT_MODEL"];
-const TICKERS_DATA: Record<string, { pe: number; eps: number; mktCap: string; sector: string; divYield: number; beta: number; basePrice: number }> = {
-  AAPL: { pe: 28.4, eps: 6.67, mktCap: "2.94T", sector: "Technology", divYield: 0.52, beta: 1.24, basePrice: 189 },
-  MSFT: { pe: 35.2, eps: 11.95, mktCap: "3.12T", sector: "Technology", divYield: 0.72, beta: 0.98, basePrice: 420 },
-  NVDA: { pe: 62.8, eps: 13.93, mktCap: "2.15T", sector: "Technology", divYield: 0.02, beta: 1.71, basePrice: 875 },
-  AMZN: { pe: 52.1, eps: 3.56, mktCap: "1.93T", sector: "Consumer Disc.", divYield: 0.00, beta: 1.15, basePrice: 185 },
-  GOOGL: { pe: 24.8, eps: 6.29, mktCap: "1.94T", sector: "Comm. Svcs.", divYield: 0.00, beta: 1.05, basePrice: 155 },
-  META: { pe: 22.5, eps: 22.48, mktCap: "1.30T", sector: "Comm. Svcs.", divYield: 0.00, beta: 1.22, basePrice: 505 },
-  JPM: { pe: 11.8, eps: 16.81, mktCap: "572B", sector: "Financials", divYield: 2.35, beta: 1.12, basePrice: 198 },
-  TSLA: { pe: 55.4, eps: 3.22, mktCap: "567B", sector: "Consumer Disc.", divYield: 0.00, beta: 2.08, basePrice: 178 },
-  XOM: { pe: 12.1, eps: 9.52, mktCap: "460B", sector: "Energy", divYield: 3.28, beta: 0.87, basePrice: 115 },
-  UNH: { pe: 21.3, eps: 23.57, mktCap: "462B", sector: "Healthcare", divYield: 1.42, beta: 0.72, basePrice: 502 },
-  V: { pe: 30.1, eps: 9.40, mktCap: "580B", sector: "Financials", divYield: 0.76, beta: 0.95, basePrice: 282 },
-  BAC: { pe: 10.5, eps: 3.42, mktCap: "287B", sector: "Financials", divYield: 2.52, beta: 1.35, basePrice: 35 },
-  GS: { pe: 14.2, eps: 30.82, mktCap: "142B", sector: "Financials", divYield: 2.15, beta: 1.42, basePrice: 437 },
-  HD: { pe: 24.8, eps: 15.11, mktCap: "374B", sector: "Consumer Disc.", divYield: 2.28, beta: 1.02, basePrice: 374 },
-  LLY: { pe: 98.2, eps: 8.18, mktCap: "764B", sector: "Healthcare", divYield: 0.68, beta: 0.52, basePrice: 803 },
-  AVGO: { pe: 38.5, eps: 35.24, mktCap: "677B", sector: "Technology", divYield: 1.52, beta: 1.15, basePrice: 1357 },
-};
-
-function generateTransactions(count: number): Transaction[] {
-  const tickers = Object.keys(TICKERS_DATA);
-  const txns: Transaction[] = [];
-  const now = new Date();
-
-  for (let i = 0; i < count; i++) {
-    const ticker = tickers[Math.floor(Math.random() * tickers.length)];
-    const d = TICKERS_DATA[ticker];
-    const side = Math.random() > 0.5 ? (Math.random() > 0.3 ? "BUY" : "SHORT") : (Math.random() > 0.3 ? "SELL" : "COVER");
-    const qty = Math.floor(50 + Math.random() * 950);
-    const price = d.basePrice * (1 + (Math.random() - 0.5) * 0.02);
-    const notional = qty * price;
-    const t = new Date(now.getTime() - i * (15000 + Math.random() * 120000));
-
-    txns.push({
-      id: `TXN-${(100000 + count - i).toString(36).toUpperCase()}`,
-      time: t.toLocaleTimeString("en-US", { hour12: false, hour: "2-digit", minute: "2-digit", second: "2-digit" }) + "." + t.getMilliseconds().toString().padStart(3, "0"),
-      ticker,
-      side: side as Transaction["side"],
-      qty,
-      price: +price.toFixed(2),
-      notional: +notional.toFixed(2),
-      fillType: Math.random() > 0.05 ? (Math.random() > 0.1 ? "FULL" : "PARTIAL") : "REJECTED",
-      venue: VENUES[Math.floor(Math.random() * VENUES.length)],
-      signalType: SIGNALS[Math.floor(Math.random() * SIGNALS.length)],
-      latencyMs: +(0.5 + Math.random() * 12).toFixed(1),
-      slippageBps: +((Math.random() - 0.3) * 4).toFixed(2),
-      pe: d.pe,
-      eps: d.eps,
-      mktCap: d.mktCap,
-      sector: d.sector,
-      divYield: d.divYield,
-      beta: d.beta,
-    });
-  }
-  return txns;
+  orderType: string;
+  routingStrategy: string;
+  urgency: string;
+  productType: string;
 }
 
 // ═══════════ SUMMARY CARDS ═══════════
 
 function SummaryCards({ txns }: { txns: Transaction[] }) {
-  const filled = txns.filter((t) => t.fillType !== "REJECTED");
+  const filled = txns.filter((t) => t.fillType !== "REJECTED" && t.fillType !== "PENDING");
   const totalNotional = filled.reduce((s, t) => s + t.notional, 0);
   const buys = filled.filter((t) => t.side === "BUY" || t.side === "COVER").length;
   const sells = filled.filter((t) => t.side === "SELL" || t.side === "SHORT").length;
@@ -99,7 +68,7 @@ function SummaryCards({ txns }: { txns: Transaction[] }) {
 
   const cards = [
     { label: "TOTAL EXECUTED", value: filled.length.toString(), sub: `of ${txns.length} orders` },
-    { label: "NOTIONAL VOLUME", value: `$${(totalNotional / 1e6).toFixed(2)}M`, sub: "total traded" },
+    { label: "NOTIONAL VOLUME", value: totalNotional >= 1e6 ? `$${(totalNotional / 1e6).toFixed(2)}M` : `$${totalNotional.toLocaleString(undefined, { maximumFractionDigits: 0 })}`, sub: "total traded" },
     { label: "BUY / SELL", value: `${buys} / ${sells}`, sub: `ratio ${buys > 0 ? (buys / Math.max(sells, 1)).toFixed(2) : "—"}` },
     { label: "AVG LATENCY", value: `${avgLatency.toFixed(1)}ms`, sub: "fill to confirm" },
     { label: "AVG SLIPPAGE", value: `${avgSlippage.toFixed(2)} bps`, sub: avgSlippage < 0 ? "favorable" : "adverse" },
@@ -121,7 +90,19 @@ function SummaryCards({ txns }: { txns: Transaction[] }) {
 
 // ═══════════ FILTER BAR ═══════════
 
-function FilterBar({ filter, setFilter }: { filter: any; setFilter: (f: any) => void }) {
+function FilterBar({
+  filter,
+  setFilter,
+  sides,
+  statuses,
+  source,
+}: {
+  filter: { ticker: string; side: string; fill: string; signal: string };
+  setFilter: (f: { ticker: string; side: string; fill: string; signal: string }) => void;
+  sides: string[];
+  statuses: string[];
+  source: string;
+}) {
   return (
     <div className="flex items-center gap-2 px-2 py-1.5 text-[10px] font-mono border-b border-terminal-border/50">
       <input
@@ -137,10 +118,7 @@ function FilterBar({ filter, setFilter }: { filter: any; setFilter: (f: any) => 
         className="bg-terminal-bg border border-terminal-border/50 rounded px-1 py-0.5 text-terminal-text-primary outline-none"
       >
         <option value="">All Sides</option>
-        <option value="BUY">BUY</option>
-        <option value="SELL">SELL</option>
-        <option value="SHORT">SHORT</option>
-        <option value="COVER">COVER</option>
+        {sides.map((s) => <option key={s} value={s}>{s}</option>)}
       </select>
       <select
         value={filter.fill}
@@ -148,20 +126,11 @@ function FilterBar({ filter, setFilter }: { filter: any; setFilter: (f: any) => 
         className="bg-terminal-bg border border-terminal-border/50 rounded px-1 py-0.5 text-terminal-text-primary outline-none"
       >
         <option value="">All Status</option>
-        <option value="FULL">FULL</option>
-        <option value="PARTIAL">PARTIAL</option>
-        <option value="REJECTED">REJECTED</option>
-      </select>
-      <select
-        value={filter.sector}
-        onChange={(e) => setFilter({ ...filter, sector: e.target.value })}
-        className="bg-terminal-bg border border-terminal-border/50 rounded px-1 py-0.5 text-terminal-text-primary outline-none"
-      >
-        <option value="">All Sectors</option>
-        {SECTORS.map((s) => <option key={s} value={s}>{s}</option>)}
+        {statuses.map((s) => <option key={s} value={s}>{s}</option>)}
       </select>
       <div className="flex-1" />
-      <span className="text-terminal-text-faint text-[8px]">Auto-refresh: 5s</span>
+      <span className="text-[8px] text-terminal-text-faint">Source: {source}</span>
+      <span className="text-[8px] text-terminal-text-faint">Auto-refresh: 5s</span>
       <div className="w-1.5 h-1.5 rounded-full bg-terminal-positive animate-pulse" />
     </div>
   );
@@ -170,52 +139,105 @@ function FilterBar({ filter, setFilter }: { filter: any; setFilter: (f: any) => 
 // ═══════════ MAIN COMPONENT ═══════════
 
 export default function TransactionLog() {
-  // ─── Engine API ─────────────────────────────────────
-  const { data: tradesData } = useEngineQuery<{ trades: TradeRecord[] }>("/portfolio/trades?limit=500", { refetchInterval: 5000 });
+  // ─── Engine API: primary = /portfolio/orders (Alpaca), secondary = /execution/l7/blotter ───
+  const { data: ordersData } = useEngineQuery<{ orders: OrderRecord[]; source: string }>(
+    "/portfolio/orders?limit=500",
+    { refetchInterval: 5000 },
+  );
+  const { data: blotterData } = useEngineQuery<{ trades: BlotterRecord[]; broker_type: string }>(
+    "/execution/l7/blotter?limit=500",
+    { refetchInterval: 5000 },
+  );
 
-  // Map API trades to Transaction format, fallback to generated if no API data
+  // Merge: prefer blotter records (richer TCA data), augment with orders
   const allTxns: Transaction[] = useMemo(() => {
-    if (!tradesData?.trades?.length) return generateTransactions(200);
-    return tradesData.trades.map((t, i) => {
-      const ticker = t.ticker || "UNKNOWN";
-      const d = TICKERS_DATA[ticker] || { pe: 0, eps: 0, mktCap: "—", sector: "Unknown", divYield: 0, beta: 1, basePrice: t.fill_price || 0 };
-      const side = (t.side?.toUpperCase() || "BUY") as Transaction["side"];
-      const notional = t.quantity * t.fill_price;
-      return {
-        id: t.id || `TXN-${i}`,
-        time: t.timestamp ? new Date(t.timestamp).toLocaleTimeString("en-US", { hour12: false, hour: "2-digit", minute: "2-digit", second: "2-digit" }) : "--:--:--",
-        ticker,
-        side,
-        qty: t.quantity,
-        price: t.fill_price,
-        notional: +notional.toFixed(2),
-        fillType: "FULL" as const,
-        venue: "ENGINE",
-        signalType: t.signal_type || "UNKNOWN",
-        latencyMs: 0,
-        slippageBps: 0,
-        pe: d.pe,
-        eps: d.eps,
-        mktCap: d.mktCap,
-        sector: d.sector,
-        divYield: d.divYield,
-        beta: d.beta,
-      };
-    });
-  }, [tradesData]);
+    const txns: Transaction[] = [];
 
-  const [filter, setFilter] = useState({ ticker: "", side: "", fill: "", sector: "" });
+    // Build a set of blotter tickers+times to avoid duplicates
+    const blotterKeys = new Set<string>();
+
+    // Primary: L7 blotter (has slippage, latency, TCA data)
+    if (blotterData?.trades?.length) {
+      for (let i = 0; i < blotterData.trades.length; i++) {
+        const b = blotterData.trades[i];
+        const key = `${b.ticker}|${b.timestamp}`;
+        blotterKeys.add(key);
+        const ts = b.timestamp ? new Date(b.timestamp) : null;
+        txns.push({
+          id: `BLT-${i}`,
+          time: ts ? ts.toLocaleTimeString("en-US", { hour12: false, hour: "2-digit", minute: "2-digit", second: "2-digit" }) + "." + ts.getMilliseconds().toString().padStart(3, "0") : "--:--:--.---",
+          ticker: b.ticker || "—",
+          side: b.side?.toUpperCase() || "—",
+          qty: b.quantity || 0,
+          price: b.fill_price || 0,
+          notional: +(b.fill_price * b.quantity).toFixed(2),
+          fillType: b.fill_price > 0 ? "FULL" : "PENDING",
+          venue: b.routing_strategy || "ENGINE",
+          signalType: b.signal_type || "—",
+          latencyMs: 0,
+          slippageBps: b.slippage_bps || 0,
+          orderType: "MARKET",
+          routingStrategy: b.routing_strategy || "SMART",
+          urgency: b.urgency || "MEDIUM",
+          productType: b.product_type || "EQUITY",
+        });
+      }
+    }
+
+    // Secondary: Alpaca orders (enriches with order status, type)
+    if (ordersData?.orders?.length) {
+      for (const o of ordersData.orders) {
+        // Skip if already in blotter by ticker+time match
+        const key = `${o.ticker}|${o.filled_at}`;
+        if (blotterKeys.has(key)) continue;
+
+        const ts = o.filled_at && o.filled_at !== "None" ? new Date(o.filled_at) : (
+          o.submitted_at && o.submitted_at !== "None" ? new Date(o.submitted_at) : null
+        );
+        txns.push({
+          id: o.id || `ORD-${txns.length}`,
+          time: ts && !isNaN(ts.getTime()) ? ts.toLocaleTimeString("en-US", { hour12: false, hour: "2-digit", minute: "2-digit", second: "2-digit" }) + "." + ts.getMilliseconds().toString().padStart(3, "0") : "--:--:--.---",
+          ticker: o.ticker || "—",
+          side: o.side?.toUpperCase() || "—",
+          qty: o.qty || 0,
+          price: o.price || 0,
+          notional: o.notional || 0,
+          fillType: o.fill_type || "FULL",
+          venue: "ALPACA",
+          signalType: o.signal_type || "BROKER",
+          latencyMs: 0,
+          slippageBps: 0,
+          orderType: o.order_type || "MARKET",
+          routingStrategy: "SMART",
+          urgency: "MEDIUM",
+          productType: "EQUITY",
+        });
+      }
+    }
+
+    // Sort by time descending
+    txns.sort((a, b) => (b.time > a.time ? 1 : b.time < a.time ? -1 : 0));
+    return txns;
+  }, [ordersData, blotterData]);
+
+  const [filter, setFilter] = useState({ ticker: "", side: "", fill: "", signal: "" });
   const [expandedId, setExpandedId] = useState<string | null>(null);
+
+  // Derive filter options from actual data
+  const sides = useMemo(() => [...new Set(allTxns.map((t) => t.side).filter(Boolean))].sort(), [allTxns]);
+  const statuses = useMemo(() => [...new Set(allTxns.map((t) => t.fillType).filter(Boolean))].sort(), [allTxns]);
+  const dataSource = ordersData?.source || (blotterData?.broker_type ? `blotter:${blotterData.broker_type}` : "connecting...");
 
   const filteredTxns = useMemo(() => {
     return allTxns.filter((t) => {
       if (filter.ticker && !t.ticker.includes(filter.ticker)) return false;
       if (filter.side && t.side !== filter.side) return false;
       if (filter.fill && t.fillType !== filter.fill) return false;
-      if (filter.sector && t.sector !== filter.sector) return false;
       return true;
     });
   }, [allTxns, filter]);
+
+  const noData = allTxns.length === 0;
 
   return (
     <div className="h-full flex flex-col gap-[2px] p-[2px]" data-testid="transaction-log">
@@ -237,7 +259,7 @@ export default function TransactionLog() {
         noPadding
       >
         <div className="h-full flex flex-col">
-          <FilterBar filter={filter} setFilter={setFilter} />
+          <FilterBar filter={filter} setFilter={setFilter} sides={sides} statuses={statuses} source={dataSource} />
 
           {/* Table header */}
           <div className="flex items-center px-2 py-1.5 text-[8px] text-terminal-text-faint uppercase tracking-wider border-b border-terminal-border/50 font-mono flex-shrink-0">
@@ -248,19 +270,23 @@ export default function TransactionLog() {
             <span className="w-[75px] text-right">Price</span>
             <span className="w-[90px] text-right">Notional</span>
             <span className="w-[55px] text-center">Status</span>
-            <span className="w-[50px]">Venue</span>
+            <span className="w-[55px]">Venue</span>
             <span className="w-[85px]">Signal</span>
-            <span className="w-[55px] text-right">Lat ms</span>
             <span className="w-[55px] text-right">Slip bps</span>
             <span className="w-px bg-terminal-border/30 h-3 mx-1" />
-            <span className="w-[40px] text-right">P/E</span>
-            <span className="w-[50px] text-right">EPS</span>
-            <span className="w-[55px] text-right">Mkt Cap</span>
-            <span className="flex-1 text-right">Sector</span>
+            <span className="w-[60px]">Type</span>
+            <span className="w-[60px]">Route</span>
+            <span className="flex-1 text-right">Product</span>
           </div>
 
           {/* Scrollable rows */}
           <div className="flex-1 overflow-auto">
+            {noData && (
+              <div className="flex items-center justify-center h-32 text-[10px] text-terminal-text-faint font-mono">
+                Awaiting trade data from broker...
+              </div>
+            )}
+
             {filteredTxns.map((t) => (
               <div key={t.id}>
                 <div
@@ -277,26 +303,22 @@ export default function TransactionLog() {
                     {t.side}
                   </span>
                   <span className="w-[55px] text-right">{t.qty.toLocaleString()}</span>
-                  <span className="w-[75px] text-right">${t.price.toFixed(2)}</span>
-                  <span className="w-[90px] text-right">${t.notional >= 1e6 ? (t.notional / 1e6).toFixed(2) + "M" : t.notional.toLocaleString(undefined, { maximumFractionDigits: 0 })}</span>
+                  <span className="w-[75px] text-right">{t.price > 0 ? `$${t.price.toFixed(2)}` : "—"}</span>
+                  <span className="w-[90px] text-right">{t.notional >= 1e6 ? (t.notional / 1e6).toFixed(2) + "M" : t.notional > 0 ? "$" + t.notional.toLocaleString(undefined, { maximumFractionDigits: 0 }) : "—"}</span>
                   <span className={`w-[55px] text-center text-[8px] font-semibold ${
-                    t.fillType === "FULL" ? "text-terminal-positive" : t.fillType === "PARTIAL" ? "text-terminal-warning" : "text-terminal-negative"
+                    t.fillType === "FULL" ? "text-terminal-positive" : t.fillType === "PARTIAL" ? "text-terminal-warning" : t.fillType === "PENDING" ? "text-terminal-text-faint" : "text-terminal-negative"
                   }`}>
                     {t.fillType}
                   </span>
-                  <span className="w-[50px] text-terminal-text-faint">{t.venue}</span>
+                  <span className="w-[55px] text-terminal-text-faint">{t.venue}</span>
                   <span className="w-[85px] text-terminal-text-muted truncate">{t.signalType}</span>
-                  <span className={`w-[55px] text-right ${t.latencyMs > 8 ? "text-terminal-warning" : "text-terminal-text-muted"}`}>
-                    {t.latencyMs}
-                  </span>
                   <span className={`w-[55px] text-right ${t.slippageBps > 1 ? "text-terminal-negative" : t.slippageBps < -0.5 ? "text-terminal-positive" : "text-terminal-text-muted"}`}>
-                    {t.slippageBps > 0 ? "+" : ""}{t.slippageBps}
+                    {t.slippageBps !== 0 ? (t.slippageBps > 0 ? "+" : "") + t.slippageBps.toFixed(2) : "—"}
                   </span>
                   <span className="w-px bg-terminal-border/30 h-3 mx-1" />
-                  <span className="w-[40px] text-right text-terminal-text-faint">{t.pe > 0 ? t.pe.toFixed(1) : "—"}</span>
-                  <span className="w-[50px] text-right text-terminal-text-faint">{t.eps.toFixed(2)}</span>
-                  <span className="w-[55px] text-right text-terminal-text-faint">{t.mktCap}</span>
-                  <span className="flex-1 text-right text-terminal-text-faint truncate">{t.sector}</span>
+                  <span className="w-[60px] text-terminal-text-faint">{t.orderType}</span>
+                  <span className="w-[60px] text-terminal-text-faint">{t.routingStrategy}</span>
+                  <span className="flex-1 text-right text-terminal-text-faint truncate">{t.productType}</span>
                 </div>
 
                 {/* Expanded detail row */}
@@ -305,19 +327,19 @@ export default function TransactionLog() {
                     <div className="grid grid-cols-6 gap-4">
                       <div>
                         <div className="text-terminal-text-faint">Order ID</div>
-                        <div className="text-terminal-text-primary">{t.id}</div>
+                        <div className="text-terminal-text-primary break-all">{t.id}</div>
                       </div>
                       <div>
                         <div className="text-terminal-text-faint">Signal Source</div>
                         <div className="text-terminal-accent">{t.signalType}</div>
                       </div>
                       <div>
-                        <div className="text-terminal-text-faint">Div Yield</div>
-                        <div className="text-terminal-text-primary">{t.divYield.toFixed(2)}%</div>
+                        <div className="text-terminal-text-faint">Order Type</div>
+                        <div className="text-terminal-text-primary">{t.orderType}</div>
                       </div>
                       <div>
-                        <div className="text-terminal-text-faint">Beta</div>
-                        <div className="text-terminal-text-primary">{t.beta.toFixed(2)}</div>
+                        <div className="text-terminal-text-faint">Routing</div>
+                        <div className="text-terminal-text-primary">{t.routingStrategy}</div>
                       </div>
                       <div>
                         <div className="text-terminal-text-faint">Cost Basis</div>
@@ -326,7 +348,7 @@ export default function TransactionLog() {
                       <div>
                         <div className="text-terminal-text-faint">Execution Quality</div>
                         <div className={t.slippageBps < 0 ? "text-terminal-positive" : t.slippageBps > 2 ? "text-terminal-negative" : "text-terminal-text-primary"}>
-                          {t.slippageBps < 0 ? "GOOD" : t.slippageBps > 2 ? "POOR" : "FAIR"}
+                          {t.slippageBps < 0 ? "GOOD" : t.slippageBps > 2 ? "POOR" : t.slippageBps === 0 ? "—" : "FAIR"}
                         </div>
                       </div>
                     </div>

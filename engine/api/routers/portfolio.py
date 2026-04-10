@@ -376,3 +376,75 @@ async def portfolio_pnl_series():
     except Exception as e:
         logger.error(f"portfolio/pnl-series error: {e}")
         return {"series": [], "error": str(e)}
+
+
+# ─── TXLOG: Alpaca orders fallback ────────────────────────────
+
+@router.get("/orders")
+async def portfolio_orders(limit: int = Query(100, ge=1, le=500)):
+    """Fetch broker orders (Alpaca API primary, trade_history fallback).
+
+    Returns unified order/fill records for the TXLOG tab.
+    Alpaca's get_orders() gives richer data (status, filled_qty, type).
+    PaperBroker falls back to get_trade_history().
+    """
+    try:
+        broker = _get_broker()
+
+        # --- Primary: Alpaca get_orders() ---
+        if hasattr(broker, "get_orders") and callable(broker.get_orders):
+            try:
+                raw = broker.get_orders()
+                if raw:
+                    orders = []
+                    for o in raw[-limit:]:
+                        filled_price = float(o.get("filled_avg_price") or 0)
+                        filled_qty = float(o.get("filled_qty") or 0)
+                        qty = float(o.get("qty") or 0)
+                        status = str(o.get("status", "")).upper()
+                        fill_type = "FULL" if status == "FILLED" else (
+                            "PARTIAL" if "PARTIAL" in status else (
+                            "REJECTED" if status in ("REJECTED", "CANCELED", "EXPIRED") else "PENDING"))
+                        orders.append({
+                            "id": o.get("id", ""),
+                            "ticker": o.get("symbol", ""),
+                            "side": str(o.get("side", "")).upper().replace("ORDERSIDETYPE.", "").replace("ORDERSIDE.", ""),
+                            "qty": filled_qty if filled_qty > 0 else qty,
+                            "price": filled_price,
+                            "notional": round(filled_price * (filled_qty or qty), 2),
+                            "fill_type": fill_type,
+                            "order_type": str(o.get("type", "MARKET")).upper(),
+                            "status": status,
+                            "submitted_at": str(o.get("submitted_at", "")),
+                            "filled_at": str(o.get("filled_at", "")),
+                            "signal_type": o.get("signal_type", "BROKER"),
+                        })
+                    return {"orders": orders, "source": "alpaca", "timestamp": datetime.utcnow().isoformat()}
+            except Exception as oe:
+                logger.warning(f"portfolio/orders: Alpaca get_orders failed, falling back: {oe}")
+
+        # --- Fallback: trade history ---
+        trades = broker.get_trade_history()[-limit:]
+        orders = []
+        for t in trades:
+            ts = t.get("fill_timestamp", "")
+            if hasattr(ts, "isoformat"):
+                ts = ts.isoformat()
+            orders.append({
+                "id": str(t.get("id", "")),
+                "ticker": t.get("ticker", ""),
+                "side": str(t.get("side", "")).upper(),
+                "qty": t.get("quantity", 0),
+                "price": t.get("fill_price", 0),
+                "notional": round(t.get("fill_price", 0) * t.get("quantity", 0), 2),
+                "fill_type": "FULL",
+                "order_type": t.get("order_type", "MARKET"),
+                "status": "FILLED",
+                "submitted_at": str(ts),
+                "filled_at": str(ts),
+                "signal_type": t.get("signal_type", ""),
+            })
+        return {"orders": orders, "source": "trade_history", "timestamp": datetime.utcnow().isoformat()}
+    except Exception as e:
+        logger.error(f"portfolio/orders error: {e}")
+        return {"orders": [], "error": str(e)}

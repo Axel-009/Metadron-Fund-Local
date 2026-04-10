@@ -259,6 +259,44 @@ def _create_metrics(registry: "CollectorRegistry"):
         registry=registry,
     )
 
+    # TXLOG / Trade execution metrics
+    metrics["txlog_orders_total"] = Gauge(
+        "metadron_txlog_orders_total",
+        "Total orders in current session",
+        registry=registry,
+    )
+    metrics["txlog_fill_rate"] = Gauge(
+        "metadron_txlog_fill_rate",
+        "Order fill rate (0-1)",
+        registry=registry,
+    )
+    metrics["txlog_reject_rate"] = Gauge(
+        "metadron_txlog_reject_rate",
+        "Order rejection rate (0-1)",
+        registry=registry,
+    )
+    metrics["txlog_avg_latency_ms"] = Gauge(
+        "metadron_txlog_avg_latency_ms",
+        "Average order fill latency in milliseconds",
+        registry=registry,
+    )
+    metrics["txlog_avg_slippage_bps"] = Gauge(
+        "metadron_txlog_avg_slippage_bps",
+        "Average order slippage in basis points",
+        registry=registry,
+    )
+    metrics["txlog_notional_volume"] = Gauge(
+        "metadron_txlog_notional_volume",
+        "Total notional volume of executed orders",
+        registry=registry,
+    )
+    metrics["txlog_orders_by_side"] = Gauge(
+        "metadron_txlog_orders_by_side",
+        "Order count by side (BUY/SELL/SHORT/COVER)",
+        ["side"],
+        registry=registry,
+    )
+
     return metrics
 
 
@@ -414,6 +452,38 @@ def _collect_live_metrics(metrics: dict):
                 metrics["pm2_process_restarts"].labels(process=name).set(
                     pm2_env.get("restart_time", 0)
                 )
+    except Exception:
+        pass
+
+    # ── TXLOG: Trade Execution Metrics ─────────────────────────────
+    try:
+        from engine.execution.execution_engine import ExecutionEngine
+        eng = ExecutionEngine._instance if hasattr(ExecutionEngine, "_instance") else None
+        if eng is None:
+            from engine.api.routers.execution import _get_exec
+            eng = _get_exec()
+        if eng is not None:
+            broker = eng.broker
+            trades = broker.get_trade_history()
+            total = len(trades)
+            metrics["txlog_orders_total"].set(total)
+            if total > 0:
+                filled = [t for t in trades if t.get("fill_price", 0) > 0]
+                rejected = total - len(filled)
+                metrics["txlog_fill_rate"].set(len(filled) / total if total else 0)
+                metrics["txlog_reject_rate"].set(rejected / total if total else 0)
+                # Notional volume
+                notional = sum(t.get("fill_price", 0) * t.get("quantity", 0) for t in filled)
+                metrics["txlog_notional_volume"].set(notional)
+                # Slippage (if tracked)
+                slippages = [t.get("slippage", t.get("slippage_bps", 0)) or 0 for t in filled]
+                if slippages:
+                    metrics["txlog_avg_slippage_bps"].set(sum(slippages) / len(slippages))
+                # Orders by side
+                from collections import Counter
+                side_counts = Counter(str(t.get("side", "UNKNOWN")).upper() for t in trades)
+                for side_name in ["BUY", "SELL", "SHORT", "COVER"]:
+                    metrics["txlog_orders_by_side"].labels(side=side_name).set(side_counts.get(side_name, 0))
     except Exception:
         pass
 
