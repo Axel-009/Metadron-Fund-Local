@@ -1427,4 +1427,67 @@ TradierBroker   → LEGACY: Fallback only
 RithmicBroker   → FUTURE: Live futures execution
 ```
 
+---
+
+## Fixed Income Engine & Router
+
+### FixedIncomeEngine (`engine/signals/fixed_income_engine.py`)
+
+Aggregates fixed income data from existing data sources. No new external providers — composes data from OpenBB/FRED, MacroEngine, and broker positions.
+
+**Data Flow:**
+```
+OpenBB/FRED (treasury rates, credit spreads)
+     │
+     ▼
+FixedIncomeEngine ←── MacroEngine (yield curve analysis, credit pulse)
+     │              ←── Broker (FI positions: TLT, IEF, SHY, LQD, HYG, etc.)
+     ▼
+/api/engine/fixed-income router (6 endpoints)
+     │
+     ▼
+Tab 18 (Fixed Income) — useEngineQuery hooks
+```
+
+**Methods:**
+| Method | Data Source | Returns |
+|---|---|---|
+| `get_summary()` | `get_treasury_rates()` + `MacroEngine.get_yield_curve_analysis()` | Portfolio summary: avg yield, duration, rating, DV01 |
+| `get_holdings()` | Broker positions filtered for FI ETFs | List of FI holdings with P&L |
+| `get_yield_curve()` | `get_fred_series()` for 11 tenors (1M through 30Y) | `[{tenor, rate, change_1d}]` |
+| `get_credit_quality()` | `get_credit_spreads()` (BAMLH0A0HYM2, BAMLC0A4CBBB) | Market credit quality distribution |
+| `get_duration_ladder()` | `get_fred_series()` grouped by maturity bucket | `[{bucket, avg_rate}]` |
+| `get_spread_history(days)` | `get_credit_spreads()` historical | `{dates, ig_spread, hy_spread}` |
+
+### Fixed Income Router (`engine/api/routers/fixed_income.py`)
+
+**Mount:** `/api/engine/fixed-income`
+
+| Endpoint | Method | Description |
+|---|---|---|
+| `/summary` | GET | Portfolio-level FI summary |
+| `/holdings` | GET | Bond holdings from broker |
+| `/yield-curve` | GET | Full yield curve (11 tenors) |
+| `/credit-quality` | GET | Credit quality distribution |
+| `/duration-ladder` | GET | Duration/maturity buckets |
+| `/spread-history?days=90` | GET | Historical IG/HY spreads |
+
+### Macro Router — Historical Time Series Extensions
+
+Added to existing `/api/engine/macro` router:
+
+| Endpoint | FRED Series | Description |
+|---|---|---|
+| `/spread-history` | DGS10 - DGS2 | 2s10s yield spread (30 days) |
+| `/vix-history` | VIXCLS | VIX time series (30 days) |
+| `/dxy-history` | DTWEXBGS | Dollar index (30 days) |
+
+### Dashboard Tab Status
+
+| Tab | Status | Data Source |
+|---|---|---|
+| Tab 18 (Fixed Income) | WIRED TO LIVE DATA | `/fixed-income/*` + `/macro/yield-curve` + `/macro/credit-pulse` |
+| Tab 19 (Macro) | WIRED TO LIVE DATA | `/macro/*` + FRED historical time series |
+| Tab 25 (Money Velocity) | UNTOUCHED | As-is per user instruction |
+
 

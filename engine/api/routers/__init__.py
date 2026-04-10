@@ -9,6 +9,7 @@ from engine.api.routers import (
     ml,
     monitoring,
     universe,
+    fixed_income,
 )
 
 __all__ = [
@@ -22,4 +23,5 @@ __all__ = [
     "ml",
     "monitoring",
     "universe",
+    "fixed_income",
 ]

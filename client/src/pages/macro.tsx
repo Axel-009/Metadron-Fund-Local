@@ -6,10 +6,6 @@ import {
 } from "recharts";
 import { useEngineQuery, type MacroSnapshot } from "@/hooks/use-engine-api";
 
-// ═══════════ MOCK DATA ═══════════
-
-const REGIME = { label:"TRANSITION", confidence: 67, prev:"BULL" };
-
 const REGIME_COLORS: Record<string, { bg: string; text: string; border: string }> = {
   BULL:       { bg:"#3fb95022", text:"#3fb950", border:"#3fb950" },
   BEAR:       { bg:"#f8514922", text:"#f85149", border:"#f85149" },
@@ -18,70 +14,11 @@ const REGIME_COLORS: Record<string, { bg: string; text: string; border: string }
   CRASH:      { bg:"#f8514944", text:"#f85149", border:"#f85149" },
 };
 
-const G10_COUNTRIES = [
-  { flag:"🇺🇸", country:"United States", code:"US",  gdp: 2.8,  cpi: 3.1,  unemp: 3.9, rate: 5.25, y10: 4.58, currency:"USD", cxChg:  0.00, pmiMfg: 49.8, pmiSvc: 52.3 },
-  { flag:"🇬🇧", country:"United Kingdom",code:"UK",  gdp: 0.6,  cpi: 3.8,  unemp: 4.2, rate: 5.25, y10: 4.14, currency:"GBP", cxChg: -0.28, pmiMfg: 47.4, pmiSvc: 53.1 },
-  { flag:"🇪🇺", country:"Eurozone",      code:"EUR", gdp: 0.4,  cpi: 2.6,  unemp: 6.4, rate: 4.50, y10: 2.41, currency:"EUR", cxChg: -0.14, pmiMfg: 46.2, pmiSvc: 50.8 },
-  { flag:"🇯🇵", country:"Japan",         code:"JP",  gdp: 0.1,  cpi: 2.4,  unemp: 2.6, rate: 0.10, y10: 0.82, currency:"JPY", cxChg:  0.61, pmiMfg: 48.2, pmiSvc: 51.4 },
-  { flag:"🇨🇦", country:"Canada",        code:"CA",  gdp: 1.2,  cpi: 2.8,  unemp: 6.1, rate: 5.00, y10: 3.92, currency:"CAD", cxChg:  0.31, pmiMfg: 49.1, pmiSvc: 50.2 },
-  { flag:"🇦🇺", country:"Australia",     code:"AU",  gdp: 1.5,  cpi: 3.4,  unemp: 4.1, rate: 4.35, y10: 4.38, currency:"AUD", cxChg:  0.19, pmiMfg: 47.8, pmiSvc: 52.9 },
-  { flag:"🇳🇿", country:"New Zealand",   code:"NZ",  gdp: 0.3,  cpi: 4.0,  unemp: 4.0, rate: 5.50, y10: 5.02, currency:"NZD", cxChg: -0.22, pmiMfg: 46.1, pmiSvc: 49.8 },
-  { flag:"🇨🇭", country:"Switzerland",   code:"CH",  gdp: 1.4,  cpi: 1.1,  unemp: 2.5, rate: 1.75, y10: 0.89, currency:"CHF", cxChg: -0.08, pmiMfg: 43.8, pmiSvc: 52.1 },
-  { flag:"🇸🇪", country:"Sweden",        code:"SE",  gdp:-0.2,  cpi: 2.2,  unemp: 8.8, rate: 4.00, y10: 2.81, currency:"SEK", cxChg:  0.44, pmiMfg: 45.2, pmiSvc: 48.9 },
-  { flag:"🇳🇴", country:"Norway",        code:"NO",  gdp: 1.0,  cpi: 3.6,  unemp: 2.1, rate: 4.50, y10: 4.12, currency:"NOK", cxChg:  0.27, pmiMfg: 51.2, pmiSvc: 53.8 },
-];
-
-const ECON_CALENDAR = [
-  { date:"Apr 02", time:"08:30", event:"US NFP (Non-Farm Payrolls)",   country:"🇺🇸", prev:"303K", consensus:"215K",  importance:3 },
-  { date:"Apr 02", time:"08:30", event:"US Unemployment Rate",         country:"🇺🇸", prev:"3.9%", consensus:"3.9%",  importance:2 },
-  { date:"Apr 03", time:"10:00", event:"ISM Services PMI",             country:"🇺🇸", prev:"52.6", consensus:"52.8",  importance:2 },
-  { date:"Apr 04", time:"08:30", event:"US CPI YoY",                   country:"🇺🇸", prev:"3.1%", consensus:"3.0%",  importance:3 },
-  { date:"Apr 04", time:"08:30", event:"US Core CPI MoM",              country:"🇺🇸", prev:"0.4%", consensus:"0.3%",  importance:3 },
-  { date:"Apr 07", time:"04:00", event:"ECB Rate Decision",            country:"🇪🇺", prev:"4.50%","consensus":"4.25%",importance:3 },
-  { date:"Apr 08", time:"09:30", event:"UK GDP MoM",                   country:"🇬🇧", prev:"0.2%", consensus:"0.2%",  importance:2 },
-  { date:"Apr 10", time:"08:30", event:"US PPI MoM",                   country:"🇺🇸", prev:"0.3%", consensus:"0.2%",  importance:2 },
-  { date:"Apr 11", time:"00:50", event:"BOJ Monetary Policy Minutes",  country:"🇯🇵", prev:"—",    consensus:"—",     importance:2 },
-  { date:"Apr 14", time:"08:30", event:"Canada CPI YoY",               country:"🇨🇦", prev:"2.8%", consensus:"2.9%",  importance:2 },
-  { date:"Apr 16", time:"09:00", event:"Eurozone CPI Flash",           country:"🇪🇺", prev:"2.6%", consensus:"2.4%",  importance:2 },
-  { date:"Apr 17", time:"08:30", event:"US Retail Sales MoM",          country:"🇺🇸", prev:"0.6%", consensus:"0.4%",  importance:2 },
-];
-
-const MACRO_NEWS = [
-  { ts:"10:41 EST", src:"Reuters",   headline:"Fed Chair Powell signals higher-for-longer as inflation remains sticky above 3%",   sentiment:"hawkish" },
-  { ts:"10:22 EST", src:"Bloomberg", headline:"ECB policymakers debate April cut timing amid diverging inflation data across zone", sentiment:"dovish"  },
-  { ts:"09:58 EST", src:"FT",        headline:"NFP expected to show moderation as hiring slows in key service sectors",            sentiment:"neutral"  },
-  { ts:"09:31 EST", src:"WSJ",       headline:"BOJ hints at rate path normalization, yen strengthens against dollar",              sentiment:"hawkish" },
-  { ts:"09:14 EST", src:"Reuters",   headline:"US 2s10s inversion narrowing — yield curve steepening signals growth optimism",    sentiment:"neutral"  },
-  { ts:"08:47 EST", src:"Bloomberg", headline:"China's deflationary pressure spills over to global goods prices, PBOC on hold",   sentiment:"dovish"  },
-  { ts:"08:30 EST", src:"CNBC",      headline:"Initial jobless claims come in below expectations, labor market still resilient",   sentiment:"hawkish" },
-  { ts:"07:55 EST", src:"FT",        headline:"Eurozone PMI composite rises to 50.8, barely expansionary — recovery fragile",     sentiment:"neutral"  },
-  { ts:"07:22 EST", src:"Reuters",   headline:"Oil prices fall as OPEC+ signals production discipline review for Q3 2026",        sentiment:"neutral"  },
-  { ts:"06:48 EST", src:"Bloomberg", headline:"Australia RBA holds steady at 4.35%, governor warns against premature easing",     sentiment:"hawkish" },
-];
-
 const SENTIMENT_COLORS: Record<string, string> = {
   hawkish:"#f85149",
   dovish:  "#3fb950",
   neutral: "#d29922",
 };
-
-const LIQUIDITY_METRICS = [
-  { label:"Fed Balance Sheet",   value:"$7.44T",  chg:"-$28B",  dir:"down" },
-  { label:"M2 Money Supply YoY", value:"+1.4%",   chg:"vs -3.8%",dir:"up"  },
-  { label:"SOFR Rate",           value:"5.31%",   chg:"+2bps",  dir:"up"   },
-  { label:"TED Spread",          value:"22.4bps", chg:"-1.2bps",dir:"down" },
-  { label:"Net Liquidity Est",   value:"$5.82T",  chg:"-$12B",  dir:"down" },
-];
-
-function genChartData(base: number, vol: number, drift = 0, days = 30) {
-  const data: { day: number; val: number }[] = [];
-  let v = base;
-  for (let i = 0; i < days; i++) {
-    v = v + (Math.random() - 0.5) * vol + drift;
-    data.push({ day: i + 1, val: +v.toFixed(2) });
-  }
-  return data;
-}
 
 const TOOLTIP_STYLE = {
   backgroundColor: "#0d1117",
@@ -91,6 +28,8 @@ const TOOLTIP_STYLE = {
   color: "#e6edf3",
   padding: "4px 8px",
 };
+
+type ChartPoint = { day: number; val: number };
 
 export default function MacroDashboard() {
   // ─── Engine API ─────────────────────────────────────
@@ -102,9 +41,14 @@ export default function MacroDashboard() {
   const { data: calendarData } = useEngineQuery<{ events: Array<Record<string, string>> }>("/macro/calendar", { refetchInterval: 300000 });
   const { data: g10Data } = useEngineQuery<{ countries: Array<Record<string, string | number | null>> }>("/macro/g10", { refetchInterval: 120000 });
 
-  // Override news from API when available
+  // ─── Historical time series from FRED ───────────────
+  const { data: spreadHistData } = useEngineQuery<{ data: ChartPoint[] }>("/macro/spread-history", { refetchInterval: 60000 });
+  const { data: vixHistData } = useEngineQuery<{ data: ChartPoint[] }>("/macro/vix-history", { refetchInterval: 60000 });
+  const { data: dxyHistData } = useEngineQuery<{ data: ChartPoint[] }>("/macro/dxy-history", { refetchInterval: 60000 });
+
+  // News from API
   const macroNews = useMemo(() => {
-    if (!newsData?.news?.length) return MACRO_NEWS;
+    if (!newsData?.news?.length) return [];
     return newsData.news.slice(0, 10).map((n) => ({
       ts: n.date || n.published || "",
       src: n.source || n.provider || "OpenBB",
@@ -115,7 +59,7 @@ export default function MacroDashboard() {
 
   // G10 countries from FRED API
   const g10Countries = useMemo(() => {
-    if (!g10Data?.countries?.length) return G10_COUNTRIES;
+    if (!g10Data?.countries?.length) return [];
     return g10Data.countries.map((c) => ({
       flag: String(c.flag || ""),
       country: String(c.country || ""),
@@ -134,7 +78,7 @@ export default function MacroDashboard() {
 
   // Economic calendar from OpenBB
   const econCalendar = useMemo(() => {
-    if (!calendarData?.events?.length) return ECON_CALENDAR;
+    if (!calendarData?.events?.length) return [];
     return calendarData.events.slice(0, 12).map((e) => ({
       date: String(e.date || ""),
       time: String(e.time || ""),
@@ -146,25 +90,40 @@ export default function MacroDashboard() {
     }));
   }, [calendarData]);
 
-  // Override regime from API
-  const apiRegime = macroSnap?.regime?.toUpperCase() || REGIME.label;
-  const regime = { label: apiRegime, confidence: macroSnap ? Math.round((macroSnap.gmtf_score || 0.67) * 100) : REGIME.confidence, prev: REGIME.prev };
+  // Regime from API
+  const apiRegime = macroSnap?.regime?.toUpperCase() || "UNKNOWN";
+  const regime = { label: apiRegime, confidence: macroSnap ? Math.round((macroSnap.gmtf_score || 0.67) * 100) : 0, prev: "—" };
 
-  // Override liquidity metrics from API
+  // Liquidity metrics from velocity API
   const liqMetrics = useMemo(() => {
-    if (!velocityData) return LIQUIDITY_METRICS;
+    if (!velocityData) return [];
     return [
-      { label: "Fed Balance Sheet", value: velocityData.liquidity_score != null ? `Score: ${(velocityData.liquidity_score).toFixed(1)}` : LIQUIDITY_METRICS[0].value, chg: "", dir: "up" },
-      { label: "Money Velocity", value: velocityData.velocity != null ? `V=${(velocityData.velocity).toFixed(3)}` : LIQUIDITY_METRICS[1].value, chg: "", dir: (velocityData.velocity || 0) > 1.15 ? "up" : "down" },
-      { label: "SOFR Rate", value: velocityData.sofr_rate != null ? `${velocityData.sofr_rate.toFixed(2)}%` : LIQUIDITY_METRICS[2].value, chg: "", dir: "up" },
-      { label: "TED Spread", value: velocityData.ted_spread != null ? `${(velocityData.ted_spread * 100).toFixed(1)}bps` : LIQUIDITY_METRICS[3].value, chg: "", dir: "down" },
-      { label: "Credit Impulse", value: velocityData.credit_impulse != null ? `${velocityData.credit_impulse.toFixed(2)}` : LIQUIDITY_METRICS[4].value, chg: "", dir: (velocityData.credit_impulse || 0) > 0 ? "up" : "down" },
+      { label: "Fed Balance Sheet", value: velocityData.liquidity_score != null ? `Score: ${(velocityData.liquidity_score).toFixed(1)}` : "—", chg: "", dir: "up" },
+      { label: "Money Velocity", value: velocityData.velocity != null ? `V=${(velocityData.velocity).toFixed(3)}` : "—", chg: "", dir: (velocityData.velocity || 0) > 1.15 ? "up" : "down" },
+      { label: "SOFR Rate", value: velocityData.sofr_rate != null ? `${velocityData.sofr_rate.toFixed(2)}%` : "—", chg: "", dir: "up" },
+      { label: "TED Spread", value: velocityData.ted_spread != null ? `${(velocityData.ted_spread * 100).toFixed(1)}bps` : "—", chg: "", dir: "down" },
+      { label: "Credit Impulse", value: velocityData.credit_impulse != null ? `${velocityData.credit_impulse.toFixed(2)}` : "—", chg: "", dir: (velocityData.credit_impulse || 0) > 0 ? "up" : "down" },
     ];
   }, [velocityData]);
 
-  const spreadData = useMemo(() => genChartData(macroSnap?.yield_spread ?? -0.38, 0.06, 0.004, 30), [macroSnap]);
-  const vixData    = useMemo(() => genChartData(macroSnap?.vix ?? 18.4, 1.2, -0.02, 30), [macroSnap]);
-  const dxyData    = useMemo(() => genChartData(104.2, 0.3, 0.01, 30), []);
+  // Historical chart data from FRED
+  const spreadData = useMemo(() => {
+    const d = spreadHistData?.data;
+    if (d && d.length > 0) return d.map((p, i) => ({ day: i + 1, val: p.val }));
+    return [];
+  }, [spreadHistData]);
+
+  const vixData = useMemo(() => {
+    const d = vixHistData?.data;
+    if (d && d.length > 0) return d.map((p, i) => ({ day: i + 1, val: p.val }));
+    return [];
+  }, [vixHistData]);
+
+  const dxyData = useMemo(() => {
+    const d = dxyHistData?.data;
+    if (d && d.length > 0) return d.map((p, i) => ({ day: i + 1, val: p.val }));
+    return [];
+  }, [dxyHistData]);
 
   const r = REGIME_COLORS[regime.label] || REGIME_COLORS["TRANSITION"];
 
@@ -196,6 +155,9 @@ export default function MacroDashboard() {
           <div className="h-full flex flex-col gap-1 overflow-hidden">
       <DashboardPanel title="G10 ECONOMIC INDICATORS" noPadding>
         <div className="overflow-auto h-full">
+          {g10Countries.length === 0 ? (
+            <div className="flex items-center justify-center h-full text-terminal-text-muted text-[11px] font-mono">Loading G10 data from FRED...</div>
+          ) : (
           <table className="w-full text-[10px] font-mono border-collapse">
             <thead className="sticky top-0 bg-terminal-surface z-10">
               <tr className="border-b border-terminal-border">
@@ -244,6 +206,7 @@ export default function MacroDashboard() {
               ))}
             </tbody>
           </table>
+          )}
         </div>
       </DashboardPanel>
 
@@ -252,36 +215,48 @@ export default function MacroDashboard() {
           {/* Right: 3 Charts container */}
           <div className="flex flex-col gap-1 h-full overflow-auto">
             <DashboardPanel title="2s10s YIELD SPREAD (30D)" className="flex-1">
+              {spreadData.length === 0 ? (
+                <div className="flex items-center justify-center h-full text-terminal-text-muted text-[10px] font-mono">Loading spread data...</div>
+              ) : (
               <ResponsiveContainer width="100%" height="100%">
                 <LineChart data={spreadData} margin={{ top: 4, right: 6, left: -20, bottom: 0 }}>
-                  <XAxis dataKey="day" tick={{ fontSize: 8, fill: "#8b949e" }} tickFormatter={v => `D${v}`} />
-                  <YAxis domain={[-0.6, -0.1]} tickFormatter={v => `${v.toFixed(2)}%`} tick={{ fontSize: 8, fill: "#8b949e" }} />
+                  <XAxis dataKey="day" tick={{ fontSize: 8, fill: "#8b949e" }} tickFormatter={(v: number) => `D${v}`} />
+                  <YAxis domain={["auto", "auto"]} tickFormatter={(v: number) => `${v.toFixed(2)}%`} tick={{ fontSize: 8, fill: "#8b949e" }} />
                   <ReferenceLine y={0} stroke="#555" strokeDasharray="3 3" />
                   <Tooltip contentStyle={TOOLTIP_STYLE} formatter={(v: number) => [`${v.toFixed(3)}%`, "2s10s"]} />
                   <Line type="monotone" dataKey="val" stroke="#d29922" strokeWidth={1.5} dot={false} />
                 </LineChart>
               </ResponsiveContainer>
+              )}
             </DashboardPanel>
             <DashboardPanel title="VIX INDEX (30D)" className="flex-1">
+              {vixData.length === 0 ? (
+                <div className="flex items-center justify-center h-full text-terminal-text-muted text-[10px] font-mono">Loading VIX data...</div>
+              ) : (
               <ResponsiveContainer width="100%" height="100%">
                 <LineChart data={vixData} margin={{ top: 4, right: 6, left: -20, bottom: 0 }}>
-                  <XAxis dataKey="day" tick={{ fontSize: 8, fill: "#8b949e" }} tickFormatter={v => `D${v}`} />
-                  <YAxis domain={[13, 26]} tick={{ fontSize: 8, fill: "#8b949e" }} />
+                  <XAxis dataKey="day" tick={{ fontSize: 8, fill: "#8b949e" }} tickFormatter={(v: number) => `D${v}`} />
+                  <YAxis domain={["auto", "auto"]} tick={{ fontSize: 8, fill: "#8b949e" }} />
                   <ReferenceLine y={20} stroke="#d29922" strokeDasharray="3 3" label={{ value: "20", position: "right", fontSize: 8, fill: "#d29922" }} />
                   <Tooltip contentStyle={TOOLTIP_STYLE} formatter={(v: number) => [v.toFixed(2), "VIX"]} />
                   <Line type="monotone" dataKey="val" stroke="#a855f7" strokeWidth={1.5} dot={false} />
                 </LineChart>
               </ResponsiveContainer>
+              )}
             </DashboardPanel>
             <DashboardPanel title="DXY DOLLAR INDEX (30D)" className="flex-1">
+              {dxyData.length === 0 ? (
+                <div className="flex items-center justify-center h-full text-terminal-text-muted text-[10px] font-mono">Loading DXY data...</div>
+              ) : (
               <ResponsiveContainer width="100%" height="100%">
                 <LineChart data={dxyData} margin={{ top: 4, right: 6, left: -20, bottom: 0 }}>
-                  <XAxis dataKey="day" tick={{ fontSize: 8, fill: "#8b949e" }} tickFormatter={v => `D${v}`} />
-                  <YAxis domain={[102, 107]} tick={{ fontSize: 8, fill: "#8b949e" }} />
+                  <XAxis dataKey="day" tick={{ fontSize: 8, fill: "#8b949e" }} tickFormatter={(v: number) => `D${v}`} />
+                  <YAxis domain={["auto", "auto"]} tick={{ fontSize: 8, fill: "#8b949e" }} />
                   <Tooltip contentStyle={TOOLTIP_STYLE} formatter={(v: number) => [v.toFixed(2), "DXY"]} />
                   <Line type="monotone" dataKey="val" stroke="#3b82f6" strokeWidth={1.5} dot={false} />
                 </LineChart>
               </ResponsiveContainer>
+              )}
             </DashboardPanel>
           </div>
         </ResizableDashboard>
@@ -292,7 +267,10 @@ export default function MacroDashboard() {
         <ResizableDashboard defaultSizes={[60, 40]} minSizes={[30, 25]}>
           <DashboardPanel title="MACRO NEWS FEED" noPadding>
             <div className="overflow-auto h-full">
-              {macroNews.map((n, i) => (
+              {macroNews.length === 0 ? (
+                <div className="flex items-center justify-center h-full text-terminal-text-muted text-[10px] font-mono">Loading news...</div>
+              ) : (
+              macroNews.map((n, i) => (
                 <div key={i} className={`px-2 py-1 border-b border-terminal-border flex items-start gap-2 hover:bg-[#161b22] ${i % 2 === 0 ? "" : "bg-[#0d1117]"}`}>
                   <span className="text-[8px] font-mono text-terminal-text-faint w-16 flex-shrink-0">{n.ts}</span>
                   <span className="text-[8px] font-mono text-terminal-text-muted w-14 flex-shrink-0">{n.src}</span>
@@ -301,13 +279,17 @@ export default function MacroDashboard() {
                     {n.sentiment}
                   </span>
                 </div>
-              ))}
+              ))
+              )}
             </div>
           </DashboardPanel>
 
           <DashboardPanel title="MONEY VELOCITY & LIQUIDITY">
             <div className="grid grid-cols-1 gap-2">
-              {liqMetrics.map(m => (
+              {liqMetrics.length === 0 ? (
+                <div className="flex items-center justify-center text-terminal-text-muted text-[10px] font-mono py-4">Loading velocity data...</div>
+              ) : (
+              liqMetrics.map(m => (
                 <div key={m.label} className="flex items-center justify-between border-b border-terminal-border pb-1">
                   <span className="text-[9px] text-terminal-text-muted">{m.label}</span>
                   <div className="flex items-center gap-2">
@@ -315,7 +297,8 @@ export default function MacroDashboard() {
                     <span className={`text-[9px] font-mono ${m.dir === "up" ? "text-terminal-positive" : "text-terminal-negative"}`}>{m.chg}</span>
                   </div>
                 </div>
-              ))}
+              ))
+              )}
               <div className="text-[8px] text-terminal-text-faint mt-1">
                 GMTF: Global Monetary Tension Framework | V=GDP/M2 | SDR: USD 43.38% EUR 29.31% CNY 12.28% JPY 7.59% GBP 7.44%
               </div>

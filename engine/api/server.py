@@ -29,6 +29,7 @@ from engine.api.routers import (
     ml,
     monitoring,
     universe,
+    fixed_income,
 )
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [API] %(message)s")
@@ -66,6 +67,7 @@ app.include_router(agents.router, prefix="/api/engine/agents", tags=["Agents"])
 app.include_router(ml.router, prefix="/api/engine/ml", tags=["ML"])
 app.include_router(monitoring.router, prefix="/api/engine/monitoring", tags=["Monitoring"])
 app.include_router(universe.router, prefix="/api/engine/universe", tags=["Universe"])
+app.include_router(fixed_income.router, prefix="/api/engine/fixed-income", tags=["FixedIncome"])
 
 
 @app.get("/api/engine/health")

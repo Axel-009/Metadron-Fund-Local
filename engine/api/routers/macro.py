@@ -377,6 +377,91 @@ async def macro_news():
         return {"news": [], "error": str(e)}
 
 
+# ─── Historical Time Series (FRED) ────────────────────────
+
+@router.get("/spread-history")
+async def spread_history():
+    """2s10s yield spread time series from FRED (DGS10 minus DGS2)."""
+    try:
+        from engine.data.openbb_data import get_fred_series
+        from datetime import timedelta
+
+        start = (datetime.utcnow() - timedelta(days=45)).strftime("%Y-%m-%d")
+        df = get_fred_series(["DGS10", "DGS2"], start=start)
+
+        if not hasattr(df, "empty") or df.empty:
+            return {"data": [], "timestamp": datetime.utcnow().isoformat()}
+
+        data = []
+        for idx, row in df.iterrows():
+            dgs10 = row.get("DGS10") if "DGS10" in df.columns else None
+            dgs2 = row.get("DGS2") if "DGS2" in df.columns else None
+            if dgs10 is not None and dgs2 is not None:
+                import math
+                if not (math.isnan(dgs10) or math.isnan(dgs2)):
+                    date_str = idx.strftime("%Y-%m-%d") if hasattr(idx, "strftime") else str(idx)
+                    data.append({"date": date_str, "val": round(float(dgs10 - dgs2), 3)})
+
+        return {"data": data[-30:], "timestamp": datetime.utcnow().isoformat()}
+    except Exception as e:
+        logger.error(f"macro/spread-history error: {e}")
+        return {"data": [], "error": str(e), "timestamp": datetime.utcnow().isoformat()}
+
+
+@router.get("/vix-history")
+async def vix_history():
+    """VIX time series from FRED (VIXCLS)."""
+    try:
+        from engine.data.openbb_data import get_fred_series
+        from datetime import timedelta
+
+        start = (datetime.utcnow() - timedelta(days=45)).strftime("%Y-%m-%d")
+        df = get_fred_series("VIXCLS", start=start)
+
+        if not hasattr(df, "empty") or df.empty:
+            return {"data": [], "timestamp": datetime.utcnow().isoformat()}
+
+        data = []
+        col = df.iloc[:, 0] if df.ndim > 1 else df
+        for idx, val in col.items():
+            import math
+            if val is not None and not math.isnan(val):
+                date_str = idx.strftime("%Y-%m-%d") if hasattr(idx, "strftime") else str(idx)
+                data.append({"date": date_str, "val": round(float(val), 2)})
+
+        return {"data": data[-30:], "timestamp": datetime.utcnow().isoformat()}
+    except Exception as e:
+        logger.error(f"macro/vix-history error: {e}")
+        return {"data": [], "error": str(e), "timestamp": datetime.utcnow().isoformat()}
+
+
+@router.get("/dxy-history")
+async def dxy_history():
+    """Dollar index time series from FRED (DTWEXBGS)."""
+    try:
+        from engine.data.openbb_data import get_fred_series
+        from datetime import timedelta
+
+        start = (datetime.utcnow() - timedelta(days=45)).strftime("%Y-%m-%d")
+        df = get_fred_series("DTWEXBGS", start=start)
+
+        if not hasattr(df, "empty") or df.empty:
+            return {"data": [], "timestamp": datetime.utcnow().isoformat()}
+
+        data = []
+        col = df.iloc[:, 0] if df.ndim > 1 else df
+        for idx, val in col.items():
+            import math
+            if val is not None and not math.isnan(val):
+                date_str = idx.strftime("%Y-%m-%d") if hasattr(idx, "strftime") else str(idx)
+                data.append({"date": date_str, "val": round(float(val), 2)})
+
+        return {"data": data[-30:], "timestamp": datetime.utcnow().isoformat()}
+    except Exception as e:
+        logger.error(f"macro/dxy-history error: {e}")
+        return {"data": [], "error": str(e), "timestamp": datetime.utcnow().isoformat()}
+
+
 # ─── WRAP tab endpoints ────────────────────────────────────
 
 @router.get("/wrap")
