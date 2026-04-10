@@ -21,9 +21,9 @@ try:
 except ImportError:
     raise RuntimeError("FastAPI and SQLAlchemy are required.")
 
-from app.backend.models.database import get_db
-from app.backend.models.tables import Flow, FlowRun
-from app.backend.schemas.flows import (
+from engine.db.database import get_db
+from engine.db.tables import Flow, FlowRun
+from engine.db.schemas import (
     FlowCreate,
     FlowResponse,
     FlowRunCreate,
