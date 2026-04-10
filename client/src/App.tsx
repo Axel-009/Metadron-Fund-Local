@@ -34,6 +34,8 @@ import ArchivePage from "@/pages/archive";
 import BacktestingPage from "@/pages/backtesting";
 import MetadronCubePage from "@/pages/metadron-cube";
 import MoneyVelocityPage from "@/pages/money-velocity";
+import ThinkingTab from "@/pages/thinking-tab";
+import CollateralTab from "@/pages/collateral-tab";
 
 // ═══════════ ALL AVAILABLE TABS ═══════════
 const ALL_TABS = [
@@ -63,6 +65,8 @@ const ALL_TABS = [
   { path: "/archive", label: "ARCHIVE" },
   { path: "/backtesting", label: "BACKTEST" },
   { path: "/velocity", label: "VELOCITY" },
+  { path: "/thinking", label: "THINKING" },
+  { path: "/collateral", label: "MARGIN" },
 ];
 
 const DEFAULT_PINNED = [
@@ -423,6 +427,8 @@ function AppRouter() {
       <Route path="/archive" component={ArchivePage} />
       <Route path="/backtesting" component={BacktestingPage} />
       <Route path="/velocity" component={MoneyVelocityPage} />
+      <Route path="/thinking" component={ThinkingTab} />
+      <Route path="/collateral" component={CollateralTab} />
       <Route component={NotFound} />
     </Switch>
   );

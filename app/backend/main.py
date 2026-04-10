@@ -47,6 +47,11 @@ try:
 except Exception:
     streaming_router = None
 
+try:
+    from app.backend.api.allocation import router as allocation_router
+except Exception:
+    allocation_router = None
+
 # ---------------------------------------------------------------------------
 # Application factory
 # ---------------------------------------------------------------------------
@@ -75,6 +80,7 @@ _routers = [
     (hedge_fund_router, "/api/hedge-fund", ["Hedge Fund"]),
     (api_keys_router, "/api-keys", ["API Keys"]),
     (streaming_router, "/api/stream", ["Streaming"]),
+    (allocation_router, "/api/allocation", ["Allocation"]),
 ]
 
 for router, prefix, tags in _routers:

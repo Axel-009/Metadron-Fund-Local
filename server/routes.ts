@@ -65,5 +65,9 @@ export async function registerRoutes(
   // All API traffic goes through the Python engine — no mock fallbacks
   proxyToEngine(app);
 
+  // Allocation engine endpoints → Python FastAPI
+  // Covers: /api/allocation/rules, /status, /slate, /scan/*, /collateral/*
+  proxyToEngine(app, "/api/allocation");
+
   return httpServer;
 }

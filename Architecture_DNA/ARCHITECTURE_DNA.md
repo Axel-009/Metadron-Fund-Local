@@ -1427,164 +1427,335 @@ TradierBroker   → LEGACY: Fallback only
 RithmicBroker   → FUTURE: Live futures execution
 ```
 
-
-
 ---
 
-## FIXED INCOME ENGINE — Tab 18
+## Fixed Income Engine & Router
 
-### Engine: `engine/signals/fixed_income_engine.py`
+### FixedIncomeEngine (`engine/signals/fixed_income_engine.py`)
 
-Dedicated fixed income analytics engine aggregating data from OpenBB/FRED, MacroEngine,
-and broker positions. No static or hardcoded data — all real-time API sourced.
+Aggregates fixed income data from existing data sources. No new external providers — composes data from OpenBB/FRED, MacroEngine, and broker positions.
 
-**Data Sources:**
-- FRED Treasury yields: DGS1MO, DGS3MO, DGS6MO, DGS1, DGS2, DGS3, DGS5, DGS7, DGS10, DGS20, DGS30
-- FRED Credit spreads: BAMLH0A0HYM2 (HY OAS), BAMLC0A0CM (IG OAS), BAMLC0A4CBBB (BBB OAS)
-- MacroEngine: yield curve analysis, credit pulse monitoring
-- Broker positions: filtered for FI ETFs (TLT, IEF, SHY, LQD, HYG, AGG, BND, MBB, MUB, TIPS)
+**Data Flow:**
+```
+OpenBB/FRED (treasury rates, credit spreads)
+     │
+     ▼
+FixedIncomeEngine ←── MacroEngine (yield curve analysis, credit pulse)
+     │              ←── Broker (FI positions: TLT, IEF, SHY, LQD, HYG, etc.)
+     ▼
+/api/engine/fixed-income router (6 endpoints)
+     │
+     ▼
+Tab 18 (Fixed Income) — useEngineQuery hooks
+```
 
 **Methods:**
-```
-FixedIncomeEngine
-├── get_summary()          → Portfolio-level FI exposure, duration, yield, DV01, convexity
-├── get_holdings()         → Bond/FI ETF positions from broker (filtered)
-├── get_yield_curve()      → 11-tenor treasury curve from FRED
-├── get_credit_quality()   → Credit quality distribution from spread environment
-├── get_duration_ladder()  → DV01 by maturity bucket from rate levels
-└── get_spread_history()   → Historical IG/HY OAS time series from FRED
-```
-
-### Router: `engine/api/routers/fixed_income.py`
-Mounted at: `/api/engine/fixed-income`
-
-| Endpoint | Method | Source |
+| Method | Data Source | Returns |
 |---|---|---|
-| `/summary` | GET | FixedIncomeEngine.get_summary() |
-| `/holdings` | GET | FixedIncomeEngine.get_holdings() |
-| `/yield-curve` | GET | FixedIncomeEngine.get_yield_curve() |
-| `/credit-quality` | GET | FixedIncomeEngine.get_credit_quality() |
-| `/duration-ladder` | GET | FixedIncomeEngine.get_duration_ladder() |
-| `/spread-history?days=90` | GET | FixedIncomeEngine.get_spread_history() |
+| `get_summary()` | `get_treasury_rates()` + `MacroEngine.get_yield_curve_analysis()` | Portfolio summary: avg yield, duration, rating, DV01 |
+| `get_holdings()` | Broker positions filtered for FI ETFs | List of FI holdings with P&L |
+| `get_yield_curve()` | `get_fred_series()` for 11 tenors (1M through 30Y) | `[{tenor, rate, change_1d}]` |
+| `get_credit_quality()` | `get_credit_spreads()` (BAMLH0A0HYM2, BAMLC0A4CBBB) | Market credit quality distribution |
+| `get_duration_ladder()` | `get_fred_series()` grouped by maturity bucket | `[{bucket, avg_rate}]` |
+| `get_spread_history(days)` | `get_credit_spreads()` historical | `{dates, ig_spread, hy_spread}` |
 
-### Data Flow
-```
-FRED (DGS*, BAML*)  →  FixedIncomeEngine  →  /api/engine/fixed-income/*
-MacroEngine         →       ↑                        ↓
-Broker Positions    →       ↑                  fixed-income.tsx (Tab 18)
-```
+### Fixed Income Router (`engine/api/routers/fixed_income.py`)
 
----
+**Mount:** `/api/engine/fixed-income`
 
-## MACRO DASHBOARD HISTORICAL ENDPOINTS — Tab 19
+| Endpoint | Method | Description |
+|---|---|---|
+| `/summary` | GET | Portfolio-level FI summary |
+| `/holdings` | GET | Bond holdings from broker |
+| `/yield-curve` | GET | Full yield curve (11 tenors) |
+| `/credit-quality` | GET | Credit quality distribution |
+| `/duration-ladder` | GET | Duration/maturity buckets |
+| `/spread-history?days=90` | GET | Historical IG/HY spreads |
 
-Three FRED-backed time series endpoints added to `engine/api/routers/macro.py`:
+### Macro Router — Historical Time Series Extensions
+
+Added to existing `/api/engine/macro` router:
 
 | Endpoint | FRED Series | Description |
 |---|---|---|
-| `/macro/spread-history` | DGS10 - DGS2 | 2s10s yield spread (30-day history) |
-| `/macro/vix-history` | VIXCLS | VIX index (30-day history) |
-| `/macro/dxy-history` | DTWEXBGS | Trade-weighted Dollar Index (30-day history) |
+| `/spread-history` | DGS10 - DGS2 | 2s10s yield spread (30 days) |
+| `/vix-history` | VIXCLS | VIX time series (30 days) |
+| `/dxy-history` | DTWEXBGS | Dollar index (30 days) |
 
-Replaces `genChartData()` function that used `Math.random()` for chart generation.
+### Dashboard Tab Status
+
+| Tab | Status | Data Source |
+|---|---|---|
+| Tab 18 (Fixed Income) | WIRED TO LIVE DATA | `/fixed-income/*` + `/macro/yield-curve` + `/macro/credit-pulse` |
+| Tab 19 (Macro) | WIRED TO LIVE DATA | `/macro/*` + FRED historical time series |
+| Tab 25 (Money Velocity) | UNTOUCHED | As-is per user instruction |
+| Tab 26 (Thinking) | LIVE SSE STREAM | `/api/allocation/scan/thinking` SSE + `/api/allocation/scan/status` |
+| Tab 27 (Collateral/Margin) | WIRED TO LIVE DATA | `/api/allocation/collateral/status` |
 
 ---
 
-## DASHBOARD TAB WIRING STATUS
+## ALLOCATION ENGINE MODULE (engine/allocation/)
 
-### Fully Wired to Live API (no static/mock data):
-- Tab 4: Asset Allocation
-- Tab 5: Risk Portfolio
-- Tab 6: Machine Learning
-- Tab 8: Reporting
-- Tab 9: Strategy Builder
-- Tab 10: OpenBB Terminal
-- Tab 11: Transaction Log
-- Tab 12: Futures
-- Tab 13: TCA
-- Tab 14: Agents
-- Tab 15: Quant Tools
-- Tab 16: Reconciliation
-- Tab 17: ETF Dashboard
-- Tab 18: Fixed Income ← NEW (FixedIncomeEngine → FRED yields, IG/HY OAS, broker positions)
-- Tab 19: Macro Dashboard ← NEW (MacroEngine → FRED VIX/DXY/2s10s historical)
-- Tab 21: ML Models ← WIRED (models/health endpoint, real engine health data, LLM inference verified)
-- Tab 22: Monte Carlo Sim ← WIRED (backend MC simulate endpoint, stress-test scenarios wired, Box-Muller quick preview retained)
-- Tab 23: Simulations ← WIRED (MarkovRegimeBridge regime-simulation, BS inputs from real data, vol surface noise removed)
+### Architecture Overview
 
-### Prometheus Monitoring (23 new metrics)
-- Fixed Income (10): fi_yield_2y/10y/30y, fi_spread_2s10s, fi_ig_oas, fi_hy_oas, fi_positions_count, fi_total_exposure, fi_avg_duration, fi_dv01
-- Macro (3): macro_vix_current, macro_dxy_current, macro_spread_2s10s_current
-- Monte Carlo (5): mc_var95, mc_var99, mc_expected_return, mc_prob_profit, mc_max_drawdown
-- Simulation (2): sim_regime_bull_prob, sim_regime_bear_prob
-- ML Models (3): ml_models_online, ml_models_total, ml_models_by_type
-- Collection: FixedIncomeEngine, FRED series, MonteCarloBridge, MarkovRegimeBridge, importlib engine scan
+```
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                    ALLOCATION ENGINE (engine/allocation/)                    │
+│                                                                             │
+│  ┌──────────────────┐   ┌──────────────────┐   ┌──────────────────────┐   │
+│  │ AllocationRules   │   │ BetaCorridorEngine│   │ KillSwitchMonitor    │   │
+│  │ - IG 30%         │   │ - Compute beta    │   │ - 20% max drawdown   │   │
+│  │ - HY 20%         │   │ - HIGH/NEUTRAL/LOW│   │ - HWM tracking       │   │
+│  │ - ETF 15%        │   │ - Leverage mult   │   │ - Event logging      │   │
+│  │ - FI+Macro 10%   │   │   H=0.5x N=1.0x  │   │ - Manual reset       │   │
+│  │ - Options 25%    │   │   L=1.5x          │   │                      │   │
+│  │ - Cash 5%        │   │                    │   │                      │   │
+│  └──────┬───────────┘   └──────┬─────────────┘   └──────┬───────────────┘   │
+│         │                       │                         │                  │
+│         ▼                       ▼                         ▼                  │
+│  ┌────────────────────────────────────────────────────────────────────┐     │
+│  │                      AllocationEngine                              │     │
+│  │  classify_opportunity(signal) → bucket                             │     │
+│  │  size_position(signal, bucket, utilization, beta_mult) → size      │     │
+│  │  apply_rules(opportunity_list) → AllocationSlate                   │     │
+│  │  aggregate_runs(run1..4) → final_slate                             │     │
+│  │  validate_against_kill_switch(slate, nav) → slate | HALT           │     │
+│  └─────────────────────────────┬──────────────────────────────────────┘     │
+│                                │                                            │
+│                                ▼                                            │
+│  ┌──────────────────────────────────────────────────────────────────┐       │
+│  │                    FullUniverseScan Orchestrator                   │       │
+│  │  4 runs × 150s heartbeat → 10min scan                            │       │
+│  │  + 5min aggregation + L7 execution                               │       │
+│  │  + 5min risk/backtest pass                                        │       │
+│  │  = 20 min full cycle → 3 cycles/hour                             │       │
+│  │  Emits SSE events → Thinking Tab                                  │       │
+│  └──────────────────────────────────────────────────────────────────┘       │
+└─────────────────────────────────────────────────────────────────────────────┘
+```
 
-### Grafana Dashboard (12 new panels, 29 total)
-- Fixed Income Row (301-306): Yield Curve, Credit Spreads, 2s10s, Exposure, DV01, Positions
-- Monte Carlo Row (401-404): VaR 95/99, Expected Return, Prob of Profit (gauge), Max Drawdown
-- ML Models Row (501-502): Models Online (stat), Models by Type (bar chart)
+### AllocationRules Dataclass
 
-### Decision Matrix Integration (8 gates, up from 6)
-- New: MC_RISK gate (weight 0.08) — evaluates VaR95 headroom, profit probability, CVaR tail ratio
-- New: REGIME_PROBABILITY gate (weight 0.08) — bull/bear regime directional scoring + entropy confidence
-- Rebalanced all gate weights to sum to 1.00
-- build_trade_proposal() accepts mc_var95, mc_prob_profit, mc_cvar95, regime_bull_prob, regime_bear_prob
+| Parameter | Default | Description |
+|-----------|---------|-------------|
+| max_drawdown_kill_switch | 0.20 | 20% drawdown → HALT |
+| single_name_ig_pct | 0.30 | IG equities (30%) |
+| single_name_hy_distressed_pct | 0.20 | HY/FA/Distressed (20%) |
+| div_cashflow_etf_pct | 0.15 | DIV/Cashflow ETFs (15%) |
+| fi_macro_pct | 0.05 | FI + Macro RV (5%) |
+| event_driven_cvr_pct | 0.05 | Event-driven / CVR (5%) |
+| options_notional_pct | 0.25 | Options notional (25%: IG 10%, HY 10%, Distressed 5%) |
+| margin_real_capital_range | (0.05, 0.15) | Margin real capital 5-15% |
+| money_market_pct | 0.05 | Cash / dry powder (5%) |
+| drip_rule | True | ETF distributions must be reinvested |
+| alpha_primary_goal | True | Alpha extraction is the primary goal |
 
-### ML API Endpoints Added
-- GET /ml/models/health — per-engine health status via importlib scan (31 modules)
-- POST /ml/monte-carlo/simulate — backend MC simulation with GBM paths, returns VaR/CVaR/stats
-- GET /ml/regime-simulation — MarkovRegimeBridge regime probs + transition matrix + 60-step simulation
-- GET /ml/simulation-summary — aggregated regime + options + macro + MC data
+### Bucket Classification Logic
 
-### ML/LLM Inference Status
-- investor_personas.py: Claude claude-opus-4-6 via ANTHROPIC_API_KEY ✓
-- llm_inference_bridge.py: Multi-provider routing (Anthropic/OpenAI) ✓
-- deep_learning_engine.py: PPO agent with PyTorch ✓
-- alpha_optimizer.py: XGBoost + Ridge pipeline ✓
-- model_evaluator.py: Sharpe, sortino, max drawdown, win rate metrics ✓
+```
+Signal → classify_opportunity():
+  OPTION → OPTIONS_IG / OPTIONS_HY / OPTIONS_DISTRESSED (by signal type)
+  FUTURE/DERIVATIVE → MARGIN
+  FIXED_INCOME → FI_MACRO or EVENT_DRIVEN_CVR
+  ETF → DIV_CASHFLOW_ETF
+  EQUITY + DISTRESS signal → HY_DISTRESSED
+  EQUITY + EVENT signal → EVENT_DRIVEN_CVR
+  EQUITY default → IG_EQUITY
+```
 
-### Tab 24: Archive ← WIRED
-- **ArchiveEngine** (`engine/ops/archive_engine.py`): 5 collectors (broker trades, tech/system, errors, TX logs, patterns)
-  - Archives to `logs/archive/YYYY/MM/DD/` with dated folder structure
-  - Methods: archive_daily(), get_archive_dates(), get_archive_by_date(), get_archive_file(), get_archive_summary()
-- **DailySummaryGenerator** (`engine/monitoring/daily_summary_generator.py`): One-page daily report
-  - Performance (P&L, cumulative returns, Sharpe, win rate)
-  - NAV (Alpaca equity, Paper broker, NAV delta)
-  - Pricing (SPY/QQQ/IWM/TLT/GLD benchmarks, top holdings)
-  - Risk (VaR 95/99, CVaR, max drawdown, beta, sector concentration)
-  - Outlook (regime, ML consensus, macro indicators, next session signals)
-- **Archive Router** (`engine/api/routers/archive.py`): 7 endpoints
-  - GET /archive/dates, /archive/daily/{date}, /archive/daily/{date}/{filename}
-  - GET /archive/monthly-summary, /archive/daily-summary/{date}, /archive/daily-summary/latest
-  - POST /archive/trigger
-- **Frontend**: Date/month selector, daily summary card, file browser (expandable JSON), monthly summary bar, ARCHIVE NOW button. Zero Math.random().
+### Full Universe Scan Timing Diagram
 
-### Tab 25: Backtesting ← NEW
-- **EveningBacktester** (`engine/ml/evening_backtester.py`): Post-market analysis engine
-  - Mispricing detection: Z-score analysis (>2σ from rolling mean), pairs divergence, fair value model (P/E vs sector, earnings yield vs treasury)
-  - Relative value: Cross-sector RS rankings, momentum-adjusted RV (12-1mo), mean reversion (RSI extremes + Bollinger violations), pairs trading via RV_PAIRS
-  - Correlation analysis: Rolling 30/60/90d matrices, breakdown alerts (pairs >0.8 historical but <0.4 current), regime correlation shifts
-  - Pattern detection: Via PatternRecognitionEngine (technical patterns with confidence + direction)
-  - Strategy backtesting: Walk-forward on identified signals, Sharpe/Sortino/DD/win rate/profit factor, vs buy-and-hold benchmark
-  - Results saved to `logs/backtest/YYYY-MM-DD_evening.json`
-  - Feeds into DecisionMatrix next morning, PatternDiscoveryEngine, risk engine for portfolio construction
-- **Backtest Router** (`engine/api/routers/backtest.py`): 9 endpoints
-  - GET /backtest/latest, /backtest/history, /backtest/date/{date}
-  - GET /backtest/mispricings, /backtest/relative-value, /backtest/correlations, /backtest/patterns, /backtest/opportunities
-  - POST /backtest/trigger
-- **Frontend**: KPI cards, mispricings table, RV table + sector RS, correlation heatmap + breakdown alerts, patterns table, backtest results table, opportunities panel (filterable by source), RUN BACKTEST button. Zero Math.random().
+```
+Market Hours: 09:30 — 16:00 ET
+Cycle Duration: 20 minutes
+Cycles Per Hour: 3
 
-### Tab 26: Money Velocity (moved from Tab 25, content unchanged)
+ ┌──── CYCLE N ─────────────────────────────────────────────────────────────┐
+ │                                                                          │
+ │  ┌─────┐ ┌─────┐ ┌─────┐ ┌─────┐ ┌─────────┐ ┌─────────┐             │
+ │  │SP500│ │SP400│ │SP600│ │ETF  │ │AGGREGATE│ │RISK +   │             │
+ │  │150s │ │150s │ │150s │ │+FI  │ │+ EXECUTE│ │BACKTEST │             │
+ │  │     │ │     │ │     │ │150s │ │  5 min  │ │  5 min  │             │
+ │  └──┬──┘ └──┬──┘ └──┬──┘ └──┬──┘ └────┬────┘ └────┬────┘             │
+ │     │       │       │       │          │            │                   │
+ │  0 min   2.5min  5 min   7.5min    10 min      15 min     20 min      │
+ │                                                                          │
+ │  ├── SCANNING PHASE ──────────────┤├─ EXEC ─┤├── RISK ──┤              │
+ └──────────────────────────────────────────────────────────────────────────┘
 
-### Prometheus Monitoring Update (33 panels total)
-- 5 new metrics: archive_files_today, archive_total_files, backtest_opportunities, backtest_high_conviction, backtest_last_run
-- 3 new Grafana panels (601-603): Archive Files Today, Backtest Opportunities, High Conviction Signals
+ Per-run output:
+   → Favored equity names + signal scores
+   → Options/derivatives plays
+   → ETF/FI positions (Run 4 emphasis)
+   → Confidence scores + regime context
+   → JSON → AllocationEngine → L7 Surface
+```
 
-### Remaining (static data needs replacement):
-- Tab 1: Live Dashboard
-- Tab 2: Metadron Cube
-- Tab 3: Market Wrap
-- Tab 7: Tech Dashboard
-- Tab 20: Arbitrage
-- Tab 26: Money Velocity (DO NOT TOUCH)
+### Beta Corridor → Leverage → Margin Bucket Flow
+
+```
+Portfolio Returns + SPY Returns
+         │
+         ▼
+  BetaCorridorEngine.compute()
+         │
+         ├── β ≥ 1.3  → HIGH  → leverage_multiplier = 0.5x
+         ├── β ≤ 0.7  → LOW   → leverage_multiplier = 1.5x
+         └── else      → NEUTRAL → leverage_multiplier = 1.0x
+         │
+         ▼
+  AllocationEngine.size_position()
+         │
+         └── margin/options positions scaled by leverage_multiplier
+             └── Real capital capped at 5-15% of NAV
+```
+
+### Kill Switch Flow
+
+```
+  Current NAV → KillSwitchMonitor.check(nav, hwm)
+         │
+         ├── Update high_water_mark = max(hwm, nav)
+         ├── drawdown = (hwm - nav) / hwm
+         │
+         ├── drawdown < 20% → CLEAR → normal operations
+         └── drawdown ≥ 20% → TRIGGERED
+                  │
+                  ├── Log event with timestamp
+                  ├── All new orders HALTED
+                  ├── Notify operator
+                  └── Await manual reset()
+```
+
+### L7 Execution Surface Integration
+
+```
+  AllocationSlate (from aggregate_runs)
+         │
+         ▼
+  validate_against_kill_switch()
+         │
+         ├── HALTED → empty slate, no execution
+         └── CLEAR → proceed
+                │
+                ▼
+  L7UnifiedExecutionSurface
+         │
+         ├── Product classification (equity/option/future)
+         ├── Risk gates (8 gates)
+         ├── DecisionMatrix (6 gates)
+         └── Broker execution (Alpaca primary)
+```
+
+### Thinking Tab Data Flow (SSE Pipeline)
+
+```
+  FullUniverseScan.run_universe()
+         │
+         ├── Per-ticker analysis → signal discovery
+         │        │
+         │        ▼
+         │   SignalEventBus.emit({
+         │     type: "signal_discovered",
+         │     ticker, signal_type, confidence,
+         │     alpha_score, regime_context, bucket
+         │   })
+         │
+         ▼
+  SignalEventBus → asyncio.Queue (per subscriber)
+         │
+         ▼
+  FastAPI SSE endpoint: /api/allocation/scan/thinking
+         │
+         ▼
+  Express proxy: /api/allocation/scan/thinking
+         │
+         ▼
+  React EventSource → ThinkingTab.tsx
+         │
+         ├── SignalCard rendering (color-coded by bucket)
+         ├── Progress bars (per universe run)
+         ├── Cycle phase indicator
+         ├── Kill switch status badge
+         └── Beta corridor indicator
+```
+
+### Collateral Tab Data Flow
+
+```
+  AllocationEngine._utilization → collateral/status endpoint
+         │
+         ├── OPTIONS_IG + OPTIONS_HY + OPTIONS_DISTRESSED → options_premium
+         ├── MARGIN → futures_margin
+         ├── BetaCorridorEngine.status() → corridor + leverage
+         ├── KillSwitchMonitor.status() → drawdown + trigger
+         └── total_real_capital = margin + options * 0.3
+         │
+         ▼
+  FastAPI: GET /api/allocation/collateral/status
+         │
+         ▼
+  Express proxy → React CollateralTab.tsx
+         │
+         ├── UtilizationGauge (0-15% range, alert at >12%)
+         ├── Beta corridor card
+         ├── Notional exposure breakdown (IG/HY/Distressed/Futures)
+         ├── Kill switch badge
+         └── History chart (margin utilization over session)
+```
+
+### S&P 1500 Universe Composition
+
+| Universe | Source | Ticker Count | Run |
+|----------|--------|-------------|-----|
+| S&P 500 | cross_asset_universe.py SP500_TICKERS | ~500 | Run 1 |
+| S&P 400 MidCap | cross_asset_universe.py SP400_TICKERS | ~400 | Run 2 |
+| S&P 600 SmallCap | cross_asset_universe.py SP600_TICKERS | ~600 | Run 3 |
+| ETF + Fixed Income | sp1500_universe.py ETF_TICKERS + FI_TICKERS | ~70 | Run 4 |
+
+ETF list: TLTW, QQQ, SPY, IWM, HYG, LQD, TLT, PDBC, GLD, USO + 11 GICS sector ETFs + factor/income ETFs
+FI instruments: TLT, IEF, SHY, HYG, LQD, EMB, BKLN, AGG, BND, VCIT, VCSH, MUB, TIP, GOVT + international FI
+
+### New API Endpoints
+
+| Method | Path | Description |
+|--------|------|-------------|
+| GET | `/api/allocation/rules` | Current allocation rules as JSON |
+| POST | `/api/allocation/rules` | Operator rule updates (with timestamp logging) |
+| GET | `/api/allocation/status` | Bucket utilization, kill switch, beta corridor |
+| GET | `/api/allocation/slate` | Last computed allocation slate |
+| GET | `/api/allocation/scan/status` | Current scan cycle status (run, elapsed, phase) |
+| GET | `/api/allocation/scan/thinking` | SSE stream of real-time scan signals |
+| GET | `/api/allocation/collateral/status` | Margin bucket: real capital, notional, leverage |
+
+All endpoints are registered in FastAPI at `/api/allocation/*` and proxied through Express.
+
+### Backtest Integration
+
+All allocation rules apply identically in backtest mode:
+- `AllocationEngine(backtest=True)` or `apply_rules(opportunity_list, backtest=True)`
+- Kill switch applied historically (20% drawdown stops the test)
+- Beta corridor computed from historical returns
+- Bucket constraints enforced on historical positions
+- DRIP rule simulated (distribution reinvestment logged)
+- Margin bucket modeled at 5-15% real capital
+- FullUniverseScan with `backtest=True` fast-forwards timing (no real 150s waits)
+
+### New Frontend Tabs
+
+| # | Tab | Path | Component | Description |
+|---|-----|------|-----------|-------------|
+| 26 | THINKING | `/thinking` | ThinkingTab | Live SSE scan reasoning, signal cards, kill switch, beta corridor |
+| 27 | MARGIN | `/collateral` | CollateralTab | Margin bucket, utilization gauge, notional breakdown, P&L |
+
+### Reporting — Allocation Rules Section
+
+The Reporting tab (`/reports`) now includes a collapsible "ALLOCATION RULES IN EFFECT" section showing:
+- Date-stamped active rules with bucket targets and current utilization
+- Options notional breakdown (IG/HY/Distressed)
+- Kill switch status
+- Beta corridor summary
+- DRIP reinvestment event count
+- Operator rule change count
+- Universe scan cycle summary (cycles completed, signals, phase)
+
