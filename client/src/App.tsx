@@ -38,38 +38,55 @@ import ThinkingTab from "@/pages/thinking-tab";
 import CollateralTab from "@/pages/collateral-tab";
 import ChatTab from "@/pages/chat-tab";
 
-// ═══════════ ALL AVAILABLE TABS ═══════════
-const ALL_TABS = [
-  { path: "/live", label: "LIVE" },
-  { path: "/cube", label: "CUBE" },
-  { path: "/market-wrap", label: "WRAP" },
-  { path: "/allocation", label: "ALLOC" },
-  { path: "/risk", label: "RISK" },
-  { path: "/ml", label: "ML" },
-  { path: "/tech", label: "TECH" },
-  { path: "/reports", label: "REPORTS" },
-  { path: "/strategy", label: "STRAT" },
-  { path: "/openbb", label: "OPENBB" },
-  { path: "/txlog", label: "TXLOG" },
-  { path: "/futures", label: "FUTURES" },
-  { path: "/tca", label: "TCA" },
-  { path: "/agents", label: "AGENTS" },
-  { path: "/quant", label: "QUANT" },
-  { path: "/recon", label: "RECON" },
-  { path: "/etf", label: "ETF" },
-  { path: "/fixed-income", label: "FIXED INC" },
-  { path: "/macro", label: "MACRO" },
-  { path: "/arb", label: "ARB" },
-  { path: "/ml-models", label: "ML MODELS" },
-  { path: "/monte-carlo", label: "MC SIM" },
-  { path: "/simulations", label: "SIM" },
-  { path: "/archive", label: "ARCHIVE" },
-  { path: "/backtesting", label: "BACKTEST" },
-  { path: "/velocity", label: "VELOCITY" },
-  { path: "/thinking", label: "THINKING" },
-  { path: "/collateral", label: "MARGIN" },
-  { path: "/chat", label: "CHAT" },
+// ═══════════ TAB GROUPS (7 categories) ═══════════
+export const TAB_GROUPS = [
+  { group: "CORE", tabs: [
+    { path: "/live", label: "LIVE" },
+    { path: "/market-wrap", label: "WRAP" },
+    { path: "/openbb", label: "OPENBB" },
+    { path: "/velocity", label: "VELOCITY" },
+    { path: "/cube", label: "CUBE" },
+  ]},
+  { group: "TRANSACTIONS", tabs: [
+    { path: "/allocation", label: "ALLOC" },
+    { path: "/thinking", label: "THINKING" },
+    { path: "/risk", label: "RISK" },
+    { path: "/collateral", label: "MARGIN" },
+    { path: "/recon", label: "RECON" },
+  ]},
+  { group: "PRODUCTS", tabs: [
+    { path: "/etf", label: "ETF" },
+    { path: "/macro", label: "MACRO" },
+    { path: "/fixed-income", label: "FIXED INC" },
+    { path: "/futures", label: "FUTURES" },
+  ]},
+  { group: "AGENTS", tabs: [
+    { path: "/agents", label: "AGENTS" },
+    { path: "/chat", label: "CHAT" },
+    { path: "/tech", label: "TECH" },
+  ]},
+  { group: "ANALYSIS", tabs: [
+    { path: "/strategy", label: "STRAT" },
+    { path: "/quant", label: "QUANT" },
+    { path: "/arb", label: "ARB" },
+    { path: "/backtesting", label: "BACKTEST" },
+  ]},
+  { group: "SIMULATION", tabs: [
+    { path: "/monte-carlo", label: "MC SIM" },
+    { path: "/simulations", label: "SIM" },
+    { path: "/ml", label: "ML" },
+    { path: "/ml-models", label: "ML MODELS" },
+  ]},
+  { group: "REPORTING", tabs: [
+    { path: "/txlog", label: "TRANSACTION LOG" },
+    { path: "/tca", label: "TCA" },
+    { path: "/reports", label: "REPORTS" },
+    { path: "/archive", label: "ARCHIVE" },
+  ]},
 ];
+
+// Derive flat list for backward compat
+export const ALL_TABS = TAB_GROUPS.flatMap((g) => g.tabs);
 
 const DEFAULT_PINNED = [
   "/live", "/cube", "/market-wrap", "/allocation", "/risk",
@@ -171,43 +188,53 @@ function TabSelectorDropdown({
             <span className="text-[9px] text-terminal-text-faint tracking-wider">SELECT TABS ({pinnedPaths.length}/{MAX_PINNED} PINNED)</span>
           </div>
           <div className="max-h-[400px] overflow-y-auto">
-            {ALL_TABS.map((tab) => {
-              const isPinned = pinnedPaths.includes(tab.path);
-              const atLimit = pinnedPaths.length >= MAX_PINNED;
-              return (
-                <div
-                  key={tab.path}
-                  className="flex items-center gap-2 px-3 py-1.5 hover:bg-white/[0.03] group"
-                >
-                  <button
-                    onClick={() => onToggle(tab.path)}
-                    disabled={!isPinned && atLimit}
-                    className={`w-4 h-4 rounded border flex items-center justify-center flex-shrink-0 transition-colors ${
-                      isPinned
-                        ? "bg-terminal-accent/20 border-terminal-accent text-terminal-accent"
-                        : atLimit
-                        ? "border-terminal-border/30 text-transparent cursor-not-allowed"
-                        : "border-terminal-border hover:border-terminal-text-muted text-transparent"
-                    }`}
-                  >
-                    {isPinned && (
-                      <svg width="10" height="10" viewBox="0 0 10 10" fill="none">
-                        <path d="M2 5L4 7L8 3" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
-                      </svg>
-                    )}
-                  </button>
-                  <button
-                    onClick={() => { onNavigate(tab.path); setOpen(false); }}
-                    className="flex-1 text-left text-[10px] font-medium tracking-[0.08em] text-terminal-text-muted hover:text-terminal-text-primary transition-colors"
-                  >
-                    {tab.label}
-                  </button>
-                  {isPinned && (
-                    <span className="text-[8px] text-terminal-accent/60 tracking-wider">PINNED</span>
-                  )}
+            {TAB_GROUPS.map((group, gi) => (
+              <div key={group.group}>
+                {gi > 0 && <div className="border-t border-terminal-border/30 mx-3" />}
+                <div className="px-3 pt-2 pb-1">
+                  <span className="text-[8px] font-mono font-medium tracking-[0.15em] uppercase text-[#00d4aa]/50 select-none">
+                    {group.group}
+                  </span>
                 </div>
-              );
-            })}
+                {group.tabs.map((tab) => {
+                  const isPinned = pinnedPaths.includes(tab.path);
+                  const atLimit = pinnedPaths.length >= MAX_PINNED;
+                  return (
+                    <div
+                      key={tab.path}
+                      className="flex items-center gap-2 px-3 py-1.5 hover:bg-white/[0.03] group"
+                    >
+                      <button
+                        onClick={() => onToggle(tab.path)}
+                        disabled={!isPinned && atLimit}
+                        className={`w-4 h-4 rounded border flex items-center justify-center flex-shrink-0 transition-colors ${
+                          isPinned
+                            ? "bg-terminal-accent/20 border-terminal-accent text-terminal-accent"
+                            : atLimit
+                            ? "border-terminal-border/30 text-transparent cursor-not-allowed"
+                            : "border-terminal-border hover:border-terminal-text-muted text-transparent"
+                        }`}
+                      >
+                        {isPinned && (
+                          <svg width="10" height="10" viewBox="0 0 10 10" fill="none">
+                            <path d="M2 5L4 7L8 3" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+                          </svg>
+                        )}
+                      </button>
+                      <button
+                        onClick={() => { onNavigate(tab.path); setOpen(false); }}
+                        className="flex-1 text-left text-[10px] font-medium tracking-[0.08em] text-terminal-text-muted hover:text-terminal-text-primary transition-colors"
+                      >
+                        {tab.label}
+                      </button>
+                      {isPinned && (
+                        <span className="text-[8px] text-terminal-accent/60 tracking-wider">PINNED</span>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            ))}
           </div>
         </div>
       )}

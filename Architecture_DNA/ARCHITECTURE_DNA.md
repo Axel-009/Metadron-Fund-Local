@@ -1860,3 +1860,21 @@ engine/api/routers/chat.py     # FastAPI chat router (/api/chat/*)
 client/src/pages/chat-tab.tsx  # React chat tab (NANOCLAW + RUFLO sub-tabs)
 ```
 
+---
+
+## Tab Groups
+
+The frontend tab navigation is organized into 7 groups. Each group contains related tabs displayed under a group header in the dropdown selector.
+
+| Group | Tabs |
+|-------|------|
+| **CORE** | LIVE, WRAP, OPENBB, VELOCITY, CUBE |
+| **TRANSACTIONS** | ALLOC, THINKING, RISK, MARGIN, RECON |
+| **PRODUCTS** | ETF, MACRO, FIXED INC, FUTURES |
+| **AGENTS** | AGENTS, CHAT, TECH |
+| **ANALYSIS** | STRAT, QUANT, ARB, BACKTEST |
+| **SIMULATION** | MC SIM, SIM, ML, ML MODELS |
+| **REPORTING** | TRANSACTION LOG, TCA, REPORTS, ARCHIVE |
+
+Defined in `client/src/App.tsx` as `TAB_GROUPS`. A flat `ALL_TABS` array is derived via `flatMap` for backward compatibility with pinning, routing, and navigation logic.
+
