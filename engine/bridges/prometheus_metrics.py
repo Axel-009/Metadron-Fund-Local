@@ -519,6 +519,37 @@ def _create_metrics(registry: "CollectorRegistry"):
         registry=registry,
     )
 
+    # ─── Fixed Income Metrics ─────────────────────────────────────
+    metrics["fi_yield_2y"] = Gauge("metadron_fi_yield_2y", "US Treasury 2Y yield", registry=registry)
+    metrics["fi_yield_10y"] = Gauge("metadron_fi_yield_10y", "US Treasury 10Y yield", registry=registry)
+    metrics["fi_yield_30y"] = Gauge("metadron_fi_yield_30y", "US Treasury 30Y yield", registry=registry)
+    metrics["fi_spread_2s10s"] = Gauge("metadron_fi_spread_2s10s", "2s10s yield spread", registry=registry)
+    metrics["fi_ig_oas"] = Gauge("metadron_fi_ig_oas", "IG OAS credit spread (bps)", registry=registry)
+    metrics["fi_hy_oas"] = Gauge("metadron_fi_hy_oas", "HY OAS credit spread (bps)", registry=registry)
+    metrics["fi_positions_count"] = Gauge("metadron_fi_positions_count", "Number of FI positions", registry=registry)
+    metrics["fi_total_exposure"] = Gauge("metadron_fi_total_exposure", "Total FI exposure USD", registry=registry)
+    metrics["fi_avg_duration"] = Gauge("metadron_fi_avg_duration", "Average portfolio duration (years)", registry=registry)
+    metrics["fi_dv01"] = Gauge("metadron_fi_dv01", "Portfolio DV01", registry=registry)
+
+    # ─── Macro Historical Metrics ─────────────────────────────────
+    metrics["macro_vix_current"] = Gauge("metadron_macro_vix_current", "Current VIX level from FRED", registry=registry)
+    metrics["macro_dxy_current"] = Gauge("metadron_macro_dxy_current", "Current DXY level from FRED", registry=registry)
+    metrics["macro_spread_2s10s_current"] = Gauge("metadron_macro_spread_2s10s_current", "Current 2s10s spread from FRED", registry=registry)
+
+    # ─── Monte Carlo & Simulation Metrics ─────────────────────────
+    metrics["mc_var95"] = Gauge("metadron_mc_var95", "Monte Carlo VaR 95%", registry=registry)
+    metrics["mc_var99"] = Gauge("metadron_mc_var99", "Monte Carlo VaR 99%", registry=registry)
+    metrics["mc_expected_return"] = Gauge("metadron_mc_expected_return", "MC expected portfolio return %", registry=registry)
+    metrics["mc_prob_profit"] = Gauge("metadron_mc_prob_profit", "MC probability of profit %", registry=registry)
+    metrics["mc_max_drawdown"] = Gauge("metadron_mc_max_drawdown", "MC average max drawdown %", registry=registry)
+    metrics["sim_regime_bull_prob"] = Gauge("metadron_sim_regime_bull_prob", "Simulation bull regime probability", registry=registry)
+    metrics["sim_regime_bear_prob"] = Gauge("metadron_sim_regime_bear_prob", "Simulation bear regime probability", registry=registry)
+
+    # ─── ML Models Status Metrics ─────────────────────────────────
+    metrics["ml_models_online"] = Gauge("metadron_ml_models_online", "Number of ML models online", registry=registry)
+    metrics["ml_models_total"] = Gauge("metadron_ml_models_total", "Total ML models registered", registry=registry)
+    metrics["ml_models_by_type"] = Gauge("metadron_ml_models_by_type", "Model count by type", ["model_type"], registry=registry)
+
     # ─── Quant Strategy Engine Metrics ─────────────────────────────
     metrics["quant_strategies_active"] = Gauge(
         "metadron_quant_strategies_active",
@@ -971,6 +1002,132 @@ def _collect_live_metrics(metrics: dict):
         if vix_df is not None and not vix_df.empty:
             close_col = vix_df["Close"].iloc[:, 0] if hasattr(vix_df.columns, "levels") and "Close" in vix_df.columns.get_level_values(0) else vix_df.get("Close", vix_df.get("close", vix_df.iloc[:, 0]))
             metrics["quant_vix_regime"].set(float(close_col.iloc[-1]))
+    except Exception:
+        pass
+
+    # ── Fixed Income Metrics ─────────────────────────────────────────
+    try:
+        from engine.signals.fixed_income_engine import FixedIncomeEngine
+        fi = FixedIncomeEngine()
+        fi_summary = fi.get_summary() if hasattr(fi, "get_summary") else {}
+        metrics["fi_positions_count"].set(fi_summary.get("positions_count", 0))
+        metrics["fi_total_exposure"].set(fi_summary.get("total_exposure", 0))
+        metrics["fi_avg_duration"].set(fi_summary.get("avg_duration", 0))
+        metrics["fi_dv01"].set(fi_summary.get("dv01", 0))
+        metrics["strat_engine_health"].labels(engine="FixedIncomeEngine").set(1)
+    except Exception:
+        metrics["strat_engine_health"].labels(engine="FixedIncomeEngine").set(0)
+
+    # FI yields and spreads from FRED
+    try:
+        from engine.data.openbb_data import get_fred_series
+        from datetime import datetime as dt_fi, timedelta as td_fi
+        end_fi = dt_fi.utcnow().strftime("%Y-%m-%d")
+        start_fi = (dt_fi.utcnow() - td_fi(days=10)).strftime("%Y-%m-%d")
+        fi_yields = get_fred_series(["DGS2", "DGS10", "DGS30", "BAMLH0A0HYM2", "BAMLC0A4CBBB"], start=start_fi, end=end_fi)
+        if fi_yields is not None and not fi_yields.empty:
+            if "DGS2" in fi_yields.columns:
+                val = fi_yields["DGS2"].dropna().iloc[-1]
+                metrics["fi_yield_2y"].set(float(val))
+            if "DGS10" in fi_yields.columns:
+                val = fi_yields["DGS10"].dropna().iloc[-1]
+                metrics["fi_yield_10y"].set(float(val))
+            if "DGS30" in fi_yields.columns:
+                val = fi_yields["DGS30"].dropna().iloc[-1]
+                metrics["fi_yield_30y"].set(float(val))
+            if "DGS2" in fi_yields.columns and "DGS10" in fi_yields.columns:
+                y2 = fi_yields["DGS2"].dropna().iloc[-1]
+                y10 = fi_yields["DGS10"].dropna().iloc[-1]
+                metrics["fi_spread_2s10s"].set(float(y10 - y2))
+            if "BAMLC0A4CBBB" in fi_yields.columns:
+                metrics["fi_ig_oas"].set(float(fi_yields["BAMLC0A4CBBB"].dropna().iloc[-1]))
+            if "BAMLH0A0HYM2" in fi_yields.columns:
+                metrics["fi_hy_oas"].set(float(fi_yields["BAMLH0A0HYM2"].dropna().iloc[-1]))
+    except Exception:
+        pass
+
+    # ── Macro Historical Metrics (VIX, DXY, 2s10s) ───────────────────
+    try:
+        from engine.data.openbb_data import get_fred_series as gfs_macro
+        from datetime import datetime as dt_m, timedelta as td_m
+        end_m = dt_m.utcnow().strftime("%Y-%m-%d")
+        start_m = (dt_m.utcnow() - td_m(days=10)).strftime("%Y-%m-%d")
+        macro_series = gfs_macro(["VIXCLS", "DTWEXBGS", "T10Y2Y"], start=start_m, end=end_m)
+        if macro_series is not None and not macro_series.empty:
+            if "VIXCLS" in macro_series.columns:
+                metrics["macro_vix_current"].set(float(macro_series["VIXCLS"].dropna().iloc[-1]))
+            if "DTWEXBGS" in macro_series.columns:
+                metrics["macro_dxy_current"].set(float(macro_series["DTWEXBGS"].dropna().iloc[-1]))
+            if "T10Y2Y" in macro_series.columns:
+                metrics["macro_spread_2s10s_current"].set(float(macro_series["T10Y2Y"].dropna().iloc[-1]))
+    except Exception:
+        pass
+
+    # ── Monte Carlo & Simulation Metrics ──────────────────────────────
+    try:
+        from engine.ml.bridges.monte_carlo_bridge import MonteCarloBridge
+        mc = MonteCarloBridge()
+        mc_result = mc.compute_portfolio_risk() if hasattr(mc, "compute_portfolio_risk") else {}
+        metrics["mc_var95"].set(mc_result.get("var_95", 0))
+        metrics["mc_var99"].set(mc_result.get("var_99", 0))
+        metrics["mc_expected_return"].set(mc_result.get("expected_return", 0))
+        metrics["mc_prob_profit"].set(mc_result.get("prob_profit", 0))
+        metrics["mc_max_drawdown"].set(mc_result.get("max_drawdown", 0))
+        metrics["strat_engine_health"].labels(engine="MonteCarloRiskEngine").set(1)
+    except Exception:
+        metrics["strat_engine_health"].labels(engine="MonteCarloRiskEngine").set(0)
+
+    # Regime simulation probabilities
+    try:
+        from engine.ml.bridges.markov_regime_bridge import MarkovRegimeBridge
+        mrb = MarkovRegimeBridge()
+        regime_probs = mrb.get_regime_probabilities() if hasattr(mrb, "get_regime_probabilities") else {}
+        metrics["sim_regime_bull_prob"].set(regime_probs.get("bull", regime_probs.get("BULL", 0)))
+        metrics["sim_regime_bear_prob"].set(regime_probs.get("bear", regime_probs.get("BEAR", 0)))
+        metrics["strat_engine_health"].labels(engine="MarkovRegimeBridge").set(1)
+    except Exception:
+        metrics["strat_engine_health"].labels(engine="MarkovRegimeBridge").set(0)
+
+    # ── ML Models Status Metrics ──────────────────────────────────────
+    try:
+        import importlib
+        engine_modules = [
+            "engine.data.universe_engine", "engine.data.openbb_data",
+            "engine.signals.macro_engine", "engine.signals.metadron_cube",
+            "engine.signals.stat_arb_engine", "engine.signals.contagion_engine",
+            "engine.signals.fixed_income_engine", "engine.ml.alpha_optimizer",
+            "engine.ml.backtester", "engine.ml.pattern_recognition",
+            "engine.ml.universe_classifier", "engine.ml.deep_learning_engine",
+            "engine.execution.execution_engine", "engine.execution.decision_matrix",
+            "engine.execution.options_engine", "engine.agents.investor_personas",
+        ]
+        online_count = 0
+        total_count = len(engine_modules)
+        type_counts = {"ML": 0, "Statistical": 0, "Neural Net": 0, "LLM": 0,
+                       "Rule-Based": 0, "Ensemble": 0, "Framework": 0}
+        type_map = {
+            "alpha_optimizer": "ML", "universe_classifier": "Ensemble",
+            "deep_learning_engine": "Neural Net", "backtester": "Statistical",
+            "pattern_recognition": "Rule-Based", "investor_personas": "LLM",
+            "options_engine": "Statistical", "decision_matrix": "Rule-Based",
+            "execution_engine": "Neural Net", "stat_arb_engine": "Statistical",
+            "contagion_engine": "Statistical", "macro_engine": "Rule-Based",
+            "metadron_cube": "Ensemble", "fixed_income_engine": "Rule-Based",
+            "universe_engine": "Rule-Based", "openbb_data": "Framework",
+        }
+        for mod_path in engine_modules:
+            try:
+                importlib.import_module(mod_path)
+                online_count += 1
+                mod_name = mod_path.split(".")[-1]
+                mtype = type_map.get(mod_name, "Rule-Based")
+                type_counts[mtype] = type_counts.get(mtype, 0) + 1
+            except Exception:
+                pass
+        metrics["ml_models_online"].set(online_count)
+        metrics["ml_models_total"].set(total_count)
+        for mtype, count in type_counts.items():
+            metrics["ml_models_by_type"].labels(model_type=mtype).set(count)
     except Exception:
         pass
 

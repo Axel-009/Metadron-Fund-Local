@@ -19,7 +19,7 @@ const PATH_COLORS = [
   "rgba(63,185,80,0.25)", "rgba(210,153,34,0.25)", "rgba(78,205,196,0.25)",
 ];
 
-const SCENARIOS = [
+const DEFAULT_SCENARIOS = [
   { scenario: "Bull Market", probability: "30%", avgReturn: "+24.8%", var95: "-3.1%", maxDD: "-8.2%", color: "text-terminal-positive" },
   { scenario: "Base Case", probability: "45%", avgReturn: "+12.4%", var95: "-8.7%", maxDD: "-18.3%", color: "text-terminal-text-primary" },
   { scenario: "Bear Market", probability: "20%", avgReturn: "-6.2%", var95: "-19.4%", maxDD: "-32.1%", color: "text-terminal-warning" },
@@ -321,12 +321,15 @@ export default function MonteCarlo() {
   // ─── Engine API — market parameters for simulation ──
   const { data: macroApi } = useEngineQuery<{ vix?: number; spy_return_1m?: number }>("/macro/snapshot", { refetchInterval: 60000 });
   const { data: betaApi } = useEngineQuery<{ state: { vol_adjustment?: number } }>("/portfolio/beta", { refetchInterval: 60000 });
+  const { data: stressApi } = useEngineQuery<{ tests: Array<{ scenario: string; probability?: number; expected_return?: number; var_95?: number; max_drawdown?: number }> }>("/ml/stress-tests", { refetchInterval: 120000 });
 
   const [nPaths, setNPaths] = useState(10000);
   const [days, setDays] = useState(252);
   const [initialCapital, setInitialCapital] = useState(100000);
   const [running, setRunning] = useState(false);
   const [runCount, setRunCount] = useState(10000);
+  const [backendRunning, setBackendRunning] = useState(false);
+  const [backendResult, setBackendResult] = useState<{ var_95?: number; var_99?: number; mean_return?: number; prob_profit?: number; avg_max_drawdown?: number; source?: string } | null>(null);
 
   // Derive drift and vol from real market data when available
   // VIX → annualized vol: VIX/100 → daily vol: VIX/(100*sqrt(252))
@@ -356,6 +359,48 @@ export default function MonteCarlo() {
       setRunning(false);
     }, 600);
   }, [nPaths, days, initialCapital, simDrift, simVol]);
+
+  const runBackendMC = useCallback(async () => {
+    setBackendRunning(true);
+    try {
+      const baseUrl = (import.meta as Record<string, Record<string, string>>).env?.VITE_ENGINE_API_URL || "http://localhost:8000";
+      const params = new URLSearchParams({
+        n_paths: String(nPaths),
+        horizon_days: String(days),
+        drift: String(simDrift),
+        volatility: String(simVol),
+        initial_capital: String(initialCapital),
+      });
+      const res = await fetch(`${baseUrl}/ml/monte-carlo/simulate?${params}`, { method: "POST" });
+      const data = await res.json();
+      if (data && !data.error) {
+        setBackendResult(data);
+      }
+    } catch {
+      // Silently fail — client-side sim is the fallback
+    } finally {
+      setBackendRunning(false);
+    }
+  }, [nPaths, days, initialCapital, simDrift, simVol]);
+
+  // Wire stress-test scenarios from backend
+  const SCENARIOS = useMemo(() => {
+    if (stressApi?.tests && Array.isArray(stressApi.tests) && stressApi.tests.length > 0) {
+      const colorMap: Record<string, string> = { Bull: "text-terminal-positive", Base: "text-terminal-text-primary", Bear: "text-terminal-warning", Crash: "text-terminal-negative" };
+      return stressApi.tests.slice(0, 6).map((t) => {
+        const key = Object.keys(colorMap).find((k) => (t.scenario || "").includes(k)) || "Base";
+        return {
+          scenario: t.scenario || "Unknown",
+          probability: t.probability != null ? `${t.probability}%` : "—",
+          avgReturn: t.expected_return != null ? `${t.expected_return > 0 ? "+" : ""}${t.expected_return}%` : "—",
+          var95: t.var_95 != null ? `${t.var_95}%` : "—",
+          maxDD: t.max_drawdown != null ? `${t.max_drawdown}%` : "—",
+          color: colorMap[key] || "text-terminal-text-primary",
+        };
+      });
+    }
+    return DEFAULT_SCENARIOS;
+  }, [stressApi]);
 
   const stats = useMemo(() => computeStats(statPaths, daysSim), [statPaths, daysSim]);
 
@@ -437,6 +482,19 @@ export default function MonteCarlo() {
             >
               {running ? "RUNNING..." : "RUN SIMULATION"}
             </button>
+            <button
+              onClick={runBackendMC}
+              disabled={backendRunning}
+              data-testid="button-backend-mc"
+              className="px-3 py-1.5 rounded text-[10px] font-semibold tracking-wider bg-[#58a6ff]/20 text-[#58a6ff] border border-[#58a6ff]/40 hover:bg-[#58a6ff]/30 transition-colors disabled:opacity-50 flex-shrink-0"
+            >
+              {backendRunning ? "COMPUTING..." : "RUN BACKEND MC"}
+            </button>
+            {backendResult && (
+              <span className="text-[8px] text-terminal-text-faint">
+                Backend: VaR95={backendResult.var_95}% | E[R]={backendResult.mean_return}% | P(profit)={backendResult.prob_profit}%
+              </span>
+            )}
             <div className="flex items-center gap-1.5">
               <span className="text-terminal-text-faint">N Paths:</span>
               <select

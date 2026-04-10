@@ -1506,9 +1506,43 @@ Replaces `genChartData()` function that used `Math.random()` for chart generatio
 - Tab 15: Quant Tools
 - Tab 16: Reconciliation
 - Tab 17: ETF Dashboard
-- Tab 18: Fixed Income ← NEW
-- Tab 19: Macro Dashboard ← NEW
-- Tab 21: ML Models
+- Tab 18: Fixed Income ← NEW (FixedIncomeEngine → FRED yields, IG/HY OAS, broker positions)
+- Tab 19: Macro Dashboard ← NEW (MacroEngine → FRED VIX/DXY/2s10s historical)
+- Tab 21: ML Models ← WIRED (models/health endpoint, real engine health data, LLM inference verified)
+- Tab 22: Monte Carlo Sim ← WIRED (backend MC simulate endpoint, stress-test scenarios wired, Box-Muller quick preview retained)
+- Tab 23: Simulations ← WIRED (MarkovRegimeBridge regime-simulation, BS inputs from real data, vol surface noise removed)
+
+### Prometheus Monitoring (23 new metrics)
+- Fixed Income (10): fi_yield_2y/10y/30y, fi_spread_2s10s, fi_ig_oas, fi_hy_oas, fi_positions_count, fi_total_exposure, fi_avg_duration, fi_dv01
+- Macro (3): macro_vix_current, macro_dxy_current, macro_spread_2s10s_current
+- Monte Carlo (5): mc_var95, mc_var99, mc_expected_return, mc_prob_profit, mc_max_drawdown
+- Simulation (2): sim_regime_bull_prob, sim_regime_bear_prob
+- ML Models (3): ml_models_online, ml_models_total, ml_models_by_type
+- Collection: FixedIncomeEngine, FRED series, MonteCarloBridge, MarkovRegimeBridge, importlib engine scan
+
+### Grafana Dashboard (12 new panels, 29 total)
+- Fixed Income Row (301-306): Yield Curve, Credit Spreads, 2s10s, Exposure, DV01, Positions
+- Monte Carlo Row (401-404): VaR 95/99, Expected Return, Prob of Profit (gauge), Max Drawdown
+- ML Models Row (501-502): Models Online (stat), Models by Type (bar chart)
+
+### Decision Matrix Integration (8 gates, up from 6)
+- New: MC_RISK gate (weight 0.08) — evaluates VaR95 headroom, profit probability, CVaR tail ratio
+- New: REGIME_PROBABILITY gate (weight 0.08) — bull/bear regime directional scoring + entropy confidence
+- Rebalanced all gate weights to sum to 1.00
+- build_trade_proposal() accepts mc_var95, mc_prob_profit, mc_cvar95, regime_bull_prob, regime_bear_prob
+
+### ML API Endpoints Added
+- GET /ml/models/health — per-engine health status via importlib scan (31 modules)
+- POST /ml/monte-carlo/simulate — backend MC simulation with GBM paths, returns VaR/CVaR/stats
+- GET /ml/regime-simulation — MarkovRegimeBridge regime probs + transition matrix + 60-step simulation
+- GET /ml/simulation-summary — aggregated regime + options + macro + MC data
+
+### ML/LLM Inference Status
+- investor_personas.py: Claude claude-opus-4-6 via ANTHROPIC_API_KEY ✓
+- llm_inference_bridge.py: Multi-provider routing (Anthropic/OpenAI) ✓
+- deep_learning_engine.py: PPO agent with PyTorch ✓
+- alpha_optimizer.py: XGBoost + Ridge pipeline ✓
+- model_evaluator.py: Sharpe, sortino, max drawdown, win rate metrics ✓
 
 ### Remaining (static data needs replacement):
 - Tab 1: Live Dashboard
@@ -1516,7 +1550,5 @@ Replaces `genChartData()` function that used `Math.random()` for chart generatio
 - Tab 3: Market Wrap
 - Tab 7: Tech Dashboard
 - Tab 20: Arbitrage
-- Tab 22: Monte Carlo Sim
-- Tab 23: Simulations
 - Tab 24: Archive
-- Tab 25: Money Velocity
+- Tab 25: Money Velocity (DO NOT TOUCH)

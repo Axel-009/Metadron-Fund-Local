@@ -434,6 +434,238 @@
       ],
       "title": "OpenBB Error Rate",
       "type": "timeseries"
+    },
+    {
+      "collapsed": false,
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 34 },
+      "id": 300,
+      "title": "Fixed Income",
+      "type": "row"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "description": "US Treasury yield curve: 2Y, 10Y, 30Y",
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "palette-classic" },
+          "custom": { "drawStyle": "line", "fillOpacity": 10, "lineInterpolation": "smooth", "lineWidth": 2, "showPoints": "never" },
+          "unit": "percent", "decimals": 3
+        },
+        "overrides": []
+      },
+      "gridPos": { "h": 8, "w": 8, "x": 0, "y": 35 },
+      "id": 301,
+      "options": { "legend": { "calcs": ["lastNotNull"], "displayMode": "table", "placement": "bottom", "showLegend": true }, "tooltip": { "mode": "multi", "sort": "desc" } },
+      "targets": [
+        { "expr": "metadron_fi_yield_2y{job=\"engine-api\"}", "legendFormat": "2Y Yield", "refId": "A" },
+        { "expr": "metadron_fi_yield_10y{job=\"engine-api\"}", "legendFormat": "10Y Yield", "refId": "B" },
+        { "expr": "metadron_fi_yield_30y{job=\"engine-api\"}", "legendFormat": "30Y Yield", "refId": "C" }
+      ],
+      "title": "FI Yield Curve",
+      "type": "timeseries"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "description": "IG and HY OAS credit spreads (bps)",
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "palette-classic" },
+          "custom": { "drawStyle": "line", "fillOpacity": 15, "lineInterpolation": "smooth", "lineWidth": 2, "showPoints": "never" },
+          "unit": "short", "decimals": 1
+        },
+        "overrides": [
+          { "matcher": { "id": "byName", "options": "HY OAS" }, "properties": [{ "id": "color", "value": { "fixedColor": "#FF6347", "mode": "fixed" } }] },
+          { "matcher": { "id": "byName", "options": "IG OAS" }, "properties": [{ "id": "color", "value": { "fixedColor": "#5794F2", "mode": "fixed" } }] }
+        ]
+      },
+      "gridPos": { "h": 8, "w": 8, "x": 8, "y": 35 },
+      "id": 302,
+      "options": { "legend": { "calcs": ["lastNotNull", "mean"], "displayMode": "table", "placement": "bottom", "showLegend": true }, "tooltip": { "mode": "multi", "sort": "desc" } },
+      "targets": [
+        { "expr": "metadron_fi_ig_oas{job=\"engine-api\"}", "legendFormat": "IG OAS", "refId": "A" },
+        { "expr": "metadron_fi_hy_oas{job=\"engine-api\"}", "legendFormat": "HY OAS", "refId": "B" }
+      ],
+      "title": "FI Credit Spreads (bps)",
+      "type": "timeseries"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "description": "2s10s yield curve spread",
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "palette-classic" },
+          "custom": { "drawStyle": "line", "fillOpacity": 20, "lineInterpolation": "smooth", "lineWidth": 2, "showPoints": "never" },
+          "unit": "percent", "decimals": 3
+        },
+        "overrides": []
+      },
+      "gridPos": { "h": 8, "w": 8, "x": 16, "y": 35 },
+      "id": 303,
+      "options": { "legend": { "calcs": ["lastNotNull"], "displayMode": "list", "placement": "bottom", "showLegend": true }, "tooltip": { "mode": "single", "sort": "none" } },
+      "targets": [
+        { "expr": "metadron_fi_spread_2s10s{job=\"engine-api\"}", "legendFormat": "2s10s Spread", "refId": "A" }
+      ],
+      "title": "FI 2s10s Spread",
+      "type": "timeseries"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "description": "Total fixed income exposure in USD",
+      "fieldConfig": {
+        "defaults": { "color": { "mode": "thresholds" }, "thresholds": { "mode": "absolute", "steps": [{ "color": "green", "value": null }] }, "unit": "currencyUSD", "decimals": 0 },
+        "overrides": []
+      },
+      "gridPos": { "h": 4, "w": 8, "x": 0, "y": 43 },
+      "id": 304,
+      "options": { "colorMode": "value", "graphMode": "none", "justifyMode": "center", "orientation": "auto", "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false }, "textMode": "value_and_name" },
+      "targets": [{ "expr": "metadron_fi_total_exposure{job=\"engine-api\"}", "legendFormat": "FI Exposure", "refId": "A" }],
+      "title": "FI Total Exposure",
+      "type": "stat"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "description": "Portfolio DV01 — dollar value of 1bp rate move",
+      "fieldConfig": {
+        "defaults": { "color": { "mode": "thresholds" }, "thresholds": { "mode": "absolute", "steps": [{ "color": "blue", "value": null }] }, "unit": "currencyUSD", "decimals": 2 },
+        "overrides": []
+      },
+      "gridPos": { "h": 4, "w": 8, "x": 8, "y": 43 },
+      "id": 305,
+      "options": { "colorMode": "value", "graphMode": "none", "justifyMode": "center", "orientation": "auto", "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false }, "textMode": "value_and_name" },
+      "targets": [{ "expr": "metadron_fi_dv01{job=\"engine-api\"}", "legendFormat": "DV01", "refId": "A" }],
+      "title": "FI DV01",
+      "type": "stat"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "description": "Number of fixed income positions",
+      "fieldConfig": {
+        "defaults": { "color": { "mode": "thresholds" }, "thresholds": { "mode": "absolute", "steps": [{ "color": "green", "value": null }, { "color": "yellow", "value": 10 }] }, "unit": "short" },
+        "overrides": []
+      },
+      "gridPos": { "h": 4, "w": 8, "x": 16, "y": 43 },
+      "id": 306,
+      "options": { "colorMode": "background", "graphMode": "area", "justifyMode": "center", "orientation": "auto", "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false }, "textMode": "auto" },
+      "targets": [{ "expr": "metadron_fi_positions_count{job=\"engine-api\"}", "legendFormat": "FI Positions", "refId": "A" }],
+      "title": "FI Positions",
+      "type": "stat"
+    },
+    {
+      "collapsed": false,
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 47 },
+      "id": 400,
+      "title": "Monte Carlo Risk",
+      "type": "row"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "description": "Monte Carlo Value-at-Risk at 95% and 99% confidence",
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "palette-classic" },
+          "custom": { "drawStyle": "line", "fillOpacity": 15, "lineInterpolation": "smooth", "lineWidth": 2, "showPoints": "never" },
+          "unit": "percent", "decimals": 2
+        },
+        "overrides": [
+          { "matcher": { "id": "byName", "options": "VaR 99%" }, "properties": [{ "id": "color", "value": { "fixedColor": "#FF4444", "mode": "fixed" } }] },
+          { "matcher": { "id": "byName", "options": "VaR 95%" }, "properties": [{ "id": "color", "value": { "fixedColor": "#FF9830", "mode": "fixed" } }] }
+        ]
+      },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 48 },
+      "id": 401,
+      "options": { "legend": { "calcs": ["lastNotNull", "mean", "max"], "displayMode": "table", "placement": "bottom", "showLegend": true }, "tooltip": { "mode": "multi", "sort": "desc" } },
+      "targets": [
+        { "expr": "metadron_mc_var95{job=\"engine-api\"}", "legendFormat": "VaR 95%", "refId": "A" },
+        { "expr": "metadron_mc_var99{job=\"engine-api\"}", "legendFormat": "VaR 99%", "refId": "B" }
+      ],
+      "title": "MC VaR 95% / 99%",
+      "type": "timeseries"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "description": "Monte Carlo expected portfolio return",
+      "fieldConfig": {
+        "defaults": { "color": { "mode": "thresholds" }, "thresholds": { "mode": "absolute", "steps": [{ "color": "red", "value": null }, { "color": "yellow", "value": 0 }, { "color": "green", "value": 5 }] }, "unit": "percent", "decimals": 1 },
+        "overrides": []
+      },
+      "gridPos": { "h": 4, "w": 6, "x": 12, "y": 48 },
+      "id": 402,
+      "options": { "colorMode": "value", "graphMode": "area", "justifyMode": "center", "orientation": "auto", "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false }, "textMode": "value_and_name" },
+      "targets": [{ "expr": "metadron_mc_expected_return{job=\"engine-api\"}", "legendFormat": "Expected Return", "refId": "A" }],
+      "title": "MC Expected Return",
+      "type": "stat"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "description": "Monte Carlo probability of profit",
+      "fieldConfig": {
+        "defaults": { "color": { "mode": "thresholds" }, "thresholds": { "mode": "absolute", "steps": [{ "color": "red", "value": null }, { "color": "yellow", "value": 40 }, { "color": "green", "value": 60 }] }, "unit": "percent", "min": 0, "max": 100, "decimals": 1 },
+        "overrides": []
+      },
+      "gridPos": { "h": 4, "w": 6, "x": 18, "y": 48 },
+      "id": 403,
+      "options": { "orientation": "auto", "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false }, "showThresholdLabels": false, "showThresholdMarkers": true },
+      "targets": [{ "expr": "metadron_mc_prob_profit{job=\"engine-api\"}", "legendFormat": "Prob Profit", "refId": "A" }],
+      "title": "MC Probability of Profit",
+      "type": "gauge"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "description": "Monte Carlo average maximum drawdown",
+      "fieldConfig": {
+        "defaults": { "color": { "mode": "thresholds" }, "thresholds": { "mode": "absolute", "steps": [{ "color": "green", "value": null }, { "color": "yellow", "value": 10 }, { "color": "red", "value": 25 }] }, "unit": "percent", "decimals": 1 },
+        "overrides": []
+      },
+      "gridPos": { "h": 4, "w": 12, "x": 12, "y": 52 },
+      "id": 404,
+      "options": { "colorMode": "value", "graphMode": "area", "justifyMode": "center", "orientation": "auto", "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false }, "textMode": "value_and_name" },
+      "targets": [{ "expr": "metadron_mc_max_drawdown{job=\"engine-api\"}", "legendFormat": "Max Drawdown", "refId": "A" }],
+      "title": "MC Max Drawdown",
+      "type": "stat"
+    },
+    {
+      "collapsed": false,
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 56 },
+      "id": 500,
+      "title": "ML Models",
+      "type": "row"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "description": "ML models online vs total registered",
+      "fieldConfig": {
+        "defaults": { "color": { "mode": "thresholds" }, "thresholds": { "mode": "absolute", "steps": [{ "color": "red", "value": null }, { "color": "yellow", "value": 8 }, { "color": "green", "value": 12 }] }, "unit": "short" },
+        "overrides": []
+      },
+      "gridPos": { "h": 6, "w": 8, "x": 0, "y": 57 },
+      "id": 501,
+      "options": { "colorMode": "value", "graphMode": "area", "justifyMode": "center", "orientation": "auto", "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false }, "textMode": "value_and_name" },
+      "targets": [
+        { "expr": "metadron_ml_models_online{job=\"engine-api\"}", "legendFormat": "Online", "refId": "A" },
+        { "expr": "metadron_ml_models_total{job=\"engine-api\"}", "legendFormat": "Total", "refId": "B" }
+      ],
+      "title": "ML Models Online",
+      "type": "stat"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "description": "Model count by type (ML, Statistical, Neural Net, LLM, etc.)",
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "palette-classic" },
+          "custom": { "drawStyle": "bars", "fillOpacity": 80, "lineWidth": 1, "showPoints": "never" },
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "gridPos": { "h": 6, "w": 16, "x": 8, "y": 57 },
+      "id": 502,
+      "options": { "legend": { "calcs": ["lastNotNull"], "displayMode": "table", "placement": "right", "showLegend": true }, "tooltip": { "mode": "multi", "sort": "desc" } },
+      "targets": [
+        { "expr": "metadron_ml_models_by_type{job=\"engine-api\"}", "legendFormat": "{{ model_type }}", "refId": "A" }
+      ],
+      "title": "ML Models by Type",
+      "type": "timeseries"
     }
   ],
   "refresh": "30s",

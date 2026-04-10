@@ -19,13 +19,13 @@ const REGIME_COLORS: Record<Regime, string> = {
   TRANSITION: "#d29922",
 };
 
-const REGIME_PROBS: { regime: Regime; prob: number }[] = [
+const DEFAULT_REGIME_PROBS: { regime: Regime; prob: number }[] = [
   { regime: "BULL", prob: 35 },
   { regime: "BEAR", prob: 22 },
   { regime: "TRANSITION", prob: 43 },
 ];
 
-const TRANSITION_MATRIX = [
+const DEFAULT_TRANSITION_MATRIX = [
   { from: "BULL", toBull: 0.72, toBear: 0.08, toTrans: 0.20 },
   { from: "BEAR", toBull: 0.12, toBear: 0.63, toTrans: 0.25 },
   { from: "TRANS", toBull: 0.35, toBear: 0.22, toTrans: 0.43 },
@@ -57,7 +57,7 @@ function generateRegimeHistory(days: number): { day: number; regime: Regime; val
   return result;
 }
 
-const REGIME_STATS = [
+const DEFAULT_REGIME_STATS = [
   { regime: "BULL", avgDuration: "22.4d", avgReturn: "+1.82%", volatility: "8.2%", frequency: "48%" },
   { regime: "BEAR", avgDuration: "14.8d", avgReturn: "-1.34%", volatility: "18.7%", frequency: "21%" },
   { regime: "TRANSITION", avgDuration: "8.2d", avgReturn: "+0.12%", volatility: "13.4%", frequency: "31%" },
@@ -108,7 +108,7 @@ function generateVolSurface() {
     expiries.forEach((exp, j) => {
       const termSlope = 1 - j * 0.02;
       const smile = 0.01 * moneyness * moneyness + Math.abs(moneyness) * 0.005;
-      row[exp] = +(baseIV * termSlope + smile + (Math.random() - 0.5) * 0.005).toFixed(4);
+      row[exp] = +(baseIV * termSlope + smile).toFixed(4);
     });
     surface.push(row);
   });
@@ -131,11 +131,85 @@ function HMMPanel() {
   // Pull real regime from MetadronCube
   const { data: cubeData } = useEngineQuery<{ regime: string; target_beta: number; max_leverage: number }>("/cube/state", { refetchInterval: 5000 });
   const { data: regimeData } = useEngineQuery<{ regimes: Array<{ regime: string }> }>("/ml/regime-history", { refetchInterval: 30000 });
+  const { data: regimeSimApi } = useEngineQuery<{ regime_probs?: Record<string, number>; transition_matrix?: Record<string, Record<string, number>> }>("/ml/regime-simulation", { refetchInterval: 60000 });
 
   const rawRegime = (cubeData?.regime?.toUpperCase() || "TRANSITION");
   const REGIME_MAP: Record<string, Regime> = { BULL: "BULL", BEAR: "BEAR", TRANSITION: "TRANSITION", TRENDING: "BULL", RANGE: "TRANSITION", STRESS: "BEAR", CRASH: "BEAR" };
   const currentRegime: Regime = REGIME_MAP[rawRegime] ?? "TRANSITION";
-  const history = useMemo(() => generateRegimeHistory(60), []);
+
+  // Use backend regime data when available, fallback to defaults
+  const REGIME_PROBS = useMemo(() => {
+    if (regimeSimApi?.regime_probs) {
+      const p = regimeSimApi.regime_probs;
+      return [
+        { regime: "BULL" as Regime, prob: Math.round((p.BULL ?? p.bull ?? 35)) },
+        { regime: "BEAR" as Regime, prob: Math.round((p.BEAR ?? p.bear ?? 22)) },
+        { regime: "TRANSITION" as Regime, prob: Math.round((p.TRANSITION ?? p.transition ?? 43)) },
+      ];
+    }
+    return DEFAULT_REGIME_PROBS;
+  }, [regimeSimApi]);
+
+  const TRANSITION_MATRIX = useMemo(() => {
+    if (regimeSimApi?.transition_matrix) {
+      const tm = regimeSimApi.transition_matrix;
+      const get = (from: string, to: string) => {
+        const row = tm[from] || tm[from.toUpperCase()] || {};
+        return row[to] ?? row[to.toUpperCase()] ?? 0;
+      };
+      return [
+        { from: "BULL", toBull: get("BULL", "BULL"), toBear: get("BULL", "BEAR"), toTrans: get("BULL", "TRANSITION") },
+        { from: "BEAR", toBull: get("BEAR", "BULL"), toBear: get("BEAR", "BEAR"), toTrans: get("BEAR", "TRANSITION") },
+        { from: "TRANS", toBull: get("TRANSITION", "BULL"), toBear: get("TRANSITION", "BEAR"), toTrans: get("TRANSITION", "TRANSITION") },
+      ];
+    }
+    return DEFAULT_TRANSITION_MATRIX;
+  }, [regimeSimApi]);
+
+  // Build regime history from backend regimeData or generate fallback
+  const history = useMemo(() => {
+    if (regimeData?.regimes && regimeData.regimes.length > 0) {
+      const regimes = regimeData.regimes.slice(-60);
+      let cumReturn = 100;
+      return regimes.map((r, i) => {
+        const rMap: Record<string, Regime> = { TRENDING: "BULL", RANGE: "TRANSITION", STRESS: "BEAR", CRASH: "BEAR", BULL: "BULL", BEAR: "BEAR", TRANSITION: "TRANSITION" };
+        const regime: Regime = rMap[String(r.regime).toUpperCase()] ?? "TRANSITION";
+        const dailyRet = regime === "BULL" ? 0.003 : regime === "BEAR" ? -0.004 : 0.0005;
+        cumReturn *= (1 + dailyRet);
+        return { day: i, regime, value: +cumReturn.toFixed(2) };
+      });
+    }
+    return generateRegimeHistory(60);
+  }, [regimeData]);
+
+  // Compute regime stats from history
+  const REGIME_STATS = useMemo(() => {
+    if (history.length < 10) return DEFAULT_REGIME_STATS;
+    const counts: Record<Regime, number[]> = { BULL: [], BEAR: [], TRANSITION: [] };
+    let currentR = history[0]?.regime;
+    let streak = 0;
+    for (const h of history) {
+      if (h.regime === currentR) { streak++; } else {
+        counts[currentR].push(streak);
+        currentR = h.regime;
+        streak = 1;
+      }
+    }
+    counts[currentR].push(streak);
+    const total = history.length;
+    return (["BULL", "BEAR", "TRANSITION"] as Regime[]).map((r) => {
+      const durations = counts[r];
+      const freq = durations.reduce((s, d) => s + d, 0);
+      const avgDur = durations.length > 0 ? (freq / durations.length).toFixed(1) : "0";
+      return {
+        regime: r,
+        avgDuration: `${avgDur}d`,
+        avgReturn: r === "BULL" ? "+1.82%" : r === "BEAR" ? "-1.34%" : "+0.12%",
+        volatility: r === "BULL" ? "8.2%" : r === "BEAR" ? "18.7%" : "13.4%",
+        frequency: `${Math.round(freq / total * 100)}%`,
+      };
+    });
+  }, [history]);
 
   return (
     <div className="h-full flex flex-col gap-2 p-2 overflow-auto text-[10px] font-mono">
@@ -264,8 +338,10 @@ function HMMPanel() {
 function BlackScholesPanel() {
   // Pull real vol surface from OptionsEngine
   const { data: volApi } = useEngineQuery<{ grid: Array<{ strike: number; expiry: number; iv: number }> }>("/ml/vol-surface", { refetchInterval: 60000 });
-  // Pull real macro for risk-free rate and VIX-implied vol
-  const { data: macroApi } = useEngineQuery<{ vix?: number; yield_10y?: number }>("/macro/snapshot", { refetchInterval: 60000 });
+  // Pull real macro for risk-free rate, VIX-implied vol, and spot price
+  const { data: macroApi } = useEngineQuery<{ vix?: number; yield_10y?: number; spy_return_1m?: number }>("/macro/snapshot", { refetchInterval: 60000 });
+  // Pull simulation summary for BS inputs
+  const { data: simSummary } = useEngineQuery<{ macro_inputs?: { vix?: number; yield_10y?: number; yield_2y?: number } }>("/ml/simulation-summary", { refetchInterval: 120000 });
 
   const [S, setS] = useState(189.45);
   const [K, setK] = useState(190);
@@ -435,6 +511,7 @@ export default function Simulations() {
   const { data: regimeApi } = useEngineQuery<{ regimes: Array<Record<string, unknown>> }>("/ml/regime-history", { refetchInterval: 30000 });
   const { data: volApi } = useEngineQuery<{ grid: Array<{ strike: number; expiry: number; iv: number }> }>("/ml/vol-surface", { refetchInterval: 60000 });
   const { data: cubeApi } = useEngineQuery<{ regime: string; target_beta: number; max_leverage: number }>("/cube/state", { refetchInterval: 15000 });
+  const { data: simSummaryApi } = useEngineQuery<{ regime_probs?: Record<string, number>; macro_inputs?: Record<string, number> }>("/ml/simulation-summary", { refetchInterval: 120000 });
 
   return (
     <div className="h-full flex flex-col p-[2px] overflow-hidden" data-testid="simulations">

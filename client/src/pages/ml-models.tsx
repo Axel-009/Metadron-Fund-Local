@@ -26,8 +26,24 @@ interface Layer {
 
 // ═══════════ USAGE HELPERS ═══════════
 
-function usageForType(type: ModelType, seed: number): string {
-  // Deterministic but varied values based on seed
+// Default labels per model type — used as format templates
+const USAGE_LABELS: Record<ModelType, string> = {
+  LLM: "tokens",
+  ML: "eff.",
+  Statistical: "sims",
+  "Rule-Based": "calls",
+  "Neural Net": "infer.",
+  Ensemble: "eff.",
+  Framework: "calls",
+};
+
+function usageForType(type: ModelType, seed: number, healthData?: Record<string, { online: number; total: number; health_pct: number }>): string {
+  // If real health data is available from /ml/models/health, use it
+  if (healthData && healthData[type]) {
+    const info = healthData[type];
+    return `${info.health_pct}% ${USAGE_LABELS[type]}`;
+  }
+  // Fallback: deterministic static labels (architectural metadata)
   const vals = [
     ["2.4M tokens", "890K tokens", "1.2M tokens", "3.1M tokens", "540K tokens"],
     ["94.2% eff.", "87.5% eff.", "91.0% eff.", "78.3% eff.", "96.1% eff."],
@@ -253,9 +269,11 @@ function ModelTypeBadge({ type }: { type: ModelType }) {
 function LayerSection({
   layer,
   query,
+  healthData,
 }: {
   layer: Layer;
   query: string;
+  healthData?: Record<string, { online: number; total: number; health_pct: number }>;
 }) {
   const [open, setOpen] = useState(true);
 
@@ -331,7 +349,9 @@ function LayerSection({
                   </td>
                   <td className="px-3 py-2">
                     <span className={`tabular-nums ${engine.status === "OFFLINE" ? "text-[#484f58]" : "text-[#8b949e]"}`}>
-                      {engine.usage}
+                      {healthData && healthData[engine.type]
+                        ? `${healthData[engine.type].health_pct}% ${USAGE_LABELS[engine.type]}`
+                        : engine.usage}
                     </span>
                   </td>
                 </tr>
@@ -465,6 +485,7 @@ function StatusFilterPills({
 export default function MLModelsPage() {
   // ─── Engine API — live engine module status ─────────
   const { data: modelsApi } = useEngineQuery<{ modules: Array<{ layer: string; name: string; status: string; error?: string }>; online: number; total: number }>("/ml/models/status", { refetchInterval: 15000 });
+  const { data: healthApi } = useEngineQuery<{ usage_by_type: Record<string, { online: number; total: number; health_pct: number }> }>("/ml/models/health", { refetchInterval: 30000 });
 
   const [search, setSearch] = useState("");
   const [typeFilter, setTypeFilter] = useState<ModelType | null>(null);
@@ -547,7 +568,7 @@ export default function MLModelsPage() {
       {/* Layer sections */}
       <div className="flex-1 overflow-y-auto p-3 space-y-2" data-testid="layers-container">
         {filteredLayers.map((layer) => (
-          <LayerSection key={layer.id} layer={layer} query={query} />
+          <LayerSection key={layer.id} layer={layer} query={query} healthData={healthApi?.usage_by_type} />
         ))}
         {filteredLayers.length === 0 && (
           <div className="flex items-center justify-center h-32 text-[10px] text-[#484f58] font-mono">

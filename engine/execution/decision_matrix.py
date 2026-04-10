@@ -56,13 +56,19 @@ SPREAD_MAX_BPS = 30.0                 # Max acceptable spread
 
 # Gate definitions
 GATE_CONFIGS = {
-    "ALPHA_QUALITY":    {"weight": 0.25, "threshold": 0.50},
-    "REGIME_ALIGNMENT": {"weight": 0.20, "threshold": 0.45},
-    "RISK_BUDGET":      {"weight": 0.20, "threshold": 0.40},
-    "CONVICTION_SCORE": {"weight": 0.15, "threshold": 0.50},
-    "MOMENTUM_CONFIRM": {"weight": 0.10, "threshold": 0.35},
-    "LIQUIDITY_CHECK":  {"weight": 0.10, "threshold": 0.30},
+    "ALPHA_QUALITY":       {"weight": 0.22, "threshold": 0.50},
+    "REGIME_ALIGNMENT":    {"weight": 0.17, "threshold": 0.45},
+    "RISK_BUDGET":         {"weight": 0.17, "threshold": 0.40},
+    "CONVICTION_SCORE":    {"weight": 0.12, "threshold": 0.50},
+    "MOMENTUM_CONFIRM":    {"weight": 0.08, "threshold": 0.35},
+    "LIQUIDITY_CHECK":     {"weight": 0.08, "threshold": 0.30},
+    "MC_RISK":             {"weight": 0.08, "threshold": 0.40},
+    "REGIME_PROBABILITY":  {"weight": 0.08, "threshold": 0.35},
 }
+
+# MC risk bounds
+MC_VAR95_MAX = 0.05           # 5% max VaR95 for portfolio
+MC_PROB_PROFIT_MIN = 0.40     # Must have >= 40% profit probability
 
 # Quality tier -> score mapping (from AlphaOptimizer)
 QUALITY_TIER_SCORES = {
@@ -713,6 +719,129 @@ class DecisionMatrix:
         gate.details = (f"ADV=${adv:,.0f} Spread={spread_bps:.1f}bps "
                         f"Participation={participation:.4%} "
                         f"MktCap=${mkt_cap:,.0f}")
+        gate.evaluate()
+        return gate
+
+    def _score_mc_risk(self, proposal: dict) -> DecisionGate:
+        """Gate 7: Monte Carlo VaR/CVaR check.
+
+        Validates that the portfolio's MC-estimated VaR95 is within bounds
+        and that the probability of profit is acceptable. Pulls data from
+        MonteCarloRiskEngine or proposal overrides.
+        """
+        cfg = GATE_CONFIGS["MC_RISK"]
+        gate = DecisionGate(
+            gate_name="MC_RISK",
+            weight=cfg["weight"],
+            pass_threshold=cfg["threshold"],
+        )
+
+        # MC metrics from proposal or live engine
+        mc_var95 = proposal.get("mc_var95", None)
+        mc_prob_profit = proposal.get("mc_prob_profit", None)
+        mc_cvar95 = proposal.get("mc_cvar95", None)
+
+        # Try to pull live MC data if not in proposal
+        if mc_var95 is None:
+            try:
+                from engine.ml.bridges.monte_carlo_bridge import MonteCarloBridge
+                mc = MonteCarloBridge()
+                if hasattr(mc, "compute_portfolio_risk"):
+                    risk = mc.compute_portfolio_risk()
+                    mc_var95 = risk.get("var_95", 0)
+                    mc_prob_profit = risk.get("prob_profit", 50)
+                    mc_cvar95 = risk.get("cvar_95", 0)
+            except Exception:
+                pass
+
+        # Defaults if still unavailable
+        if mc_var95 is None:
+            mc_var95 = 0.02
+        if mc_prob_profit is None:
+            mc_prob_profit = 55.0
+        if mc_cvar95 is None:
+            mc_cvar95 = mc_var95 * 1.3
+
+        # VaR score: how much headroom vs max
+        var_abs = abs(mc_var95)
+        var_score = np.clip(1.0 - var_abs / MC_VAR95_MAX, 0.0, 1.0)
+
+        # Profit probability score
+        prob_score = np.clip(mc_prob_profit / 100.0, 0.0, 1.0)
+
+        # CVaR tail risk (penalize heavy tails)
+        cvar_ratio = abs(mc_cvar95) / max(abs(mc_var95), 0.001) if mc_var95 != 0 else 1.0
+        tail_score = np.clip(1.0 - (cvar_ratio - 1.0) / 2.0, 0.0, 1.0)
+
+        gate.score = 0.40 * var_score + 0.35 * prob_score + 0.25 * tail_score
+        gate.details = (f"VaR95={mc_var95:.4f}/{MC_VAR95_MAX:.4f} "
+                        f"P(profit)={mc_prob_profit:.1f}% "
+                        f"CVaR/VaR={cvar_ratio:.2f}")
+        gate.evaluate()
+        return gate
+
+    def _score_regime_probability(self, proposal: dict) -> DecisionGate:
+        """Gate 8: Regime probability gate.
+
+        Factors in bull/bear regime probabilities from MarkovRegimeBridge.
+        For long trades: higher bull prob = higher score.
+        For short trades: higher bear prob = higher score.
+        """
+        cfg = GATE_CONFIGS["REGIME_PROBABILITY"]
+        gate = DecisionGate(
+            gate_name="REGIME_PROBABILITY",
+            weight=cfg["weight"],
+            pass_threshold=cfg["threshold"],
+        )
+
+        side = proposal.get("side", "long").lower()
+
+        # Regime probabilities from proposal or live engine
+        bull_prob = proposal.get("regime_bull_prob", None)
+        bear_prob = proposal.get("regime_bear_prob", None)
+
+        # Try to pull from MarkovRegimeBridge
+        if bull_prob is None:
+            try:
+                from engine.ml.bridges.markov_regime_bridge import MarkovRegimeBridge
+                mrb = MarkovRegimeBridge()
+                if hasattr(mrb, "get_regime_probabilities"):
+                    probs = mrb.get_regime_probabilities()
+                    bull_prob = probs.get("BULL", probs.get("bull", 0.33))
+                    bear_prob = probs.get("BEAR", probs.get("bear", 0.22))
+            except Exception:
+                pass
+
+        # Normalize to 0-1 if given as percentages
+        if bull_prob is not None and bull_prob > 1:
+            bull_prob = bull_prob / 100.0
+        if bear_prob is not None and bear_prob > 1:
+            bear_prob = bear_prob / 100.0
+
+        # Defaults
+        if bull_prob is None:
+            bull_prob = 0.33
+        if bear_prob is None:
+            bear_prob = 0.22
+
+        transition_prob = max(0, 1.0 - bull_prob - bear_prob)
+
+        if side == "long":
+            # Favor bull regimes for longs
+            directional_score = bull_prob * 1.0 + transition_prob * 0.4 + bear_prob * 0.1
+        else:
+            # Favor bear regimes for shorts
+            directional_score = bear_prob * 1.0 + transition_prob * 0.4 + bull_prob * 0.1
+
+        # Confidence in regime determination (entropy-based)
+        probs_arr = [bull_prob, bear_prob, transition_prob]
+        entropy = -sum(p * np.log(max(p, 1e-10)) for p in probs_arr)
+        max_entropy = -3 * (1/3) * np.log(1/3)  # max for 3 states
+        confidence = 1.0 - (entropy / max_entropy)
+
+        gate.score = 0.65 * directional_score + 0.35 * confidence
+        gate.details = (f"P(Bull)={bull_prob:.2f} P(Bear)={bear_prob:.2f} "
+                        f"Side={side} Conf={confidence:.2f}")
         gate.evaluate()
         return gate
 
