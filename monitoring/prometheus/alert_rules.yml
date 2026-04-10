@@ -11,13 +11,13 @@ groups:
           description: "The MetadronCube has entered CRASH regime. All positions should be de-risked to beta <= 0.35."
 
       - alert: DrawdownExceeded
-        expr: (1 - metadron_portfolio_nav / metadron_portfolio_nav offset 1d) > 0.15
+        expr: (1 - metadron_portfolio_nav / metadron_portfolio_nav offset 1d) > 0.20
         for: 5m
         labels:
           severity: critical
         annotations:
-          summary: "Portfolio drawdown exceeds 15%"
-          description: "NAV has declined more than 15% from the previous day."
+          summary: "Portfolio drawdown exceeds 20% — kill switch threshold"
+          description: "NAV has declined more than 20% from the previous day. Per allocation rules: 20% max drawdown kill switch activates."
 
       - alert: DailyLossCircuitBreaker
         expr: metadron_portfolio_pnl_daily < -0.03 * metadron_portfolio_nav
@@ -31,13 +31,13 @@ groups:
   - name: metadron_performance
     rules:
       - alert: ScanCycleSlow
-        expr: metadron_api_duration_seconds{endpoint="/api/engine/pipeline/run"} > 300
+        expr: metadron_api_duration_seconds{endpoint="/api/engine/pipeline/run"} > 1200
         for: 3m
         labels:
           severity: warning
         annotations:
-          summary: "Signal pipeline scan cycle exceeds 300 seconds"
-          description: "Full pipeline run taking >5 minutes. Check data source timeouts or CPU."
+          summary: "Full scan cycle exceeds 20 minutes"
+          description: "Full 20-min cycle (10 min scan + 5 min execution + 5 min risk/backtesting) has exceeded its budget. Check data source timeouts or CPU."
 
       - alert: EngineAPIDown
         expr: metadron_engine_up == 0
