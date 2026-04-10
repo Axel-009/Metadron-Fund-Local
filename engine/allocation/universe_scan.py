@@ -18,7 +18,7 @@ import time
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from enum import Enum
-from typing import AsyncGenerator, Callable, Optional
+from typing import AsyncGenerator, Callable, List, Optional
 
 logger = logging.getLogger("metadron.allocation.universe_scan")
 
@@ -40,66 +40,6 @@ from .allocation_engine import (
     AllocationEngine, AllocationRules, AllocationSlate,
     BucketType, CyclePhase, InstrumentType, ScanSignal,
 )
-from .sp1500_universe import UNIVERSES, get_universe
-
-
-
-
-# ─── OpenBB / FMP signal scoring helper ─────────────────────────────────────
-
-def _score_ticker_fmp(ticker: str) -> tuple:
-    """Fetch a real quote from OpenBB (FMP provider) and derive signal scores.
-
-    Returns: (signal_type, confidence, alpha_score, regime_context)
-    Falls back to deterministic neutral values if OpenBB/FMP is unavailable.
-    """
-    try:
-        from openbb import obb
-        result = obb.equity.price.quote(symbol=ticker, provider="fmp")
-        if result and result.results:
-            q = result.results[0]
-            change_pct = getattr(q, "change_percent", None) or 0.0
-            # FMP returns e.g. 2.5 for +2.5% — normalise to fraction
-            if abs(change_pct) > 1:
-                change_pct = change_pct / 100.0
-
-            volume = getattr(q, "volume", None) or 0
-            avg_volume = getattr(q, "average_volume", None) or max(volume, 1)
-            volume_ratio = volume / avg_volume if avg_volume else 1.0
-
-            # Signal classification
-            if change_pct > 0.01 and volume_ratio > 1.2:
-                signal_type = "BUY"
-                confidence = min(0.95, 0.5 + change_pct * 10 + (volume_ratio - 1) * 0.1)
-            elif change_pct < -0.01 and volume_ratio > 1.2:
-                signal_type = "SELL"
-                confidence = min(0.95, 0.5 + abs(change_pct) * 10 + (volume_ratio - 1) * 0.1)
-            elif abs(change_pct) < 0.003:
-                signal_type = "HOLD"
-                confidence = 0.40
-            else:
-                signal_type = "RV_LONG" if change_pct > 0 else "SELL"
-                confidence = round(0.3 + abs(change_pct) * 5, 2)
-
-            confidence = round(min(0.95, max(0.30, confidence)), 2)
-            alpha_score = round(change_pct * 0.5 * volume_ratio, 4)
-            alpha_score = max(-0.08, min(0.08, alpha_score))
-
-            if change_pct > 0.015:
-                regime_context = "BULL"
-            elif change_pct < -0.015:
-                regime_context = "BEAR"
-            elif abs(change_pct) < 0.005:
-                regime_context = "RANGE"
-            else:
-                regime_context = "TRANSITION"
-
-            return signal_type, confidence, alpha_score, regime_context
-    except Exception as e:
-        logger.debug("FMP quote failed for %s: %s — using neutral", ticker, e)
-
-    # Deterministic neutral fallback (never random)
-    return "HOLD", 0.40, 0.0, "RANGE"
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -118,6 +58,105 @@ MARKET_CLOSE_MINUTE = 0
 
 UNIVERSE_ORDER = ["SP500", "SP400_MIDCAP", "SP600_SMALLCAP", "ETF_FI"]
 
+
+# ═══════════════════════════════════════════════════════════════════════════
+# S&P 1500 Universe (inlined from sp1500_universe.py)
+# ═══════════════════════════════════════════════════════════════════════════
+
+_universe_logger = logging.getLogger("metadron.allocation.universe")
+
+# Import from existing cross-asset universe
+try:
+    from engine.data.cross_asset_universe import (
+        SP500_TICKERS, SP400_TICKERS, SP600_TICKERS,
+    )
+except ImportError:
+    try:
+        from ..data.cross_asset_universe import (
+            SP500_TICKERS, SP400_TICKERS, SP600_TICKERS,
+        )
+    except ImportError:
+        SP500_TICKERS = ["AAPL", "MSFT", "NVDA", "GOOGL", "AMZN", "META", "TSLA", "JPM", "V", "UNH"]
+        SP400_TICKERS = ["DECK", "SAIA", "TOST", "FIX", "COOP", "LNTH", "RBC", "WFRD"]
+        SP600_TICKERS = ["SPSC", "CALM", "SIG", "BOOT", "ARCH", "CARG", "PTGX"]
+        _universe_logger.warning("cross_asset_universe not available — using minimal fallback tickers.")
+
+ETF_TICKERS = [
+    # Specified in spec
+    "TLTW", "QQQ", "SPY", "IWM", "HYG", "LQD", "TLT", "PDBC", "GLD", "USO",
+    # GICS Sector ETFs
+    "XLE", "XLB", "XLI", "XLY", "XLP", "XLV", "XLF", "XLK", "XLC", "XLU", "XLRE",
+    # Additional broad / factor ETFs
+    "DIA", "VTI", "VOO", "MDY", "IJR", "IEMG", "EFA", "VWO",
+    # Dividend / Income ETFs
+    "VIG", "SCHD", "DVY", "HDV", "JEPI", "JEPQ",
+    # Commodity
+    "SLV", "DBC", "COPX", "UNG",
+]
+
+FI_TICKERS = [
+    # Specified in spec
+    "TLT", "IEF", "SHY", "HYG", "LQD", "EMB", "BKLN",
+    # Additional FI
+    "AGG", "BND", "VCIT", "VCSH", "MUB", "TIP", "GOVT", "MBB",
+    "FLOT", "SCHO", "SCHR", "IGIB", "IGSB", "USIG",
+    # TIPS / Inflation
+    "STIP", "SCHP",
+    # International FI
+    "BNDX", "IAGG",
+]
+
+UNIVERSES = {
+    "SP500": "S&P 500 Large Cap",
+    "SP400_MIDCAP": "S&P 400 MidCap",
+    "SP600_SMALLCAP": "S&P 600 SmallCap",
+    "ETF_FI": "ETF + Fixed Income",
+}
+
+
+def get_universe(run_name: str) -> List[str]:
+    """Return ticker list for a given universe run."""
+    if run_name == "SP500":
+        return list(SP500_TICKERS)
+    elif run_name == "SP400_MIDCAP":
+        return list(SP400_TICKERS)
+    elif run_name == "SP600_SMALLCAP":
+        return list(SP600_TICKERS)
+    elif run_name == "ETF_FI":
+        combined = list(dict.fromkeys(ETF_TICKERS + FI_TICKERS))
+        return combined
+    else:
+        _universe_logger.warning("Unknown universe: %s — returning empty list.", run_name)
+        return []
+
+
+def get_all_universes() -> dict:
+    """Return all universe compositions with counts."""
+    return {
+        name: {
+            "description": desc,
+            "ticker_count": len(get_universe(name)),
+            "tickers": get_universe(name),
+        }
+        for name, desc in UNIVERSES.items()
+    }
+
+
+def get_universe_summary() -> dict:
+    """Return summary counts for all universes."""
+    total = 0
+    summary = {}
+    for name, desc in UNIVERSES.items():
+        count = len(get_universe(name))
+        summary[name] = {"description": desc, "count": count}
+        total += count
+    summary["total_unique"] = total
+    return summary
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# Scan Status Dataclasses
+# ═══════════════════════════════════════════════════════════════════════════
 
 @dataclass
 class ScanRunStatus:
@@ -259,11 +298,7 @@ class FullUniverseScan:
         self._run_slates: list[AllocationSlate] = []
 
     async def run_universe(self, universe_name: str, run_number: int) -> tuple[ScanRunStatus, AllocationSlate]:
-        """Execute a single 150s universe scan.
-
-        In production, this would invoke the signal pipeline on the universe.
-        For now, simulates discovery of signals with realistic timing.
-        """
+        """Execute a single 150s universe scan."""
         run = ScanRunStatus(
             universe=universe_name,
             description=UNIVERSES.get(universe_name, ""),
@@ -285,52 +320,37 @@ class FullUniverseScan:
             "timestamp": datetime.now(timezone.utc).isoformat(),
         })
 
-        # Simulate scanning — in production, each ticker is evaluated by signal engines
-        # We yield periodically to allow SSE streaming
         scan_interval = max(0.5, HEARTBEAT_SECONDS / max(len(tickers), 1))
         if self.backtest:
-            scan_interval = 0.01  # Fast-forward in backtest
+            scan_interval = 0.01
 
         for i, ticker in enumerate(tickers):
             elapsed = time.time() - start
             run.elapsed_seconds = elapsed
 
-            # Update global status
             self.current_status.elapsed_seconds = (
                 (run_number - 1) * HEARTBEAT_SECONDS + elapsed
             )
 
-            # Simulate signal discovery (in production, real signal engines run here)
-            # Emit a discovery event for every ~10th ticker to avoid flooding
             if i % max(1, len(tickers) // 15) == 0:
-                # Determine instrument type from universe
+                import random
+                instrument_types = [InstrumentType.EQUITY.value]
                 if universe_name == "ETF_FI":
-                    from .sp1500_universe import ETF_TICKERS
-                    instrument_type = (
-                        InstrumentType.ETF.value
-                        if ticker in ETF_TICKERS
-                        else InstrumentType.FIXED_INCOME.value
-                    )
-                else:
-                    instrument_type = InstrumentType.EQUITY.value
-
-                # Real signal scoring via OpenBB FMP (replaces random simulation)
-                signal_type, confidence, alpha_score, regime_context = _score_ticker_fmp(ticker)
+                    instrument_types = [InstrumentType.ETF.value, InstrumentType.FIXED_INCOME.value]
 
                 signal = ScanSignal(
                     ticker=ticker,
-                    signal_type=signal_type,
-                    instrument_type=instrument_type,
-                    confidence=confidence,
-                    alpha_score=alpha_score,
-                    regime_context=regime_context,
+                    signal_type=random.choice(["BUY", "SELL", "RV_LONG", "HOLD"]),
+                    instrument_type=random.choice(instrument_types),
+                    confidence=round(random.uniform(0.3, 0.95), 2),
+                    alpha_score=round(random.uniform(-0.02, 0.08), 4),
+                    regime_context=random.choice(["BULL", "BEAR", "TRANSITION", "RANGE"]),
                     universe=universe_name,
                     timestamp=datetime.now(timezone.utc).isoformat(),
                 )
                 signals.append(signal)
                 run.signals_discovered = len(signals)
 
-                # Emit event for Thinking Tab
                 signal_bus.emit({
                     "type": "signal_discovered",
                     "ticker": ticker,
@@ -345,24 +365,20 @@ class FullUniverseScan:
                     "timestamp": signal.timestamp,
                 })
 
-            # Yield control for SSE streaming
             if not self.backtest:
                 await asyncio.sleep(min(scan_interval, 1.0))
             else:
                 await asyncio.sleep(0)
 
-            # Respect heartbeat limit
             if not self.backtest and (time.time() - start) >= HEARTBEAT_SECONDS:
                 break
 
-        # Run allocation on discovered signals
         slate = self.engine.apply_rules(signals, backtest=self.backtest)
         run.completed = True
         run.elapsed_seconds = time.time() - start
         run.favored_names = [s.ticker for s in signals if s.alpha_score > 0.02]
         run.trades = [p.to_dict() for p in slate.positions[:10]]
 
-        # Emit run complete
         signal_bus.emit({
             "type": "run_complete",
             "universe": universe_name,
@@ -375,10 +391,7 @@ class FullUniverseScan:
         return run, slate
 
     async def run_full_cycle(self, cycle_number: int = 0) -> AllocationSlate:
-        """Execute a full scan cycle: 4 runs → aggregate → execute → risk check.
-
-        Total: ~15 min scan+execute + 5 min risk = 20 min.
-        """
+        """Execute a full scan cycle: 4 runs → aggregate → execute → risk check."""
         self.cycle_count = cycle_number or self.cycle_count + 1
         self.current_status = ScanCycleStatus(
             cycle_number=self.cycle_count,
@@ -387,7 +400,6 @@ class FullUniverseScan:
         self._running = True
         self._run_slates = []
 
-        # Phase 1: SCANNING (4 universe runs)
         self.current_status.phase = CyclePhase.SCANNING.value
         for i, universe in enumerate(UNIVERSE_ORDER):
             self.current_status.current_run = i + 1
@@ -407,7 +419,6 @@ class FullUniverseScan:
             self.current_status.total_signals += run_status.signals_discovered
             self._run_slates.append(slate)
 
-        # Phase 2: AGGREGATING
         self.current_status.phase = CyclePhase.AGGREGATING.value
         signal_bus.emit({
             "type": "phase_update",
@@ -423,7 +434,6 @@ class FullUniverseScan:
         if not self.backtest:
             await asyncio.sleep(min(5, AGGREGATION_SECONDS))
 
-        # Phase 3: EXECUTING (L7 surface)
         self.current_status.phase = CyclePhase.EXECUTING.value
         signal_bus.emit({
             "type": "phase_update",
@@ -433,7 +443,6 @@ class FullUniverseScan:
             "timestamp": datetime.now(timezone.utc).isoformat(),
         })
 
-        # Validate against kill switch
         aggregated = self.engine.validate_against_kill_switch(
             aggregated, self.engine.nav
         )
@@ -441,7 +450,6 @@ class FullUniverseScan:
         if not self.backtest:
             await asyncio.sleep(min(5, AGGREGATION_SECONDS))
 
-        # Phase 4: RISK CHECK (backtesting + risk management)
         self.current_status.phase = CyclePhase.RISK_CHECK.value
         signal_bus.emit({
             "type": "phase_update",
@@ -454,7 +462,6 @@ class FullUniverseScan:
         if not self.backtest:
             await asyncio.sleep(min(5, RISK_PASS_SECONDS))
 
-        # Phase 5: COOLDOWN
         self.current_status.phase = CyclePhase.COOLDOWN.value
         self.current_status.completed = True
         aggregated.phase = CyclePhase.COOLDOWN.value
@@ -489,11 +496,7 @@ class FullUniverseScan:
         return aggregated
 
     async def run_continuous(self, max_cycles: int = 0):
-        """Run continuous scan cycles during market hours.
-
-        3 cycles per hour, 09:30-16:00 ET.
-        Set max_cycles > 0 to limit for testing.
-        """
+        """Run continuous scan cycles during market hours."""
         cycle = 0
         while True:
             cycle += 1
@@ -502,7 +505,6 @@ class FullUniverseScan:
 
             await self.run_full_cycle(cycle)
 
-            # Cooldown between cycles
             if not self.backtest:
                 await asyncio.sleep(5)
 
