@@ -1428,3 +1428,95 @@ RithmicBroker   → FUTURE: Live futures execution
 ```
 
 
+
+---
+
+## FIXED INCOME ENGINE — Tab 18
+
+### Engine: `engine/signals/fixed_income_engine.py`
+
+Dedicated fixed income analytics engine aggregating data from OpenBB/FRED, MacroEngine,
+and broker positions. No static or hardcoded data — all real-time API sourced.
+
+**Data Sources:**
+- FRED Treasury yields: DGS1MO, DGS3MO, DGS6MO, DGS1, DGS2, DGS3, DGS5, DGS7, DGS10, DGS20, DGS30
+- FRED Credit spreads: BAMLH0A0HYM2 (HY OAS), BAMLC0A0CM (IG OAS), BAMLC0A4CBBB (BBB OAS)
+- MacroEngine: yield curve analysis, credit pulse monitoring
+- Broker positions: filtered for FI ETFs (TLT, IEF, SHY, LQD, HYG, AGG, BND, MBB, MUB, TIPS)
+
+**Methods:**
+```
+FixedIncomeEngine
+├── get_summary()          → Portfolio-level FI exposure, duration, yield, DV01, convexity
+├── get_holdings()         → Bond/FI ETF positions from broker (filtered)
+├── get_yield_curve()      → 11-tenor treasury curve from FRED
+├── get_credit_quality()   → Credit quality distribution from spread environment
+├── get_duration_ladder()  → DV01 by maturity bucket from rate levels
+└── get_spread_history()   → Historical IG/HY OAS time series from FRED
+```
+
+### Router: `engine/api/routers/fixed_income.py`
+Mounted at: `/api/engine/fixed-income`
+
+| Endpoint | Method | Source |
+|---|---|---|
+| `/summary` | GET | FixedIncomeEngine.get_summary() |
+| `/holdings` | GET | FixedIncomeEngine.get_holdings() |
+| `/yield-curve` | GET | FixedIncomeEngine.get_yield_curve() |
+| `/credit-quality` | GET | FixedIncomeEngine.get_credit_quality() |
+| `/duration-ladder` | GET | FixedIncomeEngine.get_duration_ladder() |
+| `/spread-history?days=90` | GET | FixedIncomeEngine.get_spread_history() |
+
+### Data Flow
+```
+FRED (DGS*, BAML*)  →  FixedIncomeEngine  →  /api/engine/fixed-income/*
+MacroEngine         →       ↑                        ↓
+Broker Positions    →       ↑                  fixed-income.tsx (Tab 18)
+```
+
+---
+
+## MACRO DASHBOARD HISTORICAL ENDPOINTS — Tab 19
+
+Three FRED-backed time series endpoints added to `engine/api/routers/macro.py`:
+
+| Endpoint | FRED Series | Description |
+|---|---|---|
+| `/macro/spread-history` | DGS10 - DGS2 | 2s10s yield spread (30-day history) |
+| `/macro/vix-history` | VIXCLS | VIX index (30-day history) |
+| `/macro/dxy-history` | DTWEXBGS | Trade-weighted Dollar Index (30-day history) |
+
+Replaces `genChartData()` function that used `Math.random()` for chart generation.
+
+---
+
+## DASHBOARD TAB WIRING STATUS
+
+### Fully Wired to Live API (no static/mock data):
+- Tab 4: Asset Allocation
+- Tab 5: Risk Portfolio
+- Tab 6: Machine Learning
+- Tab 8: Reporting
+- Tab 9: Strategy Builder
+- Tab 10: OpenBB Terminal
+- Tab 11: Transaction Log
+- Tab 12: Futures
+- Tab 13: TCA
+- Tab 14: Agents
+- Tab 15: Quant Tools
+- Tab 16: Reconciliation
+- Tab 17: ETF Dashboard
+- Tab 18: Fixed Income ← NEW
+- Tab 19: Macro Dashboard ← NEW
+- Tab 21: ML Models
+
+### Remaining (static data needs replacement):
+- Tab 1: Live Dashboard
+- Tab 2: Metadron Cube
+- Tab 3: Market Wrap
+- Tab 7: Tech Dashboard
+- Tab 20: Arbitrage
+- Tab 22: Monte Carlo Sim
+- Tab 23: Simulations
+- Tab 24: Archive
+- Tab 25: Money Velocity

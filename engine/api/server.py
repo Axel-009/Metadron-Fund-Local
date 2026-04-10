@@ -32,6 +32,7 @@ from engine.api.routers import (
     futures,
     quant,
     etf,
+    fixed_income,
 )
 from engine.bridges.prometheus_metrics import create_metrics_router
 
@@ -73,6 +74,7 @@ app.include_router(universe.router, prefix="/api/engine/universe", tags=["Univer
 app.include_router(futures.router, prefix="/api/engine/futures", tags=["Futures"])
 app.include_router(quant.router, prefix="/api/engine/quant", tags=["Quant"])
 app.include_router(etf.router, prefix="/api/engine/etf", tags=["ETF"])
+app.include_router(fixed_income.router, prefix="/api/engine/fixed-income", tags=["FixedIncome"])
 
 # ─── Prometheus metrics (scraped by Contabo monitoring stack) ──────
 _metrics_router = create_metrics_router(app)
