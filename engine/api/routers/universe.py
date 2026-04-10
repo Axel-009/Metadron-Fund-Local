@@ -242,3 +242,89 @@ async def openbb_fundamentals(ticker: str = Query(...)):
     except Exception as e:
         logger.error(f"universe/openbb/fundamentals error: {e}")
         return {"ticker": ticker, "error": str(e)}
+
+
+@router.get("/openbb/quotes")
+async def openbb_quotes(tickers: str = Query(..., description="Comma-separated tickers")):
+    """Bulk quotes via OpenBB/FMP, falling back to Alpaca broker prices."""
+    try:
+        ticker_list = [t.strip().upper() for t in tickers.split(",") if t.strip()]
+        if not ticker_list:
+            return {"quotes": [], "timestamp": datetime.utcnow().isoformat()}
+
+        results = []
+
+        # Try OpenBB/FMP bulk quote first
+        from engine.data.openbb_data import get_quote
+        raw = get_quote(ticker_list)
+        found = set()
+        if raw:
+            for r in raw:
+                sym = r.get("symbol", r.get("ticker", ""))
+                if sym:
+                    found.add(sym)
+                    results.append({
+                        "ticker": sym,
+                        "price": r.get("price", r.get("last_price", 0)),
+                        "change": r.get("change", 0),
+                        "change_pct": r.get("change_percent", r.get("change_pct", 0)),
+                        "volume": r.get("volume", 0),
+                        "market_cap": r.get("market_cap", 0),
+                        "source": "openbb",
+                    })
+
+        # Fallback to Alpaca for any missing tickers
+        missing = [t for t in ticker_list if t not in found]
+        if missing:
+            try:
+                from engine.data.openbb_data import get_prices
+                from datetime import timedelta
+                end = datetime.utcnow().strftime("%Y-%m-%d")
+                start = (datetime.utcnow() - timedelta(days=5)).strftime("%Y-%m-%d")
+                df = get_prices(missing, start=start, end=end)
+                if hasattr(df, "empty") and not df.empty:
+                    import pandas as pd
+                    if hasattr(df.columns, "levels"):
+                        for t in missing:
+                            try:
+                                close_col = "Close" if "Close" in df.columns.get_level_values(0) else "Adj Close"
+                                series = df[close_col][t] if t in df[close_col].columns else None
+                                if series is not None and len(series) > 0:
+                                    price = float(series.iloc[-1])
+                                    prev = float(series.iloc[-2]) if len(series) > 1 else price
+                                    results.append({
+                                        "ticker": t,
+                                        "price": round(price, 2),
+                                        "change": round(price - prev, 2),
+                                        "change_pct": round((price - prev) / prev * 100, 2) if prev else 0,
+                                        "volume": 0,
+                                        "market_cap": 0,
+                                        "source": "alpaca" if "alpaca" in str(type(df)).lower() else "fmp",
+                                    })
+                                    found.add(t)
+                            except Exception:
+                                continue
+                    else:
+                        for t in missing:
+                            try:
+                                price = float(df.iloc[-1].get("Close", df.iloc[-1].get("close", 0)))
+                                prev = float(df.iloc[-2].get("Close", df.iloc[-2].get("close", price))) if len(df) > 1 else price
+                                results.append({
+                                    "ticker": t,
+                                    "price": round(price, 2),
+                                    "change": round(price - prev, 2),
+                                    "change_pct": round((price - prev) / prev * 100, 2) if prev else 0,
+                                    "volume": 0,
+                                    "market_cap": 0,
+                                    "source": "price_history",
+                                })
+                                found.add(t)
+                            except Exception:
+                                continue
+            except Exception as e:
+                logger.debug(f"Bulk quote fallback failed: {e}")
+
+        return {"quotes": results, "source": "openbb+alpaca", "timestamp": datetime.utcnow().isoformat()}
+    except Exception as e:
+        logger.error(f"universe/openbb/quotes error: {e}")
+        return {"quotes": [], "error": str(e)}

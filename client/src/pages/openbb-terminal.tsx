@@ -7,120 +7,6 @@ import {
 } from "recharts";
 import { useEngineQuery } from "@/hooks/use-engine-api";
 
-// ═══════════ SIMULATED DATA ═══════════
-
-function generateOHLC(days = 200, startPrice = 189) {
-  const data: any[] = [];
-  let price = startPrice;
-  const now = Date.now();
-  for (let i = days; i >= 0; i--) {
-    const open = price;
-    const change = (Math.random() - 0.48) * 4;
-    const high = open + Math.abs(change) + Math.random() * 2;
-    const low = open - Math.abs(change) - Math.random() * 2;
-    const close = open + change;
-    const vol = Math.floor(40000000 + Math.random() * 60000000);
-    price = close;
-    data.push({
-      date: new Date(now - i * 86400000).toLocaleDateString("en-US", { month: "short", day: "numeric" }),
-      open: +open.toFixed(2),
-      high: +high.toFixed(2),
-      low: +low.toFixed(2),
-      close: +close.toFixed(2),
-      volume: vol,
-      sma20: 0,
-      sma50: 0,
-      rsi: 50,
-      macd: 0,
-      signal: 0,
-      histogram: 0,
-    });
-  }
-  // Calculate SMAs
-  for (let i = 0; i < data.length; i++) {
-    if (i >= 19) {
-      data[i].sma20 = +(data.slice(i - 19, i + 1).reduce((s: number, d: any) => s + d.close, 0) / 20).toFixed(2);
-    }
-    if (i >= 49) {
-      data[i].sma50 = +(data.slice(i - 49, i + 1).reduce((s: number, d: any) => s + d.close, 0) / 50).toFixed(2);
-    }
-    // Simple RSI proxy
-    if (i > 0) {
-      const diff = data[i].close - data[i - 1].close;
-      data[i].rsi = Math.min(90, Math.max(10, 50 + diff * 8 + (Math.random() - 0.5) * 10));
-    }
-    // MACD proxy
-    data[i].macd = (Math.random() - 0.5) * 4;
-    data[i].signal = data[i].macd * 0.7 + (Math.random() - 0.5) * 1;
-    data[i].histogram = data[i].macd - data[i].signal;
-  }
-  return data;
-}
-
-// Full universe — all securities
-const ALL_SECURITIES = [
-  // Holdings (portfolio positions)
-  { ticker: "AAPL", price: 189.45, chg: 1.23, pct: 0.65, vol: "62.3M", mktCap: "2.94T", isHolding: true },
-  { ticker: "MSFT", price: 420.12, chg: -2.18, pct: -0.52, vol: "24.1M", mktCap: "3.12T", isHolding: true },
-  { ticker: "NVDA", price: 875.30, chg: 18.42, pct: 2.15, vol: "48.7M", mktCap: "2.15T", isHolding: true },
-  { ticker: "AMZN", price: 185.67, chg: 2.34, pct: 1.28, vol: "35.9M", mktCap: "1.93T", isHolding: true },
-  { ticker: "GOOGL", price: 155.89, chg: -0.45, pct: -0.29, vol: "22.8M", mktCap: "1.94T", isHolding: true },
-  { ticker: "JPM", price: 198.34, chg: 1.12, pct: 0.57, vol: "8.7M", mktCap: "572B", isHolding: true },
-  { ticker: "UNH", price: 502.15, chg: -3.45, pct: -0.68, vol: "3.8M", mktCap: "462B", isHolding: true },
-  { ticker: "V", price: 282.90, chg: 0.78, pct: 0.28, vol: "5.2M", mktCap: "580B", isHolding: true },
-  { ticker: "META", price: 505.78, chg: 8.12, pct: 1.63, vol: "18.4M", mktCap: "1.30T", isHolding: true },
-  { ticker: "XOM", price: 115.23, chg: -1.87, pct: -1.60, vol: "15.2M", mktCap: "460B", isHolding: true },
-  // Watchlist
-  { ticker: "TSLA", price: 178.22, chg: -5.34, pct: -2.91, vol: "89.1M", mktCap: "567B", isHolding: false },
-  { ticker: "SPY", price: 527.82, chg: 2.34, pct: 0.44, vol: "72.4M", mktCap: "—", isHolding: false },
-  { ticker: "QQQ", price: 448.19, chg: 5.12, pct: 1.16, vol: "42.1M", mktCap: "—", isHolding: false },
-  { ticker: "IWM", price: 210.45, chg: -0.67, pct: -0.32, vol: "28.3M", mktCap: "—", isHolding: false },
-  { ticker: "GLD", price: 218.34, chg: 1.45, pct: 0.67, vol: "12.1M", mktCap: "—", isHolding: false },
-  { ticker: "TLT", price: 94.12, chg: -0.89, pct: -0.94, vol: "18.7M", mktCap: "—", isHolding: false },
-  { ticker: "ARKK", price: 48.90, chg: -1.12, pct: -2.24, vol: "9.4M", mktCap: "—", isHolding: false },
-  { ticker: "COIN", price: 198.45, chg: 7.82, pct: 4.10, vol: "21.3M", mktCap: "49B", isHolding: false },
-  { ticker: "PLTR", price: 22.67, chg: 0.45, pct: 2.03, vol: "44.8M", mktCap: "48B", isHolding: false },
-  { ticker: "AMD", price: 168.90, chg: 3.12, pct: 1.88, vol: "37.2M", mktCap: "273B", isHolding: false },
-];
-
-// ═══════════ FMP UNIVERSE ═══════════
-// Mock FMP universe — extended tickers with simulated prices
-
-function randChg(seed: number): { price: number; chg: number; pct: number } {
-  const price = +(20 + Math.abs(seed * 37.3) % 480).toFixed(2);
-  const chg = +((Math.random() - 0.48) * price * 0.025).toFixed(2);
-  const pct = +((chg / price) * 100).toFixed(2);
-  return { price, chg, pct };
-}
-
-const FMP_TICKERS = [
-  "AVGO", "CRM", "NFLX", "COST", "PEP", "KO", "MCD", "WMT", "DIS", "PYPL",
-  "SQ", "SHOP", "ROKU", "SNAP", "UBER", "LYFT", "DASH", "ABNB", "ZM", "DOCU",
-  "CRWD", "ZS", "NET", "DDOG", "SNOW", "MDB", "BILL", "HUBS", "TTD", "U",
-  "RBLX", "PINS", "ETSY", "W", "CHWY", "PTON", "LCID", "RIVN", "NIO", "LI",
-  "XPEV", "SOFI", "HOOD", "UPST", "AFRM", "MARA", "RIOT", "CLSK", "BITF", "WULF",
-];
-
-// Stable mock prices — generated once
-const FMP_UNIVERSE: SecurityItem[] = FMP_TICKERS.map((ticker, i) => {
-  const seed = ticker.charCodeAt(0) * 0.1 + i;
-  const { price, chg, pct } = randChg(seed);
-  const vol = `${(5 + Math.abs(seed * 3.7) % 80).toFixed(1)}M`;
-  const mc = price > 100 ? `${(price * 0.05 + Math.abs(seed * 2)).toFixed(0)}B` : `${(price * 0.02 + Math.abs(seed * 0.5)).toFixed(0)}B`;
-  return { ticker, price, chg, pct, vol, mktCap: mc, isHolding: false };
-});
-
-const SCREENER_RESULTS = [
-  { ticker: "SMCI", name: "Super Micro Computer", sector: "Technology", pe: 31.2, eps: 18.45, rsi: 72, signal: "BUY", score: 87 },
-  { ticker: "ARM", name: "ARM Holdings", sector: "Technology", pe: 95.4, eps: 1.32, rsi: 65, signal: "BUY", score: 82 },
-  { ticker: "PLTR", name: "Palantir Technologies", sector: "Technology", pe: 68.1, eps: 0.38, rsi: 58, signal: "HOLD", score: 71 },
-  { ticker: "COIN", name: "Coinbase Global", sector: "Financials", pe: 42.8, eps: 5.89, rsi: 44, signal: "SELL", score: 38 },
-  { ticker: "RIVN", name: "Rivian Automotive", sector: "Consumer Disc.", pe: -12.3, eps: -4.52, rsi: 35, signal: "SELL", score: 22 },
-  { ticker: "CRWD", name: "CrowdStrike", sector: "Technology", pe: 55.2, eps: 5.67, rsi: 61, signal: "BUY", score: 78 },
-  { ticker: "SNOW", name: "Snowflake", sector: "Technology", pe: -85.0, eps: -1.23, rsi: 42, signal: "HOLD", score: 55 },
-  { ticker: "NET", name: "Cloudflare", sector: "Technology", pe: 210.0, eps: 0.45, rsi: 57, signal: "BUY", score: 74 },
-];
-
 const INDICATORS = ["SMA 20", "SMA 50", "RSI", "MACD", "Volume", "Bollinger"];
 
 // ═══════════ CANDLESTICK CHART (Canvas) ═══════════
@@ -256,7 +142,7 @@ function ChartPanel({ ticker }: { ticker: string }) {
         return { date: shortDate, open, high, low, close, volume, sma20: +sma20.toFixed(2), sma50: +sma50.toFixed(2), rsi: 50, macd: 0, signal: 0, histogram: 0 };
       });
     }
-    return generateOHLC(200, ticker === "AAPL" ? 189 : ticker === "NVDA" ? 875 : 150 + Math.random() * 300);
+    return [];
   }, [histData, ticker]);
   const containerRef = useRef<HTMLDivElement>(null);
   const [dims, setDims] = useState({ w: 800, h: 400 });
@@ -285,18 +171,24 @@ function ChartPanel({ ticker }: { ticker: string }) {
 
   const last = data[data.length - 1];
   const prev = data[data.length - 2];
-  const chg = last.close - prev.close;
-  const chgPct = (chg / prev.close) * 100;
+  const chg = last && prev ? last.close - prev.close : 0;
+  const chgPct = last && prev && prev.close ? (chg / prev.close) * 100 : 0;
 
   return (
     <div className="h-full flex flex-col">
       {/* Toolbar */}
       <div className="flex items-center gap-2 px-2 py-1 border-b border-terminal-border/50 flex-shrink-0">
         <span className="text-terminal-accent font-semibold text-xs">{ticker}</span>
-        <span className="font-mono text-xs text-terminal-text-primary tabular-nums">{last.close.toFixed(2)}</span>
-        <span className={`font-mono text-[10px] tabular-nums ${chg >= 0 ? "text-terminal-positive" : "text-terminal-negative"}`}>
-          {chg >= 0 ? "+" : ""}{chg.toFixed(2)} ({chgPct >= 0 ? "+" : ""}{chgPct.toFixed(2)}%)
-        </span>
+        {last ? (
+          <>
+            <span className="font-mono text-xs text-terminal-text-primary tabular-nums">{last.close.toFixed(2)}</span>
+            <span className={`font-mono text-[10px] tabular-nums ${chg >= 0 ? "text-terminal-positive" : "text-terminal-negative"}`}>
+              {chg >= 0 ? "+" : ""}{chg.toFixed(2)} ({chgPct >= 0 ? "+" : ""}{chgPct.toFixed(2)}%)
+            </span>
+          </>
+        ) : (
+          <span className="font-mono text-[10px] text-terminal-text-faint">Loading...</span>
+        )}
         <div className="flex-1" />
         {["1m", "5m", "15m", "1H", "4H", "1D", "1W"].map((tf) => (
           <button
@@ -325,7 +217,11 @@ function ChartPanel({ ticker }: { ticker: string }) {
 
       {/* Main chart area */}
       <div ref={containerRef} className="flex-1 min-h-0">
-        {dims.w > 0 && (
+        {data.length === 0 ? (
+          <div className="h-full flex items-center justify-center text-terminal-text-faint text-[11px] font-mono">
+            Waiting for price data...
+          </div>
+        ) : dims.w > 0 && (
           <CandlestickCanvas
             data={data}
             width={dims.w}
@@ -335,7 +231,7 @@ function ChartPanel({ ticker }: { ticker: string }) {
       </div>
 
       {/* RSI */}
-      {activeIndicators.has("RSI") && (
+      {activeIndicators.has("RSI") && data.length > 0 && (
         <div className="h-[60px] border-t border-terminal-border/30 flex-shrink-0">
           <ResponsiveContainer width="100%" height="100%">
             <LineChart data={data.slice(-80)} margin={{ top: 4, right: 10, bottom: 0, left: 50 }}>
@@ -349,7 +245,7 @@ function ChartPanel({ ticker }: { ticker: string }) {
       )}
 
       {/* Volume */}
-      {activeIndicators.has("Volume") && (
+      {activeIndicators.has("Volume") && data.length > 0 && (
         <div className="h-[50px] border-t border-terminal-border/30 flex-shrink-0">
           <ResponsiveContainer width="100%" height="100%">
             <BarChart data={data.slice(-80)} margin={{ top: 2, right: 10, bottom: 0, left: 50 }}>
@@ -360,7 +256,7 @@ function ChartPanel({ ticker }: { ticker: string }) {
       )}
 
       {/* MACD */}
-      {activeIndicators.has("MACD") && (
+      {activeIndicators.has("MACD") && data.length > 0 && (
         <div className="h-[60px] border-t border-terminal-border/30 flex-shrink-0">
           <ResponsiveContainer width="100%" height="100%">
             <ComposedChart data={data.slice(-80)} margin={{ top: 4, right: 10, bottom: 0, left: 50 }}>
@@ -461,7 +357,7 @@ function SecurityListPanel({
   const [search, setSearch] = useState("");
   const [holdingsCollapsed, setHoldingsCollapsed] = useState(false);
   const [watchlistCollapsed, setWatchlistCollapsed] = useState(false);
-  const [fmpCollapsed, setFmpCollapsed] = useState(false);
+  const [searchCollapsed, setSearchCollapsed] = useState(false);
   const [liveResults, setLiveResults] = useState<SecurityItem[]>([]);
   const [searching, setSearching] = useState(false);
   const debounceRef = useRef<ReturnType<typeof setTimeout>>();
@@ -469,7 +365,14 @@ function SecurityListPanel({
   // Fetch holdings from portfolio API
   const { data: posData } = useEngineQuery<{ positions: Array<{ ticker: string; current_price: number; unrealized_pnl: number; sector: string }> }>("/portfolio/positions", { refetchInterval: 15000 });
 
-  // Build holdings from API when available, fallback to static
+  // Fetch live prices for watchlist tickers
+  const watchlistTickers = watchlist.length > 0 ? watchlist.join(",") : "";
+  const { data: watchQuotes } = useEngineQuery<{ quotes: Array<{ ticker: string; price: number; change: number; change_pct: number; volume: number; source: string }> }>(
+    `/universe/openbb/quotes?tickers=${watchlistTickers}`,
+    { refetchInterval: 15000, enabled: watchlistTickers.length > 0 }
+  );
+
+  // Build holdings from API
   const holdings = useMemo(() => {
     if (posData?.positions?.length) {
       return posData.positions.map((p) => ({
@@ -482,10 +385,25 @@ function SecurityListPanel({
         isHolding: true,
       }));
     }
-    return ALL_SECURITIES.filter(s => s.isHolding);
+    return [];
   }, [posData]);
 
-  const watchItems = ALL_SECURITIES.filter(s => !s.isHolding || watchlist.includes(s.ticker));
+  // Build watchlist items from live quotes
+  const watchItems = useMemo(() => {
+    const quotesMap = new Map((watchQuotes?.quotes ?? []).map(q => [q.ticker, q]));
+    return watchlist.map(ticker => {
+      const q = quotesMap.get(ticker);
+      return {
+        ticker,
+        price: q?.price ?? 0,
+        chg: q?.change ?? 0,
+        pct: q?.change_pct ?? 0,
+        vol: q?.volume ? `${(q.volume / 1_000_000).toFixed(1)}M` : "—",
+        mktCap: "—",
+        isHolding: false,
+      };
+    });
+  }, [watchlist, watchQuotes]);
 
   const searchLower = search.toLowerCase().trim();
 
@@ -528,22 +446,18 @@ function SecurityListPanel({
     ? watchItems.filter(s => s.ticker.toLowerCase().includes(searchLower))
     : watchItems;
 
-  // Merge: live OpenBB results + FMP fallback, excluding known tickers
-  const allKnownTickers = new Set([...ALL_SECURITIES.map(s => s.ticker), ...holdings.map(h => h.ticker)]);
-  const filteredFmp = liveResults.length > 0
-    ? liveResults.filter(s => s.ticker && !allKnownTickers.has(s.ticker))
-    : searchLower
-      ? FMP_UNIVERSE.filter(s => s.ticker.toLowerCase().includes(searchLower) && !allKnownTickers.has(s.ticker))
-      : FMP_UNIVERSE.filter(s => !allKnownTickers.has(s.ticker));
+  // Search results: live OpenBB results, excluding already-known tickers
+  const allKnownTickers = new Set([...holdings.map(h => h.ticker), ...watchlist]);
+  const filteredSearch = liveResults.filter(s => s.ticker && !allKnownTickers.has(s.ticker));
 
-  // Show search results section when searching
-  const showFmpSection = searchLower.length >= 1;
+  // Show search results section only when actively searching
+  const showSearchSection = searchLower.length >= 1;
 
-  // Determine if the searched ticker can be added to watchlist
-  const searchedFmpItem = searchLower.length >= 2
-    ? (liveResults.find(s => s.ticker.toLowerCase() === searchLower) || FMP_UNIVERSE.find(s => s.ticker.toLowerCase() === searchLower))
+  // Determine if a searched ticker can be added to watchlist
+  const searchedItem = searchLower.length >= 2
+    ? liveResults.find(s => s.ticker.toLowerCase() === searchLower)
     : null;
-  const canAddFmpToWatchlist = searchedFmpItem && !watchlist.includes(searchedFmpItem.ticker) && !allKnownTickers.has(searchedFmpItem.ticker);
+  const canAddToWatchlist = searchedItem && !watchlist.includes(searchedItem.ticker) && !allKnownTickers.has(searchedItem.ticker);
 
   return (
     <div className="h-full flex flex-col text-[10px] font-mono">
@@ -571,19 +485,19 @@ function SecurityListPanel({
         )}
       </div>
 
-      {/* ADD TO WATCHLIST button for FMP results */}
-      {canAddFmpToWatchlist && (
+      {/* ADD TO WATCHLIST button for search results */}
+      {canAddToWatchlist && (
         <div className="px-2 py-1 border-b border-terminal-border/30 flex-shrink-0 bg-[#bc8cff]/5">
           <button
             onClick={() => {
-              onAddToWatchlist(searchedFmpItem!.ticker);
+              onAddToWatchlist(searchedItem!.ticker);
               setSearch("");
             }}
             data-testid="button-add-to-watchlist"
             className="w-full flex items-center justify-center gap-1.5 py-1 rounded text-[9px] font-semibold transition-colors bg-[#bc8cff]/15 text-[#bc8cff] border border-[#bc8cff]/30 hover:bg-[#bc8cff]/25"
           >
             <GlobeIcon />
-            ADD FMP "{searchedFmpItem!.ticker}" TO WATCHLIST
+            ADD "{searchedItem!.ticker}" TO WATCHLIST
           </button>
         </div>
       )}
@@ -609,6 +523,11 @@ function SecurityListPanel({
             <span className="text-terminal-text-faint ml-1">({filteredHoldings.length})</span>
             <span className="ml-auto">{holdingsCollapsed ? "▶" : "▼"}</span>
           </button>
+          {!holdingsCollapsed && filteredHoldings.length === 0 && (
+            <div className="px-2 py-2 text-[9px] text-terminal-text-faint italic">
+              {searchLower ? `No holdings match "${search}"` : "No positions"}
+            </div>
+          )}
           {!holdingsCollapsed && filteredHoldings.map(item => (
             <div key={item.ticker} onClick={() => onSelect(item.ticker)}
               data-testid={`security-row-${item.ticker}`}
@@ -625,9 +544,6 @@ function SecurityListPanel({
               <span className="w-[52px] text-right font-mono text-[9px] text-terminal-text-faint tabular-nums">{item.vol}</span>
             </div>
           ))}
-          {!holdingsCollapsed && filteredHoldings.length === 0 && (
-            <div className="px-2 py-2 text-[9px] text-terminal-text-faint italic">No holdings match "{search}"</div>
-          )}
         </div>
 
         {/* ── WATCHLIST Section ── */}
@@ -642,6 +558,11 @@ function SecurityListPanel({
             <span className="text-terminal-text-faint ml-1">({filteredWatch.length})</span>
             <span className="ml-auto">{watchlistCollapsed ? "▶" : "▼"}</span>
           </button>
+          {!watchlistCollapsed && filteredWatch.length === 0 && (
+            <div className="px-2 py-2 text-[9px] text-terminal-text-faint italic">
+              {searchLower ? `No watchlist items match "${search}"` : "Add tickers by searching above"}
+            </div>
+          )}
           {!watchlistCollapsed && filteredWatch.map(item => (
             <div key={item.ticker} onClick={() => onSelect(item.ticker)}
               data-testid={`security-row-${item.ticker}`}
@@ -651,49 +572,43 @@ function SecurityListPanel({
             >
               <EyeIcon />
               <span className={`w-[50px] ml-1 font-semibold text-[10px] ${item.ticker === selected ? "text-[#58a6ff]" : "text-terminal-text-primary"}`}>{item.ticker}</span>
-              <span className="flex-1 text-right font-mono text-[10px] tabular-nums">{item.price.toFixed(2)}</span>
+              <span className="flex-1 text-right font-mono text-[10px] tabular-nums">{item.price > 0 ? item.price.toFixed(2) : "—"}</span>
               <span className={`w-[58px] text-right font-mono text-[10px] tabular-nums ${item.chg >= 0 ? "text-terminal-positive" : "text-terminal-negative"}`}>
-                {item.pct >= 0 ? "+" : ""}{item.pct.toFixed(2)}%
+                {item.price > 0 ? `${item.pct >= 0 ? "+" : ""}${item.pct.toFixed(2)}%` : "—"}
               </span>
               <span className="w-[52px] text-right font-mono text-[9px] text-terminal-text-faint tabular-nums">{item.vol}</span>
             </div>
           ))}
-          {!watchlistCollapsed && filteredWatch.length === 0 && (
-            <div className="px-2 py-2 text-[9px] text-terminal-text-faint italic">No watchlist items match "{search}"</div>
-          )}
         </div>
 
-        {/* ── FMP UNIVERSE Section ── (shown when searching) */}
-        {showFmpSection && (
+        {/* ── SEARCH RESULTS Section ── (shown when searching) */}
+        {showSearchSection && (
           <div>
             <button
-              onClick={() => setFmpCollapsed(c => !c)}
-              data-testid="button-collapse-fmp"
+              onClick={() => setSearchCollapsed(c => !c)}
+              data-testid="button-collapse-search"
               className="w-full flex items-center gap-1.5 px-2 py-1 bg-terminal-bg/60 hover:bg-terminal-bg/80 transition-colors border-b border-terminal-border/40 text-[8px] text-terminal-text-faint uppercase tracking-wider select-none"
             >
               <GlobeIcon />
-              <span style={{ color: "#bc8cff" }} className="font-semibold">FMP UNIVERSE</span>
-              <span className="ml-1 px-1 py-0.5 rounded text-[6px] font-bold bg-[#bc8cff]/15 text-[#bc8cff] border border-[#bc8cff]/30">FMP</span>
-              <span className="text-terminal-text-faint ml-1">({filteredFmp.length})</span>
-              <span className="ml-auto">{fmpCollapsed ? "▶" : "▼"}</span>
+              <span style={{ color: "#bc8cff" }} className="font-semibold">SEARCH RESULTS</span>
+              {searching && <span className="ml-1 text-[7px] text-terminal-text-faint">searching...</span>}
+              <span className="text-terminal-text-faint ml-1">({filteredSearch.length})</span>
+              <span className="ml-auto">{searchCollapsed ? "▶" : "▼"}</span>
             </button>
-            {!fmpCollapsed && filteredFmp.length === 0 && (
-              <div className="px-2 py-2 text-[9px] text-terminal-text-faint italic">No FMP results for "{search}"</div>
+            {!searchCollapsed && filteredSearch.length === 0 && !searching && (
+              <div className="px-2 py-2 text-[9px] text-terminal-text-faint italic">No results for "{search}"</div>
             )}
-            {!fmpCollapsed && filteredFmp.slice(0, 20).map(item => (
+            {!searchCollapsed && filteredSearch.slice(0, 20).map(item => (
               <div key={item.ticker} onClick={() => onSelect(item.ticker)}
-                data-testid={`fmp-row-${item.ticker}`}
+                data-testid={`search-row-${item.ticker}`}
                 className={`flex items-center px-2 py-1 cursor-pointer border-b border-terminal-border/10 hover:bg-white/[0.02] ${
                   item.ticker === selected ? "bg-[#bc8cff]/5 border-l-2 border-l-[#bc8cff]" : ""
                 }`}
               >
                 <GlobeIcon />
                 <span className={`w-[50px] ml-1 font-semibold text-[10px] ${item.ticker === selected ? "text-[#bc8cff]" : "text-terminal-text-primary"}`}>{item.ticker}</span>
-                <span className="flex-1 text-right font-mono text-[10px] tabular-nums">{item.price.toFixed(2)}</span>
-                <span className={`w-[58px] text-right font-mono text-[10px] tabular-nums ${item.chg >= 0 ? "text-terminal-positive" : "text-terminal-negative"}`}>
-                  {item.pct >= 0 ? "+" : ""}{item.pct.toFixed(2)}%
-                </span>
-                <span className="ml-1 px-0.5 py-0.5 text-[6px] font-bold text-[#bc8cff] bg-[#bc8cff]/10 rounded flex-shrink-0">FMP</span>
+                <span className="flex-1 text-right font-mono text-[10px] tabular-nums text-terminal-text-faint">{item.name ? item.name.slice(0, 14) : "—"}</span>
+                <span className="w-[58px] text-right font-mono text-[9px] text-terminal-text-faint">{item.mktCap}</span>
               </div>
             ))}
           </div>
@@ -725,14 +640,7 @@ function Screener() {
               score: s.quality_tier ?? "?",
             };
           })
-        : SCREENER_RESULTS.map((s) => ({
-            ticker: s.ticker,
-            name: s.name,
-            sector: s.sector,
-            pe: s.pe,
-            signal: s.signal,
-            score: String(s.score),
-          }));
+        : [];
 
     if (!filter.trim()) return source;
     const f = filter.toLowerCase();
@@ -760,6 +668,9 @@ function Screener() {
         <span className="w-[35px] text-right">Score</span>
       </div>
       <div className="flex-1 overflow-auto">
+        {rows.length === 0 && (
+          <div className="flex items-center justify-center h-20 text-[9px] text-terminal-text-faint font-mono italic">Waiting for data...</div>
+        )}
         {rows.map((s) => (
           <div key={s.ticker} className="flex items-center px-2 py-1.5 border-b border-terminal-border/10 hover:bg-white/[0.02]">
             <span className="w-[50px] text-terminal-accent font-semibold">{s.ticker}</span>
@@ -924,13 +835,11 @@ function CommandLine() {
 function AssetDetailPanel({
   selectedTicker,
   selectedData,
-  isFmpResult,
   extraWatchlist,
   onAddToWatchlist,
 }: {
   selectedTicker: string;
   selectedData: SecurityItem;
-  isFmpResult: boolean;
   extraWatchlist: string[];
   onAddToWatchlist: (ticker: string) => void;
 }) {
@@ -948,56 +857,57 @@ function AssetDetailPanel({
 
   const fund = fundData?.fundamentals ?? {};
 
-  // Live price values — fall back to selectedData if API unavailable
+  // Live price values from API
   const livePrice = quoteData?.price ?? selectedData.price;
   const liveChange = quoteData?.change ?? selectedData.chg;
   const liveChangePct = quoteData?.change_pct ?? selectedData.pct;
 
-  const pe = fund.pe_ratio ?? fund.pe ?? fund.forwardPE ?? "28.4";
-  const eps = fund.eps ?? fund.epsTrailingTwelveMonths ?? "6.67";
-  const beta = fund.beta ?? "1.24";
-  const divYield = fund.dividend_yield ?? fund.dividendYield
+  const pe = fund.pe_ratio ?? fund.pe ?? fund.forwardPE ?? "—";
+  const eps = fund.eps ?? fund.epsTrailingTwelveMonths ?? "—";
+  const beta = fund.beta ?? "—";
+  const divYield = (fund.dividend_yield ?? fund.dividendYield)
     ? `${((Number(fund.dividend_yield ?? fund.dividendYield)) * 100).toFixed(2)}%`
-    : "0.52%";
-  const high52 = fund.fifty_two_week_high ?? fund.fiftyTwoWeekHigh ?? (+selectedData.price * 1.15).toFixed(2);
-  const low52 = fund.fifty_two_week_low ?? fund.fiftyTwoWeekLow ?? (+selectedData.price * 0.72).toFixed(2);
+    : "—";
+  const high52 = fund.fifty_two_week_high ?? fund.fiftyTwoWeekHigh ?? "—";
+  const low52 = fund.fifty_two_week_low ?? fund.fiftyTwoWeekLow ?? "—";
+
+  const isWatchlisted = extraWatchlist.includes(selectedTicker);
 
   return (
     <div className="p-2 text-[10px] font-mono space-y-2">
       <div className="text-center pb-2 border-b border-terminal-border/30">
         <div className="text-terminal-accent text-sm font-semibold">{selectedData.ticker}</div>
-        <div className="text-xl tabular-nums text-terminal-text-primary">{livePrice.toFixed(2)}</div>
-        <div className={`text-xs tabular-nums ${liveChange >= 0 ? "text-terminal-positive" : "text-terminal-negative"}`}>
-          {liveChange >= 0 ? "+" : ""}{liveChange.toFixed(2)} ({liveChangePct >= 0 ? "+" : ""}{liveChangePct.toFixed(2)}%)
+        <div className="text-xl tabular-nums text-terminal-text-primary">
+          {livePrice > 0 ? livePrice.toFixed(2) : "—"}
         </div>
-        {/* Holding / Watchlist / FMP badge */}
+        {livePrice > 0 && (
+          <div className={`text-xs tabular-nums ${liveChange >= 0 ? "text-terminal-positive" : "text-terminal-negative"}`}>
+            {liveChange >= 0 ? "+" : ""}{liveChange.toFixed(2)} ({liveChangePct >= 0 ? "+" : ""}{liveChangePct.toFixed(2)}%)
+          </div>
+        )}
+        {/* Status badge */}
         <div className="mt-1.5 flex flex-col items-center gap-1.5">
           {selectedData.isHolding ? (
             <span className="px-1.5 py-0.5 rounded text-[7px] font-semibold bg-terminal-accent/15 text-terminal-accent border border-terminal-accent/30">
               ◆ PORTFOLIO HOLDING
             </span>
-          ) : isFmpResult ? (
-            <span className="px-1.5 py-0.5 rounded text-[7px] font-semibold bg-[#bc8cff]/15 text-[#bc8cff] border border-[#bc8cff]/30">
-              ○ FMP UNIVERSE
+          ) : isWatchlisted ? (
+            <span className="px-1.5 py-0.5 rounded text-[7px] font-semibold bg-terminal-accent/15 text-terminal-accent border border-terminal-accent/30">
+              ✓ WATCHLIST
             </span>
           ) : (
-            <span className="px-1.5 py-0.5 rounded text-[7px] font-semibold bg-[#58a6ff]/15 text-[#58a6ff] border border-[#58a6ff]/30">
-              ○ WATCHLIST
-            </span>
-          )}
-          {isFmpResult && !extraWatchlist.includes(selectedTicker) && (
-            <button
-              onClick={() => onAddToWatchlist(selectedTicker)}
-              data-testid="button-add-fmp-to-watchlist"
-              className="flex items-center gap-1 px-2 py-0.5 rounded text-[7px] font-semibold bg-[#bc8cff]/10 text-[#bc8cff] border border-[#bc8cff]/30 hover:bg-[#bc8cff]/20 transition-colors"
-            >
-              + ADD TO WATCHLIST
-            </button>
-          )}
-          {isFmpResult && extraWatchlist.includes(selectedTicker) && (
-            <span className="px-1.5 py-0.5 rounded text-[7px] font-semibold bg-terminal-accent/15 text-terminal-accent border border-terminal-accent/30">
-              ✓ ADDED TO WATCHLIST
-            </span>
+            <>
+              <span className="px-1.5 py-0.5 rounded text-[7px] font-semibold bg-[#58a6ff]/15 text-[#58a6ff] border border-[#58a6ff]/30">
+                ○ SEARCH RESULT
+              </span>
+              <button
+                onClick={() => onAddToWatchlist(selectedTicker)}
+                data-testid="button-add-to-watchlist-detail"
+                className="flex items-center gap-1 px-2 py-0.5 rounded text-[7px] font-semibold bg-[#bc8cff]/10 text-[#bc8cff] border border-[#bc8cff]/30 hover:bg-[#bc8cff]/20 transition-colors"
+              >
+                + ADD TO WATCHLIST
+              </button>
+            </>
           )}
         </div>
       </div>
@@ -1010,8 +920,6 @@ function AssetDetailPanel({
         ["Beta", typeof beta === "number" ? beta.toFixed(2) : String(beta)],
         ["52W High", typeof high52 === "number" ? high52.toFixed(2) : String(high52)],
         ["52W Low", typeof low52 === "number" ? low52.toFixed(2) : String(low52)],
-        ["Avg Vol", "58.2M"],
-        ["Float", "15.2B"],
       ].map(([k, v]) => (
         <div key={k} className="flex justify-between">
           <span className="text-terminal-text-faint">{k}</span>
@@ -1037,12 +945,16 @@ export default function OpenBBTerminal() {
     setExtraWatchlist(prev => prev.includes(ticker) ? prev : [...prev, ticker]);
   }, []);
 
-  // Build the lookup for the asset detail panel — check FMP universe too
-  const selectedData =
-    ALL_SECURITIES.find(x => x.ticker === selectedTicker) ||
-    FMP_UNIVERSE.find(x => x.ticker === selectedTicker) ||
-    ALL_SECURITIES[0];
-  const isFmpResult = !ALL_SECURITIES.find(x => x.ticker === selectedTicker) && !!FMP_UNIVERSE.find(x => x.ticker === selectedTicker);
+  // Minimal fallback selectedData — AssetDetailPanel fetches live data itself
+  const selectedData: SecurityItem = {
+    ticker: selectedTicker,
+    price: 0,
+    chg: 0,
+    pct: 0,
+    vol: "—",
+    mktCap: "—",
+    isHolding: false,
+  };
 
   return (
     <div className="h-full flex flex-col" data-testid="openbb-terminal">
@@ -1057,7 +969,7 @@ export default function OpenBBTerminal() {
           className="h-full"
           headerRight={
             <span className="text-[8px] text-terminal-text-faint font-mono">
-              {ALL_SECURITIES.length + extraWatchlist.length} + {FMP_UNIVERSE.length} FMP
+              {extraWatchlist.length > 0 ? `${extraWatchlist.length} watching` : ""}
             </span>
           }
           noPadding
@@ -1116,7 +1028,6 @@ export default function OpenBBTerminal() {
             <AssetDetailPanel
               selectedTicker={selectedTicker}
               selectedData={selectedData}
-              isFmpResult={isFmpResult}
               extraWatchlist={extraWatchlist}
               onAddToWatchlist={handleAddToWatchlist}
             />
