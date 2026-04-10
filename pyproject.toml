@@ -46,6 +46,8 @@ dependencies = [
     "plotly>=5.0",
     "matplotlib>=3.8",
     "seaborn>=0.13",
+    # Monitoring
+    "prometheus-client>=0.20",
     # Utilities
     "python-dotenv>=1.0",
     "rich>=13.0",

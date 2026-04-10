@@ -30,6 +30,7 @@ from engine.api.routers import (
     monitoring,
     universe,
 )
+from engine.bridges.prometheus_metrics import create_metrics_router
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [API] %(message)s")
 logger = logging.getLogger("metadron-api")
@@ -66,6 +67,11 @@ app.include_router(agents.router, prefix="/api/engine/agents", tags=["Agents"])
 app.include_router(ml.router, prefix="/api/engine/ml", tags=["ML"])
 app.include_router(monitoring.router, prefix="/api/engine/monitoring", tags=["Monitoring"])
 app.include_router(universe.router, prefix="/api/engine/universe", tags=["Universe"])
+
+# ─── Prometheus metrics (scraped by Contabo monitoring stack) ──────
+_metrics_router = create_metrics_router(app)
+if _metrics_router:
+    app.include_router(_metrics_router, prefix="/api/engine", tags=["Metrics"])
 
 
 @app.get("/api/engine/health")

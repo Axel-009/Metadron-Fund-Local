@@ -133,6 +133,118 @@ def _create_metrics(registry: "CollectorRegistry"):
         registry=registry,
     )
 
+    # STRAT engine health gauges (1=healthy, 0=degraded/offline)
+    metrics["strat_engine_health"] = Gauge(
+        "metadron_strat_engine_health",
+        "STRAT engine health (1=healthy, 0=degraded)",
+        ["engine"],
+        registry=registry,
+    )
+
+    # VolatilitySurface metrics
+    metrics["vol_surface_iv"] = Gauge(
+        "metadron_vol_surface_iv",
+        "VolatilitySurface current implied volatility",
+        registry=registry,
+    )
+    metrics["vol_surface_skew"] = Gauge(
+        "metadron_vol_surface_skew",
+        "VolatilitySurface skew value",
+        registry=registry,
+    )
+    metrics["vol_surface_term_structure"] = Gauge(
+        "metadron_vol_surface_term_structure",
+        "VolatilitySurface term-structure slope",
+        registry=registry,
+    )
+
+    # StatArbEngine metrics
+    metrics["stat_arb_pairs_count"] = Gauge(
+        "metadron_stat_arb_pairs_count",
+        "Number of cointegrated pairs tracked by StatArbEngine",
+        registry=registry,
+    )
+    metrics["stat_arb_active_trades"] = Gauge(
+        "metadron_stat_arb_active_trades",
+        "Number of active stat-arb trades",
+        registry=registry,
+    )
+    metrics["stat_arb_portfolio_beta"] = Gauge(
+        "metadron_stat_arb_portfolio_beta",
+        "StatArbEngine portfolio beta",
+        registry=registry,
+    )
+    metrics["stat_arb_mean_zscore"] = Gauge(
+        "metadron_stat_arb_mean_zscore",
+        "Mean z-score across all stat-arb pairs",
+        registry=registry,
+    )
+
+    # MLVoteEnsemble metrics
+    metrics["ml_ensemble_vote_bullish"] = Gauge(
+        "metadron_ml_ensemble_vote_bullish",
+        "MLVoteEnsemble bullish tier count",
+        registry=registry,
+    )
+    metrics["ml_ensemble_vote_bearish"] = Gauge(
+        "metadron_ml_ensemble_vote_bearish",
+        "MLVoteEnsemble bearish tier count",
+        registry=registry,
+    )
+    metrics["ml_ensemble_confidence"] = Gauge(
+        "metadron_ml_ensemble_confidence",
+        "MLVoteEnsemble aggregate confidence score",
+        registry=registry,
+    )
+
+    # DecisionMatrix metrics
+    metrics["decision_matrix_gates_passed"] = Gauge(
+        "metadron_decision_matrix_gates_passed",
+        "DecisionMatrix gates currently passing",
+        registry=registry,
+    )
+    metrics["decision_matrix_gates_total"] = Gauge(
+        "metadron_decision_matrix_gates_total",
+        "DecisionMatrix total configured gates",
+        registry=registry,
+    )
+    metrics["decision_matrix_approval_rate"] = Gauge(
+        "metadron_decision_matrix_approval_rate",
+        "DecisionMatrix trade approval rate (0-1)",
+        registry=registry,
+    )
+    metrics["decision_matrix_evaluations_total"] = Counter(
+        "metadron_decision_matrix_evaluations_total",
+        "Total DecisionMatrix evaluations by result",
+        ["result"],
+        registry=registry,
+    )
+
+    # MetadronCube confidence & sleeve allocation
+    metrics["cube_regime_confidence"] = Gauge(
+        "metadron_cube_regime_confidence",
+        "MetadronCube regime confidence score (0-1)",
+        registry=registry,
+    )
+    metrics["cube_sleeve_weight"] = Gauge(
+        "metadron_cube_sleeve_weight",
+        "MetadronCube sleeve allocation weight",
+        ["sleeve"],
+        registry=registry,
+    )
+
+    # PatternRecognitionEngine metrics
+    metrics["pattern_recognition_patterns_detected"] = Gauge(
+        "metadron_pattern_recognition_patterns_detected",
+        "Number of active patterns detected",
+        registry=registry,
+    )
+    metrics["pattern_recognition_confidence"] = Gauge(
+        "metadron_pattern_recognition_confidence",
+        "Mean pattern recognition confidence",
+        registry=registry,
+    )
+
     # PM2 process metrics
     metrics["pm2_process_memory_bytes"] = Gauge(
         "metadron_pm2_process_memory_bytes",
@@ -190,6 +302,98 @@ def _collect_live_metrics(metrics: dict):
             metrics["cube_signal_score"].set(state.get("liquidity", 0))
     except Exception:
         pass
+
+    # ── STRAT Engine Health Collectors ─────────────────────────────
+
+    # VolatilitySurface
+    try:
+        from engine.execution.options_engine import VolatilitySurface
+        vs = VolatilitySurface()
+        metrics["strat_engine_health"].labels(engine="VolatilitySurface").set(1)
+        # Pull live surface data if available
+        if hasattr(vs, "current_iv"):
+            metrics["vol_surface_iv"].set(vs.current_iv or 0)
+        if hasattr(vs, "skew"):
+            metrics["vol_surface_skew"].set(vs.skew or 0)
+        if hasattr(vs, "term_structure_slope"):
+            metrics["vol_surface_term_structure"].set(vs.term_structure_slope or 0)
+    except Exception:
+        metrics["strat_engine_health"].labels(engine="VolatilitySurface").set(0)
+
+    # StatArbEngine
+    try:
+        from engine.signals.stat_arb_engine import StatArbEngine
+        sa = StatArbEngine()
+        metrics["strat_engine_health"].labels(engine="StatArbEngine").set(1)
+        if hasattr(sa, "pairs") and sa.pairs:
+            metrics["stat_arb_pairs_count"].set(len(sa.pairs))
+            zscores = [p.z_score for p in sa.pairs if hasattr(p, "z_score") and p.z_score is not None]
+            if zscores:
+                metrics["stat_arb_mean_zscore"].set(sum(zscores) / len(zscores))
+        if hasattr(sa, "active_trades"):
+            metrics["stat_arb_active_trades"].set(len(sa.active_trades) if sa.active_trades else 0)
+        if hasattr(sa, "portfolio_beta"):
+            metrics["stat_arb_portfolio_beta"].set(sa.portfolio_beta or 0)
+    except Exception:
+        metrics["strat_engine_health"].labels(engine="StatArbEngine").set(0)
+
+    # MLVoteEnsemble
+    try:
+        from engine.execution.execution_engine import MLVoteEnsemble
+        ens = MLVoteEnsemble()
+        metrics["strat_engine_health"].labels(engine="MLVoteEnsemble").set(1)
+        if hasattr(ens, "tiers") and ens.tiers:
+            bullish = sum(1 for t in ens.tiers if getattr(t, "vote", None) == "BUY")
+            bearish = sum(1 for t in ens.tiers if getattr(t, "vote", None) == "SELL")
+            metrics["ml_ensemble_vote_bullish"].set(bullish)
+            metrics["ml_ensemble_vote_bearish"].set(bearish)
+        if hasattr(ens, "confidence"):
+            metrics["ml_ensemble_confidence"].set(ens.confidence or 0)
+    except Exception:
+        metrics["strat_engine_health"].labels(engine="MLVoteEnsemble").set(0)
+
+    # DecisionMatrix
+    try:
+        from engine.execution.decision_matrix import DecisionMatrix, GATE_CONFIGS
+        dm = DecisionMatrix()
+        metrics["strat_engine_health"].labels(engine="DecisionMatrix").set(1)
+        total_gates = len(GATE_CONFIGS) if GATE_CONFIGS else 6
+        metrics["decision_matrix_gates_total"].set(total_gates)
+        if hasattr(dm, "gates") and dm.gates:
+            passing = sum(1 for g in dm.gates if getattr(g, "passing", False))
+            metrics["decision_matrix_gates_passed"].set(passing)
+            metrics["decision_matrix_approval_rate"].set(passing / total_gates if total_gates else 0)
+    except Exception:
+        metrics["strat_engine_health"].labels(engine="DecisionMatrix").set(0)
+
+    # MetadronCube extended — confidence + sleeve weights
+    try:
+        cache_path2 = Path(__file__).resolve().parent.parent.parent / "data" / "cube_state_cache.json"
+        if cache_path2.exists():
+            with open(cache_path2) as f2:
+                cs = json.load(f2)
+            metrics["cube_regime_confidence"].set(cs.get("confidence", cs.get("liquidity", 0)))
+            sleeves = cs.get("sleeves", cs.get("sleeve_allocation", {}))
+            if isinstance(sleeves, dict):
+                for name, weight in sleeves.items():
+                    metrics["cube_sleeve_weight"].labels(sleeve=name).set(weight or 0)
+        metrics["strat_engine_health"].labels(engine="MetadronCube").set(1)
+    except Exception:
+        metrics["strat_engine_health"].labels(engine="MetadronCube").set(0)
+
+    # PatternRecognitionEngine
+    try:
+        from engine.signals.pattern_recognition import PatternRecognitionEngine
+        pre = PatternRecognitionEngine()
+        metrics["strat_engine_health"].labels(engine="PatternRecognition").set(1)
+        if hasattr(pre, "detected_patterns"):
+            patterns = pre.detected_patterns or []
+            metrics["pattern_recognition_patterns_detected"].set(len(patterns))
+            if patterns:
+                confs = [p.get("confidence", 0) for p in patterns if isinstance(p, dict)]
+                metrics["pattern_recognition_confidence"].set(sum(confs) / len(confs) if confs else 0)
+    except Exception:
+        metrics["strat_engine_health"].labels(engine="PatternRecognition").set(0)
 
     # PM2 process metrics via /proc or psutil
     try:

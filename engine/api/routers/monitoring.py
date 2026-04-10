@@ -193,7 +193,11 @@ async def engines_health():
             ("L4", "BetaCorridor", "engine.portfolio.beta_corridor"),
             ("L5", "ExecutionEngine", "engine.execution.execution_engine"),
             ("L5", "OptionsEngine", "engine.execution.options_engine"),
+            ("L5", "VolatilitySurface", "engine.execution.options_engine"),
+            ("L5", "DecisionMatrix", "engine.execution.decision_matrix"),
+            ("L5", "MLVoteEnsemble", "engine.execution.execution_engine"),
             ("L6", "ResearchBots", "engine.agents.research_bots"),
+            ("L6", "PatternRecognition", "engine.signals.pattern_recognition"),
             ("L7", "L7Execution", "engine.execution.l7_unified_execution_surface"),
             ("MON", "AnomalyDetector", "engine.monitoring.anomaly_detector"),
         ]
