@@ -53,13 +53,17 @@ async def reports_list():
         reports = []
 
         report_types = [
-            ("platinum", "Platinum Report", "Executive macro state"),
-            ("portfolio", "Portfolio Report", "Performance deep-dive"),
-            ("daily", "Daily Report", "EOD reconciliation"),
-            ("sector", "Sector Report", "Sector performance"),
+            ("platinum", "Platinum Report", "Comprehensive portfolio overview with attribution analysis and risk decomposition for C-suite stakeholders.", "Executive"),
+            ("daily", "Daily P&L Report", "Detailed daily profit & loss breakdown by strategy, sector, and individual position.", "Operations"),
+            ("portfolio", "Portfolio Analytics", "Factor exposure analysis, correlation matrices, and regime classification report.", "Research"),
+            ("risk", "Risk Dashboard", "VaR analysis, stress test results, Greeks exposure, and liquidity risk assessment.", "Risk"),
+            ("execution", "Execution Quality", "Trade execution analysis: slippage, fill rates, market impact, and broker comparison.", "Trading"),
+            ("investor", "Monthly Investor", "Monthly performance letter with NAV history, benchmark comparison, and market outlook.", "Investor"),
+            ("compliance", "Compliance Report", "Regulatory compliance checks, position limits, and concentration risk analysis.", "Compliance"),
+            ("ml-model", "ML Model Report", "Model performance metrics, feature importance, and prediction accuracy analysis.", "Research"),
         ]
 
-        for folder, name, desc in report_types:
+        for folder, name, desc, rtype in report_types:
             report_dir = logs_dir / folder
             last_file = None
             last_time = None
@@ -75,6 +79,7 @@ async def reports_list():
             reports.append({
                 "id": folder,
                 "name": name,
+                "type": rtype,
                 "description": desc,
                 "last_generated": last_time,
                 "last_file": last_file,

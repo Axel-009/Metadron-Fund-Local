@@ -1,16 +1,6 @@
 import { DashboardPanel } from "@/components/dashboard-panel";
 import { useEngineQuery } from "@/hooks/use-engine-api";
-
-const REPORTS = [
-  { name: "Platinum Report", type: "Executive", desc: "Comprehensive portfolio overview with attribution analysis and risk decomposition for C-suite stakeholders.", lastGen: "Apr 01, 2026 — 18:00", status: "ready" },
-  { name: "Daily P&L Report", type: "Operations", desc: "Detailed daily profit & loss breakdown by strategy, sector, and individual position.", lastGen: "Apr 01, 2026 — 16:30", status: "ready" },
-  { name: "Portfolio Analytics", type: "Research", desc: "Factor exposure analysis, correlation matrices, and regime classification report.", lastGen: "Apr 01, 2026 — 16:00", status: "ready" },
-  { name: "Risk Dashboard", type: "Risk", desc: "VaR analysis, stress test results, Greeks exposure, and liquidity risk assessment.", lastGen: "Apr 01, 2026 — 15:00", status: "ready" },
-  { name: "Execution Quality", type: "Trading", desc: "Trade execution analysis: slippage, fill rates, market impact, and broker comparison.", lastGen: "Apr 01, 2026 — 14:00", status: "ready" },
-  { name: "Monthly Investor", type: "Investor", desc: "Monthly performance letter with NAV history, benchmark comparison, and market outlook.", lastGen: "Mar 31, 2026 — 20:00", status: "ready" },
-  { name: "Compliance Report", type: "Compliance", desc: "Regulatory compliance checks, position limits, and concentration risk analysis.", lastGen: "Apr 01, 2026 — 12:00", status: "generating" },
-  { name: "ML Model Report", type: "Research", desc: "Model performance metrics, feature importance, and prediction accuracy analysis.", lastGen: "Apr 01, 2026 — 10:00", status: "ready" },
-];
+import { useMemo } from "react";
 
 const TYPE_COLORS: Record<string, string> = {
   Executive: "text-terminal-accent bg-terminal-accent/10",
@@ -23,22 +13,26 @@ const TYPE_COLORS: Record<string, string> = {
 };
 
 export default function Reporting() {
-  const { data: reportsApi } = useEngineQuery<{ reports: Array<{ id: string; name: string; description: string; last_generated: string | null; status: string }> }>("/monitoring/reports/list", { refetchInterval: 30000 });
+  const { data: reportsApi } = useEngineQuery<{ reports: Array<{ id: string; name: string; type?: string; description: string; last_generated: string | null; status: string }> }>("/monitoring/reports/list", { refetchInterval: 30000 });
 
-  const reports = reportsApi?.reports?.length
-    ? reportsApi.reports.map((r) => ({
-        name: r.name,
-        type: r.id === "platinum" ? "Executive" : r.id === "portfolio" ? "Research" : r.id === "daily" ? "Operations" : "Risk",
-        desc: r.description,
-        lastGen: r.last_generated || "Not generated",
-        status: r.status === "ready" ? "ready" : "generating",
-      }))
-    : REPORTS;
+  const reports = useMemo(() => {
+    if (!reportsApi?.reports?.length) return [];
+    return reportsApi.reports.map((r) => ({
+      name: r.name,
+      type: r.type || "Research",
+      desc: r.description,
+      lastGen: r.last_generated || "Not generated",
+      status: r.status === "ready" ? "ready" as const : "generating" as const,
+    }));
+  }, [reportsApi]);
 
   return (
     <div className="h-full p-[2px] overflow-auto" data-testid="reporting">
       <DashboardPanel title="REPORT CENTER" className="h-full">
         <div className="grid grid-cols-2 gap-3">
+          {reports.length === 0 && (
+            <div className="col-span-2 py-12 text-center text-terminal-text-faint text-xs font-mono">Waiting for report data…</div>
+          )}
           {reports.map((r, i) => (
             <div key={i} className="border border-terminal-border rounded p-3 hover:border-terminal-accent/30 transition-colors">
               <div className="flex items-start justify-between mb-2">
