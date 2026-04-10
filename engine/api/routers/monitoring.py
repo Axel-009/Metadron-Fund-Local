@@ -201,6 +201,13 @@ async def engines_health():
             ("L7", "L7Execution", "engine.execution.l7_unified_execution_surface"),
             ("L4", "FuturesEngine", "engine.api.routers.futures"),
             ("L5", "TCAEngine", "engine.execution.tca_engine"),
+            ("L6", "AgentScorecard", "engine.agents.agent_scorecard"),
+            ("L6", "AgentMonitor", "engine.agents.agent_monitor"),
+            ("L6", "PaulOrchestrator", "engine.agents.paul_orchestrator"),
+            ("L6", "EnforcementEngine", "engine.agents.enforcement_engine"),
+            ("L6", "DynamicAgentFactory", "engine.agents.dynamic_agent_factory"),
+            ("L6", "SectorBots", "engine.agents.sector_bots"),
+            ("L6", "InvestorPersonas", "engine.agents.investor_personas"),
             ("MON", "AnomalyDetector", "engine.monitoring.anomaly_detector"),
         ]
 

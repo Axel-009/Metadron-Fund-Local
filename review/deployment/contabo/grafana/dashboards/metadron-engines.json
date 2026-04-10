@@ -2424,6 +2424,422 @@
         }
       ],
       "options": {}
+    },
+    {
+      "id": 740,
+      "type": "row",
+      "title": "Agent Intelligence System",
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 103
+      },
+      "collapsed": false,
+      "panels": []
+    },
+    {
+      "id": 741,
+      "type": "gauge",
+      "title": "Agents: Total Count",
+      "gridPos": {
+        "h": 4,
+        "w": 4,
+        "x": 0,
+        "y": 104
+      },
+      "targets": [
+        {
+          "expr": "metadron_agents_total",
+          "legendFormat": "Total"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "thresholds"
+          },
+          "thresholds": {
+            "steps": [
+              {
+                "color": "red",
+                "value": null
+              },
+              {
+                "color": "yellow",
+                "value": 10
+              },
+              {
+                "color": "green",
+                "value": 20
+              }
+            ]
+          },
+          "max": 30
+        }
+      }
+    },
+    {
+      "id": 742,
+      "type": "gauge",
+      "title": "Agents: Active",
+      "gridPos": {
+        "h": 4,
+        "w": 4,
+        "x": 4,
+        "y": 104
+      },
+      "targets": [
+        {
+          "expr": "metadron_agents_active",
+          "legendFormat": "Active"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "thresholds"
+          },
+          "thresholds": {
+            "steps": [
+              {
+                "color": "red",
+                "value": null
+              },
+              {
+                "color": "yellow",
+                "value": 10
+              },
+              {
+                "color": "green",
+                "value": 20
+              }
+            ]
+          },
+          "max": 30
+        }
+      }
+    },
+    {
+      "id": 743,
+      "type": "gauge",
+      "title": "Agents: Avg Accuracy",
+      "gridPos": {
+        "h": 4,
+        "w": 4,
+        "x": 8,
+        "y": 104
+      },
+      "targets": [
+        {
+          "expr": "metadron_agents_avg_accuracy",
+          "legendFormat": "Accuracy"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit",
+          "color": {
+            "mode": "thresholds"
+          },
+          "thresholds": {
+            "steps": [
+              {
+                "color": "red",
+                "value": null
+              },
+              {
+                "color": "yellow",
+                "value": 0.5
+              },
+              {
+                "color": "green",
+                "value": 0.7
+              }
+            ]
+          },
+          "max": 1
+        }
+      }
+    },
+    {
+      "id": 744,
+      "type": "gauge",
+      "title": "Agents: Avg Sharpe",
+      "gridPos": {
+        "h": 4,
+        "w": 4,
+        "x": 12,
+        "y": 104
+      },
+      "targets": [
+        {
+          "expr": "metadron_agents_avg_sharpe",
+          "legendFormat": "Sharpe"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "thresholds"
+          },
+          "thresholds": {
+            "steps": [
+              {
+                "color": "red",
+                "value": null
+              },
+              {
+                "color": "yellow",
+                "value": 1.0
+              },
+              {
+                "color": "green",
+                "value": 2.0
+              }
+            ]
+          },
+          "max": 4
+        }
+      }
+    },
+    {
+      "id": 745,
+      "type": "gauge",
+      "title": "Agents: Bull Consensus %",
+      "gridPos": {
+        "h": 4,
+        "w": 4,
+        "x": 16,
+        "y": 104
+      },
+      "targets": [
+        {
+          "expr": "metadron_agents_consensus_bull_pct",
+          "legendFormat": "Bull %"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percent",
+          "color": {
+            "mode": "thresholds"
+          },
+          "thresholds": {
+            "steps": [
+              {
+                "color": "red",
+                "value": null
+              },
+              {
+                "color": "yellow",
+                "value": 30
+              },
+              {
+                "color": "green",
+                "value": 50
+              }
+            ]
+          },
+          "max": 100
+        }
+      }
+    },
+    {
+      "id": 746,
+      "type": "gauge",
+      "title": "Agents: Avg Composite Score",
+      "gridPos": {
+        "h": 4,
+        "w": 4,
+        "x": 20,
+        "y": 104
+      },
+      "targets": [
+        {
+          "expr": "metadron_agents_avg_composite",
+          "legendFormat": "Composite"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "thresholds"
+          },
+          "thresholds": {
+            "steps": [
+              {
+                "color": "red",
+                "value": null
+              },
+              {
+                "color": "yellow",
+                "value": 0.3
+              },
+              {
+                "color": "green",
+                "value": 0.6
+              }
+            ]
+          },
+          "max": 1
+        }
+      }
+    },
+    {
+      "id": 747,
+      "type": "barchart",
+      "title": "Agents: Tier Distribution",
+      "gridPos": {
+        "h": 6,
+        "w": 8,
+        "x": 0,
+        "y": 108
+      },
+      "targets": [
+        {
+          "expr": "metadron_agents_by_tier",
+          "legendFormat": "{{tier}}"
+        }
+      ],
+      "options": {
+        "orientation": "horizontal"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          }
+        }
+      }
+    },
+    {
+      "id": 748,
+      "type": "timeseries",
+      "title": "Agents: Herding & Concentration Risk",
+      "gridPos": {
+        "h": 6,
+        "w": 8,
+        "x": 8,
+        "y": 108
+      },
+      "targets": [
+        {
+          "expr": "metadron_agents_herding_risk",
+          "legendFormat": "Herding Risk"
+        },
+        {
+          "expr": "metadron_agents_concentration_risk",
+          "legendFormat": "Concentration Risk"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "fillOpacity": 10
+          }
+        }
+      }
+    },
+    {
+      "id": 749,
+      "type": "timeseries",
+      "title": "Agents: Gradient Alignment & Total Signals",
+      "gridPos": {
+        "h": 6,
+        "w": 8,
+        "x": 16,
+        "y": 108
+      },
+      "targets": [
+        {
+          "expr": "metadron_agents_gradient_alignment",
+          "legendFormat": "Gradient Alignment"
+        },
+        {
+          "expr": "rate(metadron_agents_total_signals[5m])",
+          "legendFormat": "Signals/5m"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "fillOpacity": 10
+          }
+        }
+      }
+    },
+    {
+      "id": 750,
+      "type": "timeseries",
+      "title": "Agents: Enforcement Events Rate",
+      "gridPos": {
+        "h": 6,
+        "w": 12,
+        "x": 0,
+        "y": 114
+      },
+      "targets": [
+        {
+          "expr": "rate(metadron_agents_enforcement_events{severity=\"INFO\"}[5m])",
+          "legendFormat": "INFO"
+        },
+        {
+          "expr": "rate(metadron_agents_enforcement_events{severity=\"WARNING\"}[5m])",
+          "legendFormat": "WARNING"
+        },
+        {
+          "expr": "rate(metadron_agents_enforcement_events{severity=\"CRITICAL\"}[5m])",
+          "legendFormat": "CRITICAL"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "fillOpacity": 15
+          }
+        }
+      }
+    },
+    {
+      "id": 751,
+      "type": "timeseries",
+      "title": "Agents: Accuracy & Sharpe Trend",
+      "gridPos": {
+        "h": 6,
+        "w": 12,
+        "x": 12,
+        "y": 114
+      },
+      "targets": [
+        {
+          "expr": "metadron_agents_avg_accuracy",
+          "legendFormat": "Avg Accuracy"
+        },
+        {
+          "expr": "metadron_agents_avg_sharpe",
+          "legendFormat": "Avg Sharpe"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "fillOpacity": 10
+          }
+        }
+      }
     }
   ],
   "refresh": "10s",

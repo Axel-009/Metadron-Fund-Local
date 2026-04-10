@@ -391,6 +391,70 @@ def _create_metrics(registry: "CollectorRegistry"):
         registry=registry,
     )
 
+    # ─── Agent System Metrics ─────────────────────────────────────
+    metrics["agents_total"] = Gauge(
+        "metadron_agents_total",
+        "Total number of agents in the scorecard",
+        registry=registry,
+    )
+    metrics["agents_active"] = Gauge(
+        "metadron_agents_active",
+        "Number of active agents",
+        registry=registry,
+    )
+    metrics["agents_by_tier"] = Gauge(
+        "metadron_agents_by_tier",
+        "Agent count per tier",
+        ["tier"],
+        registry=registry,
+    )
+    metrics["agents_avg_accuracy"] = Gauge(
+        "metadron_agents_avg_accuracy",
+        "Average accuracy across all agents",
+        registry=registry,
+    )
+    metrics["agents_avg_sharpe"] = Gauge(
+        "metadron_agents_avg_sharpe",
+        "Average Sharpe ratio across all agents",
+        registry=registry,
+    )
+    metrics["agents_avg_composite"] = Gauge(
+        "metadron_agents_avg_composite",
+        "Average composite score across all agents",
+        registry=registry,
+    )
+    metrics["agents_total_signals"] = Counter(
+        "metadron_agents_total_signals",
+        "Total signals generated across all agents",
+        registry=registry,
+    )
+    metrics["agents_consensus_bull_pct"] = Gauge(
+        "metadron_agents_consensus_bull_pct",
+        "Bull consensus percentage across agent fleet",
+        registry=registry,
+    )
+    metrics["agents_herding_risk"] = Gauge(
+        "metadron_agents_herding_risk",
+        "Collective herding risk from enforcement engine",
+        registry=registry,
+    )
+    metrics["agents_concentration_risk"] = Gauge(
+        "metadron_agents_concentration_risk",
+        "Concentration risk from enforcement engine",
+        registry=registry,
+    )
+    metrics["agents_gradient_alignment"] = Gauge(
+        "metadron_agents_gradient_alignment",
+        "Cross-engine gradient alignment score",
+        registry=registry,
+    )
+    metrics["agents_enforcement_events"] = Counter(
+        "metadron_agents_enforcement_events",
+        "Total enforcement events by severity",
+        ["severity"],
+        registry=registry,
+    )
+
     return metrics
 
 
