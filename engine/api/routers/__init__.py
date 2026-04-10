@@ -11,6 +11,8 @@ from engine.api.routers import (
     universe,
     futures,
     fixed_income,
+    archive,
+    backtest,
 )
 
 __all__ = [
@@ -26,4 +28,6 @@ __all__ = [
     "universe",
     "futures",
     "fixed_income",
+    "archive",
+    "backtest",
 ]

@@ -602,6 +602,35 @@ def _create_metrics(registry: "CollectorRegistry"):
         registry=registry,
     )
 
+    # ─── Archive Metrics ─────────────────────────────────────
+    metrics["archive_files_today"] = Gauge(
+        "metadron_archive_files_today",
+        "Files archived today",
+        registry=registry,
+    )
+    metrics["archive_total_files"] = Gauge(
+        "metadron_archive_total_files",
+        "Total archived files",
+        registry=registry,
+    )
+
+    # ─── Backtest Metrics ────────────────────────────────────
+    metrics["backtest_opportunities"] = Gauge(
+        "metadron_backtest_opportunities",
+        "Backtest opportunities found",
+        registry=registry,
+    )
+    metrics["backtest_high_conviction"] = Gauge(
+        "metadron_backtest_high_conviction",
+        "High conviction signals",
+        registry=registry,
+    )
+    metrics["backtest_last_run"] = Gauge(
+        "metadron_backtest_last_run",
+        "Last backtest run timestamp",
+        registry=registry,
+    )
+
     return metrics
 
 
@@ -1160,6 +1189,40 @@ def _collect_live_metrics(metrics: dict):
                 side_counts = Counter(str(t.get("side", "UNKNOWN")).upper() for t in trades)
                 for side_name in ["BUY", "SELL", "SHORT", "COVER"]:
                     metrics["txlog_orders_by_side"].labels(side=side_name).set(side_counts.get(side_name, 0))
+    except Exception:
+        pass
+
+    # ── Archive Metrics ───────────────────────────────────────
+    try:
+        from engine.ops.archive_engine import ArchiveEngine, ARCHIVE_DIR
+        from datetime import date as _date
+        today = _date.today()
+        today_dir = ARCHIVE_DIR / str(today.year) / f"{today.month:02d}" / f"{today.day:02d}"
+        if today_dir.exists():
+            metrics["archive_files_today"].set(len(list(today_dir.iterdir())))
+        total = sum(1 for _ in ARCHIVE_DIR.rglob("*.json")) if ARCHIVE_DIR.exists() else 0
+        metrics["archive_total_files"].set(total)
+    except Exception:
+        pass
+
+    # ── Backtest Metrics ──────────────────────────────────────
+    try:
+        from engine.ml.evening_backtester import EveningBacktester, BACKTEST_DIR
+        import json as _json
+        files = sorted(BACKTEST_DIR.glob("*_evening.json"), reverse=True) if BACKTEST_DIR.exists() else []
+        if files:
+            data = _json.loads(files[0].read_text())
+            summary = data.get("summary", {})
+            metrics["backtest_opportunities"].set(summary.get("total_opportunities", 0))
+            metrics["backtest_high_conviction"].set(summary.get("high_conviction", 0))
+            gen_at = data.get("generated_at", "")
+            if gen_at:
+                try:
+                    from datetime import datetime as _dt
+                    ts = _dt.fromisoformat(gen_at).timestamp()
+                    metrics["backtest_last_run"].set(ts)
+                except Exception:
+                    pass
     except Exception:
         pass
 

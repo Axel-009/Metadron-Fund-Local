@@ -1544,11 +1544,47 @@ Replaces `genChartData()` function that used `Math.random()` for chart generatio
 - alpha_optimizer.py: XGBoost + Ridge pipeline ✓
 - model_evaluator.py: Sharpe, sortino, max drawdown, win rate metrics ✓
 
+### Tab 24: Archive ← WIRED
+- **ArchiveEngine** (`engine/ops/archive_engine.py`): 5 collectors (broker trades, tech/system, errors, TX logs, patterns)
+  - Archives to `logs/archive/YYYY/MM/DD/` with dated folder structure
+  - Methods: archive_daily(), get_archive_dates(), get_archive_by_date(), get_archive_file(), get_archive_summary()
+- **DailySummaryGenerator** (`engine/monitoring/daily_summary_generator.py`): One-page daily report
+  - Performance (P&L, cumulative returns, Sharpe, win rate)
+  - NAV (Alpaca equity, Paper broker, NAV delta)
+  - Pricing (SPY/QQQ/IWM/TLT/GLD benchmarks, top holdings)
+  - Risk (VaR 95/99, CVaR, max drawdown, beta, sector concentration)
+  - Outlook (regime, ML consensus, macro indicators, next session signals)
+- **Archive Router** (`engine/api/routers/archive.py`): 7 endpoints
+  - GET /archive/dates, /archive/daily/{date}, /archive/daily/{date}/{filename}
+  - GET /archive/monthly-summary, /archive/daily-summary/{date}, /archive/daily-summary/latest
+  - POST /archive/trigger
+- **Frontend**: Date/month selector, daily summary card, file browser (expandable JSON), monthly summary bar, ARCHIVE NOW button. Zero Math.random().
+
+### Tab 25: Backtesting ← NEW
+- **EveningBacktester** (`engine/ml/evening_backtester.py`): Post-market analysis engine
+  - Mispricing detection: Z-score analysis (>2σ from rolling mean), pairs divergence, fair value model (P/E vs sector, earnings yield vs treasury)
+  - Relative value: Cross-sector RS rankings, momentum-adjusted RV (12-1mo), mean reversion (RSI extremes + Bollinger violations), pairs trading via RV_PAIRS
+  - Correlation analysis: Rolling 30/60/90d matrices, breakdown alerts (pairs >0.8 historical but <0.4 current), regime correlation shifts
+  - Pattern detection: Via PatternRecognitionEngine (technical patterns with confidence + direction)
+  - Strategy backtesting: Walk-forward on identified signals, Sharpe/Sortino/DD/win rate/profit factor, vs buy-and-hold benchmark
+  - Results saved to `logs/backtest/YYYY-MM-DD_evening.json`
+  - Feeds into DecisionMatrix next morning, PatternDiscoveryEngine, risk engine for portfolio construction
+- **Backtest Router** (`engine/api/routers/backtest.py`): 9 endpoints
+  - GET /backtest/latest, /backtest/history, /backtest/date/{date}
+  - GET /backtest/mispricings, /backtest/relative-value, /backtest/correlations, /backtest/patterns, /backtest/opportunities
+  - POST /backtest/trigger
+- **Frontend**: KPI cards, mispricings table, RV table + sector RS, correlation heatmap + breakdown alerts, patterns table, backtest results table, opportunities panel (filterable by source), RUN BACKTEST button. Zero Math.random().
+
+### Tab 26: Money Velocity (moved from Tab 25, content unchanged)
+
+### Prometheus Monitoring Update (33 panels total)
+- 5 new metrics: archive_files_today, archive_total_files, backtest_opportunities, backtest_high_conviction, backtest_last_run
+- 3 new Grafana panels (601-603): Archive Files Today, Backtest Opportunities, High Conviction Signals
+
 ### Remaining (static data needs replacement):
 - Tab 1: Live Dashboard
 - Tab 2: Metadron Cube
 - Tab 3: Market Wrap
 - Tab 7: Tech Dashboard
 - Tab 20: Arbitrage
-- Tab 24: Archive
-- Tab 25: Money Velocity (DO NOT TOUCH)
+- Tab 26: Money Velocity (DO NOT TOUCH)

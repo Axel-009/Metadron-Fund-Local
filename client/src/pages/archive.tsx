@@ -2,211 +2,59 @@ import { useState, useMemo } from "react";
 import { DashboardPanel } from "@/components/dashboard-panel";
 import { useEngineQuery } from "@/hooks/use-engine-api";
 
-// ═══════════ DATA GENERATORS ═══════════
+// ═══════════ TYPES ═══════════
 
-function getDates(count: number): string[] {
-  const dates: string[] = [];
-  const now = new Date();
-  for (let i = count - 1; i >= 0; i--) {
-    const d = new Date(now);
-    d.setDate(d.getDate() - i);
-    dates.push(d.toISOString().slice(0, 10));
-  }
-  return dates;
+interface ArchiveDate {
+  date: string;
+  files_count: number;
+  files: string[];
 }
 
-function generateTxLogs(dates: string[]) {
-  return dates.map((date) => ({
-    date,
-    filename: `TX_LOG_${date}.csv`,
-    records: Math.floor(1200 + Math.random() * 800),
-    size: `${(0.8 + Math.random() * 1.2).toFixed(1)} MB`,
-    status: Math.random() > 0.08 ? "Archived" : "Pending",
-  }));
-}
-
-function generateReconLogs(dates: string[]) {
-  return dates.map((date) => {
-    const matches = Math.floor(900 + Math.random() * 200);
-    const mismatches = Math.floor(Math.random() * 12);
-    return {
-      date,
-      filename: `RECON_${date}.csv`,
-      matches,
-      mismatches,
-      navDelta: `${(Math.random() - 0.5) < 0 ? "-" : "+"}$${(Math.random() * 850).toFixed(2)}`,
-      navNeg: (Math.random() - 0.5) < 0,
-      status: mismatches === 0 ? "Clean" : mismatches < 5 ? "Archived" : "Review",
-    };
-  });
-}
-
-function generateLearningLogs(dates: string[]) {
-  return dates.map((date, i) => {
-    const accDelta = (Math.random() - 0.42) * 0.8;
-    return {
-      date,
-      filename: `LEARNING_${date}.json`,
-      lessons: Math.floor(18 + Math.random() * 45),
-      modelVersion: `v2.${Math.floor(14 + i * 0.1)}.${Math.floor(Math.random() * 9)}`,
-      accDelta: +(accDelta).toFixed(3),
-      status: Math.random() > 0.1 ? "Archived" : "Pending",
-    };
-  });
-}
-
-// ═══════════ STATUS BADGE ═══════════
-
-function StatusBadge({ status }: { status: string }) {
-  const colors: Record<string, string> = {
-    Archived: "text-terminal-positive bg-terminal-positive/10 border-terminal-positive/30",
-    Pending: "text-terminal-warning bg-terminal-warning/10 border-terminal-warning/30",
-    Clean: "text-terminal-accent bg-terminal-accent/10 border-terminal-accent/30",
-    Review: "text-terminal-negative bg-terminal-negative/10 border-terminal-negative/30",
+interface DailySummary {
+  date: string;
+  performance: {
+    daily_pnl: number;
+    realized_pnl: number;
+    unrealized_pnl: number;
+    sharpe_30d: number;
+    win_rate: number;
+    profit_factor: number;
+    total_trades: number;
   };
-  const cls = colors[status] ?? "text-terminal-text-muted bg-terminal-bg border-terminal-border/30";
-  return (
-    <span className={`px-1.5 py-0.5 rounded text-[7px] font-semibold border ${cls}`}>
-      {status.toUpperCase()}
-    </span>
-  );
+  nav: {
+    portfolio_nav: number;
+    paper_nav: number;
+    alpaca_nav: number;
+    nav_delta: number;
+    cash: number;
+  };
+  risk: {
+    var_95: number;
+    var_99: number;
+    cvar_95: number;
+    max_drawdown: number;
+    beta_to_spy: number;
+  };
+  outlook: {
+    regime: string;
+    ml_consensus: string;
+    vix: number;
+    yield_2s10s: number;
+  };
+  pricing: {
+    benchmarks: Record<string, number>;
+  };
+  generated_at: string;
 }
 
-// ═══════════ DOWNLOAD BUTTONS ═══════════
-
-function DownloadButtons() {
-  return (
-    <div className="flex items-center gap-1">
-      <button
-        className="px-1.5 py-0.5 text-[7px] rounded border border-terminal-border/40 text-terminal-text-faint hover:text-terminal-accent hover:border-terminal-accent/40 transition-colors font-mono"
-        title="Download CSV"
-      >
-        CSV
-      </button>
-      <button
-        className="px-1.5 py-0.5 text-[7px] rounded border border-terminal-border/40 text-terminal-text-faint hover:text-terminal-accent hover:border-terminal-accent/40 transition-colors font-mono"
-        title="Download PDF"
-      >
-        PDF
-      </button>
-    </div>
-  );
-}
-
-// ═══════════ SECTION HEADERS ═══════════
-
-function SectionHeader({ cols }: { cols: string[] }) {
-  return (
-    <div className="flex items-center px-2 py-1 text-[8px] text-terminal-text-faint uppercase tracking-wider border-b border-terminal-border/40 flex-shrink-0">
-      {cols.map((c, i) => (
-        <span key={i} className={i === 0 ? "w-[90px]" : i === 1 ? "flex-1" : "w-[80px] text-right"}>{c}</span>
-      ))}
-    </div>
-  );
-}
-
-// ═══════════ TRANSACTION LOG TABLE ═══════════
-
-function TxLogTable({ logs }: { logs: ReturnType<typeof generateTxLogs> }) {
-  return (
-    <div className="flex flex-col h-full">
-      <div className="flex items-center px-2 py-1 text-[8px] text-terminal-text-faint uppercase tracking-wider border-b border-terminal-border/40 flex-shrink-0">
-        <span className="w-[90px]">Date</span>
-        <span className="flex-1">File Name</span>
-        <span className="w-[80px] text-right">Records</span>
-        <span className="w-[70px] text-right">Size</span>
-        <span className="w-[70px] text-right">Status</span>
-        <span className="w-[70px] text-right">Download</span>
-      </div>
-      <div className="flex-1 overflow-auto">
-        {logs.map((log) => (
-          <div
-            key={log.date}
-            className="flex items-center px-2 py-1.5 border-b border-terminal-border/10 hover:bg-white/[0.02] text-[9px] font-mono"
-          >
-            <span className="w-[90px] text-terminal-text-muted">{log.date}</span>
-            <span className="flex-1 text-terminal-accent font-medium pr-2 truncate">{log.filename}</span>
-            <span className="w-[80px] text-right tabular-nums text-terminal-text-primary">{log.records.toLocaleString()}</span>
-            <span className="w-[70px] text-right tabular-nums text-terminal-text-muted">{log.size}</span>
-            <span className="w-[70px] text-right"><StatusBadge status={log.status} /></span>
-            <div className="w-[70px] flex justify-end"><DownloadButtons /></div>
-          </div>
-        ))}
-      </div>
-    </div>
-  );
-}
-
-// ═══════════ RECONCILIATION TABLE ═══════════
-
-function ReconTable({ logs }: { logs: ReturnType<typeof generateReconLogs> }) {
-  return (
-    <div className="flex flex-col h-full">
-      <div className="flex items-center px-2 py-1 text-[8px] text-terminal-text-faint uppercase tracking-wider border-b border-terminal-border/40 flex-shrink-0">
-        <span className="w-[90px]">Date</span>
-        <span className="flex-1">File Name</span>
-        <span className="w-[70px] text-right">Matches</span>
-        <span className="w-[70px] text-right">Mismatches</span>
-        <span className="w-[90px] text-right">NAV Delta</span>
-        <span className="w-[70px] text-right">Status</span>
-      </div>
-      <div className="flex-1 overflow-auto">
-        {logs.map((log) => (
-          <div
-            key={log.date}
-            className="flex items-center px-2 py-1.5 border-b border-terminal-border/10 hover:bg-white/[0.02] text-[9px] font-mono"
-          >
-            <span className="w-[90px] text-terminal-text-muted">{log.date}</span>
-            <span className="flex-1 text-terminal-accent font-medium pr-2 truncate">{log.filename}</span>
-            <span className="w-[70px] text-right tabular-nums text-terminal-positive">{log.matches.toLocaleString()}</span>
-            <span className={`w-[70px] text-right tabular-nums ${log.mismatches > 0 ? "text-terminal-negative" : "text-terminal-text-faint"}`}>
-              {log.mismatches}
-            </span>
-            <span className={`w-[90px] text-right tabular-nums ${log.navNeg ? "text-terminal-negative" : "text-terminal-positive"}`}>
-              {log.navDelta}
-            </span>
-            <span className="w-[70px] text-right"><StatusBadge status={log.status} /></span>
-          </div>
-        ))}
-      </div>
-    </div>
-  );
-}
-
-// ═══════════ LEARNING FILES TABLE ═══════════
-
-function LearningTable({ logs }: { logs: ReturnType<typeof generateLearningLogs> }) {
-  return (
-    <div className="flex flex-col h-full">
-      <div className="flex items-center px-2 py-1 text-[8px] text-terminal-text-faint uppercase tracking-wider border-b border-terminal-border/40 flex-shrink-0">
-        <span className="w-[90px]">Date</span>
-        <span className="flex-1">File Name</span>
-        <span className="w-[70px] text-right">Lessons</span>
-        <span className="w-[80px] text-right">Model Ver</span>
-        <span className="w-[90px] text-right">Acc Delta</span>
-        <span className="w-[70px] text-right">Status</span>
-      </div>
-      <div className="flex-1 overflow-auto">
-        {logs.map((log) => (
-          <div
-            key={log.date}
-            className={`flex items-center px-2 py-1.5 border-b border-terminal-border/10 hover:bg-white/[0.02] text-[9px] font-mono ${
-              log.accDelta > 0 ? "border-l-2 border-l-terminal-positive/30" : log.accDelta < -0.2 ? "border-l-2 border-l-terminal-negative/30" : ""
-            }`}
-          >
-            <span className="w-[90px] text-terminal-text-muted">{log.date}</span>
-            <span className="flex-1 text-terminal-accent font-medium pr-2 truncate">{log.filename}</span>
-            <span className="w-[70px] text-right tabular-nums text-terminal-text-primary">{log.lessons}</span>
-            <span className="w-[80px] text-right tabular-nums text-terminal-text-muted">{log.modelVersion}</span>
-            <span className={`w-[90px] text-right tabular-nums font-semibold ${log.accDelta > 0 ? "text-terminal-positive" : log.accDelta < 0 ? "text-terminal-negative" : "text-terminal-text-muted"}`}>
-              {log.accDelta >= 0 ? "+" : ""}{log.accDelta.toFixed(3)}%
-            </span>
-            <span className="w-[70px] text-right"><StatusBadge status={log.status} /></span>
-          </div>
-        ))}
-      </div>
-    </div>
-  );
+interface MonthlySummary {
+  year: number;
+  month: number;
+  days_archived: number;
+  total_files: number;
+  total_trades: number;
+  total_errors: number;
+  total_patterns: number;
 }
 
 // ═══════════ KPI CARD ═══════════
@@ -221,129 +69,399 @@ function ArchiveKpiCard({ label, value, sub }: { label: string; value: string; s
   );
 }
 
+// ═══════════ DATE SELECTOR ═══════════
+
+function DateSelector({
+  dates,
+  selectedDate,
+  onSelect,
+  selectedYear,
+  selectedMonth,
+  onYearChange,
+  onMonthChange,
+}: {
+  dates: ArchiveDate[];
+  selectedDate: string;
+  onSelect: (d: string) => void;
+  selectedYear: number;
+  selectedMonth: number;
+  onYearChange: (y: number) => void;
+  onMonthChange: (m: number) => void;
+}) {
+  const now = new Date();
+  const years = [now.getFullYear() - 1, now.getFullYear()];
+  const months = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12];
+  const monthNames = ["JAN", "FEB", "MAR", "APR", "MAY", "JUN", "JUL", "AUG", "SEP", "OCT", "NOV", "DEC"];
+
+  return (
+    <div className="flex flex-col gap-1">
+      <div className="flex items-center gap-2">
+        <div className="flex items-center gap-1">
+          {years.map((y) => (
+            <button
+              key={y}
+              onClick={() => onYearChange(y)}
+              className={`px-2 py-0.5 text-[9px] font-mono rounded ${
+                selectedYear === y
+                  ? "bg-terminal-accent/15 text-terminal-accent border border-terminal-accent/40"
+                  : "text-terminal-text-muted border border-terminal-border/30 hover:text-terminal-text-primary"
+              }`}
+            >
+              {y}
+            </button>
+          ))}
+        </div>
+        <div className="w-px h-4 bg-terminal-border/50" />
+        <div className="flex items-center gap-0.5 flex-wrap">
+          {months.map((m) => (
+            <button
+              key={m}
+              onClick={() => onMonthChange(m)}
+              className={`px-1.5 py-0.5 text-[8px] font-mono rounded ${
+                selectedMonth === m
+                  ? "bg-terminal-accent/15 text-terminal-accent border border-terminal-accent/40"
+                  : "text-terminal-text-muted border border-terminal-border/20 hover:text-terminal-text-primary"
+              }`}
+            >
+              {monthNames[m - 1]}
+            </button>
+          ))}
+        </div>
+      </div>
+      <div className="flex items-center gap-1 flex-wrap max-h-[40px] overflow-auto">
+        {dates.length === 0 && (
+          <span className="text-[8px] text-terminal-text-faint font-mono">No archive data for {selectedYear}-{String(selectedMonth).padStart(2, "0")}</span>
+        )}
+        {dates.map((d) => (
+          <button
+            key={d.date}
+            onClick={() => onSelect(d.date)}
+            className={`px-1.5 py-0.5 text-[8px] font-mono rounded ${
+              selectedDate === d.date
+                ? "bg-terminal-accent/15 text-terminal-accent border border-terminal-accent/40"
+                : "text-terminal-text-muted border border-terminal-border/20 hover:text-terminal-text-primary"
+            }`}
+            title={`${d.files_count} files`}
+          >
+            {d.date.slice(8)}
+          </button>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+// ═══════════ DAILY SUMMARY CARD ═══════════
+
+function DailySummaryCard({ summary }: { summary: DailySummary | null }) {
+  if (!summary) {
+    return (
+      <div className="text-[9px] text-terminal-text-faint font-mono p-3">
+        Select a date to view the daily summary report.
+      </div>
+    );
+  }
+
+  const { performance: p, nav, risk, outlook, pricing } = summary;
+
+  return (
+    <div className="grid grid-cols-5 gap-2 p-2 text-[9px] font-mono">
+      {/* Performance */}
+      <div className="flex flex-col gap-1">
+        <div className="text-[8px] text-terminal-accent tracking-wider font-semibold">PERFORMANCE</div>
+        <div className="flex justify-between">
+          <span className="text-terminal-text-faint">Daily P&L</span>
+          <span className={p.daily_pnl >= 0 ? "text-terminal-positive" : "text-terminal-negative"}>
+            ${p.daily_pnl.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+          </span>
+        </div>
+        <div className="flex justify-between">
+          <span className="text-terminal-text-faint">Sharpe 30d</span>
+          <span className="text-terminal-text-primary">{p.sharpe_30d.toFixed(2)}</span>
+        </div>
+        <div className="flex justify-between">
+          <span className="text-terminal-text-faint">Win Rate</span>
+          <span className="text-terminal-text-primary">{(p.win_rate * 100).toFixed(1)}%</span>
+        </div>
+        <div className="flex justify-between">
+          <span className="text-terminal-text-faint">Trades</span>
+          <span className="text-terminal-text-primary">{p.total_trades}</span>
+        </div>
+      </div>
+
+      {/* NAV */}
+      <div className="flex flex-col gap-1">
+        <div className="text-[8px] text-terminal-accent tracking-wider font-semibold">NAV</div>
+        <div className="flex justify-between">
+          <span className="text-terminal-text-faint">Portfolio</span>
+          <span className="text-terminal-text-primary">${nav.portfolio_nav.toLocaleString(undefined, { maximumFractionDigits: 0 })}</span>
+        </div>
+        <div className="flex justify-between">
+          <span className="text-terminal-text-faint">Paper</span>
+          <span className="text-terminal-text-muted">${nav.paper_nav.toLocaleString(undefined, { maximumFractionDigits: 0 })}</span>
+        </div>
+        <div className="flex justify-between">
+          <span className="text-terminal-text-faint">Delta</span>
+          <span className={nav.nav_delta >= 0 ? "text-terminal-positive" : "text-terminal-negative"}>
+            ${nav.nav_delta.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+          </span>
+        </div>
+      </div>
+
+      {/* Pricing */}
+      <div className="flex flex-col gap-1">
+        <div className="text-[8px] text-terminal-accent tracking-wider font-semibold">BENCHMARKS</div>
+        {Object.entries(pricing?.benchmarks || {}).map(([ticker, price]) => (
+          <div key={ticker} className="flex justify-between">
+            <span className="text-terminal-text-faint">{ticker}</span>
+            <span className="text-terminal-text-primary">${(price as number).toFixed(2)}</span>
+          </div>
+        ))}
+        {Object.keys(pricing?.benchmarks || {}).length === 0 && (
+          <span className="text-terminal-text-faint">No data</span>
+        )}
+      </div>
+
+      {/* Risk */}
+      <div className="flex flex-col gap-1">
+        <div className="text-[8px] text-terminal-accent tracking-wider font-semibold">RISK</div>
+        <div className="flex justify-between">
+          <span className="text-terminal-text-faint">VaR 95%</span>
+          <span className="text-terminal-text-primary">{(risk.var_95 * 100).toFixed(2)}%</span>
+        </div>
+        <div className="flex justify-between">
+          <span className="text-terminal-text-faint">CVaR 95%</span>
+          <span className="text-terminal-text-primary">{(risk.cvar_95 * 100).toFixed(2)}%</span>
+        </div>
+        <div className="flex justify-between">
+          <span className="text-terminal-text-faint">Max DD</span>
+          <span className="text-terminal-negative">{(risk.max_drawdown * 100).toFixed(2)}%</span>
+        </div>
+        <div className="flex justify-between">
+          <span className="text-terminal-text-faint">Beta SPY</span>
+          <span className="text-terminal-text-primary">{risk.beta_to_spy.toFixed(2)}</span>
+        </div>
+      </div>
+
+      {/* Outlook */}
+      <div className="flex flex-col gap-1">
+        <div className="text-[8px] text-terminal-accent tracking-wider font-semibold">OUTLOOK</div>
+        <div className="flex justify-between">
+          <span className="text-terminal-text-faint">Regime</span>
+          <span className={
+            outlook.regime === "BULL" ? "text-terminal-positive" :
+            outlook.regime === "BEAR" ? "text-terminal-negative" :
+            "text-terminal-warning"
+          }>{outlook.regime}</span>
+        </div>
+        <div className="flex justify-between">
+          <span className="text-terminal-text-faint">ML</span>
+          <span className="text-terminal-text-primary">{outlook.ml_consensus}</span>
+        </div>
+        <div className="flex justify-between">
+          <span className="text-terminal-text-faint">VIX</span>
+          <span className="text-terminal-text-primary">{outlook.vix.toFixed(1)}</span>
+        </div>
+        <div className="flex justify-between">
+          <span className="text-terminal-text-faint">2s10s</span>
+          <span className="text-terminal-text-primary">{outlook.yield_2s10s.toFixed(2)}</span>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ═══════════ FILE BROWSER ═══════════
+
+function FileBrowser({ files, selectedDate }: { files: Record<string, unknown>; selectedDate: string }) {
+  const [expandedFile, setExpandedFile] = useState<string | null>(null);
+
+  const fileLabels: Record<string, string> = {
+    "broker_trades.json": "Broker Trades",
+    "tech_system.json": "Tech/System Logs",
+    "errors.json": "Error Logs",
+    "transactions.json": "Transaction Log",
+    "patterns.json": "Pattern Recognition",
+    "daily_summary.json": "Daily Summary",
+  };
+
+  const fileEntries = Object.entries(files);
+
+  if (fileEntries.length === 0) {
+    return (
+      <div className="text-[9px] text-terminal-text-faint font-mono p-3">
+        No archive data for {selectedDate}
+      </div>
+    );
+  }
+
+  return (
+    <div className="flex flex-col">
+      {fileEntries.map(([name, content]) => (
+        <div key={name} className="border-b border-terminal-border/10">
+          <button
+            onClick={() => setExpandedFile(expandedFile === name ? null : name)}
+            className="w-full flex items-center gap-2 px-2 py-1.5 hover:bg-white/[0.02] text-[9px] font-mono"
+          >
+            <span className="text-terminal-accent">{expandedFile === name ? "[-]" : "[+]"}</span>
+            <span className="text-terminal-text-primary font-medium">{fileLabels[name] || name}</span>
+            <span className="text-terminal-text-faint ml-auto">{name}</span>
+          </button>
+          {expandedFile === name && (
+            <div className="px-3 py-2 bg-terminal-bg/50 text-[8px] font-mono text-terminal-text-muted max-h-[200px] overflow-auto">
+              <pre className="whitespace-pre-wrap">{JSON.stringify(content, null, 2)}</pre>
+            </div>
+          )}
+        </div>
+      ))}
+    </div>
+  );
+}
+
+// ═══════════ MONTHLY SUMMARY BAR ═══════════
+
+function MonthlySummaryBar({ summary }: { summary: MonthlySummary | null }) {
+  if (!summary) return null;
+
+  return (
+    <div className="flex items-center gap-4 text-[9px] font-mono">
+      <div className="flex items-center gap-1.5">
+        <span className="text-terminal-text-faint">Days Archived:</span>
+        <span className="text-terminal-text-primary font-semibold">{summary.days_archived}</span>
+      </div>
+      <div className="w-px h-3 bg-terminal-border/50" />
+      <div className="flex items-center gap-1.5">
+        <span className="text-terminal-text-faint">Total Files:</span>
+        <span className="text-terminal-text-primary font-semibold">{summary.total_files}</span>
+      </div>
+      <div className="w-px h-3 bg-terminal-border/50" />
+      <div className="flex items-center gap-1.5">
+        <span className="text-terminal-text-faint">Total Trades:</span>
+        <span className="text-terminal-text-primary font-semibold">{summary.total_trades.toLocaleString()}</span>
+      </div>
+      <div className="w-px h-3 bg-terminal-border/50" />
+      <div className="flex items-center gap-1.5">
+        <span className="text-terminal-text-faint">Errors:</span>
+        <span className={summary.total_errors > 0 ? "text-terminal-negative font-semibold" : "text-terminal-text-primary font-semibold"}>
+          {summary.total_errors}
+        </span>
+      </div>
+      <div className="w-px h-3 bg-terminal-border/50" />
+      <div className="flex items-center gap-1.5">
+        <span className="text-terminal-text-faint">Patterns Found:</span>
+        <span className="text-terminal-text-primary font-semibold">{summary.total_patterns}</span>
+      </div>
+    </div>
+  );
+}
+
 // ═══════════ MAIN ARCHIVE PAGE ═══════════
 
 export default function Archive() {
-  // ─── Engine API — real archive files ────────────────
-  const { data: archiveApi } = useEngineQuery<{ files: Array<{ name: string; path: string; size: number; modified: string }> }>("/monitoring/archive/files?folder=logs&limit=100", { refetchInterval: 60000 });
-
+  const now = new Date();
+  const [selectedYear, setSelectedYear] = useState(now.getFullYear());
+  const [selectedMonth, setSelectedMonth] = useState(now.getMonth() + 1);
+  const [selectedDate, setSelectedDate] = useState("");
   const [archiving, setArchiving] = useState(false);
-  const [lastArchived, setLastArchived] = useState("Today");
+  const [archiveStatus, setArchiveStatus] = useState("");
 
-  const dates = useMemo(() => getDates(30), []);
+  // ─── API Queries ───────────────────────────────────
+  const { data: datesData } = useEngineQuery<{ dates: ArchiveDate[]; total: number }>(
+    `/archive/dates?year=${selectedYear}&month=${selectedMonth}`,
+    { refetchInterval: 30000 }
+  );
 
-  // Map API files into the 3 log categories, fall back to generators
-  const txLogs = useMemo(() => {
-    if (!archiveApi?.files?.length) return generateTxLogs(dates);
-    const txFiles = archiveApi.files.filter((f) => f.name.includes("tx") || f.name.includes("trade") || f.name.includes("execution"));
-    if (!txFiles.length) return generateTxLogs(dates);
-    return txFiles.slice(0, 30).map((f) => ({
-      date: f.modified.slice(0, 10),
-      filename: f.name,
-      records: Math.round(f.size / 50),
-      size: `${(f.size / 1024).toFixed(1)} KB`,
-      status: "Archived",
-    }));
-  }, [archiveApi, dates]);
+  const { data: dailyData } = useEngineQuery<{ date: string; files: Record<string, unknown> }>(
+    `/archive/daily/${selectedDate}`,
+    { enabled: !!selectedDate, refetchInterval: false }
+  );
 
-  const reconLogs = useMemo(() => {
-    if (!archiveApi?.files?.length) return generateReconLogs(dates);
-    const reconFiles = archiveApi.files.filter((f) => f.name.includes("recon") || f.name.includes("reconcil"));
-    if (!reconFiles.length) return generateReconLogs(dates);
-    return reconFiles.slice(0, 30).map((f) => ({
-      date: f.modified.slice(0, 10),
-      filename: f.name,
-      matches: Math.round(f.size / 60),
-      mismatches: Math.round(f.size / 500),
-      navDelta: "+0.00%",
-      navNeg: false,
-      status: "Archived",
-    }));
-  }, [archiveApi, dates]);
+  const { data: summaryData } = useEngineQuery<{ date: string; summary: DailySummary }>(
+    `/archive/daily-summary/${selectedDate}`,
+    { enabled: !!selectedDate, refetchInterval: false }
+  );
 
-  const learningLogs = useMemo(() => {
-    if (!archiveApi?.files?.length) return generateLearningLogs(dates);
-    const learnFiles = archiveApi.files.filter((f) => f.name.includes("learn") || f.name.includes("model") || f.name.includes("pattern"));
-    if (!learnFiles.length) return generateLearningLogs(dates);
-    return learnFiles.slice(0, 30).map((f) => ({
-      date: f.modified.slice(0, 10),
-      filename: f.name,
-      lessons: Math.round(f.size / 200),
-      modelVersion: "v3.8",
-      accDelta: 0,
-      status: "Archived",
-    }));
-  }, [archiveApi, dates]);
+  const { data: monthlyData } = useEngineQuery<MonthlySummary>(
+    `/archive/monthly-summary?year=${selectedYear}&month=${selectedMonth}`,
+    { refetchInterval: 60000 }
+  );
 
-  const handleArchiveNow = () => {
+  const dates = useMemo(() => datesData?.dates || [], [datesData]);
+  const dailySummary = summaryData?.summary || null;
+  const files = dailyData?.files || {};
+  const monthly = monthlyData || null;
+
+  const handleArchiveNow = async () => {
     setArchiving(true);
-    setTimeout(() => {
-      setArchiving(false);
-      setLastArchived(new Date().toLocaleTimeString());
-    }, 1500);
+    setArchiveStatus("");
+    try {
+      const res = await fetch("/api/engine/archive/trigger", { method: "POST" });
+      const data = await res.json();
+      if (data.error) {
+        setArchiveStatus(`Error: ${data.error}`);
+      } else {
+        setArchiveStatus(`Archived ${data.files_count || 0} files for ${data.date || "today"}`);
+      }
+    } catch {
+      setArchiveStatus("Archive request failed");
+    }
+    setArchiving(false);
   };
-
-  const totalSize = (txLogs.reduce((s, l) => s + parseFloat(l.size), 0) * 3).toFixed(1);
 
   return (
     <div className="h-full flex flex-col gap-[2px] p-[2px] overflow-hidden" data-testid="archive">
-      {/* Summary KPIs */}
-      <div className="flex gap-[2px] flex-shrink-0 h-[62px]">
-        <ArchiveKpiCard label="Total Archives" value="847" sub="all-time records" />
-        <ArchiveKpiCard label="Storage Used" value={`${totalSize} GB`} sub="across all types" />
-        <ArchiveKpiCard label="Oldest Record" value="Jan 2, 2024" sub="TX_LOG_2024-01-02.csv" />
-        <ArchiveKpiCard label="Last Archive" value={lastArchived} sub="auto-archived" />
-      </div>
+      {/* Date/Month Selector */}
+      <DashboardPanel
+        title="ARCHIVE NAVIGATOR"
+        className="flex-shrink-0"
+        headerRight={
+          <span className="text-[8px] text-terminal-text-faint font-mono">
+            {dates.length} dates available
+          </span>
+        }
+      >
+        <DateSelector
+          dates={dates}
+          selectedDate={selectedDate}
+          onSelect={setSelectedDate}
+          selectedYear={selectedYear}
+          selectedMonth={selectedMonth}
+          onYearChange={setSelectedYear}
+          onMonthChange={setSelectedMonth}
+        />
+      </DashboardPanel>
 
-      {/* Three tables */}
-      <div className="flex flex-col flex-1 gap-[2px] overflow-hidden min-h-0">
-        {/* TX Logs */}
-        <DashboardPanel
-          title="TRANSACTION LOG ARCHIVES"
-          className="flex-1"
-          headerRight={
-            <span className="text-[8px] text-terminal-text-faint font-mono">{txLogs.length} files · {txLogs.filter(l => l.status === "Archived").length} archived</span>
-          }
-          noPadding
-        >
-          <TxLogTable logs={txLogs} />
-        </DashboardPanel>
+      {/* Daily Summary Card */}
+      <DashboardPanel
+        title={`DAILY SUMMARY${selectedDate ? ` — ${selectedDate}` : ""}`}
+        className="flex-shrink-0"
+        headerRight={
+          dailySummary?.generated_at ? (
+            <span className="text-[8px] text-terminal-text-faint font-mono">
+              Generated: {new Date(dailySummary.generated_at).toLocaleString()}
+            </span>
+          ) : undefined
+        }
+        noPadding
+      >
+        <DailySummaryCard summary={dailySummary} />
+      </DashboardPanel>
 
-        {/* Recon Logs */}
-        <DashboardPanel
-          title="RECONCILIATION ARCHIVES"
-          className="flex-1"
-          headerRight={
-            <span className="text-[8px] text-terminal-text-faint font-mono">{reconLogs.length} files · {reconLogs.filter(l => l.status === "Clean").length} clean</span>
-          }
-          noPadding
-        >
-          <ReconTable logs={reconLogs} />
-        </DashboardPanel>
+      {/* File Browser */}
+      <DashboardPanel
+        title={`FILE BROWSER${selectedDate ? ` — ${selectedDate}` : ""}`}
+        className="flex-1 min-h-0"
+        headerRight={
+          <span className="text-[8px] text-terminal-text-faint font-mono">
+            {Object.keys(files).length} files
+          </span>
+        }
+        noPadding
+      >
+        <FileBrowser files={files} selectedDate={selectedDate} />
+      </DashboardPanel>
 
-        {/* Learning Files */}
-        <DashboardPanel
-          title="LEARNING FILES ARCHIVE"
-          className="flex-1"
-          headerRight={
-            <div className="flex items-center gap-2">
-              <span className="flex items-center gap-1 text-[7px] font-mono">
-                <span className="w-2 h-2 rounded-sm bg-terminal-positive/50 inline-block" />
-                <span className="text-terminal-text-faint">improved</span>
-              </span>
-              <span className="flex items-center gap-1 text-[7px] font-mono">
-                <span className="w-2 h-2 rounded-sm bg-terminal-negative/30 border-l border-terminal-negative/60 inline-block" />
-                <span className="text-terminal-text-faint">degraded</span>
-              </span>
-            </div>
-          }
-          noPadding
-        >
-          <LearningTable logs={learningLogs} />
-        </DashboardPanel>
-      </div>
-
-      {/* Controls row */}
+      {/* Monthly Summary Bar + Controls */}
       <div className="flex items-center gap-4 px-3 py-2 border border-terminal-border/40 rounded bg-terminal-surface flex-shrink-0 text-[10px] font-mono">
         <button
           onClick={handleArchiveNow}
@@ -353,20 +471,32 @@ export default function Archive() {
         >
           {archiving ? "ARCHIVING..." : "ARCHIVE NOW"}
         </button>
+
+        {archiveStatus && (
+          <>
+            <div className="w-px h-4 bg-terminal-border/50" />
+            <span className="text-[8px] text-terminal-accent">{archiveStatus}</span>
+          </>
+        )}
+
         <div className="w-px h-4 bg-terminal-border/50" />
-        <div className="flex items-center gap-1.5">
-          <span className="text-terminal-text-faint">Retention Policy:</span>
-          <span className="text-terminal-text-primary font-semibold">90 days</span>
-        </div>
-        <div className="w-px h-4 bg-terminal-border/50" />
-        <div className="flex items-center gap-1.5">
-          <span className="text-terminal-text-faint">Auto-Archive Schedule:</span>
-          <span className="text-terminal-accent">Daily at 00:00 UTC</span>
-        </div>
-        <div className="w-px h-4 bg-terminal-border/50" />
-        <div className="flex items-center gap-1.5">
-          <span className="w-1.5 h-1.5 rounded-full bg-terminal-positive animate-pulse" />
-          <span className="text-terminal-positive text-[8px]">SCHEDULER ACTIVE</span>
+        <MonthlySummaryBar summary={monthly} />
+
+        <div className="ml-auto flex items-center gap-3">
+          <div className="flex items-center gap-1.5">
+            <span className="text-terminal-text-faint">Retention:</span>
+            <span className="text-terminal-text-primary font-semibold">90 days</span>
+          </div>
+          <div className="w-px h-4 bg-terminal-border/50" />
+          <div className="flex items-center gap-1.5">
+            <span className="text-terminal-text-faint">Schedule:</span>
+            <span className="text-terminal-accent">Daily 00:00 UTC</span>
+          </div>
+          <div className="w-px h-4 bg-terminal-border/50" />
+          <div className="flex items-center gap-1.5">
+            <span className="w-1.5 h-1.5 rounded-full bg-terminal-positive animate-pulse" />
+            <span className="text-terminal-positive text-[8px]">SCHEDULER ACTIVE</span>
+          </div>
         </div>
       </div>
     </div>
