@@ -1,146 +1,134 @@
-import { useState, useEffect, useMemo } from "react";
+import { useState, useMemo } from "react";
 import { DashboardPanel } from "@/components/dashboard-panel";
 import { ResizableDashboard } from "@/components/resizable-panel";
 import { useEngineQuery } from "@/hooks/use-engine-api";
 import {
   AreaChart, Area, XAxis, YAxis, Tooltip, ResponsiveContainer,
   BarChart, Bar, LineChart, Line, ComposedChart, Cell,
-  PieChart, Pie, RadarChart, Radar, PolarGrid, PolarAngleAxis, PolarRadiusAxis,
+  RadarChart, Radar, PolarGrid, PolarAngleAxis, PolarRadiusAxis,
 } from "recharts";
 
-// ═══════════ SIMULATED TCA DATA ═══════════
+// ═══════════ TYPES ═══════════
 
 interface TCARecord {
-  orderId: string;
+  order_id: string;
   ticker: string;
-  side: "BUY" | "SELL";
-  qty: number;
-  avgFillPrice: number;
-  arrivalPrice: number;
-  vwapPrice: number;
-  spreadCostBps: number;
-  marketImpactBps: number;
-  timingCostBps: number;
-  commissionBps: number;
-  totalCostBps: number;
-  implementationShortfallUsd: number;
-  vwapSlippageBps: number;
+  side: string;
+  quantity: number;
+  fill_price: number;
+  arrival_price: number;
+  vwap_price: number;
+  spread_cost_bps: number;
+  market_impact_bps: number;
+  timing_cost_bps: number;
+  commission_bps: number;
+  total_cost_bps: number;
+  implementation_shortfall_usd: number;
+  vwap_slippage_bps: number;
   venue: string;
   algo: string;
-  duration: string;
-  participationRate: number;
   sector: string;
+  signal_type: string;
+  product_type: string;
+  participation_rate: number;
+  latency_ms: number;
+  timestamp: string;
 }
 
-function generateTCARecords(): TCARecord[] {
-  const tickers = [
-    { t: "AAPL", s: "Technology" }, { t: "MSFT", s: "Technology" }, { t: "NVDA", s: "Technology" },
-    { t: "GOOGL", s: "Communication" }, { t: "AMZN", s: "Consumer Disc." }, { t: "JPM", s: "Financials" },
-    { t: "XOM", s: "Energy" }, { t: "JNJ", s: "Healthcare" }, { t: "V", s: "Financials" },
-    { t: "PG", s: "Consumer Staples" }, { t: "META", s: "Communication" }, { t: "UNH", s: "Healthcare" },
-    { t: "HD", s: "Consumer Disc." }, { t: "BAC", s: "Financials" }, { t: "TSLA", s: "Consumer Disc." },
-    { t: "LLY", s: "Healthcare" }, { t: "AVGO", s: "Technology" }, { t: "MRK", s: "Healthcare" },
-    { t: "KO", s: "Consumer Staples" }, { t: "CVX", s: "Energy" },
-  ];
-  const venues = ["NASDAQ", "NYSE", "ARCA", "BATS", "IEX", "EDGX"];
-  const algos = ["TWAP", "VWAP", "IS", "POV", "CLOSE", "ADAPTIVE"];
-
-  return tickers.map(({ t, s }, i) => {
-    const side = i % 3 === 0 ? "SELL" : "BUY";
-    const qty = Math.floor(500 + Math.random() * 9500);
-    const base = 50 + Math.random() * 400;
-    const spread = 0.3 + Math.random() * 2.2;
-    const impact = 0.5 + Math.random() * 4.0;
-    const timing = -1.0 + Math.random() * 3.0;
-    const commission = 0.15 + Math.random() * 0.4;
-    const total = spread + impact + timing + commission;
-    const arrival = base;
-    const fill = side === "BUY" ? base + (total / 10000) * base : base - (total / 10000) * base;
-    const vwap = base + (Math.random() - 0.5) * 0.5;
-    const vwapSlip = ((fill - vwap) / vwap) * 10000 * (side === "BUY" ? 1 : -1);
-    const isUsd = (fill - arrival) * qty * (side === "BUY" ? 1 : -1);
-
-    return {
-      orderId: `TCA-${String(i + 1).padStart(4, "0")}`,
-      ticker: t,
-      side,
-      qty,
-      avgFillPrice: +fill.toFixed(2),
-      arrivalPrice: +arrival.toFixed(2),
-      vwapPrice: +vwap.toFixed(2),
-      spreadCostBps: +spread.toFixed(2),
-      marketImpactBps: +impact.toFixed(2),
-      timingCostBps: +timing.toFixed(2),
-      commissionBps: +commission.toFixed(2),
-      totalCostBps: +total.toFixed(2),
-      implementationShortfallUsd: +isUsd.toFixed(2),
-      vwapSlippageBps: +vwapSlip.toFixed(2),
-      venue: venues[Math.floor(Math.random() * venues.length)],
-      algo: algos[Math.floor(Math.random() * algos.length)],
-      duration: `${Math.floor(1 + Math.random() * 45)}m ${Math.floor(Math.random() * 60)}s`,
-      participationRate: +(2 + Math.random() * 18).toFixed(1),
-      sector: s,
-    };
-  });
+interface TCASummary {
+  total_trades: number;
+  avg_total_cost_bps: number;
+  avg_spread_bps: number;
+  avg_impact_bps: number;
+  avg_timing_bps: number;
+  avg_commission_bps: number;
+  avg_vwap_slip_bps: number;
+  total_is_usd: number;
+  total_volume_usd: number;
+  execution_quality_score: number;
+  best_execution: { ticker: string; cost_bps: number } | null;
+  worst_execution: { ticker: string; cost_bps: number } | null;
+  cost_trend: string;
 }
 
-function generateCostTrend() {
-  const days: any[] = [];
-  for (let i = 29; i >= 0; i--) {
-    const d = new Date(Date.now() - i * 86400000);
-    days.push({
-      date: d.toLocaleDateString("en-US", { month: "short", day: "numeric" }),
-      spreadBps: +(0.8 + Math.random() * 1.4).toFixed(2),
-      impactBps: +(1.0 + Math.random() * 2.5).toFixed(2),
-      timingBps: +(-0.5 + Math.random() * 2.0).toFixed(2),
-      totalBps: +(2.0 + Math.random() * 4.0).toFixed(2),
-    });
-  }
-  return days;
+interface TrendPoint {
+  date: string;
+  trades: number;
+  volume_usd: number;
+  spread_bps: number;
+  impact_bps: number;
+  timing_bps: number;
+  commission_bps: number;
+  total_bps: number;
+  avg_is_usd: number;
 }
 
-function generateVenueComparison() {
-  return [
-    { venue: "NASDAQ", avgCost: 2.84, fills: 342, avgLatency: 0.42 },
-    { venue: "NYSE", avgCost: 3.12, fills: 287, avgLatency: 0.68 },
-    { venue: "ARCA", avgCost: 2.71, fills: 198, avgLatency: 0.31 },
-    { venue: "BATS", avgCost: 2.94, fills: 156, avgLatency: 0.28 },
-    { venue: "IEX", avgCost: 3.48, fills: 89, avgLatency: 1.12 },
-    { venue: "EDGX", avgCost: 2.63, fills: 124, avgLatency: 0.35 },
-  ];
-}
+interface DecompItem { ticker: string; trades: number; spread: number; impact: number; timing: number; commission: number; total: number; }
+interface VenueStat { venue: string; fills: number; avg_cost_bps: number; avg_latency_ms: number; avg_impact_bps: number; avg_spread_bps: number; quality_score: number; }
+interface AlgoStat { algo: string; trades: number; avg_cost_bps: number; avg_is_usd: number; avg_vwap_slip_bps: number; avg_participation: number; quality_score: number; }
+interface SectorStat { sector: string; trades: number; avg_cost_bps: number; avg_impact_bps: number; total_is_usd: number; total_volume_usd: number; }
+interface Outlier { order_id: string; ticker: string; side: string; total_cost_bps: number; z_score: number; reason: string; timestamp: string; }
+interface Benchmark { benchmark: string; avg_slippage_bps: number; total_shortfall_usd: number; win_rate: number; trades_evaluated: number; }
+interface ISBucket { range: string; count: number; }
+interface QualityScore { dimensions: string[]; scores: number[]; }
 
-function generateAlgoComparison() {
-  return [
-    { algo: "TWAP", avgCost: 3.21, avgIS: 412, trades: 84 },
-    { algo: "VWAP", avgCost: 2.87, avgIS: 324, trades: 156 },
-    { algo: "IS", avgCost: 2.42, avgIS: 218, trades: 102 },
-    { algo: "POV", avgCost: 3.08, avgIS: 387, trades: 67 },
-    { algo: "CLOSE", avgCost: 3.54, avgIS: 468, trades: 43 },
-    { algo: "ADAPTIVE", avgCost: 2.31, avgIS: 196, trades: 78 },
-  ];
+// ═══════════ HOOKS ═══════════
+
+function useTCA() {
+  const { data: tcaData } = useEngineQuery<{ trades: TCARecord[]; summary: TCASummary }>("/execution/tca", { refetchInterval: 10000 });
+  const { data: trendData } = useEngineQuery<{ trend: TrendPoint[] }>("/execution/tca/trend", { refetchInterval: 30000 });
+  const { data: decompData } = useEngineQuery<{ decomposition: DecompItem[] }>("/execution/tca/decomposition", { refetchInterval: 30000 });
+  const { data: venueData } = useEngineQuery<{ venues: VenueStat[] }>("/execution/venue-comparison", { refetchInterval: 30000 });
+  const { data: algoData } = useEngineQuery<{ algos: AlgoStat[] }>("/execution/algo-comparison", { refetchInterval: 30000 });
+  const { data: sectorData } = useEngineQuery<{ sectors: SectorStat[] }>("/execution/tca/sectors", { refetchInterval: 30000 });
+  const { data: outlierData } = useEngineQuery<{ outliers: Outlier[] }>("/execution/tca/outliers", { refetchInterval: 30000 });
+  const { data: benchData } = useEngineQuery<{ benchmarks: Benchmark[] }>("/execution/tca/benchmarks", { refetchInterval: 30000 });
+  const { data: isDistData } = useEngineQuery<{ distribution: ISBucket[] }>("/execution/tca/is-distribution", { refetchInterval: 30000 });
+  const { data: qualityData } = useEngineQuery<QualityScore>("/execution/tca/quality-score", { refetchInterval: 30000 });
+
+  return {
+    records: tcaData?.trades ?? [],
+    summary: tcaData?.summary ?? null,
+    trend: trendData?.trend ?? [],
+    decomposition: decompData?.decomposition ?? [],
+    venues: venueData?.venues ?? [],
+    algos: algoData?.algos ?? [],
+    sectors: sectorData?.sectors ?? [],
+    outliers: outlierData?.outliers ?? [],
+    benchmarks: benchData?.benchmarks ?? [],
+    isDistribution: isDistData?.distribution ?? [],
+    qualityScore: qualityData ?? null,
+  };
 }
 
 // ═══════════ COMPONENTS ═══════════
 
-function SummaryCards({ records }: { records: TCARecord[] }) {
-  const avgTotal = records.reduce((s, r) => s + r.totalCostBps, 0) / records.length;
-  const avgSpread = records.reduce((s, r) => s + r.spreadCostBps, 0) / records.length;
-  const avgImpact = records.reduce((s, r) => s + r.marketImpactBps, 0) / records.length;
-  const avgVwapSlip = records.reduce((s, r) => s + r.vwapSlippageBps, 0) / records.length;
-  const totalIS = records.reduce((s, r) => s + Math.abs(r.implementationShortfallUsd), 0);
-  const bestTicker = records.reduce((best, r) => r.totalCostBps < best.totalCostBps ? r : best);
-  const worstTicker = records.reduce((worst, r) => r.totalCostBps > worst.totalCostBps ? r : worst);
+function SummaryCards({ summary }: { summary: TCASummary | null }) {
+  if (!summary) {
+    return (
+      <div className="grid grid-cols-4 gap-1.5">
+        {Array.from({ length: 8 }).map((_, i) => (
+          <div key={i} className="bg-terminal-bg rounded border border-terminal-border/50 px-2.5 py-2 animate-pulse">
+            <div className="h-2 bg-terminal-border/30 rounded w-20 mb-2" />
+            <div className="h-4 bg-terminal-border/30 rounded w-16" />
+          </div>
+        ))}
+      </div>
+    );
+  }
+
+  const trendIcon = summary.cost_trend === "IMPROVING" ? "↓" : summary.cost_trend === "DEGRADING" ? "↑" : "→";
+  const trendColor = summary.cost_trend === "IMPROVING" ? "text-terminal-positive" : summary.cost_trend === "DEGRADING" ? "text-terminal-negative" : "text-terminal-text-muted";
 
   const cards = [
-    { label: "AVG TOTAL COST", value: `${avgTotal.toFixed(2)} bps`, color: "text-terminal-accent" },
-    { label: "AVG SPREAD", value: `${avgSpread.toFixed(2)} bps`, color: "text-terminal-text-primary" },
-    { label: "AVG MKT IMPACT", value: `${avgImpact.toFixed(2)} bps`, color: "text-terminal-warning" },
-    { label: "AVG VWAP SLIP", value: `${avgVwapSlip.toFixed(2)} bps`, color: avgVwapSlip > 0 ? "text-terminal-negative" : "text-terminal-positive" },
-    { label: "TOTAL IMPL. SHORTFALL", value: `$${totalIS.toLocaleString(undefined, { maximumFractionDigits: 0 })}`, color: "text-terminal-negative" },
-    { label: "BEST EXECUTION", value: `${bestTicker.ticker} (${bestTicker.totalCostBps.toFixed(1)} bps)`, color: "text-terminal-positive" },
-    { label: "WORST EXECUTION", value: `${worstTicker.ticker} (${worstTicker.totalCostBps.toFixed(1)} bps)`, color: "text-terminal-negative" },
-    { label: "TOTAL TRADES", value: `${records.length}`, color: "text-terminal-text-primary" },
+    { label: "AVG TOTAL COST", value: `${summary.avg_total_cost_bps.toFixed(2)} bps`, color: "text-terminal-accent" },
+    { label: "AVG SPREAD", value: `${summary.avg_spread_bps.toFixed(2)} bps`, color: "text-terminal-text-primary" },
+    { label: "AVG MKT IMPACT", value: `${summary.avg_impact_bps.toFixed(2)} bps`, color: "text-terminal-warning" },
+    { label: "AVG VWAP SLIP", value: `${summary.avg_vwap_slip_bps.toFixed(2)} bps`, color: summary.avg_vwap_slip_bps > 0 ? "text-terminal-negative" : "text-terminal-positive" },
+    { label: "TOTAL IMPL. SHORTFALL", value: `$${Math.abs(summary.total_is_usd).toLocaleString(undefined, { maximumFractionDigits: 0 })}`, color: summary.total_is_usd > 0 ? "text-terminal-negative" : "text-terminal-positive" },
+    { label: "QUALITY SCORE", value: `${summary.execution_quality_score.toFixed(1)} / 100`, color: summary.execution_quality_score >= 70 ? "text-terminal-positive" : summary.execution_quality_score >= 40 ? "text-terminal-warning" : "text-terminal-negative" },
+    { label: "COST TREND", value: `${trendIcon} ${summary.cost_trend}`, color: trendColor },
+    { label: "TOTAL TRADES", value: `${summary.total_trades}`, color: "text-terminal-text-primary" },
   ];
 
   return (
@@ -155,18 +143,13 @@ function SummaryCards({ records }: { records: TCARecord[] }) {
   );
 }
 
-function CostDecomposition({ records }: { records: TCARecord[] }) {
-  const data = records.map(r => ({
-    ticker: r.ticker,
-    spread: r.spreadCostBps,
-    impact: r.marketImpactBps,
-    timing: r.timingCostBps,
-    commission: r.commissionBps,
-  }));
+function CostDecomposition({ data }: { data: DecompItem[] }) {
+  if (!data.length) return <div className="flex items-center justify-center h-full text-terminal-text-faint text-xs">Awaiting trade data...</div>;
+  const display = data.slice(0, 25);
 
   return (
     <ResponsiveContainer width="100%" height="100%">
-      <BarChart data={data} margin={{ top: 5, right: 5, left: -15, bottom: 0 }}>
+      <BarChart data={display} margin={{ top: 5, right: 5, left: -15, bottom: 0 }}>
         <XAxis dataKey="ticker" tick={{ fill: "#484f58", fontSize: 9 }} tickLine={false} axisLine={false} />
         <YAxis tick={{ fill: "#484f58", fontSize: 9 }} tickLine={false} axisLine={false} />
         <Tooltip
@@ -182,30 +165,46 @@ function CostDecomposition({ records }: { records: TCARecord[] }) {
   );
 }
 
-function CostTrendChart({ data }: { data: ReturnType<typeof generateCostTrend> }) {
+function CostTrendChart({ data }: { data: TrendPoint[] }) {
+  if (!data.length) return <div className="flex items-center justify-center h-full text-terminal-text-faint text-xs">Awaiting trend data...</div>;
+
+  const display = data.map(d => ({
+    ...d,
+    date: d.date.slice(5), // "MM-DD"
+  }));
+
   return (
     <ResponsiveContainer width="100%" height="100%">
-      <ComposedChart data={data} margin={{ top: 5, right: 5, left: -15, bottom: 0 }}>
-        <XAxis dataKey="date" tick={{ fill: "#484f58", fontSize: 9 }} tickLine={false} axisLine={false} interval={4} />
+      <ComposedChart data={display} margin={{ top: 5, right: 5, left: -15, bottom: 0 }}>
+        <XAxis dataKey="date" tick={{ fill: "#484f58", fontSize: 9 }} tickLine={false} axisLine={false} interval={Math.max(0, Math.floor(display.length / 8))} />
         <YAxis tick={{ fill: "#484f58", fontSize: 9 }} tickLine={false} axisLine={false} />
         <Tooltip
           contentStyle={{ backgroundColor: "#0d1117", border: "1px solid #1e2530", borderRadius: "4px", fontSize: 10 }}
           labelStyle={{ color: "#8b949e" }}
         />
-        <Area type="monotone" dataKey="totalBps" fill="#00d4aa" fillOpacity={0.08} stroke="#00d4aa" strokeWidth={1.5} name="Total Cost (bps)" />
-        <Line type="monotone" dataKey="spreadBps" stroke="#58a6ff" strokeWidth={1} dot={false} name="Spread" />
-        <Line type="monotone" dataKey="impactBps" stroke="#f0883e" strokeWidth={1} dot={false} name="Impact" />
-        <Line type="monotone" dataKey="timingBps" stroke="#d2a8ff" strokeWidth={1} dot={false} name="Timing" />
+        <Area type="monotone" dataKey="total_bps" fill="#00d4aa" fillOpacity={0.08} stroke="#00d4aa" strokeWidth={1.5} name="Total Cost (bps)" />
+        <Line type="monotone" dataKey="spread_bps" stroke="#58a6ff" strokeWidth={1} dot={false} name="Spread" />
+        <Line type="monotone" dataKey="impact_bps" stroke="#f0883e" strokeWidth={1} dot={false} name="Impact" />
+        <Line type="monotone" dataKey="timing_bps" stroke="#d2a8ff" strokeWidth={1} dot={false} name="Timing" />
       </ComposedChart>
     </ResponsiveContainer>
   );
 }
 
 function VWAPSlippageChart({ records }: { records: TCARecord[] }) {
-  const data = records.map(r => ({
-    ticker: r.ticker,
-    slippage: r.vwapSlippageBps,
-  }));
+  if (!records.length) return <div className="flex items-center justify-center h-full text-terminal-text-faint text-xs">Awaiting trade data...</div>;
+
+  // Aggregate by ticker
+  const tickerMap = new Map<string, { total: number; count: number }>();
+  records.forEach(r => {
+    const prev = tickerMap.get(r.ticker) || { total: 0, count: 0 };
+    tickerMap.set(r.ticker, { total: prev.total + r.vwap_slippage_bps, count: prev.count + 1 });
+  });
+
+  const data = Array.from(tickerMap.entries())
+    .map(([ticker, v]) => ({ ticker, slippage: +(v.total / v.count).toFixed(2) }))
+    .sort((a, b) => Math.abs(b.slippage) - Math.abs(a.slippage))
+    .slice(0, 20);
 
   return (
     <ResponsiveContainer width="100%" height="100%">
@@ -226,107 +225,12 @@ function VWAPSlippageChart({ records }: { records: TCARecord[] }) {
   );
 }
 
-function VenueAnalysis({ venues }: { venues: ReturnType<typeof generateVenueComparison> }) {
-  return (
-    <div className="text-[10px]">
-      <table className="w-full">
-        <thead>
-          <tr className="text-terminal-text-faint border-b border-terminal-border">
-            {["Venue", "Avg Cost (bps)", "Fill Count", "Avg Latency (ms)"].map(h => (
-              <th key={h} className="py-1 px-2 text-left font-medium">{h}</th>
-            ))}
-          </tr>
-        </thead>
-        <tbody>
-          {venues.sort((a, b) => a.avgCost - b.avgCost).map(v => (
-            <tr key={v.venue} className="border-b border-terminal-border/50 hover:bg-white/[0.02]">
-              <td className="py-1.5 px-2 font-mono font-semibold text-terminal-text-primary">{v.venue}</td>
-              <td className="py-1.5 px-2 font-mono">
-                <div className="flex items-center gap-2">
-                  <span>{v.avgCost.toFixed(2)}</span>
-                  <div className="flex-1 h-1.5 bg-terminal-bg rounded-full overflow-hidden">
-                    <div
-                      className="h-full rounded-full"
-                      style={{
-                        width: `${(v.avgCost / 4) * 100}%`,
-                        backgroundColor: v.avgCost < 2.8 ? "#3fb950" : v.avgCost < 3.2 ? "#d29922" : "#f85149",
-                      }}
-                    />
-                  </div>
-                </div>
-              </td>
-              <td className="py-1.5 px-2 font-mono">{v.fills}</td>
-              <td className="py-1.5 px-2 font-mono">{v.avgLatency.toFixed(2)}</td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
-    </div>
-  );
-}
-
-function AlgoPerformance({ algos }: { algos: ReturnType<typeof generateAlgoComparison> }) {
-  return (
-    <div className="text-[10px]">
-      <table className="w-full">
-        <thead>
-          <tr className="text-terminal-text-faint border-b border-terminal-border">
-            {["Algorithm", "Avg Cost (bps)", "Avg IS ($)", "Trades"].map(h => (
-              <th key={h} className="py-1 px-2 text-left font-medium">{h}</th>
-            ))}
-          </tr>
-        </thead>
-        <tbody>
-          {algos.sort((a, b) => a.avgCost - b.avgCost).map(a => (
-            <tr key={a.algo} className="border-b border-terminal-border/50 hover:bg-white/[0.02]">
-              <td className="py-1.5 px-2 font-mono font-semibold text-terminal-accent">{a.algo}</td>
-              <td className="py-1.5 px-2 font-mono">
-                <div className="flex items-center gap-2">
-                  <span>{a.avgCost.toFixed(2)}</span>
-                  <div className="flex-1 h-1.5 bg-terminal-bg rounded-full overflow-hidden">
-                    <div
-                      className="h-full rounded-full"
-                      style={{
-                        width: `${(a.avgCost / 4) * 100}%`,
-                        backgroundColor: a.avgCost < 2.5 ? "#3fb950" : a.avgCost < 3.2 ? "#d29922" : "#f85149",
-                      }}
-                    />
-                  </div>
-                </div>
-              </td>
-              <td className="py-1.5 px-2 font-mono">${a.avgIS}</td>
-              <td className="py-1.5 px-2 font-mono">{a.trades}</td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
-    </div>
-  );
-}
-
-function ISDistribution({ records }: { records: TCARecord[] }) {
-  // Bucket IS values
-  const buckets = [
-    { range: "< -$500", count: 0 },
-    { range: "-$500 to -$100", count: 0 },
-    { range: "-$100 to $0", count: 0 },
-    { range: "$0 to $100", count: 0 },
-    { range: "$100 to $500", count: 0 },
-    { range: "> $500", count: 0 },
-  ];
-  records.forEach(r => {
-    const v = r.implementationShortfallUsd;
-    if (v < -500) buckets[0].count++;
-    else if (v < -100) buckets[1].count++;
-    else if (v < 0) buckets[2].count++;
-    else if (v < 100) buckets[3].count++;
-    else if (v < 500) buckets[4].count++;
-    else buckets[5].count++;
-  });
+function ISDistribution({ data }: { data: ISBucket[] }) {
+  if (!data.length) return <div className="flex items-center justify-center h-full text-terminal-text-faint text-xs">Awaiting distribution data...</div>;
 
   return (
     <ResponsiveContainer width="100%" height="100%">
-      <BarChart data={buckets} margin={{ top: 5, right: 5, left: -15, bottom: 0 }}>
+      <BarChart data={data} margin={{ top: 5, right: 5, left: -15, bottom: 0 }}>
         <XAxis dataKey="range" tick={{ fill: "#484f58", fontSize: 8 }} tickLine={false} axisLine={false} />
         <YAxis tick={{ fill: "#484f58", fontSize: 9 }} tickLine={false} axisLine={false} />
         <Tooltip
@@ -338,18 +242,252 @@ function ISDistribution({ records }: { records: TCARecord[] }) {
   );
 }
 
-function PerAssetTable({ records }: { records: TCARecord[] }) {
-  const [sortKey, setSortKey] = useState<"totalCostBps" | "implementationShortfallUsd" | "vwapSlippageBps">("totalCostBps");
-  const sorted = useMemo(() => [...records].sort((a, b) => b[sortKey] - a[sortKey]), [records, sortKey]);
+function ExecutionQualityRadar({ data }: { data: QualityScore | null }) {
+  if (!data || !data.dimensions.length) {
+    return <div className="flex items-center justify-center h-full text-terminal-text-faint text-xs">Awaiting quality data...</div>;
+  }
+
+  const chartData = data.dimensions.map((dim, i) => ({
+    dimension: dim,
+    score: data.scores[i] || 0,
+    fullMark: 100,
+  }));
 
   return (
-    <div className="text-[10px]">
-      <div className="flex items-center gap-2 px-2 py-1 mb-1">
+    <ResponsiveContainer width="100%" height="100%">
+      <RadarChart data={chartData} cx="50%" cy="50%" outerRadius="70%">
+        <PolarGrid stroke="#1e2530" />
+        <PolarAngleAxis dataKey="dimension" tick={{ fill: "#8b949e", fontSize: 9 }} />
+        <PolarRadiusAxis tick={{ fill: "#484f58", fontSize: 8 }} domain={[0, 100]} />
+        <Radar name="Score" dataKey="score" stroke="#00d4aa" fill="#00d4aa" fillOpacity={0.2} strokeWidth={2} />
+      </RadarChart>
+    </ResponsiveContainer>
+  );
+}
+
+function VenueAnalysis({ venues }: { venues: VenueStat[] }) {
+  if (!venues.length) return <div className="flex items-center justify-center h-full text-terminal-text-faint text-xs">Awaiting venue data...</div>;
+
+  return (
+    <div className="text-[10px] overflow-auto h-full">
+      <table className="w-full">
+        <thead>
+          <tr className="text-terminal-text-faint border-b border-terminal-border">
+            {["Venue", "Avg Cost (bps)", "Fills", "Latency (ms)", "Quality"].map(h => (
+              <th key={h} className="py-1 px-2 text-left font-medium">{h}</th>
+            ))}
+          </tr>
+        </thead>
+        <tbody>
+          {venues.map(v => (
+            <tr key={v.venue} className="border-b border-terminal-border/50 hover:bg-white/[0.02]">
+              <td className="py-1.5 px-2 font-mono font-semibold text-terminal-text-primary">{v.venue}</td>
+              <td className="py-1.5 px-2 font-mono">
+                <div className="flex items-center gap-2">
+                  <span>{v.avg_cost_bps.toFixed(2)}</span>
+                  <div className="flex-1 h-1.5 bg-terminal-bg rounded-full overflow-hidden">
+                    <div
+                      className="h-full rounded-full"
+                      style={{
+                        width: `${Math.min((v.avg_cost_bps / 6) * 100, 100)}%`,
+                        backgroundColor: v.avg_cost_bps < 2.8 ? "#3fb950" : v.avg_cost_bps < 3.5 ? "#d29922" : "#f85149",
+                      }}
+                    />
+                  </div>
+                </div>
+              </td>
+              <td className="py-1.5 px-2 font-mono">{v.fills}</td>
+              <td className="py-1.5 px-2 font-mono">{v.avg_latency_ms.toFixed(1)}</td>
+              <td className="py-1.5 px-2 font-mono">
+                <span className={v.quality_score >= 70 ? "text-terminal-positive" : v.quality_score >= 40 ? "text-terminal-warning" : "text-terminal-negative"}>
+                  {v.quality_score.toFixed(0)}
+                </span>
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+function AlgoPerformance({ algos }: { algos: AlgoStat[] }) {
+  if (!algos.length) return <div className="flex items-center justify-center h-full text-terminal-text-faint text-xs">Awaiting algo data...</div>;
+
+  return (
+    <div className="text-[10px] overflow-auto h-full">
+      <table className="w-full">
+        <thead>
+          <tr className="text-terminal-text-faint border-b border-terminal-border">
+            {["Algorithm", "Avg Cost (bps)", "Avg IS ($)", "VWAP Slip", "Trades", "Quality"].map(h => (
+              <th key={h} className="py-1 px-2 text-left font-medium">{h}</th>
+            ))}
+          </tr>
+        </thead>
+        <tbody>
+          {algos.map(a => (
+            <tr key={a.algo} className="border-b border-terminal-border/50 hover:bg-white/[0.02]">
+              <td className="py-1.5 px-2 font-mono font-semibold text-terminal-accent">{a.algo}</td>
+              <td className="py-1.5 px-2 font-mono">
+                <div className="flex items-center gap-2">
+                  <span>{a.avg_cost_bps.toFixed(2)}</span>
+                  <div className="flex-1 h-1.5 bg-terminal-bg rounded-full overflow-hidden">
+                    <div
+                      className="h-full rounded-full"
+                      style={{
+                        width: `${Math.min((a.avg_cost_bps / 6) * 100, 100)}%`,
+                        backgroundColor: a.avg_cost_bps < 2.5 ? "#3fb950" : a.avg_cost_bps < 3.5 ? "#d29922" : "#f85149",
+                      }}
+                    />
+                  </div>
+                </div>
+              </td>
+              <td className={`py-1.5 px-2 font-mono ${a.avg_is_usd > 0 ? "text-terminal-negative" : "text-terminal-positive"}`}>
+                ${Math.abs(a.avg_is_usd).toFixed(0)}
+              </td>
+              <td className={`py-1.5 px-2 font-mono ${a.avg_vwap_slip_bps > 0 ? "text-terminal-negative" : "text-terminal-positive"}`}>
+                {a.avg_vwap_slip_bps > 0 ? "+" : ""}{a.avg_vwap_slip_bps.toFixed(1)}
+              </td>
+              <td className="py-1.5 px-2 font-mono">{a.trades}</td>
+              <td className="py-1.5 px-2 font-mono">
+                <span className={a.quality_score >= 70 ? "text-terminal-positive" : a.quality_score >= 40 ? "text-terminal-warning" : "text-terminal-negative"}>
+                  {a.quality_score.toFixed(0)}
+                </span>
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+function SectorBreakdown({ sectors }: { sectors: SectorStat[] }) {
+  if (!sectors.length) return <div className="flex items-center justify-center h-full text-terminal-text-faint text-xs">Awaiting sector data...</div>;
+
+  const colors = ["#00d4aa", "#f0883e", "#58a6ff", "#d2a8ff", "#f85149", "#3fb950", "#d29922", "#8b949e"];
+
+  return (
+    <div className="text-[10px] space-y-1 overflow-auto h-full">
+      {sectors.map((d, i) => (
+        <div key={d.sector} className="flex items-center gap-2 px-1 py-1 rounded hover:bg-white/[0.02]">
+          <span className="w-2 h-2 rounded-full flex-shrink-0" style={{ backgroundColor: colors[i % colors.length] }} />
+          <span className="text-terminal-text-muted w-28 truncate">{d.sector}</span>
+          <div className="flex-1 h-1.5 bg-terminal-bg rounded-full overflow-hidden">
+            <div
+              className="h-full rounded-full"
+              style={{ width: `${Math.min((d.avg_cost_bps / 6) * 100, 100)}%`, backgroundColor: colors[i % colors.length] }}
+            />
+          </div>
+          <span className="font-mono text-terminal-text-primary w-14 text-right">{d.avg_cost_bps} bps</span>
+          <span className="font-mono text-terminal-text-faint w-8 text-right">{d.trades}</span>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function BenchmarkComparison({ benchmarks }: { benchmarks: Benchmark[] }) {
+  if (!benchmarks.length) return <div className="flex items-center justify-center h-full text-terminal-text-faint text-xs">Awaiting benchmark data...</div>;
+
+  return (
+    <div className="text-[10px] overflow-auto h-full">
+      <table className="w-full">
+        <thead>
+          <tr className="text-terminal-text-faint border-b border-terminal-border">
+            {["Benchmark", "Avg Slip (bps)", "Win Rate", "Shortfall ($)", "Trades"].map(h => (
+              <th key={h} className="py-1 px-2 text-left font-medium">{h}</th>
+            ))}
+          </tr>
+        </thead>
+        <tbody>
+          {benchmarks.map(b => (
+            <tr key={b.benchmark} className="border-b border-terminal-border/50 hover:bg-white/[0.02]">
+              <td className="py-1.5 px-2 font-mono font-semibold text-terminal-accent">{b.benchmark}</td>
+              <td className={`py-1.5 px-2 font-mono ${b.avg_slippage_bps > 0 ? "text-terminal-negative" : "text-terminal-positive"}`}>
+                {b.avg_slippage_bps > 0 ? "+" : ""}{b.avg_slippage_bps.toFixed(2)}
+              </td>
+              <td className="py-1.5 px-2 font-mono">
+                <div className="flex items-center gap-1.5">
+                  <span className={b.win_rate >= 50 ? "text-terminal-positive" : "text-terminal-negative"}>
+                    {b.win_rate.toFixed(1)}%
+                  </span>
+                  <div className="flex-1 h-1 bg-terminal-bg rounded-full overflow-hidden">
+                    <div
+                      className="h-full rounded-full"
+                      style={{
+                        width: `${b.win_rate}%`,
+                        backgroundColor: b.win_rate >= 50 ? "#3fb950" : "#f85149",
+                      }}
+                    />
+                  </div>
+                </div>
+              </td>
+              <td className="py-1.5 px-2 font-mono text-terminal-text-muted">
+                ${Math.abs(b.total_shortfall_usd).toLocaleString(undefined, { maximumFractionDigits: 0 })}
+              </td>
+              <td className="py-1.5 px-2 font-mono text-terminal-text-muted">{b.trades_evaluated}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+function OutlierTable({ outliers }: { outliers: Outlier[] }) {
+  if (!outliers.length) return <div className="flex items-center justify-center h-full text-terminal-text-faint text-xs">No outliers detected</div>;
+
+  const reasonColor: Record<string, string> = {
+    HIGH_COST: "text-terminal-negative",
+    HIGH_MARKET_IMPACT: "text-terminal-warning",
+    ADVERSE_TIMING: "text-terminal-warning",
+    NEGATIVE_COST: "text-terminal-positive",
+  };
+
+  return (
+    <div className="text-[10px] overflow-auto h-full">
+      <table className="w-full">
+        <thead>
+          <tr className="text-terminal-text-faint border-b border-terminal-border">
+            {["Ticker", "Side", "Cost (bps)", "Z-Score", "Reason", "Time"].map(h => (
+              <th key={h} className="py-1 px-2 text-left font-medium">{h}</th>
+            ))}
+          </tr>
+        </thead>
+        <tbody>
+          {outliers.map((o, i) => (
+            <tr key={i} className="border-b border-terminal-border/50 hover:bg-white/[0.02]">
+              <td className="py-1.5 px-2 font-mono font-semibold text-terminal-text-primary">{o.ticker}</td>
+              <td className={`py-1.5 px-2 font-mono font-semibold ${o.side === "BUY" ? "text-terminal-positive" : "text-terminal-negative"}`}>{o.side}</td>
+              <td className="py-1.5 px-2 font-mono text-terminal-warning">{o.total_cost_bps.toFixed(1)}</td>
+              <td className="py-1.5 px-2 font-mono">{o.z_score.toFixed(2)}σ</td>
+              <td className={`py-1.5 px-2 font-mono text-[9px] ${reasonColor[o.reason] || "text-terminal-text-muted"}`}>
+                {o.reason.replace(/_/g, " ")}
+              </td>
+              <td className="py-1.5 px-2 font-mono text-terminal-text-faint">{o.timestamp.slice(11, 19)}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+function PerAssetTable({ records }: { records: TCARecord[] }) {
+  const [sortKey, setSortKey] = useState<"total_cost_bps" | "implementation_shortfall_usd" | "vwap_slippage_bps">("total_cost_bps");
+  const sorted = useMemo(() => [...records].sort((a, b) => b[sortKey] - a[sortKey]), [records, sortKey]);
+
+  if (!records.length) return <div className="flex items-center justify-center h-full text-terminal-text-faint text-xs">Awaiting trade data...</div>;
+
+  return (
+    <div className="text-[10px] overflow-auto h-full">
+      <div className="flex items-center gap-2 px-2 py-1 mb-1 sticky top-0 bg-terminal-panel z-10">
         <span className="text-terminal-text-faint">SORT BY:</span>
         {([
-          ["totalCostBps", "Total Cost"],
-          ["implementationShortfallUsd", "Impl. Shortfall"],
-          ["vwapSlippageBps", "VWAP Slip"],
+          ["total_cost_bps", "Total Cost"],
+          ["implementation_shortfall_usd", "Impl. Shortfall"],
+          ["vwap_slippage_bps", "VWAP Slip"],
         ] as const).map(([k, label]) => (
           <button
             key={k}
@@ -371,24 +509,24 @@ function PerAssetTable({ records }: { records: TCARecord[] }) {
           </tr>
         </thead>
         <tbody>
-          {sorted.map(r => (
-            <tr key={r.orderId} className="border-b border-terminal-border/50 hover:bg-white/[0.02]">
+          {sorted.slice(0, 100).map((r, i) => (
+            <tr key={r.order_id || i} className="border-b border-terminal-border/50 hover:bg-white/[0.02]">
               <td className="py-1 px-1 font-mono font-semibold text-terminal-text-primary">{r.ticker}</td>
-              <td className={`py-1 px-1 font-mono font-semibold ${r.side === "BUY" ? "text-terminal-positive" : "text-terminal-negative"}`}>{r.side}</td>
-              <td className="py-1 px-1 font-mono">{r.qty.toLocaleString()}</td>
-              <td className="py-1 px-1 font-mono">{r.avgFillPrice.toFixed(2)}</td>
-              <td className="py-1 px-1 font-mono">{r.arrivalPrice.toFixed(2)}</td>
-              <td className="py-1 px-1 font-mono">{r.vwapPrice.toFixed(2)}</td>
-              <td className="py-1 px-1 font-mono">{r.spreadCostBps.toFixed(1)}</td>
-              <td className="py-1 px-1 font-mono text-terminal-warning">{r.marketImpactBps.toFixed(1)}</td>
-              <td className={`py-1 px-1 font-mono ${r.timingCostBps > 0 ? "text-terminal-negative" : "text-terminal-positive"}`}>{r.timingCostBps.toFixed(1)}</td>
-              <td className="py-1 px-1 font-mono text-terminal-text-muted">{r.commissionBps.toFixed(1)}</td>
-              <td className="py-1 px-1 font-mono font-semibold text-terminal-accent">{r.totalCostBps.toFixed(1)}</td>
-              <td className={`py-1 px-1 font-mono ${r.implementationShortfallUsd > 0 ? "text-terminal-negative" : "text-terminal-positive"}`}>
-                {r.implementationShortfallUsd > 0 ? "+" : ""}${Math.abs(r.implementationShortfallUsd).toFixed(0)}
+              <td className={`py-1 px-1 font-mono font-semibold ${r.side === "BUY" || r.side === "COVER" ? "text-terminal-positive" : "text-terminal-negative"}`}>{r.side}</td>
+              <td className="py-1 px-1 font-mono">{r.quantity.toLocaleString()}</td>
+              <td className="py-1 px-1 font-mono">{r.fill_price.toFixed(2)}</td>
+              <td className="py-1 px-1 font-mono">{r.arrival_price.toFixed(2)}</td>
+              <td className="py-1 px-1 font-mono">{r.vwap_price > 0 ? r.vwap_price.toFixed(2) : "—"}</td>
+              <td className="py-1 px-1 font-mono">{r.spread_cost_bps.toFixed(1)}</td>
+              <td className="py-1 px-1 font-mono text-terminal-warning">{r.market_impact_bps.toFixed(1)}</td>
+              <td className={`py-1 px-1 font-mono ${r.timing_cost_bps > 0 ? "text-terminal-negative" : "text-terminal-positive"}`}>{r.timing_cost_bps.toFixed(1)}</td>
+              <td className="py-1 px-1 font-mono text-terminal-text-muted">{r.commission_bps.toFixed(1)}</td>
+              <td className="py-1 px-1 font-mono font-semibold text-terminal-accent">{r.total_cost_bps.toFixed(1)}</td>
+              <td className={`py-1 px-1 font-mono ${r.implementation_shortfall_usd > 0 ? "text-terminal-negative" : "text-terminal-positive"}`}>
+                {r.implementation_shortfall_usd > 0 ? "+" : ""}${Math.abs(r.implementation_shortfall_usd).toFixed(0)}
               </td>
-              <td className={`py-1 px-1 font-mono ${r.vwapSlippageBps > 0 ? "text-terminal-negative" : "text-terminal-positive"}`}>
-                {r.vwapSlippageBps > 0 ? "+" : ""}{r.vwapSlippageBps.toFixed(1)}
+              <td className={`py-1 px-1 font-mono ${r.vwap_slippage_bps > 0 ? "text-terminal-negative" : "text-terminal-positive"}`}>
+                {r.vwap_slippage_bps > 0 ? "+" : ""}{r.vwap_slippage_bps.toFixed(1)}
               </td>
               <td className="py-1 px-1 text-terminal-text-muted">{r.venue}</td>
               <td className="py-1 px-1 font-mono text-terminal-accent">{r.algo}</td>
@@ -400,72 +538,26 @@ function PerAssetTable({ records }: { records: TCARecord[] }) {
   );
 }
 
-function SectorBreakdown({ records }: { records: TCARecord[] }) {
-  const sectorMap = new Map<string, { totalCost: number; count: number; totalIS: number }>();
-  records.forEach(r => {
-    const prev = sectorMap.get(r.sector) || { totalCost: 0, count: 0, totalIS: 0 };
-    sectorMap.set(r.sector, {
-      totalCost: prev.totalCost + r.totalCostBps,
-      count: prev.count + 1,
-      totalIS: prev.totalIS + Math.abs(r.implementationShortfallUsd),
-    });
-  });
-
-  const data = Array.from(sectorMap.entries())
-    .map(([sector, v]) => ({
-      sector,
-      avgCost: +(v.totalCost / v.count).toFixed(2),
-      trades: v.count,
-      totalIS: +v.totalIS.toFixed(0),
-    }))
-    .sort((a, b) => b.avgCost - a.avgCost);
-
-  const colors = ["#00d4aa", "#f0883e", "#58a6ff", "#d2a8ff", "#f85149", "#3fb950", "#d29922"];
-
-  return (
-    <div className="text-[10px] space-y-1">
-      {data.map((d, i) => (
-        <div key={d.sector} className="flex items-center gap-2 px-1 py-1 rounded hover:bg-white/[0.02]">
-          <span className="w-2 h-2 rounded-full flex-shrink-0" style={{ backgroundColor: colors[i % colors.length] }} />
-          <span className="text-terminal-text-muted w-28 truncate">{d.sector}</span>
-          <div className="flex-1 h-1.5 bg-terminal-bg rounded-full overflow-hidden">
-            <div
-              className="h-full rounded-full"
-              style={{ width: `${(d.avgCost / 6) * 100}%`, backgroundColor: colors[i % colors.length] }}
-            />
-          </div>
-          <span className="font-mono text-terminal-text-primary w-14 text-right">{d.avgCost} bps</span>
-          <span className="font-mono text-terminal-text-faint w-8 text-right">{d.trades}</span>
-        </div>
-      ))}
-    </div>
-  );
-}
-
 // ═══════════ MAIN PAGE ═══════════
 
 export default function TCAPage() {
-  // ─── Engine API ─────────────────────────────────────
-  const { data: tcaApi } = useEngineQuery<{ trades: Array<Record<string, string | number>>; summary: Record<string, number> }>("/execution/tca", { refetchInterval: 10000 });
-  const { data: venueApi } = useEngineQuery<{ venues: Array<Record<string, string | number>> }>("/execution/venue-comparison", { refetchInterval: 30000 });
-  const { data: algoApi } = useEngineQuery<{ algos: Array<Record<string, string | number>> }>("/execution/algo-comparison", { refetchInterval: 30000 });
-
-  const [records] = useState(generateTCARecords);
-  const [costTrend] = useState(generateCostTrend);
-  const venues = venueApi?.venues?.length ? venueApi.venues as ReturnType<typeof generateVenueComparison> : generateVenueComparison();
-  const algos = algoApi?.algos?.length ? algoApi.algos as ReturnType<typeof generateAlgoComparison> : generateAlgoComparison();
-  const [activeView, setActiveView] = useState<"overview" | "detail">("overview");
+  const {
+    records, summary, trend, decomposition,
+    venues, algos, sectors, outliers, benchmarks,
+    isDistribution, qualityScore,
+  } = useTCA();
+  const [activeView, setActiveView] = useState<"overview" | "detail" | "analytics">("overview");
 
   return (
     <div className="h-full flex flex-col gap-1 p-1 overflow-hidden">
       {/* Summary Cards Row */}
       <div className="flex-shrink-0">
-        <SummaryCards records={records} />
+        <SummaryCards summary={summary} />
       </div>
 
       {/* Tab Toggle */}
       <div className="flex items-center gap-1 flex-shrink-0 px-1">
-        {(["overview", "detail"] as const).map(v => (
+        {(["overview", "detail", "analytics"] as const).map(v => (
           <button
             key={v}
             onClick={() => setActiveView(v)}
@@ -474,8 +566,12 @@ export default function TCAPage() {
                 ? "bg-terminal-accent/15 text-terminal-accent border border-terminal-accent/30"
                 : "text-terminal-text-muted hover:text-terminal-text-primary hover:bg-white/[0.03] border border-transparent"
             }`}
-          >{v === "overview" ? "OVERVIEW" : "PER-ASSET DETAIL"}</button>
+          >{v === "overview" ? "OVERVIEW" : v === "detail" ? "PER-ASSET DETAIL" : "ANALYTICS"}</button>
         ))}
+        <div className="flex-1" />
+        <span className="text-[9px] text-terminal-text-faint font-mono">
+          {summary ? `${summary.total_trades} trades · $${(summary.total_volume_usd / 1e6).toFixed(2)}M vol` : "loading..."}
+        </span>
       </div>
 
       {activeView === "overview" ? (
@@ -486,10 +582,10 @@ export default function TCAPage() {
               <div className="flex-1 min-h-0">
                 <ResizableDashboard defaultSizes={[50, 50]} minSizes={[30, 30]}>
                   <DashboardPanel title="COST DECOMPOSITION BY ASSET">
-                    <CostDecomposition records={records} />
+                    <CostDecomposition data={decomposition} />
                   </DashboardPanel>
                   <DashboardPanel title="30-DAY COST TREND">
-                    <CostTrendChart data={costTrend} />
+                    <CostTrendChart data={trend} />
                   </DashboardPanel>
                 </ResizableDashboard>
               </div>
@@ -499,7 +595,7 @@ export default function TCAPage() {
                     <VWAPSlippageChart records={records} />
                   </DashboardPanel>
                   <DashboardPanel title="IMPL. SHORTFALL DISTRIBUTION">
-                    <ISDistribution records={records} />
+                    <ISDistribution data={isDistribution} />
                   </DashboardPanel>
                 </ResizableDashboard>
               </div>
@@ -507,11 +603,11 @@ export default function TCAPage() {
 
             {/* Right: Sector Costs sidebar */}
             <DashboardPanel title="SECTOR COSTS">
-              <SectorBreakdown records={records} />
+              <SectorBreakdown sectors={sectors} />
             </DashboardPanel>
           </ResizableDashboard>
         </div>
-      ) : (
+      ) : activeView === "detail" ? (
         <div className="flex-1 min-h-0">
           <ResizableDashboard defaultSizes={[75, 25]} minSizes={[50, 18]}>
             <DashboardPanel title="PER-ASSET TRANSACTION COST ANALYSIS" noPadding>
@@ -525,6 +621,23 @@ export default function TCAPage() {
                 <AlgoPerformance algos={algos} />
               </DashboardPanel>
             </div>
+          </ResizableDashboard>
+        </div>
+      ) : (
+        /* Analytics view: radar + benchmarks + outliers */
+        <div className="flex-1 min-h-0">
+          <ResizableDashboard defaultSizes={[50, 50]} minSizes={[30, 30]}>
+            <div className="h-full flex flex-col gap-1 overflow-hidden">
+              <DashboardPanel title="EXECUTION QUALITY RADAR" className="flex-1">
+                <ExecutionQualityRadar data={qualityScore} />
+              </DashboardPanel>
+              <DashboardPanel title="BENCHMARK COMPARISON" className="flex-1">
+                <BenchmarkComparison benchmarks={benchmarks} />
+              </DashboardPanel>
+            </div>
+            <DashboardPanel title="EXECUTION OUTLIERS">
+              <OutlierTable outliers={outliers} />
+            </DashboardPanel>
           </ResizableDashboard>
         </div>
       )}

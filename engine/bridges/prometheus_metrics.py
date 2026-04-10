@@ -301,6 +301,58 @@ def _create_metrics(registry: "CollectorRegistry"):
         registry=registry,
     )
 
+    # TCA engine metrics
+    metrics["tca_avg_total_cost_bps"] = Gauge(
+        "metadron_tca_avg_total_cost_bps",
+        "TCA average total execution cost in basis points",
+        registry=registry,
+    )
+    metrics["tca_avg_spread_bps"] = Gauge(
+        "metadron_tca_avg_spread_bps",
+        "TCA average spread cost in basis points",
+        registry=registry,
+    )
+    metrics["tca_avg_impact_bps"] = Gauge(
+        "metadron_tca_avg_impact_bps",
+        "TCA average market impact in basis points",
+        registry=registry,
+    )
+    metrics["tca_avg_timing_bps"] = Gauge(
+        "metadron_tca_avg_timing_bps",
+        "TCA average timing cost in basis points",
+        registry=registry,
+    )
+    metrics["tca_total_is_usd"] = Gauge(
+        "metadron_tca_total_is_usd",
+        "TCA total implementation shortfall in USD",
+        registry=registry,
+    )
+    metrics["tca_execution_quality"] = Gauge(
+        "metadron_tca_execution_quality",
+        "TCA execution quality score (0-100)",
+        registry=registry,
+    )
+    metrics["tca_trades_analyzed"] = Gauge(
+        "metadron_tca_trades_analyzed",
+        "Number of trades analyzed by TCA engine",
+        registry=registry,
+    )
+    metrics["tca_outliers_count"] = Gauge(
+        "metadron_tca_outliers_count",
+        "Number of execution outliers detected",
+        registry=registry,
+    )
+    metrics["tca_total_volume_usd"] = Gauge(
+        "metadron_tca_total_volume_usd",
+        "Total notional volume analyzed by TCA",
+        registry=registry,
+    )
+    metrics["tca_cost_trend"] = Gauge(
+        "metadron_tca_cost_trend",
+        "TCA cost trend direction (1=improving, 0=stable, -1=degrading)",
+        registry=registry,
+    )
+
     # TXLOG / Trade execution metrics
     metrics["txlog_orders_total"] = Gauge(
         "metadron_txlog_orders_total",
@@ -549,6 +601,51 @@ def _collect_live_metrics(metrics: dict):
             pass
     except Exception:
         pass
+
+    # ── TCA Engine Metrics ─────────────────────────────────────────
+    try:
+        from engine.execution.tca_engine import TCAEngine
+        from engine.execution.execution_engine import ExecutionEngine as EE_TCA
+        eng_tca = EE_TCA._instance if hasattr(EE_TCA, "_instance") else None
+        if eng_tca is None:
+            from engine.api.routers.execution import _get_exec as _ge_tca
+            eng_tca = _ge_tca()
+        if eng_tca is not None:
+            tca = TCAEngine()
+            broker_tca = eng_tca.broker
+            raw_trades = broker_tca.get_trade_history()[-500:]
+            td = []
+            for t in raw_trades:
+                if isinstance(t, dict):
+                    td.append(t)
+                else:
+                    d = {}
+                    for attr in ("ticker", "side", "quantity", "fill_price", "arrival_price",
+                                 "slippage", "signal_type", "venue", "latency_ms", "product_type",
+                                 "fill_timestamp", "status", "vwap_price", "order_id"):
+                        val = getattr(t, attr, None)
+                        if val is not None:
+                            d[attr] = val
+                    td.append(d)
+            tca.rebuild(td)
+            tca_summary = tca.get_summary()
+            metrics["tca_avg_total_cost_bps"].set(tca_summary.get("avg_total_cost_bps", 0))
+            metrics["tca_avg_spread_bps"].set(tca_summary.get("avg_spread_bps", 0))
+            metrics["tca_avg_impact_bps"].set(tca_summary.get("avg_impact_bps", 0))
+            metrics["tca_avg_timing_bps"].set(tca_summary.get("avg_timing_bps", 0))
+            metrics["tca_total_is_usd"].set(tca_summary.get("total_is_usd", 0))
+            metrics["tca_execution_quality"].set(tca_summary.get("execution_quality_score", 0))
+            metrics["tca_trades_analyzed"].set(tca_summary.get("total_trades", 0))
+            metrics["tca_total_volume_usd"].set(tca_summary.get("total_volume_usd", 0))
+            tca_outliers = tca.get_outliers()
+            metrics["tca_outliers_count"].set(len(tca_outliers))
+            trend_v = {"IMPROVING": 1, "STABLE": 0, "DEGRADING": -1}.get(
+                tca_summary.get("cost_trend", "STABLE"), 0
+            )
+            metrics["tca_cost_trend"].set(trend_v)
+            metrics["strat_engine_health"].labels(engine="TCAEngine").set(1)
+    except Exception:
+        metrics["strat_engine_health"].labels(engine="TCAEngine").set(0)
 
     # ── TXLOG: Trade Execution Metrics ─────────────────────────────
     try:

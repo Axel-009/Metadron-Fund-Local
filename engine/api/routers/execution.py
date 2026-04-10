@@ -193,75 +193,178 @@ async def wondertrader_status():
         return {"error": str(e)}
 
 
+# ─── TCA Engine singleton ──────────────────────────────────────
+
+_tca_engine = None
+
+
+def _get_tca():
+    global _tca_engine
+    if _tca_engine is None:
+        from engine.execution.tca_engine import TCAEngine
+        _tca_engine = TCAEngine()
+    return _tca_engine
+
+
+def _rebuild_tca():
+    """Rebuild TCA engine from live broker trade history + live quotes."""
+    tca = _get_tca()
+    eng = _get_exec()
+    broker = eng.broker
+    trades = broker.get_trade_history()[-500:]
+
+    # Fetch live quotes for spread calculation (best-effort)
+    quotes = {}
+    try:
+        tickers = list(set(
+            t.get("ticker", "") if isinstance(t, dict) else getattr(t, "ticker", "")
+            for t in trades
+        ))
+        tickers = [tk for tk in tickers if tk][:30]
+        if tickers:
+            raw_quotes = get_quote(tickers)
+            for q in raw_quotes:
+                sym = q.get("symbol", "") or q.get("ticker", "")
+                if sym:
+                    quotes[sym] = q
+    except Exception:
+        pass
+
+    # Convert to list[dict] for TCA engine
+    trade_dicts = []
+    for t in trades:
+        if isinstance(t, dict):
+            trade_dicts.append(t)
+        else:
+            # Convert dataclass/object to dict
+            d = {}
+            for attr in ("ticker", "side", "quantity", "fill_price", "arrival_price",
+                         "slippage", "signal_type", "venue", "latency_ms", "product_type",
+                         "fill_timestamp", "status", "vwap_price", "order_id", "realized_pnl"):
+                val = getattr(t, attr, None)
+                if val is not None:
+                    d[attr] = val
+            trade_dicts.append(d)
+
+    tca.rebuild(trade_dicts, quotes)
+    return tca
+
+
 @router.get("/tca")
 async def tca_metrics():
-    """Transaction cost analysis: slippage, fill rates, cost trends."""
+    """Full TCA: trade records + summary + cost decomposition.
+
+    Powered by TCAEngine — decomposes every trade into spread, impact,
+    timing, and commission components using live broker data + quotes.
+    """
     try:
-        eng = _get_exec()
-        broker = eng.broker
-
-        trades = broker.get_trade_history()[-200:]
-        if not trades:
-            return {"trades": [], "summary": {}, "timestamp": datetime.utcnow().isoformat()}
-
-        total_slippage = 0
-        total_trades = len(trades)
-        filled = 0
-        records = []
-
-        for t in trades:
-            # trade history returns list[dict] — use dict access
-            if isinstance(t, dict):
-                slippage = t.get("slippage", 0) or 0
-                status_val = t.get("status", "")
-                fill_price = t.get("fill_price", 0) or 0
-                ticker = t.get("ticker", "")
-                side_raw = t.get("side", "")
-                side = side_raw.value if hasattr(side_raw, "value") else str(side_raw)
-                quantity = t.get("quantity", 0)
-                sig_raw = t.get("signal_type", "")
-                signal_type = sig_raw.value if hasattr(sig_raw, "value") else str(sig_raw)
-                ts_raw = t.get("fill_timestamp", "")
-                timestamp = ts_raw.isoformat() if hasattr(ts_raw, "isoformat") else str(ts_raw)
-                if status_val == "FILLED" or fill_price:
-                    filled += 1
-            else:
-                slippage = getattr(t, "slippage", 0) or 0
-                status_val = getattr(t, "status", "")
-                fill_price = getattr(t, "fill_price", 0) or 0
-                ticker = getattr(t, "ticker", "")
-                side_raw = getattr(t, "side", "")
-                side = side_raw.value if hasattr(side_raw, "value") else str(side_raw)
-                quantity = getattr(t, "quantity", 0)
-                sig_raw = getattr(t, "signal_type", "")
-                signal_type = sig_raw.value if hasattr(sig_raw, "value") else str(sig_raw)
-                ts_raw = getattr(t, "fill_timestamp", None)
-                timestamp = ts_raw.isoformat() if ts_raw and hasattr(ts_raw, "isoformat") else str(ts_raw or "")
-                if status_val == "FILLED" or fill_price:
-                    filled += 1
-
-            total_slippage += abs(slippage)
-            records.append({
-                "ticker": ticker,
-                "side": side,
-                "quantity": quantity,
-                "fill_price": fill_price,
-                "slippage": slippage,
-                "signal_type": signal_type,
-                "timestamp": timestamp,
-            })
-
-        summary = {
-            "total_trades": total_trades,
-            "fill_rate": filled / total_trades if total_trades > 0 else 0,
-            "avg_slippage": total_slippage / total_trades if total_trades > 0 else 0,
-            "total_cost": total_slippage,
+        tca = _rebuild_tca()
+        return {
+            "trades": tca.get_records(limit=200),
+            "summary": tca.get_summary(),
+            "timestamp": datetime.utcnow().isoformat(),
         }
-
-        return {"trades": records[-100:], "summary": summary, "timestamp": datetime.utcnow().isoformat()}
     except Exception as e:
         logger.error(f"execution/tca error: {e}")
         return {"trades": [], "summary": {}, "error": str(e)}
+
+
+@router.get("/tca/trend")
+async def tca_trend(days: int = Query(30, ge=1, le=90)):
+    """Daily cost trend for TCA time-series chart."""
+    try:
+        tca = _rebuild_tca()
+        return {
+            "trend": tca.get_cost_trend(days=days),
+            "timestamp": datetime.utcnow().isoformat(),
+        }
+    except Exception as e:
+        logger.error(f"execution/tca/trend error: {e}")
+        return {"trend": [], "error": str(e)}
+
+
+@router.get("/tca/decomposition")
+async def tca_decomposition():
+    """Per-asset cost decomposition (spread, impact, timing, commission)."""
+    try:
+        tca = _rebuild_tca()
+        return {
+            "decomposition": tca.get_cost_decomposition(),
+            "timestamp": datetime.utcnow().isoformat(),
+        }
+    except Exception as e:
+        logger.error(f"execution/tca/decomposition error: {e}")
+        return {"decomposition": [], "error": str(e)}
+
+
+@router.get("/tca/sectors")
+async def tca_sectors():
+    """Per-sector TCA cost breakdown."""
+    try:
+        tca = _rebuild_tca()
+        return {
+            "sectors": tca.get_sector_stats(),
+            "timestamp": datetime.utcnow().isoformat(),
+        }
+    except Exception as e:
+        logger.error(f"execution/tca/sectors error: {e}")
+        return {"sectors": [], "error": str(e)}
+
+
+@router.get("/tca/outliers")
+async def tca_outliers(sigma: float = Query(2.0, ge=1.0, le=4.0)):
+    """Execution outlier detection — trades with abnormal costs."""
+    try:
+        tca = _rebuild_tca()
+        return {
+            "outliers": tca.get_outliers(sigma_threshold=sigma),
+            "timestamp": datetime.utcnow().isoformat(),
+        }
+    except Exception as e:
+        logger.error(f"execution/tca/outliers error: {e}")
+        return {"outliers": [], "error": str(e)}
+
+
+@router.get("/tca/benchmarks")
+async def tca_benchmarks():
+    """Benchmark comparison: execution vs Arrival / VWAP / Zero-Cost."""
+    try:
+        tca = _rebuild_tca()
+        return {
+            "benchmarks": tca.get_benchmarks(),
+            "timestamp": datetime.utcnow().isoformat(),
+        }
+    except Exception as e:
+        logger.error(f"execution/tca/benchmarks error: {e}")
+        return {"benchmarks": [], "error": str(e)}
+
+
+@router.get("/tca/is-distribution")
+async def tca_is_distribution():
+    """Implementation shortfall distribution buckets."""
+    try:
+        tca = _rebuild_tca()
+        return {
+            "distribution": tca.get_is_distribution(),
+            "timestamp": datetime.utcnow().isoformat(),
+        }
+    except Exception as e:
+        logger.error(f"execution/tca/is-distribution error: {e}")
+        return {"distribution": [], "error": str(e)}
+
+
+@router.get("/tca/quality-score")
+async def tca_quality_score():
+    """Execution quality radar: Total Cost, Impact, Timing, Spread, VWAP, Consistency."""
+    try:
+        tca = _rebuild_tca()
+        return {
+            **tca.get_execution_quality_score(),
+            "timestamp": datetime.utcnow().isoformat(),
+        }
+    except Exception as e:
+        logger.error(f"execution/tca/quality-score error: {e}")
+        return {"dimensions": [], "scores": [], "error": str(e)}
 
 
 @router.get("/spread-data")
@@ -390,82 +493,14 @@ async def liquidity_data(ticker: str = Query("SPY", description="Ticker symbol")
 
 @router.get("/venue-comparison")
 async def venue_comparison():
-    """Execution venue comparison benchmarked against FMP order book data.
+    """Execution venue comparison from TCAEngine.
 
-    Fits in system: L7 Execution → trade log + FMP bid/ask quotes for
-    execution quality benchmarking per venue.
+    Fits in system: L7 Execution → TCAEngine decomposes per-venue quality.
     """
     try:
-        eng = _get_exec()
-        trades = eng.broker.get_trade_history()[-500:]
-        from collections import defaultdict
-        venue_stats: dict[str, dict] = defaultdict(lambda: {"fills": 0, "total_slippage": 0.0, "total_latency": 0.0})
-
-        # Get unique tickers for FMP quote benchmark — dict access since get_trade_history() returns list[dict]
-        trade_tickers = []
-        for t in trades:
-            if isinstance(t, dict):
-                tk = t.get("ticker", "")
-            else:
-                tk = getattr(t, "ticker", "")
-            if tk:
-                trade_tickers.append(tk)
-        trade_tickers = list(set(trade_tickers))
-
-        # Fetch FMP bid/ask quotes for benchmarking
-        fmp_quotes = {}
-        if trade_tickers:
-            try:
-                quotes = get_quote(trade_tickers[:20])  # Top 20 tickers
-                for q in quotes:
-                    sym = q.get("symbol", "")
-                    if sym:
-                        fmp_quotes[sym] = {
-                            "bid": q.get("bid", 0) or q.get("bid_price", 0),
-                            "ask": q.get("ask", 0) or q.get("ask_price", 0),
-                            "spread": (q.get("ask", 0) or 0) - (q.get("bid", 0) or 0),
-                        }
-            except Exception:
-                pass
-
-        for t in trades:
-            if isinstance(t, dict):
-                venue = t.get("venue", "ENGINE") or "ENGINE"
-                ticker = t.get("ticker", "")
-                fill_price = t.get("fill_price", 0) or 0
-                slippage = abs(t.get("slippage", 0) or 0)
-                latency = t.get("latency_ms", 0) or 0
-            else:
-                venue = getattr(t, "venue", "ENGINE") or "ENGINE"
-                ticker = getattr(t, "ticker", "")
-                fill_price = getattr(t, "fill_price", 0) or 0
-                slippage = abs(getattr(t, "slippage", 0) or 0)
-                latency = getattr(t, "latency_ms", 0) or 0
-
-            # Calculate slippage vs FMP mid-price
-            if ticker in fmp_quotes and fill_price > 0:
-                fmp = fmp_quotes[ticker]
-                mid = (fmp["bid"] + fmp["ask"]) / 2 if fmp["bid"] and fmp["ask"] else 0
-                if mid > 0:
-                    slippage = abs(fill_price - mid) / mid * 10000  # bps
-
-            venue_stats[venue]["fills"] += 1
-            venue_stats[venue]["total_slippage"] += slippage
-            venue_stats[venue]["total_latency"] += latency
-
-        venues = []
-        for name, stats in venue_stats.items():
-            n = stats["fills"] or 1
-            venues.append({
-                "venue": name,
-                "fills": stats["fills"],
-                "avgCost": round(stats["total_slippage"] / n, 2),
-                "avgLatency": round(stats["total_latency"] / n, 1),
-            })
-
+        tca = _rebuild_tca()
         return {
-            "venues": venues,
-            "fmp_quotes_count": len(fmp_quotes),
+            "venues": tca.get_venue_stats(),
             "timestamp": datetime.utcnow().isoformat(),
         }
     except Exception as e:
@@ -475,43 +510,16 @@ async def venue_comparison():
 
 @router.get("/algo-comparison")
 async def algo_comparison():
-    """Execution algorithm comparison from trade history.
+    """Execution algorithm comparison from TCAEngine.
 
-    Fits in system: L7 Execution → signal type performance attribution.
+    Fits in system: L7 Execution → TCAEngine decomposes per-algo quality.
     """
     try:
-        eng = _get_exec()
-        trades = eng.broker.get_trade_history()[-500:]
-        from collections import defaultdict
-        algo_stats: dict[str, dict] = defaultdict(lambda: {"trades": 0, "total_slippage": 0.0, "total_pnl": 0.0})
-
-        for t in trades:
-            if isinstance(t, dict):
-                sig_raw = t.get("signal_type", "UNKNOWN")
-                sig = sig_raw.value if hasattr(sig_raw, "value") else str(sig_raw)
-                slippage = abs(t.get("slippage", 0) or 0)
-                pnl = t.get("realized_pnl", 0) or 0
-            else:
-                sig_raw = getattr(t, "signal_type", "UNKNOWN")
-                sig = sig_raw.value if hasattr(sig_raw, "value") else str(sig_raw)
-                slippage = abs(getattr(t, "slippage", 0) or 0)
-                pnl = getattr(t, "realized_pnl", 0) or 0
-
-            algo_stats[sig]["trades"] += 1
-            algo_stats[sig]["total_slippage"] += slippage
-            algo_stats[sig]["total_pnl"] += pnl
-
-        algos = []
-        for name, stats in algo_stats.items():
-            n = stats["trades"] or 1
-            algos.append({
-                "algo": name,
-                "trades": stats["trades"],
-                "avgCost": round(stats["total_slippage"] / n, 4),
-                "avgIS": round(stats["total_pnl"] / n, 2),
-            })
-
-        return {"algos": algos, "timestamp": datetime.utcnow().isoformat()}
+        tca = _rebuild_tca()
+        return {
+            "algos": tca.get_algo_stats(),
+            "timestamp": datetime.utcnow().isoformat(),
+        }
     except Exception as e:
         logger.error(f"execution/algo-comparison error: {e}")
         return {"algos": [], "error": str(e)}
