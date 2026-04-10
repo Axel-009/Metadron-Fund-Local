@@ -2,22 +2,6 @@ import { DashboardPanel } from "@/components/dashboard-panel";
 import { useRef, useEffect, useCallback, useMemo } from "react";
 import { useEngineQuery } from "@/hooks/use-engine-api";
 
-const STRATEGIES = [
-  { name: "Mean Reversion Alpha", status: "active", sharpe: 1.82, pnl: "+12.4%", trades: 1420 },
-  { name: "Momentum Factor", status: "active", sharpe: 1.45, pnl: "+8.7%", trades: 890 },
-  { name: "Stat Arb Pairs", status: "active", sharpe: 2.15, pnl: "+15.2%", trades: 3200 },
-  { name: "Vol Surface", status: "paused", sharpe: 0.92, pnl: "+3.1%", trades: 450 },
-  { name: "Macro Regime", status: "active", sharpe: 1.33, pnl: "+6.8%", trades: 120 },
-  { name: "ML Ensemble v3", status: "testing", sharpe: 1.67, pnl: "+9.9%", trades: 2100 },
-];
-
-const PERF_CARDS = [
-  { label: "Total Return", value: "+24.8%", color: "#00d4aa" },
-  { label: "Max Drawdown", value: "-8.78%", color: "#f85149" },
-  { label: "Win Rate", value: "62.3%", color: "#58a6ff" },
-  { label: "Profit Factor", value: "1.94", color: "#bc8cff" },
-];
-
 // Node-based flow diagram
 interface FlowNode {
   id: string; x: number; y: number; label: string; type: "input" | "process" | "output" | "decision";
@@ -155,28 +139,35 @@ export default function StrategyBuilder() {
     perf_cards: Array<{ name: string; value: string }>;
   }>("/ml/strategy/performance", { refetchInterval: 15000 });
 
-  const strategies = stratApi?.strategies?.length
-    ? stratApi.strategies.map((s) => ({
-        name: s.name,
-        status: s.status,
-        sharpe: s.sharpe,
-        pnl: s.pnl > 0 ? `+${s.pnl.toLocaleString()}` : `${s.pnl.toLocaleString()}`,
-        trades: s.trades,
-      }))
-    : STRATEGIES;
+  const strategies = useMemo(() => {
+    if (!stratApi?.strategies?.length) return [];
+    return stratApi.strategies.map((s) => ({
+      name: s.name,
+      status: s.status,
+      sharpe: s.sharpe,
+      pnl: s.pnl > 0 ? `+${s.pnl.toLocaleString()}` : `${s.pnl.toLocaleString()}`,
+      trades: s.trades,
+    }));
+  }, [stratApi]);
 
-  const perfCards = stratApi?.perf_cards?.length
-    ? stratApi.perf_cards.map((c, i) => ({
-        label: c.name,
-        value: c.value,
-        color: ["#00d4aa", "#f85149", "#58a6ff", "#bc8cff"][i % 4],
-      }))
-    : PERF_CARDS;
+  const perfCards = useMemo(() => {
+    if (!stratApi?.perf_cards?.length) return [];
+    return stratApi.perf_cards.map((c, i) => ({
+      label: c.name,
+      value: c.value,
+      color: ["#00d4aa", "#f85149", "#58a6ff", "#bc8cff"][i % 4],
+    }));
+  }, [stratApi]);
 
   return (
     <div className="h-full grid grid-cols-[260px_1fr] grid-rows-[auto_1fr] gap-[2px] p-[2px] overflow-auto" data-testid="strategy-builder">
       {/* Performance Summary */}
       <div className="col-span-2 flex gap-[2px]">
+        {perfCards.length === 0 && (
+          <DashboardPanel title="PERFORMANCE" className="flex-1">
+            <div className="text-xs text-terminal-text-faint font-mono text-center py-2">Waiting for strategy performance data…</div>
+          </DashboardPanel>
+        )}
         {perfCards.map((p, i) => (
           <DashboardPanel key={i} title={p.label} className="flex-1">
             <div className="text-xl font-mono font-bold tabular-nums text-center" style={{ color: p.color }}>
@@ -199,6 +190,9 @@ export default function StrategyBuilder() {
       {/* Strategy List Sidebar */}
       <DashboardPanel title="STRATEGIES" noPadding>
         <div className="overflow-auto h-full">
+          {strategies.length === 0 && (
+            <div className="px-2 py-6 text-center text-terminal-text-faint text-[9px] font-mono">Waiting for strategy data…</div>
+          )}
           {strategies.map((s, i) => (
             <div key={i} className="px-2 py-2 border-b border-terminal-border/20 hover:bg-white/[0.02] cursor-pointer">
               <div className="flex items-center gap-2">
