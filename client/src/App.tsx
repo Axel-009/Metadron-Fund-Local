@@ -36,6 +36,7 @@ import MetadronCubePage from "@/pages/metadron-cube";
 import MoneyVelocityPage from "@/pages/money-velocity";
 import ThinkingTab from "@/pages/thinking-tab";
 import CollateralTab from "@/pages/collateral-tab";
+import ChatTab from "@/pages/chat-tab";
 
 // ═══════════ ALL AVAILABLE TABS ═══════════
 const ALL_TABS = [
@@ -67,6 +68,7 @@ const ALL_TABS = [
   { path: "/velocity", label: "VELOCITY" },
   { path: "/thinking", label: "THINKING" },
   { path: "/collateral", label: "MARGIN" },
+  { path: "/chat", label: "CHAT" },
 ];
 
 const DEFAULT_PINNED = [
@@ -429,6 +431,7 @@ function AppRouter() {
       <Route path="/velocity" component={MoneyVelocityPage} />
       <Route path="/thinking" component={ThinkingTab} />
       <Route path="/collateral" component={CollateralTab} />
+      <Route path="/chat" component={ChatTab} />
       <Route component={NotFound} />
     </Switch>
   );

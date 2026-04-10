@@ -13,6 +13,7 @@ from engine.api.routers import (
     fixed_income,
     archive,
     backtest,
+    chat,
 )
 
 __all__ = [
@@ -30,4 +31,5 @@ __all__ = [
     "fixed_income",
     "archive",
     "backtest",
+    "chat",
 ]

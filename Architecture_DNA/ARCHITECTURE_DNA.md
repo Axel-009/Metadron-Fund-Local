@@ -1747,6 +1747,7 @@ All allocation rules apply identically in backtest mode:
 |---|-----|------|-----------|-------------|
 | 26 | THINKING | `/thinking` | ThinkingTab | Live SSE scan reasoning, signal cards, kill switch, beta corridor |
 | 27 | MARGIN | `/collateral` | CollateralTab | Margin bucket, utilization gauge, notional breakdown, P&L |
+| 28 | CHAT | `/chat` | ChatTab | NanoClaw operator chat + Ruflo swarm agent interface |
 
 ### Reporting — Allocation Rules Section
 
@@ -1758,4 +1759,104 @@ The Reporting tab (`/reports`) now includes a collapsible "ALLOCATION RULES IN E
 - DRIP reinvestment event count
 - Operator rule change count
 - Universe scan cycle summary (cycles completed, signals, phase)
+
+## Agent Governance & Chat System
+
+### Agent Identities
+
+| Agent | ID | Role | Permission Level |
+|-------|----|------|-----------------|
+| NanoClaw | `nanoclaw` | Main Operator Agent | WRITE (with explicit operator instruction) |
+| OpenClaw/CEO | `openclaw` | CEO Research Agent | READ + RECOMMEND only |
+| Ruflo | `ruflo` | Swarm Task Agents | READ + TASK REPORT only |
+
+### Permission Matrix
+
+| Action | NanoClaw | OpenClaw/CEO | Ruflo |
+|--------|----------|-------------|-------|
+| read_data | Yes | Yes | Yes |
+| search | Yes | Yes | Yes |
+| analyze | Yes | Yes | Yes |
+| recommend | Yes | Yes | Yes |
+| write_file | Yes (with permission) | **BLOCKED** | **BLOCKED** |
+| execute_trade | Yes (with permission) | **BLOCKED** | **BLOCKED** |
+| modify_config | Yes (with permission) | **BLOCKED** | **BLOCKED** |
+| update_rules | Yes (with permission) | **BLOCKED** | **BLOCKED** |
+| push_code | Yes (with permission) | **BLOCKED** | **BLOCKED** |
+| call_l7 | Yes (with permission) | **BLOCKED** | **BLOCKED** |
+
+### Chat Tab Architecture
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│                    AGENT GOVERNANCE LAYER                       │
+│                                                                 │
+│  ┌──────────────────────────────────────────────────────────┐  │
+│  │  AgentPermissionGuard                                    │  │
+│  │  • NanoClaw: WRITE (with explicit operator instruction)  │  │
+│  │  • OpenClaw/CEO: READ + RECOMMEND only                   │  │
+│  │  • Ruflo: READ + TASK REPORT only                        │  │
+│  └──────────────────────────────────────────────────────────┘  │
+│                                                                 │
+│  NanoClaw (Main Operator)  ←→  Chat Tab (NANOCLAW channel)     │
+│       │                                                         │
+│       ├── Reads: All engines, all data                          │
+│       └── Writes: With explicit AJ instruction only             │
+│                                                                 │
+│  OpenClaw/CEO (Research)   ←→  Chat Tab (NANOCLAW channel,     │
+│       │                         recommendation cards)           │
+│       ├── Reads: Market data, system status, reports            │
+│       └── Writes: BLOCKED. Output = recommendations only.       │
+│                                                                 │
+│  Ruflo Swarm              ←→  Chat Tab (RUFLO channel)          │
+│       ├── Reads: Tasked data, system status                     │
+│       └── Writes: BLOCKED. Output = status reports only.        │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+### NanoClaw Write-Gate Protocol
+
+1. Default mode: READ + RECOMMEND
+2. To execute a write action, the operator (AJ) must explicitly instruct (e.g., "go ahead", "execute", "apply this")
+3. NanoClaw always confirms before writing: "I'll [action]. Shall I proceed?"
+4. Permission enforced server-side by `AgentPermissionGuard.assert_allowed(action, agent_id)`
+
+### CEO Recommendation Approval Workflow
+
+1. OpenClaw/CEO produces a research recommendation
+2. Recommendation appears as an amber-bordered card in the NanoClaw chat channel
+3. Card includes [APPROVE] and [DISMISS] buttons
+4. APPROVE routes the recommendation to NanoClaw for execution (still requires NanoClaw confirmation)
+5. DISMISS removes the recommendation from the queue
+
+### API Endpoints
+
+| Endpoint | Method | Description |
+|----------|--------|-------------|
+| `/api/chat/nanoclaw/messages` | GET | NanoClaw message history |
+| `/api/chat/nanoclaw/send` | POST | Send message to NanoClaw (SSE stream response) |
+| `/api/chat/nanoclaw/stream` | GET | SSE stream for NanoClaw status updates |
+| `/api/chat/ruflo/agents` | GET | List active Ruflo agents + status |
+| `/api/chat/ruflo/send` | POST | Send message to Ruflo agent or broadcast |
+| `/api/chat/recommendations` | GET | Pending CEO recommendations |
+| `/api/chat/recommendations/{id}/approve` | POST | Approve a recommendation |
+| `/api/chat/recommendations/{id}/dismiss` | POST | Dismiss a recommendation |
+| `/api/chat/agent-permissions` | GET | Permission map for all agents |
+
+### Files Added
+
+```
+engine/agents/nanoclaw/
+├── __init__.py
+├── permission_guard.py        # AgentPermissionGuard class + AGENT_PERMISSIONS dict
+├── agent_config.py            # Agent identity constants + display metadata
+├── nanoclaw_agent.py          # NanoClawAgent — streaming Claude API wrapper
+└── groups/
+    ├── main/CLAUDE.md         # NanoClaw operator memory
+    ├── openclaw/CLAUDE.md     # OpenClaw/CEO read-only restrictions
+    └── ruflo/CLAUDE.md        # Ruflo swarm group memory
+
+engine/api/routers/chat.py     # FastAPI chat router (/api/chat/*)
+client/src/pages/chat-tab.tsx  # React chat tab (NANOCLAW + RUFLO sub-tabs)
+```
 

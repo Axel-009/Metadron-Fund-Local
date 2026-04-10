@@ -69,5 +69,9 @@ export async function registerRoutes(
   // Covers: /api/allocation/rules, /status, /slate, /scan/*, /collateral/*
   proxyToEngine(app, "/api/allocation");
 
+  // Chat + NanoClaw agent endpoints → Python FastAPI
+  // Covers: /api/chat/nanoclaw/*, /api/chat/ruflo/*, /api/chat/recommendations/*
+  proxyToEngine(app, "/api/chat");
+
   return httpServer;
 }
