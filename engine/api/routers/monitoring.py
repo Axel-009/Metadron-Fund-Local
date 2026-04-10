@@ -208,6 +208,11 @@ async def engines_health():
             ("L6", "DynamicAgentFactory", "engine.agents.dynamic_agent_factory"),
             ("L6", "SectorBots", "engine.agents.sector_bots"),
             ("L6", "InvestorPersonas", "engine.agents.investor_personas"),
+            ("L6.5", "QuantStrategyExecutor", "engine.execution.quant_strategy_executor"),
+            ("L6.5", "PatternRecognitionEngine", "engine.ml.pattern_recognition"),
+            ("L6.5", "PatternDiscoveryEngine", "engine.signals.pattern_discovery_engine"),
+            ("L6.5", "AlphaOptimizer", "engine.ml.alpha_optimizer"),
+            ("L6.5", "Backtester", "engine.ml.backtester"),
             ("MON", "AnomalyDetector", "engine.monitoring.anomaly_detector"),
         ]
 

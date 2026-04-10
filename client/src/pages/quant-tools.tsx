@@ -5,10 +5,18 @@ import { useEngineQuery } from "@/hooks/use-engine-api";
 import {
   AreaChart, Area, XAxis, YAxis, Tooltip, ResponsiveContainer,
   ComposedChart, Line, Bar, BarChart, ReferenceLine,
-  LineChart,
+  LineChart, Cell,
 } from "recharts";
 
 // ═══════════ TYPES ═══════════
+
+interface UniverseTicker {
+  ticker: string;
+  sector: string;
+  price: number;
+  change_pct: number;
+  source: string;
+}
 
 interface OHLCV {
   date: string;
@@ -17,72 +25,116 @@ interface OHLCV {
   low: number;
   close: number;
   volume: number;
+  sma20?: number;
+  sma50?: number;
+  rsi?: number;
+  macd?: number;
+  signal?: number;
+  histogram?: number;
+  bb_upper?: number;
+  bb_lower?: number;
 }
 
-interface TickerConfig {
+interface StrategyResult {
+  name: string;
+  key: string;
+  direction: number;
+  signal: number;
+  confidence: number;
+  description: string;
+  stop_loss: number;
+  take_profit: number;
+}
+
+interface StrategiesResponse {
   ticker: string;
-  sector: string;
-  basePrice: number;
-  volatility: number;
-  trend: number;
+  regime: string;
+  vix: number;
+  scale: number;
+  kill_switch: boolean;
+  strategies: StrategyResult[];
+  active_count: number;
+  active_names: string[];
+  consensus_direction: number;
+  consensus_signal: number;
+  agreement: number;
+  size_multiplier: number;
+  stop_loss: number;
+  take_profit: number;
+  stop_sources: string[];
+  target_sources: string[];
 }
 
-// ═══════════ TICKER CONFIGS ═══════════
-
-const TICKERS: TickerConfig[] = [
-  { ticker: "AAPL", sector: "Technology", basePrice: 189.0, volatility: 0.018, trend: 0.0008 },
-  { ticker: "MSFT", sector: "Technology", basePrice: 415.0, volatility: 0.016, trend: 0.0009 },
-  { ticker: "NVDA", sector: "Technology", basePrice: 878.0, volatility: 0.032, trend: 0.0015 },
-  { ticker: "GOOGL", sector: "Communication", basePrice: 174.0, volatility: 0.019, trend: 0.0007 },
-  { ticker: "AMZN", sector: "Consumer Disc.", basePrice: 189.0, volatility: 0.021, trend: 0.0010 },
-  { ticker: "JPM", sector: "Financials", basePrice: 198.0, volatility: 0.015, trend: 0.0006 },
-  { ticker: "XOM", sector: "Energy", basePrice: 113.0, volatility: 0.017, trend: -0.0003 },
-  { ticker: "META", sector: "Communication", basePrice: 498.0, volatility: 0.024, trend: 0.0011 },
-  { ticker: "TSLA", sector: "Consumer Disc.", basePrice: 248.0, volatility: 0.038, trend: -0.0004 },
-  { ticker: "JNJ", sector: "Healthcare", basePrice: 147.0, volatility: 0.012, trend: 0.0003 },
-  { ticker: "V", sector: "Financials", basePrice: 274.0, volatility: 0.013, trend: 0.0005 },
-  { ticker: "AMD", sector: "Technology", basePrice: 178.0, volatility: 0.034, trend: 0.0012 },
-];
-
-// ═══════════ OHLCV GENERATION ═══════════
-
-function seeded(seed: number) {
-  let s = seed;
-  return () => {
-    s = (s * 1664525 + 1013904223) & 0xffffffff;
-    return (s >>> 0) / 0xffffffff;
+interface PatternScanResponse {
+  ticker: string;
+  patterns: {
+    scan?: Record<string, unknown>;
+    analysis?: Record<string, unknown>;
+    conviction_signals?: Array<{
+      ticker: string;
+      direction: string;
+      confidence: number;
+      entry: number;
+      stop: number;
+      target: number;
+      reward_risk: number;
+      pattern: string;
+      regime: string;
+    }>;
+    discovery_signals?: Array<{
+      ticker: string;
+      pattern_type: string;
+      direction: string;
+      confidence: number;
+      source: string;
+    }>;
   };
 }
 
-function generateOHLCV(cfg: TickerConfig): OHLCV[] {
-  const rng = seeded(cfg.ticker.charCodeAt(0) * 31 + cfg.ticker.charCodeAt(1) * 7);
-  const data: OHLCV[] = [];
-  let price = cfg.basePrice * (0.88 + rng() * 0.08);
-
-  for (let i = 119; i >= 0; i--) {
-    const d = new Date(Date.now() - i * 86400000);
-    // skip weekends
-    if (d.getDay() === 0 || d.getDay() === 6) continue;
-    const dailyReturn = cfg.trend + (rng() - 0.5) * cfg.volatility * 2;
-    const open = price;
-    price = open * (1 + dailyReturn);
-    const intraRange = price * cfg.volatility * (0.5 + rng() * 0.8);
-    const high = Math.max(open, price) + intraRange * rng();
-    const low = Math.min(open, price) - intraRange * rng();
-    const volume = Math.floor(8_000_000 + rng() * 40_000_000);
-    data.push({
-      date: d.toLocaleDateString("en-US", { month: "short", day: "numeric" }),
-      open: +open.toFixed(2),
-      high: +high.toFixed(2),
-      low: +low.toFixed(2),
-      close: +price.toFixed(2),
-      volume,
-    });
-  }
-  return data;
+interface ExecutionLogEntry {
+  ticker: string;
+  regime: string;
+  consensus_direction: number;
+  consensus_signal: number;
+  active_count: number;
+  active_names: string[];
+  agreement: number;
+  size_multiplier: number;
+  kill_switch: boolean;
+  stop_loss: number;
+  take_profit: number;
 }
 
-// ═══════════ INDICATOR CALCULATIONS ═══════════
+interface FactorModelResponse {
+  factor_model: {
+    factors_by_category?: Record<string, string[]>;
+    total_factors?: number;
+    feature_importances?: Record<string, Record<string, number>>;
+    oos_sharpe?: number;
+    should_retrain?: boolean;
+  };
+}
+
+interface LearningStateResponse {
+  learning: {
+    orchestrator?: {
+      gsd_active: boolean;
+      paul_active: boolean;
+      attached_agents: number;
+    };
+    execution_learning?: {
+      total_executions: number;
+      avg_active_strategies: number;
+      avg_agreement: number;
+      kill_switch_activations: number;
+      strategy_consistency: number;
+    };
+    pattern_audit_entries?: number;
+    high_conviction_count?: number;
+  };
+}
+
+// ═══════════ LOCAL INDICATOR CALCULATIONS (from live OHLCV) ═══════════
 
 function calcSMA(closes: number[], period: number) {
   if (closes.length < period) return null;
@@ -135,7 +187,6 @@ function calcMACD(closes: number[]) {
   const ema26 = calcEMA(closes, 26);
   if (!ema12 || !ema26) return null;
   const macdLine = ema12 - ema26;
-  // Signal is 9-period EMA of MACD — approximate
   const signal = macdLine * 0.82;
   const histogram = +(macdLine - signal).toFixed(3);
   return { macd: +macdLine.toFixed(3), signal: +signal.toFixed(3), histogram };
@@ -160,8 +211,8 @@ function calcStochastic(data: OHLCV[], period = 14): { k: number; d: number } | 
   const highestHigh = Math.max(...recent.map(d => d.high));
   const lowestLow = Math.min(...recent.map(d => d.low));
   const lastClose = recent[recent.length - 1].close;
-  const k = +((( lastClose - lowestLow) / (highestHigh - lowestLow)) * 100).toFixed(2);
-  const d = +(k * 0.9 + 5).toFixed(2); // simplified
+  const k = +(((lastClose - lowestLow) / (highestHigh - lowestLow)) * 100).toFixed(2);
+  const d = +(k * 0.9 + 5).toFixed(2);
   return { k, d };
 }
 
@@ -233,66 +284,52 @@ function scoreSignal(indicators: IndicatorSet, close: number): { composite: Sign
   const signals: IndicatorSignal[] = [];
   let bull = 0, bear = 0;
 
-  // RSI
   const rsi = indicators.rsi ?? 50;
   const rsiSig: Signal = rsi < 30 ? "STRONG_BUY" : rsi < 45 ? "BUY" : rsi > 70 ? "STRONG_SELL" : rsi > 60 ? "SELL" : "NEUTRAL";
   signals.push({ name: "RSI (14)", value: `${rsi.toFixed(1)}`, signal: rsiSig });
   if (rsiSig === "STRONG_BUY") bull += 2; else if (rsiSig === "BUY") bull += 1;
   else if (rsiSig === "STRONG_SELL") bear += 2; else if (rsiSig === "SELL") bear += 1;
 
-  // SMA 20
   if (indicators.sma20) {
-    const sma20Sig: Signal = close > indicators.sma20 * 1.02 ? "BUY" : close < indicators.sma20 * 0.98 ? "SELL" : "NEUTRAL";
-    signals.push({ name: "SMA (20)", value: `$${indicators.sma20}`, signal: sma20Sig });
-    if (sma20Sig === "BUY") bull += 1; else if (sma20Sig === "SELL") bear += 1;
+    const s: Signal = close > indicators.sma20 * 1.02 ? "BUY" : close < indicators.sma20 * 0.98 ? "SELL" : "NEUTRAL";
+    signals.push({ name: "SMA (20)", value: `$${indicators.sma20}`, signal: s });
+    if (s === "BUY") bull += 1; else if (s === "SELL") bear += 1;
   }
-
-  // SMA 50
   if (indicators.sma50) {
-    const sma50Sig: Signal = close > indicators.sma50 * 1.01 ? "BUY" : close < indicators.sma50 * 0.99 ? "SELL" : "NEUTRAL";
-    signals.push({ name: "SMA (50)", value: `$${indicators.sma50}`, signal: sma50Sig });
-    if (sma50Sig === "BUY") bull += 1; else if (sma50Sig === "SELL") bear += 1;
+    const s: Signal = close > indicators.sma50 * 1.01 ? "BUY" : close < indicators.sma50 * 0.99 ? "SELL" : "NEUTRAL";
+    signals.push({ name: "SMA (50)", value: `$${indicators.sma50}`, signal: s });
+    if (s === "BUY") bull += 1; else if (s === "SELL") bear += 1;
   }
-
-  // SMA 200
   if (indicators.sma200) {
-    const sma200Sig: Signal = close > indicators.sma200 ? "BUY" : "SELL";
-    signals.push({ name: "SMA (200)", value: `$${indicators.sma200}`, signal: sma200Sig });
-    if (sma200Sig === "BUY") bull += 1; else if (sma200Sig === "SELL") bear += 1;
+    const s: Signal = close > indicators.sma200 ? "BUY" : "SELL";
+    signals.push({ name: "SMA (200)", value: `$${indicators.sma200}`, signal: s });
+    if (s === "BUY") bull += 1; else if (s === "SELL") bear += 1;
   }
-
-  // MACD
   if (indicators.macd) {
     const { histogram } = indicators.macd;
-    const macdSig: Signal = histogram > 0.5 ? "STRONG_BUY" : histogram > 0 ? "BUY" : histogram < -0.5 ? "STRONG_SELL" : "SELL";
-    signals.push({ name: "MACD", value: `${indicators.macd.macd.toFixed(3)}`, signal: macdSig });
-    if (macdSig === "STRONG_BUY") bull += 2; else if (macdSig === "BUY") bull += 1;
-    else if (macdSig === "STRONG_SELL") bear += 2; else if (macdSig === "SELL") bear += 1;
+    const s: Signal = histogram > 0.5 ? "STRONG_BUY" : histogram > 0 ? "BUY" : histogram < -0.5 ? "STRONG_SELL" : "SELL";
+    signals.push({ name: "MACD", value: `${indicators.macd.macd.toFixed(3)}`, signal: s });
+    if (s === "STRONG_BUY") bull += 2; else if (s === "BUY") bull += 1;
+    else if (s === "STRONG_SELL") bear += 2; else if (s === "SELL") bear += 1;
   }
-
-  // Bollinger Bands
   if (indicators.bb) {
     const { upper, lower, mid } = indicators.bb;
-    const bbSig: Signal = close < lower ? "STRONG_BUY" : close < mid * 0.99 ? "BUY" : close > upper ? "STRONG_SELL" : close > mid * 1.01 ? "SELL" : "NEUTRAL";
-    signals.push({ name: "Boll. Bands (20,2σ)", value: `BW: ${indicators.bb.width}%`, signal: bbSig });
-    if (bbSig === "STRONG_BUY") bull += 2; else if (bbSig === "BUY") bull += 1;
-    else if (bbSig === "STRONG_SELL") bear += 2; else if (bbSig === "SELL") bear += 1;
+    const s: Signal = close < lower ? "STRONG_BUY" : close < mid * 0.99 ? "BUY" : close > upper ? "STRONG_SELL" : close > mid * 1.01 ? "SELL" : "NEUTRAL";
+    signals.push({ name: "Boll. Bands (20,2σ)", value: `BW: ${indicators.bb.width}%`, signal: s });
+    if (s === "STRONG_BUY") bull += 2; else if (s === "BUY") bull += 1;
+    else if (s === "STRONG_SELL") bear += 2; else if (s === "SELL") bear += 1;
   }
-
-  // Stochastic
   if (indicators.stoch) {
     const { k } = indicators.stoch;
-    const stochSig: Signal = k < 20 ? "STRONG_BUY" : k < 35 ? "BUY" : k > 80 ? "STRONG_SELL" : k > 65 ? "SELL" : "NEUTRAL";
-    signals.push({ name: "Stochastic (14,3)", value: `K:${k.toFixed(1)} D:${indicators.stoch.d.toFixed(1)}`, signal: stochSig });
-    if (stochSig === "STRONG_BUY") bull += 2; else if (stochSig === "BUY") bull += 1;
-    else if (stochSig === "STRONG_SELL") bear += 2; else if (stochSig === "SELL") bear += 1;
+    const s: Signal = k < 20 ? "STRONG_BUY" : k < 35 ? "BUY" : k > 80 ? "STRONG_SELL" : k > 65 ? "SELL" : "NEUTRAL";
+    signals.push({ name: "Stochastic (14,3)", value: `K:${k.toFixed(1)} D:${indicators.stoch.d.toFixed(1)}`, signal: s });
+    if (s === "STRONG_BUY") bull += 2; else if (s === "BUY") bull += 1;
+    else if (s === "STRONG_SELL") bear += 2; else if (s === "SELL") bear += 1;
   }
 
-  // Volume
   const volSig: Signal = indicators.volRatio > 1.5 ? "BUY" : indicators.volRatio < 0.6 ? "SELL" : "NEUTRAL";
   signals.push({ name: "Volume Profile", value: `${indicators.volRatio.toFixed(2)}x avg`, signal: volSig });
 
-  // OBV
   const obvSig: Signal = indicators.obvDir === "UP" ? "BUY" : indicators.obvDir === "DOWN" ? "SELL" : "NEUTRAL";
   signals.push({ name: "OBV", value: indicators.obvDir, signal: obvSig });
   if (obvSig === "BUY") bull += 1; else if (obvSig === "SELL") bear += 1;
@@ -340,58 +377,12 @@ function SignalDot({ signal }: { signal: Signal }) {
   );
 }
 
-// ═══════════ QUANT STRATEGIES ═══════════
-
-interface QuantStrategy {
-  name: string;
-  description: string;
-  confidence: number;
-  action: Signal;
-  params: string;
-}
-
-function generateStrategies(close: number, indicators: IndicatorSet): QuantStrategy[] {
-  const rsi = indicators.rsi ?? 50;
-  const macdHist = indicators.macd?.histogram ?? 0;
-  const bbWidth = indicators.bb?.width ?? 5;
-
-  return [
-    {
-      name: "ARIMA+GARCH",
-      description: "Time series forecasting with volatility clustering",
-      confidence: Math.min(95, Math.max(35, 62 + (rsi - 50) * 0.4 + macdHist * 5)),
-      action: rsi < 50 && macdHist > 0 ? "BUY" : rsi > 60 ? "SELL" : "NEUTRAL",
-      params: "p=2,d=1,q=1 | GARCH(1,1)",
-    },
-    {
-      name: "EMA Crossover + Bollinger",
-      description: "Dual EMA crossover confirmed by BB squeeze",
-      confidence: Math.min(90, Math.max(30, 55 + (indicators.ema12 && indicators.ema26 ? (indicators.ema12 - indicators.ema26) / indicators.ema26 * 1000 : 0))),
-      action: indicators.ema12 && indicators.ema26 && indicators.ema12 > indicators.ema26 ? (bbWidth < 4 ? "STRONG_BUY" : "BUY") : "NEUTRAL",
-      params: "EMA(12,26) | BB(20,2σ) squeeze",
-    },
-    {
-      name: "Cointegration Pairs",
-      description: "Statistical arbitrage via OU mean-reversion",
-      confidence: Math.min(85, Math.max(25, 48 + Math.random() * 30)),
-      action: Math.random() > 0.5 ? "BUY" : "NEUTRAL",
-      params: "Z-score: ±2.0 entry | ±0.5 exit | ±4.0 stop",
-    },
-    {
-      name: "LSTM Forecasting",
-      description: "Deep learning sequence model 5-day forward",
-      confidence: Math.min(88, Math.max(40, 61 + (indicators.sma20 && close > indicators.sma20 ? 8 : -5))),
-      action: indicators.sma50 && close > indicators.sma50 ? "BUY" : "SELL",
-      params: "Seq=60d | Layers=3 | Dropout=0.2",
-    },
-    {
-      name: "Sentiment + Momentum",
-      description: "Combined NLP score with price momentum",
-      confidence: Math.min(80, Math.max(30, 52 + (rsi > 55 ? 10 : -5))),
-      action: rsi > 60 && macdHist > 0 ? "STRONG_BUY" : rsi > 50 ? "BUY" : "NEUTRAL",
-      params: "FinBERT score | 20d momentum",
-    },
-  ];
+function dirToSignal(dir: number, conf: number): Signal {
+  if (dir > 0 && conf > 70) return "STRONG_BUY";
+  if (dir > 0) return "BUY";
+  if (dir < 0 && conf > 70) return "STRONG_SELL";
+  if (dir < 0) return "SELL";
+  return "NEUTRAL";
 }
 
 // ═══════════ RSI GAUGE ═══════════
@@ -455,7 +446,7 @@ function MACDChart({ data }: { data: OHLCV[] }) {
         <ReferenceLine y={0} stroke="#484f58" strokeDasharray="3 3" />
         <Bar dataKey="histogram" name="Histogram">
           {chartData.map((entry, i) => (
-            <rect key={i} fill={entry.histogram >= 0 ? "#3fb950" : "#f85149"} />
+            <Cell key={i} fill={entry.histogram >= 0 ? "#3fb950" : "#f85149"} />
           ))}
         </Bar>
         <Line type="monotone" dataKey="macd" stroke="#58a6ff" strokeWidth={1} dot={false} name="MACD" />
@@ -467,31 +458,30 @@ function MACDChart({ data }: { data: OHLCV[] }) {
 
 // ═══════════ PRICE CHART ═══════════
 
-function PriceChart({ data, indicators }: { data: OHLCV[]; indicators: IndicatorSet }) {
-  const chartData = data.map(d => ({
-    date: d.date,
-    price: d.close,
-    high: d.high,
-    low: d.low,
-    volume: d.volume,
-    sma20: null as number | null,
-    sma50: null as number | null,
-    bbUpper: null as number | null,
-    bbLower: null as number | null,
-  }));
-
-  // Add SMA/BB values progressively
+function PriceChart({ data }: { data: OHLCV[] }) {
   const closes = data.map(d => d.close);
-  chartData.forEach((d, i) => {
-    if (i >= 19) d.sma20 = +(closes.slice(i - 19, i + 1).reduce((s, v) => s + v, 0) / 20).toFixed(2);
-    if (i >= 49) d.sma50 = +(closes.slice(i - 49, i + 1).reduce((s, v) => s + v, 0) / 50).toFixed(2);
+  const chartData = data.map((d, i) => {
+    const row: Record<string, number | string | null> = {
+      date: d.date,
+      price: d.close,
+      high: d.high,
+      low: d.low,
+      volume: d.volume,
+      sma20: null,
+      sma50: null,
+      bbUpper: null,
+      bbLower: null,
+    };
+    if (i >= 19) row.sma20 = +(closes.slice(i - 19, i + 1).reduce((s, v) => s + v, 0) / 20).toFixed(2);
+    if (i >= 49) row.sma50 = +(closes.slice(i - 49, i + 1).reduce((s, v) => s + v, 0) / 50).toFixed(2);
     if (i >= 19) {
-      const slice = closes.slice(i - 19, i + 1);
-      const mid = slice.reduce((s, v) => s + v, 0) / 20;
-      const sigma = Math.sqrt(slice.reduce((s, v) => s + (v - mid) ** 2, 0) / 20);
-      d.bbUpper = +(mid + 2 * sigma).toFixed(2);
-      d.bbLower = +(mid - 2 * sigma).toFixed(2);
+      const sl = closes.slice(i - 19, i + 1);
+      const mid = sl.reduce((s, v) => s + v, 0) / 20;
+      const sigma = Math.sqrt(sl.reduce((s, v) => s + (v - mid) ** 2, 0) / 20);
+      row.bbUpper = +(mid + 2 * sigma).toFixed(2);
+      row.bbLower = +(mid - 2 * sigma).toFixed(2);
     }
+    return row;
   });
 
   const priceMin = Math.min(...data.map(d => d.low)) * 0.99;
@@ -506,7 +496,7 @@ function PriceChart({ data, indicators }: { data: OHLCV[]; indicators: Indicator
           tick={{ fill: "#484f58", fontSize: 9 }}
           tickLine={false}
           axisLine={false}
-          tickFormatter={(v) => `$${v.toFixed(0)}`}
+          tickFormatter={(v: number) => `$${v.toFixed(0)}`}
         />
         <Tooltip
           contentStyle={{ backgroundColor: "#0d1117", border: "1px solid #1e2530", borderRadius: "4px", fontSize: 10 }}
@@ -541,7 +531,15 @@ function StrengthGauge({ strength }: { strength: number }) {
 export default function QuantToolsPage() {
   const [selectedTicker, setSelectedTicker] = useState("NVDA");
 
-  // ─── Engine API — live OHLCV + indicators from OpenBB ──
+  // ─── Live universe from quant engine (no static TICKERS) ──
+  const { data: universeApi } = useEngineQuery<{
+    tickers: UniverseTicker[];
+    total: number;
+  }>("/quant/universe", { refetchInterval: 60000 });
+
+  const universe = useMemo(() => universeApi?.tickers ?? [], [universeApi]);
+
+  // ─── Live OHLCV + indicators from OpenBB via ML router ──
   const { data: techApi } = useEngineQuery<{
     data: Array<Record<string, number | string>>;
     signal: string;
@@ -549,10 +547,38 @@ export default function QuantToolsPage() {
     latest: { close: number; rsi: number; macd: number; sma20: number; sma50: number };
   }>(`/ml/technical-indicators?ticker=${selectedTicker}&days=120`, { refetchInterval: 30000 });
 
-  const cfg = useMemo(() => TICKERS.find(t => t.ticker === selectedTicker) ?? TICKERS[0], [selectedTicker]);
+  // ─── 12 HFT strategies from QuantStrategyExecutor ──
+  const { data: stratApi } = useEngineQuery<StrategiesResponse>(
+    `/quant/strategies?ticker=${selectedTicker}&days=120`,
+    { refetchInterval: 30000 }
+  );
 
-  // Use API data when available, fall back to generator
-  const ohlcv = useMemo(() => {
+  // ─── Pattern recognition scan ──
+  const { data: patternApi } = useEngineQuery<PatternScanResponse>(
+    `/quant/pattern-scan?ticker=${selectedTicker}&days=252`,
+    { refetchInterval: 60000 }
+  );
+
+  // ─── Execution log ──
+  const { data: execLogApi } = useEngineQuery<{
+    log: ExecutionLogEntry[];
+    total: number;
+  }>("/quant/execution-log?limit=20", { refetchInterval: 30000 });
+
+  // ─── Factor model ──
+  const { data: factorApi } = useEngineQuery<FactorModelResponse>(
+    "/quant/factor-model",
+    { refetchInterval: 60000 }
+  );
+
+  // ─── Learning state ──
+  const { data: learningApi } = useEngineQuery<LearningStateResponse>(
+    "/quant/learning-state",
+    { refetchInterval: 30000 }
+  );
+
+  // ─── Derive OHLCV from live API ──
+  const ohlcv: OHLCV[] = useMemo(() => {
     if (techApi?.data?.length && techApi.data.length > 20) {
       return techApi.data.map((d) => ({
         date: String(d.date || ""),
@@ -571,23 +597,33 @@ export default function QuantToolsPage() {
         bb_lower: Number(d.bb_lower || 0),
       }));
     }
-    return generateOHLCV(cfg);
-  }, [techApi, cfg]);
+    return [];
+  }, [techApi]);
 
-  const indicators = useMemo(() => calcIndicators(ohlcv), [ohlcv]);
-  const close = techApi?.latest?.close ?? ohlcv[ohlcv.length - 1]?.close ?? cfg.basePrice;
-  const prevClose = ohlcv[ohlcv.length - 2]?.close ?? close;
-  const pctChange = +((close - prevClose) / prevClose * 100).toFixed(2);
-  const { composite, signals, strength } = useMemo(() => scoreSignal(indicators, close), [indicators, close]);
-  const strategies = useMemo(() => generateStrategies(close, indicators), [close, indicators]);
+  const indicators = useMemo(() => ohlcv.length > 0 ? calcIndicators(ohlcv) : null, [ohlcv]);
+  const tickerInfo = useMemo(() => universe.find(t => t.ticker === selectedTicker), [universe, selectedTicker]);
+  const close = techApi?.latest?.close ?? ohlcv[ohlcv.length - 1]?.close ?? tickerInfo?.price ?? 0;
+  const prevClose = ohlcv.length > 1 ? ohlcv[ohlcv.length - 2]?.close ?? close : close;
+  const pctChange = close > 0 && prevClose > 0 ? +((close - prevClose) / prevClose * 100).toFixed(2) : (tickerInfo?.change_pct ?? 0);
+  const { composite, signals, strength } = useMemo(
+    () => indicators ? scoreSignal(indicators, close) : { composite: "NEUTRAL" as Signal, signals: [], strength: 50 },
+    [indicators, close]
+  );
+
+  const strategies = stratApi?.strategies ?? [];
+  const conviction = patternApi?.patterns?.conviction_signals ?? [];
+  const discovery = patternApi?.patterns?.discovery_signals ?? [];
+  const execLog = execLogApi?.log ?? [];
+  const factorModel = factorApi?.factor_model ?? {};
+  const learning = learningApi?.learning ?? {};
 
   return (
     <div className="h-full flex flex-col gap-1 p-1 overflow-hidden">
 
-      {/* Ticker selector + price header */}
+      {/* Ticker selector from live universe */}
       <div className="flex-shrink-0 flex items-center gap-2">
         <div className="flex items-center gap-1 bg-terminal-surface border border-terminal-border/60 rounded p-1 flex-wrap">
-          {TICKERS.map(t => (
+          {universe.length > 0 ? universe.map(t => (
             <button
               key={t.ticker}
               onClick={() => setSelectedTicker(t.ticker)}
@@ -599,7 +635,9 @@ export default function QuantToolsPage() {
             >
               {t.ticker}
             </button>
-          ))}
+          )) : (
+            <span className="text-[10px] text-terminal-text-faint px-2 py-1">Loading universe...</span>
+          )}
         </div>
         <div className="flex items-center gap-3 ml-2">
           <span className="text-lg font-mono font-bold text-terminal-text-primary">{selectedTicker}</span>
@@ -607,90 +645,305 @@ export default function QuantToolsPage() {
           <span className={`text-sm font-mono font-semibold ${pctChange >= 0 ? "text-terminal-positive" : "text-terminal-negative"}`}>
             {pctChange >= 0 ? "+" : ""}{pctChange}%
           </span>
-          <span className="text-[10px] text-terminal-text-faint font-mono">{cfg.sector}</span>
+          <span className="text-[10px] text-terminal-text-faint font-mono">{tickerInfo?.sector ?? ""}</span>
+          {stratApi?.regime && (
+            <span className="text-[9px] font-mono px-1.5 py-0.5 rounded bg-terminal-accent/10 text-terminal-accent border border-terminal-accent/30">
+              {stratApi.regime.toUpperCase()} | VIX:{stratApi.vix}
+            </span>
+          )}
+          {stratApi?.kill_switch && (
+            <span className="text-[9px] font-mono px-1.5 py-0.5 rounded bg-red-500/20 text-red-400 border border-red-500/40">
+              KILL SWITCH
+            </span>
+          )}
         </div>
       </div>
 
       {/* Main grid */}
       <div className="flex-1 min-h-0 overflow-hidden">
         <ResizableDashboard defaultSizes={[75, 25]} minSizes={[45, 18]}>
-        {/* Left: price chart + signals + strategies */}
-        <div className="h-full flex flex-col gap-1 overflow-hidden">
+        {/* Left: charts + strategies + learning */}
+        <div className="h-full flex flex-col gap-1 overflow-auto">
           {/* Price chart */}
-          <DashboardPanel
-            title={`${selectedTicker} — PRICE CHART (120 DAYS)`}
-            className="flex-1"
-            headerRight={
-              <span className="text-[9px] font-mono text-terminal-text-faint">
-                SMA20 <span className="text-[#f0883e]">●</span>  SMA50 <span className="text-[#d2a8ff]">●</span>  BB2σ <span className="text-[#58a6ff]">●</span>
-              </span>
-            }
-          >
-            <PriceChart data={ohlcv} indicators={indicators} />
-          </DashboardPanel>
+          {ohlcv.length > 0 && (
+            <DashboardPanel
+              title={`${selectedTicker} — PRICE CHART (LIVE DATA)`}
+              className="flex-shrink-0 h-52"
+              headerRight={
+                <span className="text-[9px] font-mono text-terminal-text-faint">
+                  SMA20 <span className="text-[#f0883e]">●</span>  SMA50 <span className="text-[#d2a8ff]">●</span>  BB2σ <span className="text-[#58a6ff]">●</span>
+                </span>
+              }
+            >
+              <PriceChart data={ohlcv} />
+            </DashboardPanel>
+          )}
 
           {/* MACD */}
-          <DashboardPanel title="MACD (12, 26, 9)" className="h-24 flex-shrink-0">
-            <MACDChart data={ohlcv} />
-          </DashboardPanel>
+          {ohlcv.length > 0 && (
+            <DashboardPanel title="MACD (12, 26, 9)" className="h-24 flex-shrink-0">
+              <MACDChart data={ohlcv} />
+            </DashboardPanel>
+          )}
 
-          {/* Signal summary */}
-          <DashboardPanel title="COMPOSITE SIGNAL SUMMARY" className="flex-shrink-0">
-            <div className="flex flex-col gap-2">
-              <div className="flex items-center gap-4">
-                <div>
-                  <div className="text-[9px] text-terminal-text-faint mb-1">COMPOSITE SIGNAL</div>
-                  <span
-                    className="text-lg font-mono font-bold px-3 py-1 rounded"
-                    style={{ color: SIGNAL_COLORS[composite], backgroundColor: `${SIGNAL_COLORS[composite]}15`, border: `1px solid ${SIGNAL_COLORS[composite]}40` }}
-                  >
-                    {SIGNAL_LABELS[composite]}
-                  </span>
+          {ohlcv.length === 0 && (
+            <DashboardPanel title="PRICE DATA" className="h-24 flex-shrink-0">
+              <div className="flex items-center justify-center h-full text-terminal-text-faint text-[11px]">
+                Fetching live OHLCV data from OpenBB / Alpaca...
+              </div>
+            </DashboardPanel>
+          )}
+
+          {/* Composite signal */}
+          {indicators && (
+            <DashboardPanel title="COMPOSITE SIGNAL SUMMARY" className="flex-shrink-0">
+              <div className="flex flex-col gap-2">
+                <div className="flex items-center gap-4">
+                  <div>
+                    <div className="text-[9px] text-terminal-text-faint mb-1">COMPOSITE SIGNAL</div>
+                    <span
+                      className="text-lg font-mono font-bold px-3 py-1 rounded"
+                      style={{ color: SIGNAL_COLORS[composite], backgroundColor: `${SIGNAL_COLORS[composite]}15`, border: `1px solid ${SIGNAL_COLORS[composite]}40` }}
+                    >
+                      {SIGNAL_LABELS[composite]}
+                    </span>
+                  </div>
+                  <div className="flex-1">
+                    <div className="text-[9px] text-terminal-text-faint mb-1">SIGNAL STRENGTH — {strength}% BULLISH</div>
+                    <StrengthGauge strength={strength} />
+                  </div>
                 </div>
-                <div className="flex-1">
-                  <div className="text-[9px] text-terminal-text-faint mb-1">SIGNAL STRENGTH — {strength}% BULLISH</div>
-                  <StrengthGauge strength={strength} />
+                <div className="grid grid-cols-3 gap-1">
+                  {signals.map(s => (
+                    <div key={s.name} className="flex items-center justify-between bg-terminal-bg rounded px-2 py-1">
+                      <span className="text-[9px] text-terminal-text-muted truncate mr-1">{s.name}</span>
+                      <div className="flex items-center gap-1 flex-shrink-0">
+                        <span className="text-[9px] font-mono text-terminal-text-faint">{s.value}</span>
+                        <SignalDot signal={s.signal} />
+                      </div>
+                    </div>
+                  ))}
                 </div>
               </div>
-              <div className="grid grid-cols-3 gap-1">
-                {signals.map(s => (
-                  <div key={s.name} className="flex items-center justify-between bg-terminal-bg rounded px-2 py-1">
-                    <span className="text-[9px] text-terminal-text-muted truncate mr-1">{s.name}</span>
-                    <div className="flex items-center gap-1 flex-shrink-0">
-                      <span className="text-[9px] font-mono text-terminal-text-faint">{s.value}</span>
-                      <SignalDot signal={s.signal} />
+            </DashboardPanel>
+          )}
+
+          {/* 12 HFT Strategies from QuantStrategyExecutor */}
+          <DashboardPanel
+            title={`HFT STRATEGY ENGINE — ${strategies.length} STRATEGIES`}
+            className="flex-shrink-0"
+            headerRight={stratApi ? (
+              <span className="text-[9px] font-mono text-terminal-text-faint">
+                ACTIVE: {stratApi.active_count} | CONSENSUS: {stratApi.consensus_signal.toFixed(3)} | AGREE: {(stratApi.agreement * 100).toFixed(0)}%
+              </span>
+            ) : undefined}
+          >
+            {strategies.length > 0 ? (
+              <div className="grid grid-cols-4 gap-1">
+                {strategies.map(s => {
+                  const sig = dirToSignal(s.direction, s.confidence);
+                  return (
+                    <div key={s.key} className="bg-terminal-bg border border-terminal-border/50 rounded p-2">
+                      <div className="text-[9px] font-semibold text-terminal-accent mb-0.5 truncate">{s.name}</div>
+                      <div className="text-[8px] text-terminal-text-faint mb-1 leading-tight truncate">{s.description}</div>
+                      <div className="flex items-center justify-between mb-1">
+                        <span className="text-[9px] text-terminal-text-faint">Confidence</span>
+                        <span className="font-mono text-[9px]" style={{ color: s.confidence > 70 ? "#3fb950" : s.confidence > 50 ? "#d29922" : "#f85149" }}>
+                          {s.confidence.toFixed(0)}%
+                        </span>
+                      </div>
+                      <div className="h-1 bg-terminal-surface rounded-full overflow-hidden mb-1">
+                        <div
+                          className="h-full rounded-full"
+                          style={{ width: `${Math.min(s.confidence, 100)}%`, backgroundColor: s.confidence > 70 ? "#3fb950" : s.confidence > 50 ? "#d29922" : "#f85149" }}
+                        />
+                      </div>
+                      <div className="flex items-center justify-between mb-1">
+                        <span className="text-[8px] text-terminal-text-faint font-mono">S/L: ${s.stop_loss}</span>
+                        <span className="text-[8px] text-terminal-text-faint font-mono">T/P: ${s.take_profit}</span>
+                      </div>
+                      <SignalDot signal={sig} />
                     </div>
+                  );
+                })}
+              </div>
+            ) : (
+              <div className="text-[10px] text-terminal-text-faint py-2">Loading strategy executor...</div>
+            )}
+          </DashboardPanel>
+
+          {/* Pattern Recognition + Discovery */}
+          <DashboardPanel title="PATTERN RECOGNITION — CONVICTION SIGNALS" className="flex-shrink-0">
+            {conviction.length > 0 ? (
+              <div className="grid grid-cols-5 gap-1">
+                {conviction.slice(0, 10).map((p, i) => (
+                  <div key={i} className="bg-terminal-bg border border-terminal-border/40 rounded p-1.5">
+                    <div className="text-[9px] font-mono font-semibold text-terminal-accent">{p.ticker}</div>
+                    <div className="text-[8px] text-terminal-text-faint">{p.pattern}</div>
+                    <div className="text-[8px] font-mono text-terminal-text-muted">{p.direction} {(p.confidence * 100).toFixed(0)}%</div>
+                    <div className="text-[7px] text-terminal-text-faint font-mono">E:${p.entry} S:${p.stop} T:${p.target}</div>
+                    <div className="text-[7px] text-terminal-text-faint">R/R: {p.reward_risk.toFixed(1)} | {p.regime}</div>
                   </div>
                 ))}
               </div>
-            </div>
+            ) : (
+              <div className="text-[10px] text-terminal-text-faint py-2">Scanning patterns...</div>
+            )}
+            {discovery.length > 0 && (
+              <div className="mt-2">
+                <div className="text-[9px] text-terminal-text-faint mb-1">DISCOVERY ENGINE (Mirofish + Newton)</div>
+                <div className="flex flex-wrap gap-1">
+                  {discovery.slice(0, 8).map((d, i) => (
+                    <span key={i} className="text-[8px] px-1.5 py-0.5 rounded bg-terminal-surface border border-terminal-border/40 font-mono text-terminal-text-muted">
+                      {d.ticker} {d.pattern_type} {d.direction} {(d.confidence * 100).toFixed(0)}%
+                    </span>
+                  ))}
+                </div>
+              </div>
+            )}
           </DashboardPanel>
 
-          {/* Quant strategies */}
-          <DashboardPanel title="QUANT STRATEGY LIBRARY" className="flex-shrink-0">
-            <div className="grid grid-cols-5 gap-1">
-              {strategies.map(s => (
-                <div key={s.name} className="bg-terminal-bg border border-terminal-border/50 rounded p-2">
-                  <div className="text-[9px] font-semibold text-terminal-accent mb-0.5 truncate">{s.name}</div>
-                  <div className="text-[8px] text-terminal-text-faint mb-1.5 leading-tight">{s.description}</div>
-                  <div className="text-[8px] text-terminal-text-faint font-mono mb-1.5">{s.params}</div>
-                  <div className="flex items-center justify-between mb-1">
-                    <span className="text-[9px] text-terminal-text-faint">Confidence</span>
-                    <span className="font-mono text-[9px]" style={{ color: s.confidence > 70 ? "#3fb950" : s.confidence > 50 ? "#d29922" : "#f85149" }}>
-                      {s.confidence.toFixed(0)}%
+          {/* Execution Log */}
+          <DashboardPanel title={`L7 EXECUTION LOG — ${execLogApi?.total ?? 0} ENTRIES`} className="flex-shrink-0">
+            {execLog.length > 0 ? (
+              <div className="overflow-x-auto">
+                <table className="w-full text-[9px] font-mono">
+                  <thead>
+                    <tr className="text-terminal-text-faint border-b border-terminal-border/40">
+                      <th className="text-left px-1 py-0.5">Ticker</th>
+                      <th className="text-left px-1 py-0.5">Regime</th>
+                      <th className="text-right px-1 py-0.5">Dir</th>
+                      <th className="text-right px-1 py-0.5">Signal</th>
+                      <th className="text-right px-1 py-0.5">Active</th>
+                      <th className="text-right px-1 py-0.5">Agree</th>
+                      <th className="text-right px-1 py-0.5">Size</th>
+                      <th className="text-center px-1 py-0.5">Kill</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {execLog.slice(0, 10).map((e, i) => (
+                      <tr key={i} className="border-b border-terminal-border/20 hover:bg-white/[0.02]">
+                        <td className="px-1 py-0.5 text-terminal-accent">{e.ticker}</td>
+                        <td className="px-1 py-0.5 text-terminal-text-muted">{e.regime}</td>
+                        <td className="px-1 py-0.5 text-right" style={{ color: e.consensus_direction > 0 ? "#3fb950" : e.consensus_direction < 0 ? "#f85149" : "#8b949e" }}>
+                          {e.consensus_direction > 0 ? "LONG" : e.consensus_direction < 0 ? "SHORT" : "FLAT"}
+                        </td>
+                        <td className="px-1 py-0.5 text-right text-terminal-text-muted">{e.consensus_signal.toFixed(3)}</td>
+                        <td className="px-1 py-0.5 text-right text-terminal-text-muted">{e.active_count}</td>
+                        <td className="px-1 py-0.5 text-right text-terminal-text-muted">{(e.agreement * 100).toFixed(0)}%</td>
+                        <td className="px-1 py-0.5 text-right text-terminal-text-muted">{e.size_multiplier.toFixed(2)}x</td>
+                        <td className="px-1 py-0.5 text-center">{e.kill_switch ? "🔴" : "✓"}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            ) : (
+              <div className="text-[10px] text-terminal-text-faint py-2">No execution log entries yet...</div>
+            )}
+          </DashboardPanel>
+
+          {/* Factor Model + Learning State */}
+          <div className="flex gap-1 flex-shrink-0">
+            <DashboardPanel title="FACTOR MODEL — ALPHA OPTIMIZER" className="flex-1">
+              <div className="space-y-1 text-[9px]">
+                {factorModel.oos_sharpe !== undefined && (
+                  <div className="flex items-center justify-between">
+                    <span className="text-terminal-text-faint">OOS Sharpe</span>
+                    <span className="font-mono" style={{ color: factorModel.oos_sharpe > 1 ? "#3fb950" : factorModel.oos_sharpe > 0.5 ? "#d29922" : "#f85149" }}>
+                      {factorModel.oos_sharpe.toFixed(3)}
                     </span>
                   </div>
-                  <div className="h-1 bg-terminal-surface rounded-full overflow-hidden mb-1.5">
-                    <div
-                      className="h-full rounded-full"
-                      style={{ width: `${s.confidence}%`, backgroundColor: s.confidence > 70 ? "#3fb950" : s.confidence > 50 ? "#d29922" : "#f85149" }}
-                    />
+                )}
+                {factorModel.total_factors !== undefined && (
+                  <div className="flex items-center justify-between">
+                    <span className="text-terminal-text-faint">Total Factors</span>
+                    <span className="font-mono text-terminal-text-muted">{factorModel.total_factors}</span>
                   </div>
-                  <SignalDot signal={s.action} />
-                </div>
-              ))}
-            </div>
-          </DashboardPanel>
+                )}
+                {factorModel.should_retrain !== undefined && (
+                  <div className="flex items-center justify-between">
+                    <span className="text-terminal-text-faint">Needs Retrain</span>
+                    <span className={`font-mono ${factorModel.should_retrain ? "text-red-400" : "text-green-400"}`}>
+                      {factorModel.should_retrain ? "YES" : "NO"}
+                    </span>
+                  </div>
+                )}
+                {factorModel.factors_by_category && Object.entries(factorModel.factors_by_category).map(([cat, factors]) => (
+                  <div key={cat}>
+                    <div className="text-terminal-text-faint capitalize">{cat}</div>
+                    <div className="text-[8px] text-terminal-text-muted font-mono truncate">
+                      {Array.isArray(factors) ? factors.slice(0, 5).join(", ") : String(factors)}
+                    </div>
+                  </div>
+                ))}
+                {Object.keys(factorModel).length === 0 && (
+                  <div className="text-terminal-text-faint">Loading factor model...</div>
+                )}
+              </div>
+            </DashboardPanel>
+
+            <DashboardPanel title="LEARNING STATE — GSD PIPELINE" className="flex-1">
+              <div className="space-y-1 text-[9px]">
+                {learning.orchestrator && (
+                  <>
+                    <div className="flex items-center justify-between">
+                      <span className="text-terminal-text-faint">GSD Active</span>
+                      <span className={`font-mono ${learning.orchestrator.gsd_active ? "text-green-400" : "text-red-400"}`}>
+                        {learning.orchestrator.gsd_active ? "YES" : "NO"}
+                      </span>
+                    </div>
+                    <div className="flex items-center justify-between">
+                      <span className="text-terminal-text-faint">Paul Active</span>
+                      <span className={`font-mono ${learning.orchestrator.paul_active ? "text-green-400" : "text-red-400"}`}>
+                        {learning.orchestrator.paul_active ? "YES" : "NO"}
+                      </span>
+                    </div>
+                    <div className="flex items-center justify-between">
+                      <span className="text-terminal-text-faint">Attached Agents</span>
+                      <span className="font-mono text-terminal-text-muted">{learning.orchestrator.attached_agents}</span>
+                    </div>
+                  </>
+                )}
+                {learning.execution_learning && (
+                  <>
+                    <div className="border-t border-terminal-border/30 my-1" />
+                    <div className="flex items-center justify-between">
+                      <span className="text-terminal-text-faint">Executions</span>
+                      <span className="font-mono text-terminal-text-muted">{learning.execution_learning.total_executions}</span>
+                    </div>
+                    <div className="flex items-center justify-between">
+                      <span className="text-terminal-text-faint">Avg Active</span>
+                      <span className="font-mono text-terminal-text-muted">{learning.execution_learning.avg_active_strategies}</span>
+                    </div>
+                    <div className="flex items-center justify-between">
+                      <span className="text-terminal-text-faint">Avg Agreement</span>
+                      <span className="font-mono text-terminal-text-muted">{(learning.execution_learning.avg_agreement * 100).toFixed(0)}%</span>
+                    </div>
+                    <div className="flex items-center justify-between">
+                      <span className="text-terminal-text-faint">Kill Switches</span>
+                      <span className="font-mono text-red-400">{learning.execution_learning.kill_switch_activations}</span>
+                    </div>
+                    <div className="flex items-center justify-between">
+                      <span className="text-terminal-text-faint">Consistency</span>
+                      <span className="font-mono" style={{ color: learning.execution_learning.strategy_consistency > 0.9 ? "#3fb950" : "#d29922" }}>
+                        {(learning.execution_learning.strategy_consistency * 100).toFixed(1)}%
+                      </span>
+                    </div>
+                  </>
+                )}
+                {learning.high_conviction_count !== undefined && (
+                  <div className="flex items-center justify-between">
+                    <span className="text-terminal-text-faint">Hi-Conv Signals</span>
+                    <span className="font-mono text-terminal-accent">{learning.high_conviction_count}</span>
+                  </div>
+                )}
+                {Object.keys(learning).length === 0 && (
+                  <div className="text-terminal-text-faint">Loading learning state...</div>
+                )}
+              </div>
+            </DashboardPanel>
+          </div>
         </div>
 
         {/* Right: indicators panel */}
@@ -701,7 +954,7 @@ export default function QuantToolsPage() {
               {/* RSI Gauge */}
               <div>
                 <div className="text-[9px] text-terminal-text-faint tracking-wider mb-1">RSI (14)</div>
-                <RSIGauge value={indicators.rsi} />
+                <RSIGauge value={indicators?.rsi ?? null} />
               </div>
 
               <div className="border-t border-terminal-border/50" />
@@ -710,11 +963,11 @@ export default function QuantToolsPage() {
               <div>
                 <div className="text-[9px] text-terminal-text-faint tracking-wider mb-1.5">MOVING AVERAGES</div>
                 {[
-                  { label: "SMA (20)", value: indicators.sma20, color: "#f0883e" },
-                  { label: "SMA (50)", value: indicators.sma50, color: "#d2a8ff" },
-                  { label: "SMA (200)", value: indicators.sma200, color: "#58a6ff" },
-                  { label: "EMA (12)", value: indicators.ema12, color: "#00d4aa" },
-                  { label: "EMA (26)", value: indicators.ema26, color: "#d29922" },
+                  { label: "SMA (20)", value: indicators?.sma20 ?? null, color: "#f0883e" },
+                  { label: "SMA (50)", value: indicators?.sma50 ?? null, color: "#d2a8ff" },
+                  { label: "SMA (200)", value: indicators?.sma200 ?? null, color: "#58a6ff" },
+                  { label: "EMA (12)", value: indicators?.ema12 ?? null, color: "#00d4aa" },
+                  { label: "EMA (26)", value: indicators?.ema26 ?? null, color: "#d29922" },
                 ].map(m => {
                   const isAbove = m.value !== null && close >= m.value;
                   return (
@@ -738,7 +991,7 @@ export default function QuantToolsPage() {
               <div className="border-t border-terminal-border/50" />
 
               {/* MACD values */}
-              {indicators.macd && (
+              {indicators?.macd && (
                 <div>
                   <div className="text-[9px] text-terminal-text-faint tracking-wider mb-1.5">MACD (12, 26, 9)</div>
                   {[
@@ -757,7 +1010,7 @@ export default function QuantToolsPage() {
               <div className="border-t border-terminal-border/50" />
 
               {/* Bollinger Bands */}
-              {indicators.bb && (
+              {indicators?.bb && (
                 <div>
                   <div className="text-[9px] text-terminal-text-faint tracking-wider mb-1.5">BOLLINGER BANDS (20, 2σ)</div>
                   {[
@@ -780,9 +1033,9 @@ export default function QuantToolsPage() {
               <div>
                 <div className="text-[9px] text-terminal-text-faint tracking-wider mb-1.5">VOLATILITY / MOMENTUM</div>
                 {[
-                  { label: "ATR (14)", value: indicators.atr !== null ? `$${indicators.atr}` : "—", color: "#d29922" },
-                  { label: "Stoch %K (14,3)", value: indicators.stoch ? `${indicators.stoch.k.toFixed(1)}` : "—", color: "#58a6ff" },
-                  { label: "Stoch %D", value: indicators.stoch ? `${indicators.stoch.d.toFixed(1)}` : "—", color: "#d2a8ff" },
+                  { label: "ATR (14)", value: indicators?.atr !== null && indicators?.atr !== undefined ? `$${indicators.atr}` : "—", color: "#d29922" },
+                  { label: "Stoch %K (14,3)", value: indicators?.stoch ? `${indicators.stoch.k.toFixed(1)}` : "—", color: "#58a6ff" },
+                  { label: "Stoch %D", value: indicators?.stoch ? `${indicators.stoch.d.toFixed(1)}` : "—", color: "#d2a8ff" },
                 ].map(m => (
                   <div key={m.label} className="flex items-center justify-between py-0.5 border-b border-terminal-border/30">
                     <span className="text-terminal-text-faint">{m.label}</span>
@@ -797,14 +1050,14 @@ export default function QuantToolsPage() {
               <div>
                 <div className="text-[9px] text-terminal-text-faint tracking-wider mb-1.5">VOLUME PROFILE</div>
                 {[
-                  { label: "Avg Vol (20d)", value: `${(indicators.avgVol / 1e6).toFixed(1)}M`, color: "#8b949e" },
-                  { label: "Current Vol", value: `${(indicators.currentVol / 1e6).toFixed(1)}M`, color: "#00d4aa" },
+                  { label: "Avg Vol (20d)", value: indicators ? `${(indicators.avgVol / 1e6).toFixed(1)}M` : "—", color: "#8b949e" },
+                  { label: "Current Vol", value: indicators ? `${(indicators.currentVol / 1e6).toFixed(1)}M` : "—", color: "#00d4aa" },
                   {
                     label: "Vol/Avg Ratio",
-                    value: `${indicators.volRatio.toFixed(2)}x`,
-                    color: indicators.volRatio > 1.5 ? "#3fb950" : indicators.volRatio < 0.6 ? "#f85149" : "#d29922"
+                    value: indicators ? `${indicators.volRatio.toFixed(2)}x` : "—",
+                    color: indicators && indicators.volRatio > 1.5 ? "#3fb950" : indicators && indicators.volRatio < 0.6 ? "#f85149" : "#d29922"
                   },
-                  { label: "OBV Trend", value: indicators.obvDir, color: indicators.obvDir === "UP" ? "#3fb950" : indicators.obvDir === "DOWN" ? "#f85149" : "#8b949e" },
+                  { label: "OBV Trend", value: indicators?.obvDir ?? "—", color: indicators?.obvDir === "UP" ? "#3fb950" : indicators?.obvDir === "DOWN" ? "#f85149" : "#8b949e" },
                 ].map(m => (
                   <div key={m.label} className="flex items-center justify-between py-0.5 border-b border-terminal-border/30">
                     <span className="text-terminal-text-faint">{m.label}</span>
@@ -812,6 +1065,27 @@ export default function QuantToolsPage() {
                   </div>
                 ))}
               </div>
+
+              <div className="border-t border-terminal-border/50" />
+
+              {/* Strategy consensus summary */}
+              {stratApi && (
+                <div>
+                  <div className="text-[9px] text-terminal-text-faint tracking-wider mb-1.5">L7 STRATEGY CONSENSUS</div>
+                  {[
+                    { label: "Active Strats", value: `${stratApi.active_count}/12`, color: "#00d4aa" },
+                    { label: "Agreement", value: `${(stratApi.agreement * 100).toFixed(0)}%`, color: stratApi.agreement > 0.7 ? "#3fb950" : "#d29922" },
+                    { label: "Size Mult", value: `${stratApi.size_multiplier.toFixed(3)}x`, color: "#58a6ff" },
+                    { label: "Stop Loss", value: `$${stratApi.stop_loss}`, color: "#f85149" },
+                    { label: "Take Profit", value: `$${stratApi.take_profit}`, color: "#3fb950" },
+                  ].map(m => (
+                    <div key={m.label} className="flex items-center justify-between py-0.5 border-b border-terminal-border/30">
+                      <span className="text-terminal-text-faint">{m.label}</span>
+                      <span className="font-mono" style={{ color: m.color }}>{m.value}</span>
+                    </div>
+                  ))}
+                </div>
+              )}
 
             </div>
           </DashboardPanel>

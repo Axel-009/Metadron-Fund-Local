@@ -455,6 +455,58 @@ def _create_metrics(registry: "CollectorRegistry"):
         registry=registry,
     )
 
+    # ─── Quant Strategy Engine Metrics ─────────────────────────────
+    metrics["quant_strategies_active"] = Gauge(
+        "metadron_quant_strategies_active",
+        "Number of active HFT strategies firing signals",
+        registry=registry,
+    )
+    metrics["quant_consensus_signal"] = Gauge(
+        "metadron_quant_consensus_signal",
+        "Weighted consensus signal from all quant strategies (-1 to 1)",
+        registry=registry,
+    )
+    metrics["quant_strategy_agreement"] = Gauge(
+        "metadron_quant_strategy_agreement",
+        "Agreement ratio across active quant strategies (0-1)",
+        registry=registry,
+    )
+    metrics["quant_vix_regime"] = Gauge(
+        "metadron_quant_vix_regime",
+        "Current VIX level used for regime gating",
+        registry=registry,
+    )
+    metrics["quant_kill_switch"] = Gauge(
+        "metadron_quant_kill_switch",
+        "Quant kill switch status (1=active, 0=normal)",
+        registry=registry,
+    )
+    metrics["quant_size_multiplier"] = Gauge(
+        "metadron_quant_size_multiplier",
+        "Position size multiplier from quant consensus",
+        registry=registry,
+    )
+    metrics["quant_executions_total"] = Gauge(
+        "metadron_quant_executions_total",
+        "Total quant strategy executions logged",
+        registry=registry,
+    )
+    metrics["quant_patterns_detected"] = Gauge(
+        "metadron_quant_patterns_detected",
+        "High conviction pattern signals from PatternRecognitionEngine",
+        registry=registry,
+    )
+    metrics["quant_factor_oos_sharpe"] = Gauge(
+        "metadron_quant_factor_oos_sharpe",
+        "AlphaOptimizer out-of-sample Sharpe ratio",
+        registry=registry,
+    )
+    metrics["quant_learning_consistency"] = Gauge(
+        "metadron_quant_learning_consistency",
+        "Strategy consistency score from learning loop (0-1)",
+        registry=registry,
+    )
+
     return metrics
 
 
@@ -710,6 +762,60 @@ def _collect_live_metrics(metrics: dict):
             metrics["strat_engine_health"].labels(engine="TCAEngine").set(1)
     except Exception:
         metrics["strat_engine_health"].labels(engine="TCAEngine").set(0)
+
+    # ── Quant Strategy Engine Metrics ──────────────────────────────
+    try:
+        from engine.execution.quant_strategy_executor import QuantStrategyExecutor
+        qse = QuantStrategyExecutor()
+        metrics["strat_engine_health"].labels(engine="QuantStrategyExecutor").set(1)
+
+        log = qse.get_execution_log() if hasattr(qse, "get_execution_log") else []
+        metrics["quant_executions_total"].set(len(log))
+        if log:
+            latest = log[-1] if log else {}
+            metrics["quant_strategies_active"].set(latest.get("active_count", 0))
+            metrics["quant_consensus_signal"].set(latest.get("consensus_signal", 0))
+            metrics["quant_strategy_agreement"].set(latest.get("agreement", 0))
+            metrics["quant_kill_switch"].set(1 if latest.get("kill_switch", False) else 0)
+            metrics["quant_size_multiplier"].set(latest.get("size_multiplier", 0))
+            # Learning consistency
+            kill_count = sum(1 for e in log if e.get("kill_switch", False))
+            metrics["quant_learning_consistency"].set(
+                round(1.0 - (kill_count / len(log)), 3) if len(log) > 0 else 1.0
+            )
+    except Exception:
+        metrics["strat_engine_health"].labels(engine="QuantStrategyExecutor").set(0)
+
+    # PatternRecognitionEngine (quant-specific deep scan)
+    try:
+        from engine.ml.pattern_recognition import PatternRecognitionEngine
+        pre_q = PatternRecognitionEngine()
+        if hasattr(pre_q, "get_high_conviction_signals"):
+            hc = pre_q.get_high_conviction_signals()
+            metrics["quant_patterns_detected"].set(len(hc) if hc else 0)
+    except Exception:
+        pass
+
+    # AlphaOptimizer OOS Sharpe
+    try:
+        from engine.ml.alpha_optimizer import AlphaOptimizer
+        ao = AlphaOptimizer()
+        if hasattr(ao, "get_oos_sharpe"):
+            metrics["quant_factor_oos_sharpe"].set(ao.get_oos_sharpe())
+    except Exception:
+        pass
+
+    # VIX regime
+    try:
+        from engine.data.openbb_data import get_prices
+        from datetime import datetime as dt, timedelta as td
+        vix_df = get_prices("^VIX", start=(dt.utcnow() - td(days=5)).strftime("%Y-%m-%d"),
+                            end=dt.utcnow().strftime("%Y-%m-%d"))
+        if vix_df is not None and not vix_df.empty:
+            close_col = vix_df["Close"].iloc[:, 0] if hasattr(vix_df.columns, "levels") and "Close" in vix_df.columns.get_level_values(0) else vix_df.get("Close", vix_df.get("close", vix_df.iloc[:, 0]))
+            metrics["quant_vix_regime"].set(float(close_col.iloc[-1]))
+    except Exception:
+        pass
 
     # ── TXLOG: Trade Execution Metrics ─────────────────────────────
     try:

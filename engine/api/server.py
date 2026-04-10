@@ -30,6 +30,7 @@ from engine.api.routers import (
     monitoring,
     universe,
     futures,
+    quant,
 )
 from engine.bridges.prometheus_metrics import create_metrics_router
 
@@ -69,6 +70,7 @@ app.include_router(ml.router, prefix="/api/engine/ml", tags=["ML"])
 app.include_router(monitoring.router, prefix="/api/engine/monitoring", tags=["Monitoring"])
 app.include_router(universe.router, prefix="/api/engine/universe", tags=["Universe"])
 app.include_router(futures.router, prefix="/api/engine/futures", tags=["Futures"])
+app.include_router(quant.router, prefix="/api/engine/quant", tags=["Quant"])
 
 # ─── Prometheus metrics (scraped by Contabo monitoring stack) ──────
 _metrics_router = create_metrics_router(app)
