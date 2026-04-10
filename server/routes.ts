@@ -73,5 +73,9 @@ export async function registerRoutes(
   // Covers: /api/chat/nanoclaw/*, /api/chat/ruflo/*, /api/chat/recommendations/*
   proxyToEngine(app, "/api/chat");
 
+  // Velocity engine endpoints → Python FastAPI
+  // Covers: /api/velocity/snapshot, /stream, /order-flow, etc.
+  proxyToEngine(app, "/api/velocity");
+
   return httpServer;
 }

@@ -14,6 +14,7 @@ from engine.api.routers import (
     archive,
     backtest,
     chat,
+    velocity,
 )
 
 __all__ = [
@@ -32,4 +33,5 @@ __all__ = [
     "archive",
     "backtest",
     "chat",
+    "velocity",
 ]

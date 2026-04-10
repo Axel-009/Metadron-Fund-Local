@@ -22,6 +22,20 @@ from typing import AsyncGenerator, Callable, Optional
 
 logger = logging.getLogger("metadron.allocation.universe_scan")
 
+# ─── Prometheus instrumentation ──────────────────────────────────
+_prom = None
+
+def _get_prom():
+    global _prom
+    if _prom is not None:
+        return _prom
+    try:
+        from engine.bridges.prometheus_metrics import get_metrics
+        _prom = get_metrics()
+    except Exception:
+        _prom = {}
+    return _prom
+
 from .allocation_engine import (
     AllocationEngine, AllocationRules, AllocationSlate,
     BucketType, CyclePhase, InstrumentType, ScanSignal,
@@ -125,6 +139,14 @@ class SignalEventBus:
             try:
                 q.put_nowait(event)
             except asyncio.QueueFull:
+                pass
+        # Prometheus: track signal generation
+        if event.get("type") == "signal_discovered":
+            try:
+                prom = _get_prom()
+                if prom and "signals_generated_total" in prom:
+                    prom["signals_generated_total"].inc()
+            except Exception:
                 pass
 
     def subscribe(self) -> asyncio.Queue:
@@ -377,6 +399,22 @@ class FullUniverseScan:
             "kill_switch": aggregated.kill_switch_triggered,
             "timestamp": datetime.now(timezone.utc).isoformat(),
         })
+
+        # Prometheus: track scan cycle metrics
+        try:
+            prom = _get_prom()
+            if prom:
+                if "scan_run_number" in prom:
+                    prom["scan_run_number"].set(self.cycle_count)
+                if "universe_scan_progress_pct" in prom:
+                    prom["universe_scan_progress_pct"].set(100.0)
+                if "scan_cycle_duration_seconds" in prom:
+                    prom["scan_cycle_duration_seconds"].observe(self.current_status.elapsed_seconds)
+                if "active_universe_size" in prom:
+                    total_tickers = sum(len(get_universe(u)) for u in UNIVERSE_ORDER)
+                    prom["active_universe_size"].set(total_tickers)
+        except Exception:
+            pass
 
         self._last_slate = aggregated
         self._running = False

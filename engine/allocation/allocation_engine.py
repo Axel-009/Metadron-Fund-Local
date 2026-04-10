@@ -16,6 +16,20 @@ import numpy as np
 
 logger = logging.getLogger("metadron.allocation")
 
+# ─── Prometheus instrumentation ──────────────────────────────────
+_prom_alloc = None
+
+def _get_prom_alloc():
+    global _prom_alloc
+    if _prom_alloc is not None:
+        return _prom_alloc
+    try:
+        from engine.bridges.prometheus_metrics import get_metrics
+        _prom_alloc = get_metrics()
+    except Exception:
+        _prom_alloc = {}
+    return _prom_alloc
+
 
 # ═══════════════════════════════════════════════════════════════════════════
 # Enums
@@ -658,6 +672,13 @@ class AllocationEngine:
             halt_slate.phase = "HALTED"
             halt_slate.timestamp = datetime.now(timezone.utc).isoformat()
             logger.critical("Allocation HALTED — kill switch active.")
+            # Prometheus: track kill switch trigger
+            try:
+                prom = _get_prom_alloc()
+                if prom and "kill_switch_triggered_total" in prom:
+                    prom["kill_switch_triggered_total"].inc()
+            except Exception:
+                pass
             return halt_slate
 
         slate.kill_switch_triggered = False

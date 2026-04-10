@@ -631,6 +631,137 @@ def _create_metrics(registry: "CollectorRegistry"):
         registry=registry,
     )
 
+    # ─── Velocity Metrics ─────────────────────────────────────────
+    metrics["order_flow_velocity"] = Gauge(
+        "metadron_order_flow_velocity",
+        "Order flow velocity — trades per second",
+        registry=registry,
+    )
+    metrics["volume_per_second"] = Gauge(
+        "metadron_volume_per_second",
+        "Volume per second in USD",
+        registry=registry,
+    )
+    metrics["signal_velocity"] = Gauge(
+        "metadron_signal_velocity",
+        "Signal velocity — signals per second across universe scan",
+        registry=registry,
+    )
+    metrics["execution_latency_ms"] = Histogram(
+        "metadron_execution_latency_ms",
+        "Execution latency in milliseconds",
+        buckets=(1, 5, 10, 25, 50, 100, 250, 500, 1000, 2500),
+        registry=registry,
+    )
+    metrics["capital_deployment_rate"] = Gauge(
+        "metadron_capital_deployment_rate",
+        "Capital deployment rate in USD per minute",
+        registry=registry,
+    )
+    metrics["momentum_score"] = Gauge(
+        "metadron_momentum_score",
+        "Rolling portfolio momentum score",
+        registry=registry,
+    )
+    metrics["fill_rate_pct"] = Gauge(
+        "metadron_fill_rate_pct",
+        "Order fill rate percentage (0-100)",
+        registry=registry,
+    )
+    metrics["momentum_breadth_pct"] = Gauge(
+        "metadron_momentum_breadth_pct",
+        "Momentum breadth — pct of positions with positive momentum",
+        registry=registry,
+    )
+
+    # ─── Thinking / Universe Scan Metrics ─────────────────────────
+    metrics["universe_scan_progress_pct"] = Gauge(
+        "metadron_universe_scan_progress_pct",
+        "Universe scan progress percentage (0-100)",
+        registry=registry,
+    )
+    metrics["signals_generated_total"] = Counter(
+        "metadron_signals_generated_total",
+        "Total signals generated across all scan cycles",
+        registry=registry,
+    )
+    metrics["scan_cycle_duration_seconds"] = Histogram(
+        "metadron_scan_cycle_duration_seconds",
+        "Scan cycle duration in seconds",
+        buckets=(30, 60, 120, 180, 300, 600, 900, 1200),
+        registry=registry,
+    )
+    metrics["active_universe_size"] = Gauge(
+        "metadron_active_universe_size",
+        "Number of securities in active scan universe",
+        registry=registry,
+    )
+    metrics["scan_run_number"] = Gauge(
+        "metadron_scan_run_number",
+        "Current scan run number",
+        registry=registry,
+    )
+
+    # ─── Margin / Collateral Metrics ──────────────────────────────
+    metrics["margin_utilization_pct"] = Gauge(
+        "metadron_margin_utilization_pct",
+        "Margin utilization percentage (0-100)",
+        registry=registry,
+    )
+    metrics["beta_corridor_value"] = Gauge(
+        "metadron_beta_corridor_value",
+        "Current beta corridor value",
+        registry=registry,
+    )
+    metrics["leverage_multiplier"] = Gauge(
+        "metadron_leverage_multiplier",
+        "Current leverage multiplier",
+        registry=registry,
+    )
+    metrics["kill_switch_triggered_total"] = Counter(
+        "metadron_kill_switch_triggered_total",
+        "Total kill switch trigger events",
+        registry=registry,
+    )
+    metrics["drawdown_pct"] = Gauge(
+        "metadron_drawdown_pct",
+        "Current drawdown from high water mark percentage",
+        registry=registry,
+    )
+    metrics["collateral_available_usd"] = Gauge(
+        "metadron_collateral_available_usd",
+        "Available collateral in USD",
+        registry=registry,
+    )
+
+    # ─── Chat / NanoClaw Metrics ──────────────────────────────────
+    metrics["nanoclaw_messages_total"] = Counter(
+        "metadron_nanoclaw_messages_total",
+        "Total NanoClaw chat messages processed",
+        registry=registry,
+    )
+    metrics["openclaw_recommendations_total"] = Counter(
+        "metadron_openclaw_recommendations_total",
+        "Total OpenClaw recommendation cards generated",
+        registry=registry,
+    )
+    metrics["permission_guard_blocks_total"] = Counter(
+        "metadron_permission_guard_blocks_total",
+        "Total permission guard block events",
+        registry=registry,
+    )
+    metrics["chat_response_latency_ms"] = Histogram(
+        "metadron_chat_response_latency_ms",
+        "Chat response latency in milliseconds",
+        buckets=(50, 100, 250, 500, 1000, 2500, 5000, 10000, 30000),
+        registry=registry,
+    )
+    metrics["active_chat_sessions"] = Gauge(
+        "metadron_active_chat_sessions",
+        "Number of active chat sessions",
+        registry=registry,
+    )
+
     return metrics
 
 
@@ -1223,6 +1354,104 @@ def _collect_live_metrics(metrics: dict):
                     metrics["backtest_last_run"].set(ts)
                 except Exception:
                     pass
+    except Exception:
+        pass
+
+    # ── Velocity Metrics ──────────────────────────────────────────
+    try:
+        from engine.velocity.velocity_engine import VelocityEngine
+        _vel = VelocityEngine()
+        snap = _vel.get_snapshot()
+        metrics["order_flow_velocity"].set(snap.get("trades_per_second", 0))
+        metrics["volume_per_second"].set(snap.get("volume_per_second", 0))
+        metrics["signal_velocity"].set(snap.get("signals_per_second", 0))
+        metrics["capital_deployment_rate"].set(snap.get("capital_deployed_per_min", 0))
+        metrics["momentum_score"].set(snap.get("momentum_score", 0))
+        metrics["fill_rate_pct"].set(snap.get("fill_rate_pct", 0))
+        metrics["momentum_breadth_pct"].set(snap.get("momentum_breadth", 0))
+        avg_lat = snap.get("avg_latency_ms", 0)
+        if avg_lat > 0:
+            metrics["execution_latency_ms"].observe(avg_lat)
+        metrics["strat_engine_health"].labels(engine="VelocityEngine").set(1)
+    except Exception:
+        metrics["strat_engine_health"].labels(engine="VelocityEngine").set(0)
+
+    # ── Thinking / Universe Scan Metrics ──────────────────────────
+    try:
+        from engine.allocation.universe_scan import UniverseScanOrchestrator
+        orch = UniverseScanOrchestrator._instance if hasattr(UniverseScanOrchestrator, "_instance") else None
+        if orch is not None and hasattr(orch, "status"):
+            status = orch.status
+            # Progress: compute from current run vs total runs
+            total_runs = len(getattr(status, "runs", [])) or 4
+            completed_runs = sum(1 for r in getattr(status, "runs", []) if getattr(r, "completed", False))
+            progress = (completed_runs / total_runs) * 100 if total_runs > 0 else 0
+            metrics["universe_scan_progress_pct"].set(round(progress, 1))
+            metrics["scan_run_number"].set(getattr(status, "current_run", 0))
+            metrics["active_universe_size"].set(1044)  # SP1500 universe
+            elapsed = getattr(status, "elapsed_seconds", 0)
+            if elapsed > 0 and getattr(status, "completed", False):
+                metrics["scan_cycle_duration_seconds"].observe(elapsed)
+        else:
+            # Try scan status cache
+            from pathlib import Path as _ScanPath
+            scan_cache = _ScanPath(__file__).resolve().parent.parent.parent / "data" / "scan_status_cache.json"
+            if scan_cache.exists():
+                scan_data = json.load(open(scan_cache))
+                total_sigs = scan_data.get("total_signals", 0)
+                cycle = scan_data.get("cycle_number", 0)
+                metrics["scan_run_number"].set(scan_data.get("current_run", 0))
+                metrics["active_universe_size"].set(1044)
+                elapsed = scan_data.get("elapsed_seconds", 0)
+                if elapsed > 0:
+                    runs_list = scan_data.get("runs", [])
+                    completed = sum(1 for r in runs_list if r.get("completed", False))
+                    total_r = len(runs_list) or 4
+                    metrics["universe_scan_progress_pct"].set(round((completed / total_r) * 100, 1))
+    except Exception:
+        pass
+
+    # ── Margin / Collateral Metrics ───────────────────────────────
+    try:
+        from engine.allocation.allocation_engine import AllocationEngine
+        alloc = AllocationEngine._instance if hasattr(AllocationEngine, "_instance") else None
+        if alloc is not None:
+            status = alloc.get_collateral_status() if hasattr(alloc, "get_collateral_status") else {}
+            if isinstance(status, dict):
+                bc = status.get("beta_corridor", {})
+                metrics["beta_corridor_value"].set(bc.get("beta", 0))
+                metrics["leverage_multiplier"].set(bc.get("leverage_multiplier", 0))
+
+                mb = status.get("margin_bucket", {})
+                metrics["margin_utilization_pct"].set(mb.get("real_capital_deployed_pct", 0) * 100)
+
+                ks = status.get("kill_switch", {})
+                metrics["drawdown_pct"].set(ks.get("current_drawdown", 0) * 100)
+                metrics["collateral_available_usd"].set(status.get("nav", 0) - mb.get("real_capital_deployed_usd", 0))
+        else:
+            # Try collateral cache
+            from pathlib import Path as _ColPath
+            col_cache = _ColPath(__file__).resolve().parent.parent.parent / "data" / "collateral_cache.json"
+            if col_cache.exists():
+                col_data = json.load(open(col_cache))
+                bc = col_data.get("beta_corridor", {})
+                metrics["beta_corridor_value"].set(bc.get("beta", 0))
+                metrics["leverage_multiplier"].set(bc.get("leverage_multiplier", 0))
+                mb = col_data.get("margin_bucket", {})
+                metrics["margin_utilization_pct"].set(mb.get("real_capital_deployed_pct", 0) * 100)
+                ks = col_data.get("kill_switch", {})
+                metrics["drawdown_pct"].set(ks.get("current_drawdown", 0) * 100)
+                metrics["collateral_available_usd"].set(col_data.get("nav", 0) - mb.get("real_capital_deployed_usd", 0))
+    except Exception:
+        pass
+
+    # ── Chat / NanoClaw Metrics ───────────────────────────────────
+    try:
+        from engine.agents.nanoclaw.nanoclaw_agent import NanoClawAgent
+        agent = NanoClawAgent._instance if hasattr(NanoClawAgent, "_instance") else None
+        if agent is not None:
+            history = agent.get_history() if hasattr(agent, "get_history") else []
+            metrics["active_chat_sessions"].set(1 if history else 0)
     except Exception:
         pass
 

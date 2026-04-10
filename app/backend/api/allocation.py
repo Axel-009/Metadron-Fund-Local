@@ -21,6 +21,20 @@ from typing import Any, Dict, Optional
 
 logger = logging.getLogger("metadron.api.allocation")
 
+# ─── Prometheus instrumentation ──────────────────────────────────
+_prom_alloc_api = None
+
+def _get_prom_alloc_api():
+    global _prom_alloc_api
+    if _prom_alloc_api is not None:
+        return _prom_alloc_api
+    try:
+        from engine.bridges.prometheus_metrics import get_metrics
+        _prom_alloc_api = get_metrics()
+    except Exception:
+        _prom_alloc_api = {}
+    return _prom_alloc_api
+
 try:
     from fastapi import APIRouter, HTTPException
     from fastapi.responses import JSONResponse
@@ -235,7 +249,7 @@ async def get_collateral_status():
     margin_real = utilization.get("MARGIN", 0.0)
     total_real_capital = margin_real + options_total * 0.3  # ~30% of notional as real capital
 
-    return {
+    result = {
         "beta_corridor": beta,
         "margin_bucket": {
             "real_capital_deployed_pct": round(total_real_capital, 4),
@@ -259,6 +273,26 @@ async def get_collateral_status():
         "nav": engine.nav,
         "timestamp": datetime.now(timezone.utc).isoformat(),
     }
+
+    # Prometheus: update margin/collateral metrics
+    try:
+        prom = _get_prom_alloc_api()
+        if prom:
+            if "margin_utilization_pct" in prom:
+                prom["margin_utilization_pct"].set(round(total_real_capital * 100, 2))
+            if "beta_corridor_value" in prom:
+                prom["beta_corridor_value"].set(beta.get("beta", 0))
+            if "leverage_multiplier" in prom:
+                prom["leverage_multiplier"].set(beta.get("leverage_multiplier", 1.0))
+            if "drawdown_pct" in prom:
+                prom["drawdown_pct"].set(kill.get("current_drawdown", 0) * 100)
+            if "collateral_available_usd" in prom:
+                deployed_usd = total_real_capital * engine.nav
+                prom["collateral_available_usd"].set(engine.nav - deployed_usd)
+    except Exception:
+        pass
+
+    return result
 
 
 # ═══════════════════════════════════════════════════════════════════════════

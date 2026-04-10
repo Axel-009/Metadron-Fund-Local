@@ -10,9 +10,24 @@ from pydantic import BaseModel
 import logging
 import asyncio
 import json
+import time
 
 logger = logging.getLogger("metadron-api.chat")
 router = APIRouter()
+
+# ─── Prometheus instrumentation ──────────────────────────────────
+_prom = None
+
+def _get_prom():
+    global _prom
+    if _prom is not None:
+        return _prom
+    try:
+        from engine.bridges.prometheus_metrics import get_metrics
+        _prom = get_metrics()
+    except Exception:
+        _prom = {}
+    return _prom
 
 # ---------------------------------------------------------------------------
 # Lazy singletons
@@ -71,6 +86,14 @@ async def send_nanoclaw_message(req: SendMessageRequest):
     """Send a message to NanoClaw and stream the response via SSE."""
     try:
         agent = _get_agent()
+        prom = _get_prom()
+        start_t = time.time()
+
+        # Track message count
+        if prom and "nanoclaw_messages_total" in prom:
+            prom["nanoclaw_messages_total"].inc()
+        if prom and "active_chat_sessions" in prom:
+            prom["active_chat_sessions"].set(1)
 
         async def event_generator():
             try:
@@ -78,6 +101,9 @@ async def send_nanoclaw_message(req: SendMessageRequest):
                     data = json.dumps({"type": "token", "content": token})
                     yield f"data: {data}\n\n"
                 yield f"data: {json.dumps({'type': 'done'})}\n\n"
+                # Track response latency
+                if prom and "chat_response_latency_ms" in prom:
+                    prom["chat_response_latency_ms"].observe((time.time() - start_t) * 1000)
             except Exception as e:
                 logger.error(f"NanoClaw stream error: {e}")
                 yield f"data: {json.dumps({'type': 'error', 'content': str(e)})}\n\n"
@@ -209,6 +235,10 @@ async def get_recommendations():
     try:
         agent = _get_agent()
         recs = agent.get_pending_recommendations()
+        # Track recommendation count
+        prom = _get_prom()
+        if prom and "openclaw_recommendations_total" in prom and recs:
+            prom["openclaw_recommendations_total"].inc(len(recs))
         return {"recommendations": recs, "timestamp": datetime.utcnow().isoformat()}
     except Exception as e:
         return JSONResponse(status_code=500, content={"error": str(e)})
@@ -244,8 +274,16 @@ async def get_agent_permissions():
     """Return permission map for all agents."""
     try:
         guard = _get_guard()
+        permissions = guard.get_all_permissions()
+        # Track permission guard blocks
+        prom = _get_prom()
+        if prom and "permission_guard_blocks_total" in prom and isinstance(permissions, dict):
+            blocks = sum(1 for v in permissions.values()
+                        if isinstance(v, dict) and not v.get("allowed", True))
+            if blocks > 0:
+                prom["permission_guard_blocks_total"].inc(blocks)
         return {
-            "permissions": guard.get_all_permissions(),
+            "permissions": permissions,
             "timestamp": datetime.utcnow().isoformat(),
         }
     except Exception as e:

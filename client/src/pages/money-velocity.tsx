@@ -353,8 +353,65 @@ const AXIS_STYLE = { fontSize: 8, fill: C.textFaint, fontFamily: "monospace" };
 // ══════════════════════════════════════════════════════════════════════
 // MAIN COMPONENT
 // ══════════════════════════════════════════════════════════════════════
+// ── Velocity SSE Hook ──
+interface VelocitySnapshot {
+  trades_per_second: number;
+  volume_per_second: number;
+  total_trades_session: number;
+  total_volume_session: number;
+  signals_per_second: number;
+  signals_per_cycle: number;
+  active_signals: number;
+  scan_cycles_completed: number;
+  fill_rate_pct: number;
+  avg_latency_ms: number;
+  median_latency_ms: number;
+  p99_latency_ms: number;
+  orders_in_flight: number;
+  capital_deployed_per_min: number;
+  total_capital_deployed: number;
+  deployment_rate_trend: string;
+  nav: number;
+  momentum_score: number;
+  momentum_breadth: number;
+  momentum_leaders: Array<{ ticker: string; momentum: number }>;
+  momentum_laggards: Array<{ ticker: string; momentum: number }>;
+  timestamp: string;
+  uptime_seconds: number;
+  engine_status: string;
+}
+
+function useVelocitySSE(): VelocitySnapshot | null {
+  const [snapshot, setSnapshot] = useState<VelocitySnapshot | null>(null);
+  const esRef = useRef<EventSource | null>(null);
+
+  useEffect(() => {
+    const es = new EventSource("/api/engine/velocity/stream");
+    esRef.current = es;
+    es.onmessage = (ev) => {
+      try {
+        const data = JSON.parse(ev.data);
+        if (!data.error) setSnapshot(data);
+      } catch { /* ignore parse errors */ }
+    };
+    es.onerror = () => {
+      es.close();
+      // Reconnect after 5s
+      setTimeout(() => {
+        if (esRef.current === es) {
+          esRef.current = new EventSource("/api/engine/velocity/stream");
+          esRef.current.onmessage = es.onmessage;
+        }
+      }, 5000);
+    };
+    return () => { es.close(); };
+  }, []);
+
+  return snapshot;
+}
+
 export default function MoneyVelocityPage() {
-  // ─── Engine API ─────────────────────────────────────
+  // ─── Engine API (macro) ─────────────────────────────
   const { data: fedBsApi } = useEngineQuery<{ walcl?: number; soma_treasuries?: number; soma_mbs?: number; reserves?: number; on_rrp?: number; tga?: number }>("/macro/fed-balance-sheet", { refetchInterval: 30000 });
   const { data: reservesApi } = useEngineQuery<{ fed_to_pd?: number; pd_to_gsib?: number; gsib_to_shadow?: number; shadow_to_market?: number; net_market_liquidity?: number; bottleneck?: string }>("/macro/reserves-flow", { refetchInterval: 30000 });
   const { data: velocityApi } = useEngineQuery<{ velocity?: number; velocity_change?: number; credit_impulse?: number; sofr_rate?: number; liquidity_score?: number }>("/macro/velocity", { refetchInterval: 15000 });
@@ -362,6 +419,19 @@ export default function MoneyVelocityPage() {
   const { data: drainApi } = useEngineQuery<{ warning_level?: number; triggers?: string[] }>("/macro/drain-warning", { refetchInterval: 30000 });
   const { data: sectorFlowApi } = useEngineQuery<{ sector_scores?: Record<string, number>; overweight?: string[]; underweight?: string[]; flow_regime?: string }>("/macro/sector-flows", { refetchInterval: 30000 });
   const { data: creditApi } = useEngineQuery<{ impulse?: number; regime?: string; z_score?: number }>("/macro/credit-impulse", { refetchInterval: 30000 });
+
+  // ─── Velocity Engine (live SSE + REST) ──────────────
+  const velSnap = useVelocitySSE();
+  const { data: velRestSnap } = useEngineQuery<VelocitySnapshot>("/velocity/snapshot", { refetchInterval: 5000 });
+  const vel = velSnap ?? velRestSnap;
+
+  // SSE history for sparklines
+  const velHistoryRef = useRef<VelocitySnapshot[]>([]);
+  useEffect(() => {
+    if (vel) {
+      velHistoryRef.current = [...velHistoryRef.current.slice(-59), vel];
+    }
+  }, [vel]);
 
   // ── State ──
   const [tick, setTick] = useState(0);
@@ -438,13 +508,119 @@ export default function MoneyVelocityPage() {
           <KPI label="M2V" value={latestVelocity.toFixed(4)} sub={velocityRegime} color={velocityRegime === "ACCELERATING" ? C.positive : velocityRegime === "DECELERATING" ? C.danger : C.warn} />
           <KPI label="LIQ SCORE" value={`${latestScore.toFixed(0)}/100`} color={latestScore > 65 ? C.positive : latestScore > 40 ? C.warn : C.danger} />
           <KPI label="SDR CtV" value={sdrCtv.toFixed(3)} color={sdrCtv > 0.3 ? C.positive : sdrCtv > 0 ? C.warn : C.danger} />
+          <span className="w-px h-5 bg-terminal-border/60 mx-1" />
+          <KPI label="TPS" value={vel?.trades_per_second?.toFixed(2) ?? "—"} sub="trades/sec" color={C.cyan} />
+          <KPI label="FILL" value={vel ? `${vel.fill_rate_pct.toFixed(1)}%` : "—"} color={(vel?.fill_rate_pct ?? 0) > 90 ? C.positive : (vel?.fill_rate_pct ?? 0) > 70 ? C.warn : C.danger} />
+          <KPI label="LATENCY" value={vel ? `${vel.avg_latency_ms.toFixed(0)}ms` : "—"} color={(vel?.avg_latency_ms ?? 0) < 50 ? C.positive : (vel?.avg_latency_ms ?? 0) < 200 ? C.warn : C.danger} />
+          <KPI label="MOMENTUM" value={vel?.momentum_score?.toFixed(2) ?? "—"} color={(vel?.momentum_score ?? 0) > 0 ? C.positive : C.danger} />
+          <KPI label="ENGINE" value={vel?.engine_status ?? "—"} color={vel?.engine_status === "ONLINE" ? C.positive : C.danger} />
         </div>
       </div>
 
       {/* ── Main Grid ── */}
       <div className="flex-1 overflow-auto p-1.5 grid gap-1.5"
-        style={{ gridTemplateColumns: "1fr 1fr 1fr 1fr", gridTemplateRows: "1fr 1fr 1fr 1fr", minHeight: 0 }}
+        style={{ gridTemplateColumns: "1fr 1fr 1fr 1fr", gridTemplateRows: "auto 1fr 1fr 1fr 1fr", minHeight: 0 }}
       >
+        {/* ═══ R0: VELOCITY ENGINE METRICS (live from SSE) ═══ */}
+        <Panel title="Order Flow Velocity" cols="col-span-1">
+          <div className="flex flex-col h-full gap-1">
+            <div className="flex items-center justify-between text-[9px] font-mono">
+              <span className="text-terminal-text-faint">Trades/sec</span>
+              <span className="text-[14px] font-bold" style={{ color: C.cyan }}>{vel?.trades_per_second?.toFixed(3) ?? "0.000"}</span>
+            </div>
+            <div className="flex items-center justify-between text-[9px] font-mono">
+              <span className="text-terminal-text-faint">Volume/sec</span>
+              <span className="text-terminal-text-primary font-bold">${vel?.volume_per_second?.toLocaleString(undefined, { maximumFractionDigits: 0 }) ?? "0"}</span>
+            </div>
+            <div className="flex items-center justify-between text-[9px] font-mono">
+              <span className="text-terminal-text-faint">Session Trades</span>
+              <span className="text-terminal-text-primary">{vel?.total_trades_session ?? 0}</span>
+            </div>
+            <div className="flex items-center justify-between text-[9px] font-mono">
+              <span className="text-terminal-text-faint">Session Volume</span>
+              <span className="text-terminal-text-primary">${vel?.total_volume_session?.toLocaleString(undefined, { maximumFractionDigits: 0 }) ?? "0"}</span>
+            </div>
+            {velHistoryRef.current.length > 2 && (
+              <div className="mt-auto"><Spark data={velHistoryRef.current.map(s => s.trades_per_second)} color={C.cyan} w={120} h={24} /></div>
+            )}
+          </div>
+        </Panel>
+
+        <Panel title="Signal Velocity" cols="col-span-1">
+          <div className="flex flex-col h-full gap-1">
+            <div className="flex items-center justify-between text-[9px] font-mono">
+              <span className="text-terminal-text-faint">Signals/sec</span>
+              <span className="text-[14px] font-bold" style={{ color: C.purple }}>{vel?.signals_per_second?.toFixed(3) ?? "0.000"}</span>
+            </div>
+            <div className="flex items-center justify-between text-[9px] font-mono">
+              <span className="text-terminal-text-faint">Per Cycle</span>
+              <span className="text-terminal-text-primary">{vel?.signals_per_cycle ?? 0}</span>
+            </div>
+            <div className="flex items-center justify-between text-[9px] font-mono">
+              <span className="text-terminal-text-faint">Active Signals</span>
+              <span className="text-terminal-text-primary">{vel?.active_signals ?? 0}</span>
+            </div>
+            <div className="flex items-center justify-between text-[9px] font-mono">
+              <span className="text-terminal-text-faint">Cycles Done</span>
+              <span className="text-terminal-text-primary">{vel?.scan_cycles_completed ?? 0}</span>
+            </div>
+            {velHistoryRef.current.length > 2 && (
+              <div className="mt-auto"><Spark data={velHistoryRef.current.map(s => s.signals_per_second)} color={C.purple} w={120} h={24} /></div>
+            )}
+          </div>
+        </Panel>
+
+        <Panel title="Execution Velocity" cols="col-span-1">
+          <div className="flex flex-col h-full gap-1">
+            <div className="flex items-center justify-between text-[9px] font-mono">
+              <span className="text-terminal-text-faint">Fill Rate</span>
+              <span className="text-[14px] font-bold" style={{ color: (vel?.fill_rate_pct ?? 0) > 90 ? C.positive : C.warn }}>{vel?.fill_rate_pct?.toFixed(1) ?? "0.0"}%</span>
+            </div>
+            <div className="flex items-center justify-between text-[9px] font-mono">
+              <span className="text-terminal-text-faint">Avg Latency</span>
+              <span className="text-terminal-text-primary">{vel?.avg_latency_ms?.toFixed(1) ?? "0.0"}ms</span>
+            </div>
+            <div className="flex items-center justify-between text-[9px] font-mono">
+              <span className="text-terminal-text-faint">Median Latency</span>
+              <span className="text-terminal-text-primary">{vel?.median_latency_ms?.toFixed(1) ?? "0.0"}ms</span>
+            </div>
+            <div className="flex items-center justify-between text-[9px] font-mono">
+              <span className="text-terminal-text-faint">P99 Latency</span>
+              <span style={{ color: (vel?.p99_latency_ms ?? 0) > 500 ? C.danger : C.warn }}>{vel?.p99_latency_ms?.toFixed(1) ?? "0.0"}ms</span>
+            </div>
+            {velHistoryRef.current.length > 2 && (
+              <div className="mt-auto"><Spark data={velHistoryRef.current.map(s => s.avg_latency_ms)} color={C.orange} w={120} h={24} /></div>
+            )}
+          </div>
+        </Panel>
+
+        <Panel title="Capital & Momentum" cols="col-span-1">
+          <div className="flex flex-col h-full gap-1">
+            <div className="flex items-center justify-between text-[9px] font-mono">
+              <span className="text-terminal-text-faint">$/min Deploy</span>
+              <span className="text-[14px] font-bold" style={{ color: C.accent }}>${vel?.capital_deployed_per_min?.toLocaleString(undefined, { maximumFractionDigits: 0 }) ?? "0"}</span>
+            </div>
+            <div className="flex items-center justify-between text-[9px] font-mono">
+              <span className="text-terminal-text-faint">Trend</span>
+              <span className={`px-1 py-0.5 rounded-sm text-[7px] font-bold ${vel?.deployment_rate_trend === "ACCELERATING" ? "bg-green-500/15 text-green-400" : vel?.deployment_rate_trend === "DECELERATING" ? "bg-red-500/15 text-red-400" : "bg-yellow-500/15 text-yellow-400"}`}>{vel?.deployment_rate_trend ?? "STABLE"}</span>
+            </div>
+            <div className="flex items-center justify-between text-[9px] font-mono">
+              <span className="text-terminal-text-faint">Momentum</span>
+              <span style={{ color: (vel?.momentum_score ?? 0) >= 0 ? C.positive : C.danger }}>{vel?.momentum_score?.toFixed(3) ?? "0.000"}</span>
+            </div>
+            <div className="flex items-center justify-between text-[9px] font-mono">
+              <span className="text-terminal-text-faint">Breadth</span>
+              <span className="text-terminal-text-primary">{vel?.momentum_breadth?.toFixed(1) ?? "0.0"}%</span>
+            </div>
+            {vel?.momentum_leaders && vel.momentum_leaders.length > 0 && (
+              <div className="mt-auto flex flex-wrap gap-1 text-[7px] font-mono">
+                {vel.momentum_leaders.slice(0, 3).map(l => (
+                  <span key={l.ticker} className="px-1 py-0.5 rounded-sm bg-green-500/10 text-green-400">{l.ticker} +{l.momentum.toFixed(1)}%</span>
+                ))}
+              </div>
+            )}
+          </div>
+        </Panel>
         {/* ═══ R1C1: Fed Balance Sheet ═══ */}
         <Panel title="Fed Balance Sheet" cols="col-span-2">
           <ResponsiveContainer width="100%" height="100%">
