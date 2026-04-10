@@ -238,19 +238,26 @@ async def regime_history():
 
 @router.get("/patterns")
 async def pattern_recognition(ticker: str = Query("SPY")):
-    """Technical pattern recognition for a ticker."""
+    """Technical pattern recognition for a ticker.
+
+    Wraps PatternRecognitionEngine.analyze() which runs:
+    - CandlestickPatternDetector (hammer, engulfing, doji, stars, etc.)
+    - ChartPatternDetector (H&S, double top/bottom, triangles, breakout)
+    - MomentumSignalEngine (RSI divergence, MACD divergence, BB squeeze)
+    - StatisticalAnomalyDetector (z-score outliers, volume spikes, gaps)
+    - MarketRegimeIdentifier (trend, volatility, correlation, liquidity)
+    - ConvictionEngine (multi-factor scoring → conviction signals)
+
+    Returns a flat list of detected patterns with confidence scores,
+    plus regime info and an optional conviction signal.
+    """
     try:
         pr = _get_pattern_rec()
-        if hasattr(pr, "analyze"):
-            result = pr.analyze(ticker)
-        elif hasattr(pr, "scan"):
-            result = pr.scan(ticker)
-        else:
-            result = {}
+        result = pr.analyze(ticker)
         return {**(result if isinstance(result, dict) else {"data": str(result)}), "timestamp": datetime.utcnow().isoformat()}
     except Exception as e:
         logger.error(f"ml/patterns error: {e}")
-        return {"error": str(e)}
+        return {"patterns": [], "error": str(e)}
 
 
 @router.get("/classifier/tiers")
