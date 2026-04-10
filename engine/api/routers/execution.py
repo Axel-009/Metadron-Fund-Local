@@ -111,12 +111,29 @@ async def reconciliation():
 
             p_qty = 0
             a_qty = 0
+            p_avg = 0.0
+            a_avg = 0.0
+            p_pnl = 0.0
+            a_pnl = 0.0
+            sector = ""
+
             if in_paper:
                 p = paper_pos[ticker]
-                p_qty = getattr(p, "quantity", 0) if hasattr(p, "quantity") else p.get("quantity", 0)
+                p_qty = getattr(p, "quantity", 0) if hasattr(p, "quantity") else (p.get("quantity", 0) if isinstance(p, dict) else 0)
+                p_avg = getattr(p, "avg_cost", 0) if hasattr(p, "avg_cost") else (p.get("avg_cost", 0) if isinstance(p, dict) else 0)
+                p_pnl = getattr(p, "unrealized_pnl", 0) if hasattr(p, "unrealized_pnl") else (p.get("unrealized_pnl", 0) if isinstance(p, dict) else 0)
+                sector = getattr(p, "sector", "") if hasattr(p, "sector") else (p.get("sector", "") if isinstance(p, dict) else "")
             if in_alpaca:
                 a = alpaca_pos[ticker]
                 a_qty = a.get("quantity", getattr(a, "quantity", 0)) if isinstance(a, dict) else getattr(a, "quantity", 0)
+                a_avg = a.get("avg_cost", a.get("avg_entry_price", 0)) if isinstance(a, dict) else getattr(a, "avg_cost", getattr(a, "avg_entry_price", 0))
+                a_pnl = a.get("unrealized_pnl", 0) if isinstance(a, dict) else getattr(a, "unrealized_pnl", 0)
+                if not sector:
+                    sector = a.get("sector", "") if isinstance(a, dict) else getattr(a, "sector", "")
+
+            qty_match = None
+            if in_paper and in_alpaca:
+                qty_match = p_qty == a_qty
 
             if in_paper and in_alpaca and p_qty == a_qty:
                 status = "MATCHED"
@@ -133,10 +150,21 @@ async def reconciliation():
                 status = "MISMATCH"
                 mismatched += 1
 
+            price_diff = round(a_avg - p_avg, 2) if (in_paper and in_alpaca) else None
+            pnl_diff = round(a_pnl - p_pnl, 2) if (in_paper and in_alpaca) else None
+
             positions.append({
                 "ticker": ticker,
-                "paperQty": p_qty,
-                "alpacaQty": a_qty,
+                "sector": sector or "",
+                "paperQty": p_qty if in_paper else None,
+                "alpacaQty": a_qty if in_alpaca else None,
+                "qtyMatch": qty_match,
+                "paperAvgPrice": round(p_avg, 2) if in_paper else None,
+                "alpacaAvgPrice": round(a_avg, 2) if in_alpaca else None,
+                "priceDiff": price_diff,
+                "paperPnl": round(p_pnl, 2) if in_paper else None,
+                "alpacaPnl": round(a_pnl, 2) if in_alpaca else None,
+                "pnlDiff": pnl_diff,
                 "delta": p_qty - a_qty,
                 "isFutures": is_futures,
                 "status": status,

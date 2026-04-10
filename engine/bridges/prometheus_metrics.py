@@ -455,6 +455,38 @@ def _create_metrics(registry: "CollectorRegistry"):
         registry=registry,
     )
 
+    # ─── Reconciliation Metrics ───────────────────────────────────
+    metrics["recon_positions_matched"] = Gauge(
+        "metadron_recon_positions_matched",
+        "Number of matched positions in broker reconciliation",
+        registry=registry,
+    )
+    metrics["recon_positions_mismatched"] = Gauge(
+        "metadron_recon_positions_mismatched",
+        "Number of mismatched positions in broker reconciliation",
+        registry=registry,
+    )
+    metrics["recon_nav_delta"] = Gauge(
+        "metadron_recon_nav_delta",
+        "NAV delta between Paper and Alpaca brokers",
+        registry=registry,
+    )
+    metrics["recon_paper_nav"] = Gauge(
+        "metadron_recon_paper_nav",
+        "Paper broker NAV",
+        registry=registry,
+    )
+    metrics["recon_alpaca_nav"] = Gauge(
+        "metadron_recon_alpaca_nav",
+        "Alpaca broker NAV",
+        registry=registry,
+    )
+    metrics["recon_total_positions"] = Gauge(
+        "metadron_recon_total_positions",
+        "Total positions in reconciliation",
+        registry=registry,
+    )
+
     # ─── Quant Strategy Engine Metrics ─────────────────────────────
     metrics["quant_strategies_active"] = Gauge(
         "metadron_quant_strategies_active",
@@ -762,6 +794,47 @@ def _collect_live_metrics(metrics: dict):
             metrics["strat_engine_health"].labels(engine="TCAEngine").set(1)
     except Exception:
         metrics["strat_engine_health"].labels(engine="TCAEngine").set(0)
+
+    # ── Reconciliation Metrics ─────────────────────────────────
+    try:
+        from engine.execution.paper_broker import PaperBroker
+        pb = PaperBroker()
+        paper_pos = pb.get_all_positions()
+        paper_nav = pb.compute_nav()
+        metrics["recon_paper_nav"].set(paper_nav)
+        metrics["recon_total_positions"].set(len(paper_pos))
+
+        alpaca_nav = 0
+        alpaca_pos = {}
+        try:
+            from engine.execution.alpaca_broker import AlpacaBroker
+            ab = AlpacaBroker(initial_cash=0, paper=True)
+            alpaca_pos = ab.get_positions()
+            alpaca_nav = ab.compute_nav()
+        except Exception:
+            pass
+        metrics["recon_alpaca_nav"].set(alpaca_nav)
+        metrics["recon_nav_delta"].set(paper_nav - alpaca_nav)
+
+        all_t = set(list(paper_pos.keys()) + list(alpaca_pos.keys()))
+        m_count = 0
+        mm_count = 0
+        for t in all_t:
+            in_p = t in paper_pos
+            in_a = t in alpaca_pos
+            if in_p and in_a:
+                pq = getattr(paper_pos[t], "quantity", 0) if hasattr(paper_pos[t], "quantity") else 0
+                aq = alpaca_pos[t].get("quantity", 0) if isinstance(alpaca_pos[t], dict) else getattr(alpaca_pos[t], "quantity", 0)
+                if pq == aq:
+                    m_count += 1
+                else:
+                    mm_count += 1
+            else:
+                mm_count += 1
+        metrics["recon_positions_matched"].set(m_count)
+        metrics["recon_positions_mismatched"].set(mm_count)
+    except Exception:
+        pass
 
     # ── Quant Strategy Engine Metrics ──────────────────────────────
     try:
