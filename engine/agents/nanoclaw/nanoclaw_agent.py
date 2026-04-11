@@ -1,7 +1,8 @@
 """NanoClaw Agent — main operator agent for Metadron Capital.
 
-Wraps the Anthropic SDK to provide a streaming conversational agent
-with system context awareness and permission-gated write actions.
+Wraps the Brain Power bridge (Xiaomi Mimo V2 Pro) to provide a
+streaming conversational agent with system context awareness and
+permission-gated write actions.
 """
 import os
 import json
@@ -12,11 +13,11 @@ from typing import AsyncGenerator
 logger = logging.getLogger("metadron-api.nanoclaw.agent")
 
 try:
-    import anthropic
-    _anthropic_available = True
+    from engine.bridges.brain_power import BrainPowerClient
+    _brain_power_available = True
 except ImportError:
-    _anthropic_available = False
-    logger.warning("anthropic SDK not available — NanoClaw will use mock responses")
+    _brain_power_available = False
+    logger.warning("BrainPowerClient not available — NanoClaw will use mock responses")
 
 from engine.agents.nanoclaw.permission_guard import AgentPermissionGuard, WRITE_ACTIONS
 from engine.agents.nanoclaw.agent_config import NANOCLAW_ID, OPENCLAW_ID
@@ -60,10 +61,9 @@ class NanoClawAgent:
         self._message_history: list[dict] = []
         self._recommendations: list[dict] = []
         self._recommendation_counter = 0
-        self._model = os.environ.get("NANOCLAW_MODEL", "claude-sonnet-4-5-20241022")
 
-        if _anthropic_available:
-            self._client = anthropic.Anthropic()
+        if _brain_power_available:
+            self._client = BrainPowerClient()
         else:
             self._client = None
 
@@ -130,18 +130,17 @@ class NanoClawAgent:
         for msg in self._message_history[-50:]:
             messages.append({"role": msg["role"], "content": msg["content"]})
 
-        if self._client and _anthropic_available:
+        if self._client and _brain_power_available:
             try:
                 full_response = ""
-                with self._client.messages.stream(
-                    model=self._model,
-                    max_tokens=4096,
-                    system=system_prompt,
+                for chunk in self._client.stream_chat(
                     messages=messages,
-                ) as stream:
-                    for text in stream.text_stream:
-                        full_response += text
-                        yield text
+                    system=system_prompt,
+                    max_tokens=4096,
+                    temperature=0.3,
+                ):
+                    full_response += chunk
+                    yield chunk
 
                 self._message_history.append({
                     "role": "assistant",
@@ -151,7 +150,7 @@ class NanoClawAgent:
                 })
             except Exception as e:
                 error_msg = f"[NanoClaw Error] {str(e)}"
-                logger.error(f"NanoClaw API error: {e}")
+                logger.error(f"NanoClaw Brain Power error: {e}")
                 self._message_history.append({
                     "role": "assistant",
                     "content": error_msg,
