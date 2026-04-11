@@ -373,7 +373,8 @@ class FullUniverseScan:
             if not self.backtest and (time.time() - start) >= HEARTBEAT_SECONDS:
                 break
 
-        slate = self.engine.apply_rules(signals, backtest=self.backtest)
+        self.engine._apply_backtest_flag(self.backtest)
+        slate = self.engine.apply_rules(signals, total_capital=self.engine.nav)
         run.completed = True
         run.elapsed_seconds = time.time() - start
         run.favored_names = [s.ticker for s in signals if s.alpha_score > 0.02]
@@ -444,7 +445,7 @@ class FullUniverseScan:
         })
 
         aggregated = self.engine.validate_against_kill_switch(
-            aggregated, self.engine.nav
+            aggregated, self.engine.nav if not aggregated.kill_switch_triggered else self.engine.nav
         )
 
         if not self.backtest:

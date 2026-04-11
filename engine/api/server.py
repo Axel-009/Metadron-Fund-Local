@@ -46,6 +46,12 @@ from engine.api.routers import (
     api_keys,
     models,
 )
+try:
+    from engine.api.routers import allocation
+    _allocation_available = True
+except Exception as _alloc_err:
+    _allocation_available = False
+    logger.warning("Allocation router unavailable: %s", _alloc_err)
 from engine.bridges.prometheus_metrics import create_metrics_router
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [API] %(message)s")
@@ -143,6 +149,8 @@ app.include_router(flows.router, prefix="/api/engine/flows", tags=["Flows"])
 app.include_router(flow_runs.router, prefix="/api/engine/flow-runs", tags=["FlowRuns"])
 app.include_router(api_keys.router, prefix="/api/engine/api-keys", tags=["ApiKeys"])
 app.include_router(models.router, prefix="/api/models", tags=["Models"])
+if _allocation_available:
+    app.include_router(allocation.router, prefix="/api/allocation", tags=["Allocation"])
 
 # ─── Prometheus metrics (scraped by Contabo monitoring stack) ──────
 _metrics_router = create_metrics_router(app)

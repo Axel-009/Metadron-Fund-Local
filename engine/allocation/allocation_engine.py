@@ -313,10 +313,12 @@ class AllocationEngine:
         rules: Optional[AllocationRules] = None,
         backtest: bool = False,
         cycle_number: int = 0,
+        nav: float = 1_000_000.0,
     ):
         self.rules = rules or AllocationRules()
         self.backtest = backtest
         self.cycle_number = cycle_number
+        self._nav: float = nav
         self.kill_switch = KillSwitchMonitor(
             threshold=self.rules.max_drawdown_kill_switch
         )
@@ -399,21 +401,88 @@ class AllocationEngine:
             phase=CyclePhase.RISK_CHECK.value,
         )
 
+        # ── Per-cycle rule header ─────────────────────────────────
+        logger.info(
+            "[AllocationEngine] ── Cycle #%d Rule Check ──────────────────────────────",
+            self.cycle_number,
+        )
+        logger.info(
+            "[AllocationEngine]   NAV: $%.0f  |  Drawdown: %.2f%%  |  Kill-switch threshold: %.0f%%",
+            total_capital,
+            drawdown * 100,
+            self.rules.max_drawdown_kill_switch * 100,
+        )
+        logger.info(
+            "[AllocationEngine]   Beta corridor: %s  |  Leverage multiplier: %.2fx",
+            self._beta_corridor.value,
+            self._leverage_multiplier,
+        )
+        logger.info(
+            "[AllocationEngine]   Bucket caps (pct of NAV):"
+            "  IG=%.0f%%  HY/Dist=%.0f%%  ETF=%.0f%%  FI=%.0f%%"
+            "  CVR=%.0f%%  Opts=%.0f%%  Margin=%.0f–%.0f%%  MM=%.0f%%",
+            self.rules.single_name_ig_pct * 100,
+            self.rules.single_name_hy_distressed_pct * 100,
+            self.rules.div_cashflow_etf_pct * 100,
+            self.rules.fi_macro_pct * 100,
+            self.rules.event_driven_cvr_pct * 100,
+            self.rules.options_notional_pct * 100,
+            self.rules.margin_real_capital_range[0] * 100,
+            self.rules.margin_real_capital_range[1] * 100,
+            self.rules.money_market_pct * 100,
+        )
+        logger.info(
+            "[AllocationEngine]   DRIP rule: %s  |  Alpha primary goal: %s  |  Signals in: %d",
+            self.rules.drip_rule,
+            self.rules.alpha_primary_goal,
+            len(signals),
+        )
+
         # Kill switch check
         if self.kill_switch.check(drawdown):
+            logger.critical(
+                "[AllocationEngine]   KILL SWITCH ACTIVE — drawdown %.2f%% >= threshold %.0f%% "
+                "— ALL equity trades BLOCKED this cycle",
+                drawdown * 100,
+                self.rules.max_drawdown_kill_switch * 100,
+            )
             return self.validate_against_kill_switch(slate, total_capital)
 
         slate.phase = CyclePhase.AGGREGATING.value
 
+        rejected_cap: list[str] = []
         for sig in signals:
             alloc = self._size_position(sig, total_capital)
             if alloc is None:
                 continue
             if not self._fits_in_bucket(alloc):
-                logger.debug("Position rejected: bucket cap reached for %s", sig.ticker)
+                rejected_cap.append(
+                    f"{sig.ticker} (bucket={alloc.bucket} "
+                    f"used={self._utilization.get(alloc.bucket, 0.0)*100:.1f}% "
+                    f"cap={self._bucket_cap(alloc.bucket)*100:.0f}%)"
+                )
+                logger.info(
+                    "[AllocationEngine]   REJECTED %s — bucket %s full "
+                    "(utilization=%.1f%% cap=%.0f%% size_requested=%.2f%%)",
+                    sig.ticker,
+                    alloc.bucket,
+                    self._utilization.get(alloc.bucket, 0.0) * 100,
+                    (self._bucket_cap(alloc.bucket) or 0.0) * 100,
+                    alloc.position_size * 100,
+                )
                 continue
             self._apply_utilization(alloc, total_capital)
             slate.positions.append(alloc)
+            logger.info(
+                "[AllocationEngine]   ACCEPTED %s — bucket=%s size=%.2f%% ($%.0f) "
+                "confidence=%.2f alpha=%.4f",
+                alloc.ticker,
+                alloc.bucket,
+                alloc.position_size * 100,
+                alloc.dollar_amount,
+                alloc.confidence,
+                alloc.alpha_score,
+            )
 
         # Populate slate totals from utilization
         slate.total_ig_equity = self._utilization[BucketType.IG_EQUITY]
@@ -431,11 +500,39 @@ class AllocationEngine:
         slate.phase = CyclePhase.EXECUTING.value
         slate.timestamp = datetime.now(timezone.utc).isoformat()
 
+        # ── Per-cycle rule summary ────────────────────────────────
         logger.info(
-            "apply_rules cycle=%d: %d positions accepted from %d signals",
+            "[AllocationEngine] ── Cycle #%d Summary ───────────────────────────────────",
             self.cycle_number,
+        )
+        logger.info(
+            "[AllocationEngine]   Result: %d/%d signals → slate  |  %d rejected by bucket caps",
             len(slate.positions),
             len(signals),
+            len(rejected_cap),
+        )
+        logger.info(
+            "[AllocationEngine]   Bucket utilization after cycle:"
+            "  IG=%.1f%%  HY=%.1f%%  ETF=%.1f%%  FI=%.1f%%"
+            "  CVR=%.1f%%  Opts=%.1f%%  Margin=%.1f%%  MM=%.1f%%",
+            slate.total_ig_equity * 100,
+            slate.total_hy_distressed * 100,
+            slate.total_etf * 100,
+            slate.total_fi_macro * 100,
+            slate.total_event_cvr * 100,
+            slate.total_options_notional * 100,
+            slate.total_margin_real * 100,
+            slate.total_money_market * 100,
+        )
+        total_deployed = sum(p.position_size for p in slate.positions)
+        total_dollars = sum(p.dollar_amount for p in slate.positions)
+        logger.info(
+            "[AllocationEngine]   Total deployed: %.2f%% of NAV = $%.0f",
+            total_deployed * 100,
+            total_dollars,
+        )
+        logger.info(
+            "[AllocationEngine] ────────────────────────────────────────────────────────",
         )
         return slate
 
@@ -559,3 +656,176 @@ class AllocationEngine:
 
     def get_kill_switch_status(self) -> dict:
         return self.kill_switch.status()
+
+    # ── nav property ──────────────────────────────────────────────
+
+    @property
+    def nav(self) -> float:
+        """Current NAV used for position sizing."""
+        return self._nav
+
+    @nav.setter
+    def nav(self, value: float) -> None:
+        self._nav = float(value)
+
+    # ── classify_opportunity ──────────────────────────────────────
+
+    def classify_opportunity(self, sig: "ScanSignal") -> str:
+        """Classify a ScanSignal into its allocation bucket.
+
+        Used by FullUniverseScan to emit bucket labels on the Thinking Tab SSE.
+        Mirrors _infer_bucket() but public-facing and accepts a ScanSignal.
+        """
+        itype = (sig.instrument_type or "").upper()
+        signal_type = (sig.signal_type or "").upper()
+        regime = (sig.regime_context or "").upper()
+
+        if itype == InstrumentType.OPTION:
+            if "HY" in regime or "DISTRESSED" in regime:
+                return BucketType.OPTIONS_DISTRESSED
+            if "HY" in signal_type:
+                return BucketType.OPTIONS_HY
+            return BucketType.OPTIONS_IG
+        if itype in (InstrumentType.FUTURE, InstrumentType.DERIVATIVE):
+            return BucketType.MARGIN
+        if itype == InstrumentType.FIXED_INCOME:
+            if "CVR" in signal_type or "EVENT" in signal_type:
+                return BucketType.EVENT_DRIVEN_CVR
+            return BucketType.FI_MACRO
+        if itype == InstrumentType.ETF:
+            return BucketType.DIV_CASHFLOW_ETF
+        # Equity paths
+        if "DISTRESSED" in regime or "DISTRESS" in signal_type:
+            return BucketType.HY_DISTRESSED
+        if "HY" in regime or "HY" in signal_type:
+            return BucketType.HY_DISTRESSED
+        if "CVR" in signal_type or "EVENT" in signal_type:
+            return BucketType.EVENT_DRIVEN_CVR
+        return BucketType.IG_EQUITY
+
+    # ── aggregate_runs ────────────────────────────────────────────
+
+    def aggregate_runs(self, *slates: "AllocationSlate") -> "AllocationSlate":
+        """Merge 4 universe-run slates into a single de-duplicated slate.
+
+        Rules:
+        - If any run triggered the kill switch → aggregate is halted
+        - Duplicate tickers across runs are merged by taking the highest
+          confidence score (same ticker may appear in SP500 + SP400)
+        - Bucket utilization is recomputed from scratch on the merged set
+        - Leverage multiplier is taken from the last (most recent) slate
+        """
+        if not slates:
+            return AllocationSlate(cycle_number=self.cycle_number)
+
+        # Kill switch propagation — any triggered run halts the aggregate
+        if any(s.kill_switch_triggered for s in slates):
+            halt = AllocationSlate(
+                kill_switch_triggered=True,
+                cycle_number=self.cycle_number,
+                phase=CyclePhase.COOLDOWN.value,
+                beta_corridor=slates[-1].beta_corridor,
+                leverage_multiplier=0.0,
+                timestamp=datetime.now(timezone.utc).isoformat(),
+            )
+            logger.critical(
+                "[AllocationEngine] aggregate_runs: kill switch in one or more run slates — halting aggregate"
+            )
+            return halt
+
+        # Merge positions — deduplicate by ticker, keep highest confidence
+        seen: dict[str, PositionAllocation] = {}
+        for slate in slates:
+            for pos in slate.positions:
+                existing = seen.get(pos.ticker)
+                if existing is None or pos.confidence > existing.confidence:
+                    seen[pos.ticker] = pos
+
+        # Re-enforce bucket caps on the merged set
+        self.reset_cycle_utilization()
+        accepted: list[PositionAllocation] = []
+        for pos in sorted(seen.values(), key=lambda p: p.confidence, reverse=True):
+            if self._fits_in_bucket(pos):
+                self._apply_utilization(pos, self._nav)
+                accepted.append(pos)
+            else:
+                logger.info(
+                    "[AllocationEngine] aggregate_runs: REJECTED %s — bucket %s full after merge",
+                    pos.ticker, pos.bucket,
+                )
+
+        merged = AllocationSlate(
+            positions=accepted,
+            kill_switch_triggered=False,
+            beta_corridor=slates[-1].beta_corridor,
+            leverage_multiplier=slates[-1].leverage_multiplier,
+            cycle_number=self.cycle_number,
+            phase=CyclePhase.AGGREGATING.value,
+            timestamp=datetime.now(timezone.utc).isoformat(),
+        )
+        merged.total_ig_equity = self._utilization[BucketType.IG_EQUITY]
+        merged.total_hy_distressed = self._utilization[BucketType.HY_DISTRESSED]
+        merged.total_etf = self._utilization[BucketType.DIV_CASHFLOW_ETF]
+        merged.total_fi_macro = self._utilization[BucketType.FI_MACRO]
+        merged.total_event_cvr = self._utilization[BucketType.EVENT_DRIVEN_CVR]
+        merged.total_options_notional = (
+            self._utilization[BucketType.OPTIONS_IG]
+            + self._utilization[BucketType.OPTIONS_HY]
+            + self._utilization[BucketType.OPTIONS_DISTRESSED]
+        )
+        merged.total_margin_real = self._utilization[BucketType.MARGIN]
+        merged.total_money_market = self._utilization[BucketType.MONEY_MARKET]
+
+        total_input = sum(len(s.positions) for s in slates)
+        logger.info(
+            "[AllocationEngine] aggregate_runs: %d runs → %d input positions → %d accepted after dedup+caps",
+            len(slates), total_input, len(accepted),
+        )
+        return merged
+
+    # ── update_rules ──────────────────────────────────────────────
+
+    def update_rules(self, updates: dict) -> AllocationRules:
+        """Apply a partial rules update dict and return the updated rules.
+
+        Called by the allocation API router's POST /rules endpoint.
+        Only updates fields present in the dict — all others unchanged.
+        """
+        for key, value in updates.items():
+            if hasattr(self.rules, key):
+                setattr(self.rules, key, value)
+                logger.info("[AllocationEngine] Rule updated: %s = %s", key, value)
+            else:
+                logger.warning("[AllocationEngine] update_rules: unknown field %s — skipped", key)
+        # Re-sync kill switch threshold if max_drawdown_kill_switch changed
+        if "max_drawdown_kill_switch" in updates:
+            self.kill_switch.threshold = self.rules.max_drawdown_kill_switch
+        return self.rules
+
+    # ── get_status ────────────────────────────────────────────────
+
+    def get_status(self) -> dict:
+        """Return full engine status for the allocation /status endpoint.
+
+        Includes bucket utilization, kill switch state, beta corridor,
+        leverage multiplier, rules summary, and current NAV.
+        """
+        return {
+            "nav": self._nav,
+            "beta_corridor": {
+                "corridor": self._beta_corridor.value,
+                "leverage_multiplier": self._leverage_multiplier,
+                "beta": 1.0,  # live beta injected by BetaCorridor component
+            },
+            "kill_switch": self.kill_switch.status(),
+            "bucket_utilization": self.get_utilization(),
+            "rules": self.rules.to_dict(),
+            "cycle_number": self.cycle_number,
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+        }
+
+    # ── apply_rules backtest kwarg passthrough ────────────────────
+
+    def _apply_backtest_flag(self, backtest: bool) -> None:
+        """Sync the backtest flag — called by universe_scan.run_universe()."""
+        self.backtest = backtest

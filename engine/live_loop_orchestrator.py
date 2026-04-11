@@ -84,6 +84,11 @@ except ImportError:
     AllocBetaCorridorLevel = None
 
 try:
+    from .allocation.universe_scan import FullUniverseScan
+except ImportError:
+    FullUniverseScan = None
+
+try:
     from .execution.execution_engine import ExecutionEngine
 except ImportError:
     ExecutionEngine = None
@@ -422,6 +427,8 @@ class LiveLoopOrchestrator:
         self._last_cube_output: Any = None
         self._last_alpha_output: Any = None
         self._last_decision_result: Any = None
+        self._last_scan_slate: Any = None          # latest AllocationSlate from FullUniverseScan
+        self._scan_task: Any = None                # background asyncio task for run_full_cycle
 
         # Initialize components
         self._components: Dict[str, Any] = {}
@@ -454,6 +461,9 @@ class LiveLoopOrchestrator:
             ("alpha_optimizer", lambda: AlphaOptimizer() if AlphaOptimizer else None),
             ("decision_matrix", lambda: DecisionMatrix() if DecisionMatrix else None),
             ("allocation_engine", lambda: AllocationEngine() if AllocationEngine else None),
+            ("universe_scan", lambda: FullUniverseScan(
+                allocation_engine=self._components.get("allocation_engine"),
+            ) if FullUniverseScan else None),
             ("execution_engine", lambda: ExecutionEngine(
                 initial_nav=self._initial_nav,
                 broker_type=self._broker_type,
@@ -834,6 +844,7 @@ class LiveLoopOrchestrator:
         """Phase 3: ML intelligence and agent scoring.
 
         Runs at 5-minute cadence:
+            - FullUniverseScan.run_full_cycle() — 4-run universe scan (async background)
             - AlphaOptimizer.optimize()
             - ML vote ensemble scoring
             - Agent sector bot scoring
@@ -841,6 +852,69 @@ class LiveLoopOrchestrator:
         pr = PhaseResult(phase=LoopPhase.INTELLIGENCE.value, timestamp=datetime.now().isoformat())
         t0 = time.monotonic()
         items = 0
+
+        # ── FullUniverseScan (4-run 20-min cycle, fired as async background task) ──
+        # The scan runs SP500 → SP400 → SP600 → ETF+FI, emitting live SSE events to
+        # the Thinking Tab.  Each 5-min intelligence tick either:
+        #   (a) Starts a new scan cycle if none is running
+        #   (b) Harvests the completed slate from the previous cycle
+        scanner = self._get("universe_scan")
+        if scanner:
+            try:
+                import asyncio
+                # Sync the scanner's AllocationEngine NAV with current live NAV
+                alloc_engine = self._get("allocation_engine")
+                if alloc_engine:
+                    alloc_engine.nav = self._get_live_nav()
+
+                # Harvest completed scan slate if ready
+                if (
+                    self._scan_task is not None
+                    and hasattr(self._scan_task, "done")
+                    and self._scan_task.done()
+                    and not self._scan_task.cancelled()
+                ):
+                    try:
+                        self._last_scan_slate = self._scan_task.result()
+                        pos_count = len(getattr(self._last_scan_slate, "positions", []))
+                        kill = getattr(self._last_scan_slate, "kill_switch_triggered", False)
+                        pr.data["scan_slate_positions"] = pos_count
+                        pr.data["scan_kill_switch"] = kill
+                        logger.info(
+                            "[LiveLoop] FullUniverseScan cycle complete: %d positions kill_switch=%s",
+                            pos_count, kill,
+                        )
+                    except Exception as harvest_exc:
+                        logger.warning("[LiveLoop] scan harvest error: %s", harvest_exc)
+                    self._scan_task = None
+
+                # Launch new scan cycle if none is running
+                if self._scan_task is None or (
+                    hasattr(self._scan_task, "done") and self._scan_task.done()
+                ):
+                    try:
+                        loop = asyncio.get_event_loop()
+                        if loop.is_running():
+                            self._scan_task = loop.create_task(
+                                scanner.run_full_cycle()
+                            )
+                            pr.data["scan_cycle_launched"] = True
+                            logger.info(
+                                "[LiveLoop] FullUniverseScan cycle #%d launched",
+                                scanner.cycle_count + 1,
+                            )
+                        else:
+                            pr.data["scan_cycle_skipped"] = "no_running_event_loop"
+                    except RuntimeError:
+                        pr.data["scan_cycle_skipped"] = "event_loop_unavailable"
+                else:
+                    pr.data["scan_cycle_running"] = True
+                    pr.data["scan_cycle_number"] = scanner.cycle_count
+
+                pr.data["scan_status"] = scanner.get_scan_status().get("phase", "IDLE")
+            except Exception as exc:
+                pr.data["scan_error"] = str(exc)
+                logger.warning("[LiveLoop] FullUniverseScan error: %s", exc)
 
         # Alpha Optimizer
         alpha = self._get("alpha_optimizer")
@@ -940,7 +1014,54 @@ class LiveLoopOrchestrator:
         self._pending_trades.clear()
         self._approved_trades.clear()
 
-        # Decision Matrix evaluation
+        # ── Path A: Use FullUniverseScan slate if available ───────────────────
+        # If Phase 3 completed a scan cycle, the aggregated AllocationSlate already
+        # has bucket-sized, cap-enforced positions ready to execute directly.
+        # This is the primary path — it bypasses the single-batch DM+AllocationEngine
+        # path and uses the full 4-run universe scan result instead.
+        if self._last_scan_slate is not None:
+            scan_slate = self._last_scan_slate
+            if getattr(scan_slate, "kill_switch_triggered", False):
+                logger.critical(
+                    "[LiveLoop] Decision: scan slate kill switch active — blocking all trades"
+                )
+                pr.data["scan_kill_switch"] = True
+                pr.data["trades_approved"] = 0
+                pr.duration_ms = (time.monotonic() - t0) * 1000
+                pr.success = True
+                return pr
+
+            for pos in getattr(scan_slate, "positions", []):
+                self._approved_trades.append({
+                    "ticker": pos.ticker,
+                    "signal": None,
+                    "decision": {"source": "universe_scan", "bucket": pos.bucket},
+                    "dollar_amount": pos.dollar_amount,
+                    "position_size": pos.position_size,
+                    "bucket": pos.bucket,
+                    "instrument_type": pos.instrument_type,
+                    "confidence": pos.confidence,
+                    "alpha_score": pos.alpha_score,
+                    "timestamp": datetime.now().isoformat(),
+                })
+
+            approved = len(self._approved_trades)
+            pr.data["source"] = "universe_scan"
+            pr.data["trades_approved"] = approved
+            pr.data["scan_cycle"] = getattr(scan_slate, "cycle_number", 0)
+            pr.data["beta_corridor"] = getattr(scan_slate, "beta_corridor", "NEUTRAL")
+            logger.info(
+                "[LiveLoop] Decision: using scan slate — %d positions from cycle #%d",
+                approved, getattr(scan_slate, "cycle_number", 0),
+            )
+            # Consume the slate so it’s not re-used next tick
+            self._last_scan_slate = None
+
+            # Still run BetaCorridor and Options scan below
+
+        # ── Path B: Fallback DecisionMatrix + AllocationEngine (single-batch) ──
+        # Used when no scan slate is ready (first few minutes after startup, or
+        # between 20-min scan cycles).
         dm = self._get("decision_matrix")
         alloc_engine = self._get("allocation_engine")
         live_nav = self._get_live_nav()
@@ -959,7 +1080,7 @@ class LiveLoopOrchestrator:
             else:
                 alloc_beta_level = AllocBetaCorridorLevel.NEUTRAL
 
-        if dm and self._last_alpha_output:
+        if dm and self._last_alpha_output and pr.data.get("source") != "universe_scan":
             try:
                 signals = getattr(self._last_alpha_output, "signals", [])
                 cube_out = self._last_cube_output
