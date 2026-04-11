@@ -25,7 +25,7 @@ Complete reference for all sub-repos in `intelligence_platform/`, their purpose,
 |----------|---------|------------------------|------------------|-------------------|
 | **Financial-Data** | OpenBB market data pipeline, yfinance fallback | `openbb_bridge.py` — `OpenBBTicker`, `get_data` shim | `engine/data/openbb_data.py` (supersedes), `engine/signals/pattern_discovery_engine.py` | FULLY_WIRED (superseded by engine/data/openbb_data.py) |
 | **open-bb** | Vendored OpenBB platform | None (vendored source) | Used via `from openbb import obb` in `engine/data/openbb_data.py` | FULLY_WIRED |
-| **hedgefund-tracker** | Institutional flow intelligence, OpenBB universe | `openbb_universe.py` — `AssetClass` enum, GICS, `get_full_universe()` | `engine/data/universe_engine.py` (supersedes), `engine/data/cross_asset_universe.py` | FULLY_WIRED (superseded by engine/data/) |
+| **hedgefund-tracker** | Institutional flow intelligence — SEC 13F/13D/Form 4 analysis, Promise Score, fund mimicry signals | `openbb_universe.py`, `app/analysis/stocks.py`, `app/ai/agent.py`, `app/analysis/performance_evaluator.py` | `engine/data/universe_engine.py` (supersedes universe), `engine/ml/bridges/hedgefund_tracker_bridge.py` (newly wired — `HedgefundTrackerBridge`) | FULLY_WIRED |
 | **FRB** | Federal Reserve Bank FRED API Python client | `fred/` — `Fred` class with `category`, `release`, `series`, `tag`, `source` clients | `engine/signals/fed_liquidity_plumbing.py` (newly wired — `FRBFredClient`) | FULLY_WIRED |
 | **EquityLinkedGICPooling** | GIC pooling methodology documentation | None (README only) | `engine/data/universal_pooling.py` (reference) | REFERENCE_ONLY |
 | **Quant-Developers-Resources** | Quantitative finance reference materials | None (reference docs) | None | REFERENCE_ONLY |
@@ -45,7 +45,7 @@ Complete reference for all sub-repos in `intelligence_platform/`, their purpose,
 
 | Sub-repo | Purpose | Custom Integration Files | Engine Consumers | Integration Status |
 |----------|---------|------------------------|------------------|-------------------|
-| **QLIB** | Microsoft QLIB quantitative ML framework | None (vendored library) | `engine/ml/bridges/` (framework available for model training) | PARTIALLY_WIRED |
+| **QLIB** | Microsoft QLIB quantitative ML framework — backtest engine, OpenBB data providers, model framework | `qlib/data/openbb_universe.py` — `OpenBBCalendarProvider`, `OpenBBInstrumentProvider`, `OpenBBFeatureProvider` | `engine/ml/bridges/qlib_bridge.py` (newly wired — `QLIBBridge`) | FULLY_WIRED |
 | **Stock-techincal-prediction-model** | Multi-asset price prediction — LSTM, XGBoost, RF, Transformer ensemble | `multi_asset_predictor.py` — `MultiAssetPredictor` | `engine/ml/bridges/stock_prediction_bridge.py` (newly wired — `predict_with_ensemble()`) | FULLY_WIRED |
 | **Stock-prediction** | Jupyter notebooks — BiLSTM, BiGRU, RNN variants | None (notebooks only) | None | REFERENCE_ONLY |
 | **ML-Macro-Market** | Macro-market ML — HMM regime model, Fama-French factor model, GDP nowcasting | `macro_ml_engine.py` — `HiddenMarkovRegimeModel`, `FactorModel`, `NowcastingEngine`, `MacroMLEngine` | `engine/signals/macro_engine.py` (newly wired) | FULLY_WIRED |
@@ -106,8 +106,8 @@ These sub-repos were found in `intelligence_platform/` but not in the original t
 
 | Status | Count | Sub-repos |
 |--------|-------|-----------|
-| FULLY_WIRED | 25 | AI-Newton, Air-LLM, Kserve, Financial-Data, MiroFish, nividia-repo, agent_skills, FinancialDistressPrediction, financial-distressed-repo, sophisticated-distress-analysis, ML-Macro-Market, Stock-techincal-prediction-model, TradeTheEvent, FRB, Mav-Analysis, quant-trading, stock-chain, open-bb, hedgefund-tracker, exchange-core, get-shit-done, plugins, qstrader, ai-hedgefund, EquityLinkedGICPooling |
-| PARTIALLY_WIRED | 3 | QLIB, Ruflo-agents, wondertrader |
+| FULLY_WIRED | 27 | AI-Newton, Air-LLM, Kserve, Financial-Data, MiroFish, nividia-repo, agent_skills, FinancialDistressPrediction, financial-distressed-repo, sophisticated-distress-analysis, ML-Macro-Market, Stock-techincal-prediction-model, TradeTheEvent, FRB, Mav-Analysis, quant-trading, stock-chain, open-bb, hedgefund-tracker, exchange-core, get-shit-done, plugins, qstrader, ai-hedgefund, EquityLinkedGICPooling, QLIB, hedgefund-tracker |
+| PARTIALLY_WIRED | 2 | Ruflo-agents, wondertrader |
 | REFERENCE_ONLY | 4 | CTA-code, Quant-Developers-Resources, Stock-prediction, ai-hedgefund |
 
 ## Newly Wired in This Integration
@@ -129,5 +129,7 @@ The following bridges were added to connect previously-unwired intelligence_plat
 13. **Mav-Analysis** → `engine/signals/security_analysis_engine.py` — `MultiAssetAnalyzer`
 14. **stock-chain** → `engine/signals/security_analysis_engine.py` — `AssetClassAnalyzer`
 15. **quant-trading** → `engine/execution/quant_strategy_executor.py` — `ArbitrageDetector`, `UniverseScanner`
+16. **QLIB** → `engine/ml/bridges/qlib_bridge.py` — `QLIBBridge` (OpenBB providers, backtest engine, signal adapter)
+17. **hedgefund-tracker** → `engine/ml/bridges/hedgefund_tracker_bridge.py` — `HedgefundTrackerBridge` (institutional flow signals, quarterly consensus, growth score)
 
 All imports use `try/except` with graceful degradation — the system runs in degraded mode if any sub-repo is unavailable.

@@ -16,6 +16,8 @@ from .monte_carlo_bridge import MonteCarloBridge
 from .stock_prediction_bridge import StockPredictionBridge
 from .deep_trading_features import DeepTradingFeatureBuilder
 from .kserve_adapter import KServeAdapter
+from .qlib_bridge import QLIBBridge
+from .hedgefund_tracker_bridge import HedgefundTrackerBridge
 
 __all__ = [
     "FinRLBridge",
@@ -24,4 +26,6 @@ __all__ = [
     "StockPredictionBridge",
     "DeepTradingFeatureBuilder",
     "KServeAdapter",
+    "QLIBBridge",
+    "HedgefundTrackerBridge",
 ]
