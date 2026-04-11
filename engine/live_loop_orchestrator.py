@@ -73,6 +73,17 @@ except ImportError:
     DecisionMatrix = None
 
 try:
+    from .allocation.allocation_engine import (
+        AllocationEngine, AllocationRules, ScanSignal as AllocationScanSignal,
+        BetaCorridorLevel as AllocBetaCorridorLevel,
+    )
+except ImportError:
+    AllocationEngine = None
+    AllocationRules = None
+    AllocationScanSignal = None
+    AllocBetaCorridorLevel = None
+
+try:
     from .execution.execution_engine import ExecutionEngine
 except ImportError:
     ExecutionEngine = None
@@ -442,6 +453,7 @@ class LiveLoopOrchestrator:
             ("security_analysis", lambda: SecurityAnalysisEngine() if SecurityAnalysisEngine else None),
             ("alpha_optimizer", lambda: AlphaOptimizer() if AlphaOptimizer else None),
             ("decision_matrix", lambda: DecisionMatrix() if DecisionMatrix else None),
+            ("allocation_engine", lambda: AllocationEngine() if AllocationEngine else None),
             ("execution_engine", lambda: ExecutionEngine(
                 initial_nav=self._initial_nav,
                 broker_type=self._broker_type,
@@ -894,11 +906,29 @@ class LiveLoopOrchestrator:
         pr.success = True
         return pr
 
+    def _get_live_nav(self) -> float:
+        """Return the best available current NAV from the broker or initial value."""
+        exec_engine = self._get("execution_engine")
+        if exec_engine:
+            broker = getattr(exec_engine, "broker", None) or getattr(exec_engine, "_broker", None)
+            if broker:
+                try:
+                    if hasattr(broker, "nav"):
+                        return float(broker.nav)
+                    if hasattr(broker, "get_nav"):
+                        return float(broker.get_nav())
+                    if hasattr(broker, "cash"):
+                        return float(broker.cash)
+                except Exception:
+                    pass
+        return self._initial_nav
+
     def run_decision_phase(self) -> PhaseResult:
         """Phase 4: Trade decision evaluation.
 
         Triggered on signal change:
             - DecisionMatrix.evaluate()
+            - AllocationEngine.apply_rules()  ← bucket sizing + caps enforced here
             - BetaCorridor.check()
             - Options opportunistic scan
             - Futures beta hedge check
@@ -912,12 +942,32 @@ class LiveLoopOrchestrator:
 
         # Decision Matrix evaluation
         dm = self._get("decision_matrix")
+        alloc_engine = self._get("allocation_engine")
+        live_nav = self._get_live_nav()
+
+        # Resolve current drawdown for AllocationEngine kill-switch
+        current_drawdown = max(0.0, (self._initial_nav - live_nav) / self._initial_nav) if self._initial_nav > 0 else 0.0
+
+        # Resolve beta corridor level for AllocationEngine
+        alloc_beta_level = None
+        if AllocBetaCorridorLevel and self._last_cube_output:
+            target_beta = getattr(self._last_cube_output, "target_beta", 1.0)
+            if target_beta > 1.1:
+                alloc_beta_level = AllocBetaCorridorLevel.HIGH
+            elif target_beta < 0.9:
+                alloc_beta_level = AllocBetaCorridorLevel.LOW
+            else:
+                alloc_beta_level = AllocBetaCorridorLevel.NEUTRAL
+
         if dm and self._last_alpha_output:
             try:
                 signals = getattr(self._last_alpha_output, "signals", [])
                 cube_out = self._last_cube_output
                 macro_snap = self._last_macro_snapshot
+                regime_str = str(getattr(macro_snap, "regime", "TRENDING")) if macro_snap else "TRENDING"
 
+                # Step 1 — collect DecisionMatrix-approved signals
+                dm_approved_signals = []
                 for sig in signals[:30]:
                     ticker = getattr(sig, "ticker", "")
                     if not ticker:
@@ -943,6 +993,78 @@ class LiveLoopOrchestrator:
                             is_approved = decision.composite_score >= 0.55
 
                         if is_approved:
+                            dm_approved_signals.append((ticker, sig, decision))
+                    except Exception as exc:
+                        logger.debug("Decision eval failed for %s: %s", ticker, exc)
+
+                pr.data["candidates_evaluated"] = len(signals[:30])
+                pr.data["dm_approved"] = len(dm_approved_signals)
+
+                # Step 2 — pass through AllocationEngine for bucket sizing + cap enforcement
+                if alloc_engine and AllocationScanSignal and dm_approved_signals:
+                    try:
+                        scan_signals = []
+                        _decision_map: dict = {}
+                        for ticker, sig, decision in dm_approved_signals:
+                            quality_tier = getattr(sig, "quality_tier", "B")
+                            itype = "OPTION" if "opt" in ticker.lower() else "EQUITY"
+                            confidence = float(getattr(sig, "weight", 0.5) or 0.5)
+                            alpha_score = float(getattr(sig, "alpha_pred", 0.0))
+                            scan_sig = AllocationScanSignal(
+                                ticker=ticker,
+                                signal_type="LONG" if alpha_score >= 0 else "SHORT",
+                                instrument_type=itype,
+                                confidence=min(max(confidence, 0.01), 1.0),
+                                alpha_score=alpha_score,
+                                regime_context=regime_str,
+                            )
+                            scan_signals.append(scan_sig)
+                            _decision_map[ticker] = decision
+
+                        slate = alloc_engine.apply_rules(
+                            signals=scan_signals,
+                            total_capital=live_nav,
+                            drawdown=current_drawdown,
+                            beta_corridor=alloc_beta_level,
+                        )
+
+                        if slate.kill_switch_triggered:
+                            logger.critical(
+                                "AllocationEngine KILL SWITCH triggered (drawdown=%.2f%%) "
+                                "— blocking all equity trades this cycle",
+                                current_drawdown * 100,
+                            )
+                            pr.data["allocation_kill_switch"] = True
+                            pr.data["trades_approved"] = 0
+                        else:
+                            for pos in slate.positions:
+                                self._approved_trades.append({
+                                    "ticker": pos.ticker,
+                                    "signal": _decision_map.get(pos.ticker),
+                                    "decision": _decision_map.get(pos.ticker),
+                                    "dollar_amount": pos.dollar_amount,
+                                    "position_size": pos.position_size,
+                                    "bucket": pos.bucket,
+                                    "instrument_type": pos.instrument_type,
+                                    "timestamp": datetime.now().isoformat(),
+                                })
+                                approved += 1
+
+                            pr.data["allocation_slate_positions"] = len(slate.positions)
+                            pr.data["allocation_nav"] = live_nav
+                            pr.data["allocation_drawdown_pct"] = round(current_drawdown * 100, 3)
+                            pr.data["allocation_beta_corridor"] = alloc_beta_level.value if alloc_beta_level else "NEUTRAL"
+                            logger.info(
+                                "AllocationEngine: %d/%d signals accepted into slate "
+                                "(nav=%.0f drawdown=%.2f%% beta=%s)",
+                                len(slate.positions), len(dm_approved_signals),
+                                live_nav, current_drawdown * 100,
+                                alloc_beta_level.value if alloc_beta_level else "NEUTRAL",
+                            )
+                    except Exception as exc:
+                        # Allocation engine failure — fall back to raw DM approvals
+                        logger.warning("AllocationEngine error — falling back to DM approvals: %s", exc)
+                        for ticker, sig, decision in dm_approved_signals:
                             self._approved_trades.append({
                                 "ticker": ticker,
                                 "signal": sig,
@@ -950,10 +1072,17 @@ class LiveLoopOrchestrator:
                                 "timestamp": datetime.now().isoformat(),
                             })
                             approved += 1
-                    except Exception as exc:
-                        logger.debug("Decision eval failed for %s: %s", ticker, exc)
+                else:
+                    # AllocationEngine unavailable — use raw DM approvals
+                    for ticker, sig, decision in dm_approved_signals:
+                        self._approved_trades.append({
+                            "ticker": ticker,
+                            "signal": sig,
+                            "decision": decision,
+                            "timestamp": datetime.now().isoformat(),
+                        })
+                        approved += 1
 
-                pr.data["candidates_evaluated"] = len(signals[:30])
                 pr.data["trades_approved"] = approved
             except Exception as exc:
                 pr.data["decision_error"] = str(exc)
