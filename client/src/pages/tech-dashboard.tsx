@@ -170,6 +170,138 @@ function APIEndpointsTab() {
   );
 }
 
+
+/* ─── Model Ensemble Status Types ─────────────────────────────────── */
+
+interface ModelStatus {
+  name: string;
+  key: string;
+  port: string;
+  status: "online" | "offline" | "stub" | "loading";
+  status_detail: string;
+  last_latency_ms: number | null;
+}
+
+interface ModelsStatusResponse {
+  models: ModelStatus[];
+  ensemble_active: boolean;
+  brain_power_orchestrating: boolean;
+  timestamp: string;
+}
+
+/* ─── Model Ensemble Status Component ─────────────────────────────── */
+
+function ModelEnsembleStatus({ data, onError }: { data: ModelsStatusResponse | null; onError?: (model: string, msg: string) => void }) {
+  if (!data) {
+    return (
+      <DashboardPanel title="MODEL ENSEMBLE" className="col-span-2">
+        <div className="p-3 text-[9px] text-terminal-text-faint font-mono">
+          Loading model ensemble status...
+        </div>
+      </DashboardPanel>
+    );
+  }
+
+  const statusColor = (status: string) => {
+    switch (status) {
+      case "online": return "#22c55e";
+      case "offline": return "#ef4444";
+      case "stub":
+      case "loading": return "#eab308";
+      default: return "#6b7280";
+    }
+  };
+
+  const allNonStubOnline = data.models
+    .filter((m) => m.status !== "stub")
+    .every((m) => m.status === "online");
+  const anyOffline = data.models.some((m) => m.status === "offline");
+
+  return (
+    <DashboardPanel title="MODEL ENSEMBLE" className="col-span-2">
+      <div className="p-2">
+        {/* Header row */}
+        <div className="flex items-center justify-between mb-3">
+          <div>
+            <span className="text-[10px] text-terminal-accent font-mono font-bold">Model Ensemble</span>
+            <span className="text-[8px] text-terminal-text-faint ml-2">Parallel inference — Brain Power orchestration</span>
+          </div>
+          <div className="flex items-center gap-2">
+            <span
+              className={`text-[8px] font-mono px-1.5 py-0.5 rounded ${
+                allNonStubOnline && !anyOffline
+                  ? "bg-[#22c55e]/20 text-[#22c55e]"
+                  : "bg-[#ef4444]/20 text-[#ef4444]"
+              }`}
+            >
+              {allNonStubOnline && !anyOffline ? "ENSEMBLE ACTIVE" : "ENSEMBLE DEGRADED"}
+            </span>
+            {data.brain_power_orchestrating && (
+              <span className="text-[8px] font-mono px-1.5 py-0.5 rounded bg-terminal-accent/20 text-terminal-accent">
+                BP ORCHESTRATING
+              </span>
+            )}
+          </div>
+        </div>
+
+        {/* Model rows */}
+        <div className="space-y-1">
+          {data.models.map((model) => (
+            <div
+              key={model.key}
+              className="flex items-center gap-2 px-2 py-1.5 rounded border border-terminal-border/30 hover:bg-white/[0.02]"
+            >
+              {/* Status dot with pulse animation for online */}
+              <span className="relative flex h-2.5 w-2.5">
+                {model.status === "online" && (
+                  <span
+                    className="animate-ping absolute inline-flex h-full w-full rounded-full opacity-40"
+                    style={{ backgroundColor: statusColor(model.status) }}
+                  />
+                )}
+                <span
+                  className="relative inline-flex rounded-full h-2.5 w-2.5"
+                  style={{ backgroundColor: statusColor(model.status) }}
+                />
+              </span>
+
+              {/* Model name */}
+              <span className="text-[10px] text-terminal-text-primary font-mono font-bold flex-shrink-0 min-w-[200px]">
+                {model.name}
+              </span>
+
+              {/* Port badge */}
+              <span className="text-[8px] font-mono px-1.5 py-0.5 rounded bg-terminal-surface-2 text-terminal-text-faint flex-shrink-0">
+                {model.port}
+              </span>
+
+              {/* Orchestrator badge for Brain Power */}
+              {model.key === "brain_power" && (
+                <span className="text-[8px] font-mono px-1.5 py-0.5 rounded bg-terminal-accent/15 text-terminal-accent flex-shrink-0">
+                  Orchestrator
+                </span>
+              )}
+
+              {/* Status text */}
+              <span
+                className="text-[9px] font-mono flex-1"
+                style={{ color: statusColor(model.status) }}
+              >
+                {model.status === "online" ? "Online" : model.status === "stub" ? `Stub — ${model.status_detail}` : model.status === "offline" ? "Offline" : "Loading"}
+              </span>
+
+              {/* Latency */}
+              <span className="text-[8px] font-mono text-terminal-text-faint text-right min-w-[50px]">
+                {model.last_latency_ms != null ? `${model.last_latency_ms}ms` : "—"}
+              </span>
+            </div>
+          ))}
+        </div>
+      </div>
+    </DashboardPanel>
+  );
+}
+
 /* ─── Main Dashboard ──────────────────────────────────────────────── */
 
 type TechTab = "system" | "api-endpoints";
@@ -182,6 +314,22 @@ export default function TechDashboard() {
   const { data: vpsApi } = useEngineQuery<{ metrics: Array<{ name: string; cpu: number; memory: number; disk: number; network: string }> }>("/monitoring/vps-metrics", { refetchInterval: 10000 });
   const { data: logsApi } = useEngineQuery<{ messages: Array<{ time: string; level: string; message: string; source: string }> }>("/monitoring/logs", { refetchInterval: 5000 });
   const { data: errorsApi } = useEngineQuery<{ errors: Array<{ timestamp: string; engine: string; severity: string; message: string; file?: string; line?: number }>; counts: { total: number; by_engine: Record<string, number> } }>("/monitoring/errors", { refetchInterval: 5000 });
+
+  // ─── Model Ensemble Status ─────────────────
+  const [ensembleData, setEnsembleData] = useState<ModelsStatusResponse | null>(null);
+  useEffect(() => {
+    const fetchModels = () => {
+      fetch("/api/models/status")
+        .then((r) => r.json())
+        .then((d) => setEnsembleData(d))
+        .catch(() => {});
+    };
+    fetchModels();
+    const iv = setInterval(fetchModels, 30000);
+    return () => clearInterval(iv);
+  }, []);
+
+
 
   // Use API engines when available
   const [engines, setEngines] = useState(ENGINES);
@@ -283,6 +431,9 @@ export default function TechDashboard() {
         </div>
       ) : (
         <div className="flex-1 grid grid-cols-[1fr_1fr] grid-rows-[auto_1fr_1fr] gap-[2px] p-[2px] overflow-auto">
+          {/* Model Ensemble Status — top of system tab */}
+          <ModelEnsembleStatus data={ensembleData} />
+
           {/* Engine Status Grid */}
           <DashboardPanel title="ACTIVE ENGINES" className="col-span-2">
             <div className="flex gap-2 overflow-x-auto pb-1">
