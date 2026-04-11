@@ -1,4 +1,4 @@
-# BROKER SWAP NOTE: This router accesses broker via _get_broker() which
+# BROKER SWAP NOTE: This router accesses broker via get_broker() which
 # tries ExecutionEngine (default: AlpacaBroker) and falls back to PaperBroker.
 # Trade records are dict-shaped (from broker.get_trade_history()).
 # When adding IBKR/Tradier: ensure get_trade_history() returns list[dict]
@@ -14,29 +14,13 @@ from datetime import datetime
 import logging
 import traceback
 
+from engine.api.shared import get_broker, get_engine, get_beta
+
 logger = logging.getLogger("metadron-api.portfolio")
 router = APIRouter()
 
-# ─── Lazy engine singletons ────────────────────────────────
-_broker = None
+# ─── Alpha optimizer — local lazy singleton (not on ExecutionEngine) ──
 _alpha = None
-_beta = None
-
-
-# TODO: migrate to engine.api.shared.get_broker() once shared singleton is deployed
-def _get_broker():
-    global _broker
-    if _broker is None:
-        try:
-            from engine.execution.execution_engine import ExecutionEngine
-            eng = ExecutionEngine()
-            _broker = eng.broker
-        except Exception:
-            from engine.execution.paper_broker import PaperBroker
-            _broker = PaperBroker()
-    return _broker
-
-
 
 
 def _get_alpha():
@@ -47,21 +31,13 @@ def _get_alpha():
     return _alpha
 
 
-def _get_beta():
-    global _beta
-    if _beta is None:
-        from engine.portfolio.beta_corridor import BetaCorridor
-        _beta = BetaCorridor()
-    return _beta
-
-
 # ─── LIVE tab endpoints ────────────────────────────────────
 
 @router.get("/live")
 async def portfolio_live():
     """Current portfolio state: NAV, P&L, positions, exposure."""
     try:
-        broker = _get_broker()
+        broker = get_broker()
         state = broker.get_portfolio_summary()
         # get_portfolio_summary() returns a dict
         s = state if isinstance(state, dict) else {}
@@ -85,7 +61,7 @@ async def portfolio_live():
 async def portfolio_positions():
     """All current positions with P&L."""
     try:
-        broker = _get_broker()
+        broker = get_broker()
         positions = broker.get_all_positions()
         result = []
         for ticker, pos in (positions.items() if isinstance(positions, dict) else []):
@@ -108,7 +84,7 @@ async def portfolio_positions():
 async def portfolio_trades(limit: int = Query(50, ge=1, le=500)):
     """Recent trade history."""
     try:
-        broker = _get_broker()
+        broker = get_broker()
         trades = broker.get_trade_history()[-limit:]
         result = []
         for t in trades:
@@ -171,7 +147,7 @@ async def portfolio_allocation():
 async def portfolio_beta():
     """Beta corridor state and analytics."""
     try:
-        beta = _get_beta()
+        beta = get_beta()
         analytics = beta.get_corridor_analytics()
         history = beta.get_history()
         latest = history[-1] if history else None
@@ -199,7 +175,7 @@ async def portfolio_beta():
 async def portfolio_exposures():
     """Gross/net exposure breakdown."""
     try:
-        broker = _get_broker()
+        broker = get_broker()
         exposures = broker.compute_exposures()
         return {**exposures, "timestamp": datetime.utcnow().isoformat()}
     except Exception as e:
@@ -282,7 +258,7 @@ async def portfolio_movers():
 async def portfolio_sector_allocation():
     """Sector allocation from current positions."""
     try:
-        broker = _get_broker()
+        broker = get_broker()
         positions = broker.get_all_positions()
         sector_weights: dict[str, float] = {}
         total_value = 0
@@ -313,7 +289,7 @@ async def portfolio_sector_allocation():
 async def portfolio_pnl_series():
     """Intraday P&L time-series from trade history."""
     try:
-        broker = _get_broker()
+        broker = get_broker()
 
         # Try Alpaca portfolio history first (real brokerage PnL)
         if hasattr(broker, "get_portfolio_history"):
@@ -389,7 +365,7 @@ async def portfolio_orders(limit: int = Query(100, ge=1, le=500)):
     PaperBroker falls back to get_trade_history().
     """
     try:
-        broker = _get_broker()
+        broker = get_broker()
 
         # --- Primary: Alpaca get_orders() ---
         if hasattr(broker, "get_orders") and callable(broker.get_orders):

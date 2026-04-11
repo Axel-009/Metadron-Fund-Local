@@ -78,6 +78,7 @@ if TYPE_CHECKING:
     from engine.execution.l7_unified_execution_surface import L7UnifiedExecutionSurface as _L7
     from engine.portfolio.beta_corridor import BetaCorridor as _BetaCorridor
     from engine.execution.options_engine import OptionsEngine as _OptionsEngine
+    from engine.execution.decision_matrix import DecisionMatrix as _DecisionMatrix
 
 logger = logging.getLogger("metadron-api.shared")
 
@@ -93,6 +94,7 @@ _engine: Optional["_ExecutionEngine"] = None
 _l7: Optional["_L7"] = None
 _beta: Optional["_BetaCorridor"] = None
 _options: Optional["_OptionsEngine"] = None
+_decision: Optional["_DecisionMatrix"] = None
 
 # ---------------------------------------------------------------------------
 # Environment configuration
@@ -415,6 +417,33 @@ def get_options() -> "_OptionsEngine":
 
 
 # ---------------------------------------------------------------------------
+# DecisionMatrix singleton
+# ---------------------------------------------------------------------------
+def get_decision() -> "_DecisionMatrix":
+    """Return the shared DecisionMatrix instance (lazy, thread-safe)."""
+    global _decision
+    if _decision is not None:
+        return _decision
+
+    with _init_lock:
+        if _decision is not None:
+            return _decision
+
+        logger.info("Shared singleton: initialising DecisionMatrix")
+        try:
+            from engine.execution.decision_matrix import DecisionMatrix
+            _decision = DecisionMatrix()
+            logger.info("Shared singleton: DecisionMatrix ready")
+        except Exception as exc:
+            logger.error(
+                "Shared singleton: DecisionMatrix init failed (%s).", exc,
+            )
+            raise
+
+    return _decision
+
+
+# ---------------------------------------------------------------------------
 # Development / testing utility
 # ---------------------------------------------------------------------------
 def _reset_singletons() -> None:
@@ -436,10 +465,11 @@ def _reset_singletons() -> None:
         broker = get_broker()
         assert broker.paper is True
     """
-    global _engine, _l7, _beta, _options
+    global _engine, _l7, _beta, _options, _decision
     with _init_lock:
         _engine = None
         _l7 = None
         _beta = None
         _options = None
+        _decision = None
     logger.warning("Shared singletons reset — all getters will reinitialise on next call")

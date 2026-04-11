@@ -578,8 +578,9 @@ async def classifier_tiers():
 
 # ─── STRAT tab ─────────────────────────────────────────────
 
+from engine.api.shared import get_engine
+
 _cube_instance = None
-_exec_engine = None
 
 
 def _get_cube():
@@ -589,15 +590,6 @@ def _get_cube():
         from engine.signals.metadron_cube import MetadronCube
         _cube_instance = MetadronCube()
     return _cube_instance
-
-
-def _get_exec_engine():
-    """Singleton ExecutionEngine for strategy perf."""
-    global _exec_engine
-    if _exec_engine is None:
-        from engine.execution.execution_engine import ExecutionEngine
-        _exec_engine = ExecutionEngine()
-    return _exec_engine
 
 
 def _read_cube_cache() -> dict | None:
@@ -725,7 +717,7 @@ async def strategy_performance():
     Uses singleton ExecutionEngine to preserve state across calls.
     """
     try:
-        eng = _get_exec_engine()
+        eng = get_engine()
         broker = eng.broker
         trades = broker.get_trade_history()[-500:]
         state = broker.get_portfolio_summary()
@@ -988,7 +980,7 @@ async def strategy_signals():
 
     # --- 3. ML Ensemble (10-tier vote) ---
     try:
-        eng = _get_exec_engine()
+        eng = get_engine()
         ensemble = eng.ensemble if hasattr(eng, "ensemble") else None
         ensemble_data = {}
         if ensemble:

@@ -7,6 +7,7 @@ import sys
 import os
 import json
 import logging
+import uuid
 from pathlib import Path
 from datetime import datetime
 
@@ -14,9 +15,12 @@ from datetime import datetime
 PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
 sys.path.insert(0, str(PROJECT_ROOT))
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
+from starlette.middleware.base import BaseHTTPMiddleware
+
+from engine.api.auth import AuthMiddleware
 
 from engine.api.routers import (
     portfolio,
@@ -61,12 +65,60 @@ app = FastAPI(
     openapi_url="/api/engine/openapi.json",
 )
 
+# ---------------------------------------------------------------------------
+# CORS — configurable origins (no more allow_origins=["*"])
+# ---------------------------------------------------------------------------
+_default_origins = ["http://localhost:5000", "http://localhost:3000", "http://localhost:5173"]
+_env = os.getenv("METADRON_ENV", "development").lower()
+_cors_origins_raw = os.getenv("METADRON_CORS_ORIGINS", "")
+if _cors_origins_raw:
+    _cors_origins = [o.strip() for o in _cors_origins_raw.split(",") if o.strip()]
+elif _env == "production":
+    _cors_origins = []  # production requires explicit origins
+    logger.warning("METADRON_CORS_ORIGINS not set in production — CORS will reject all cross-origin requests")
+else:
+    _cors_origins = _default_origins
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=_cors_origins,
     allow_methods=["*"],
     allow_headers=["*"],
+    expose_headers=["X-Request-ID"],
 )
+
+
+# ---------------------------------------------------------------------------
+# Request ID middleware
+# ---------------------------------------------------------------------------
+class RequestIDMiddleware(BaseHTTPMiddleware):
+    async def dispatch(self, request: Request, call_next):
+        request_id = str(uuid.uuid4())
+        request.state.request_id = request_id
+        response = await call_next(request)
+        response.headers["X-Request-ID"] = request_id
+        return response
+
+
+# ---------------------------------------------------------------------------
+# Security headers middleware
+# ---------------------------------------------------------------------------
+class SecurityHeadersMiddleware(BaseHTTPMiddleware):
+    async def dispatch(self, request: Request, call_next):
+        response = await call_next(request)
+        response.headers["X-Content-Type-Options"] = "nosniff"
+        response.headers["X-Frame-Options"] = "DENY"
+        response.headers["X-XSS-Protection"] = "1; mode=block"
+        if os.getenv("METADRON_ENV", "development").lower() == "production":
+            response.headers["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains"
+        return response
+
+
+# Middleware order: outermost runs first.
+# RequestID → SecurityHeaders → Auth → CORS (already added above)
+app.add_middleware(AuthMiddleware)
+app.add_middleware(SecurityHeadersMiddleware)
+app.add_middleware(RequestIDMiddleware)
 
 # ─── Register routers ──────────────────────────────────────
 app.include_router(portfolio.router, prefix="/api/engine/portfolio", tags=["Portfolio"])

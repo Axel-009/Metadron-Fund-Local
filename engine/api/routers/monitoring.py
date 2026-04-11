@@ -129,8 +129,8 @@ async def generate_report(report_type: str = Query("platinum")):
             log_dir = PROJECT_ROOT / "logs" / "risk"
 
         elif report_type == "execution":
-            from engine.execution.execution_engine import ExecutionEngine
-            eng = ExecutionEngine()
+            from engine.api.shared import get_engine
+            eng = get_engine()
             result = eng.format_execution_report() if hasattr(eng, "format_execution_report") else "Not available"
             log_dir = PROJECT_ROOT / "logs" / "execution"
 

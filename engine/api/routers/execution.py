@@ -15,32 +15,13 @@ from datetime import datetime
 import logging
 
 from engine.data.openbb_data import get_quote, get_prices
+from engine.api.shared import get_engine, get_l7
 
 logger = logging.getLogger("metadron-api.execution")
 router = APIRouter()
 
-_exec_engine = None
-_l7 = None
+# WondertraderEngine — local lazy singleton (optional HFT only, not shared)
 _wonder = None
-
-
-def _get_exec():
-    global _exec_engine
-    if _exec_engine is None:
-        from engine.execution.execution_engine import ExecutionEngine
-        _exec_engine = ExecutionEngine()
-    return _exec_engine
-
-
-def _get_l7():
-    global _l7
-    if _l7 is None:
-        try:
-            from engine.execution.l7_unified_execution_surface import L7UnifiedExecutionSurface
-            _l7 = L7UnifiedExecutionSurface()
-        except Exception:
-            _l7 = None
-    return _l7
 
 
 def _get_wonder():
@@ -58,7 +39,7 @@ def _get_wonder():
 async def pipeline_status():
     """Current pipeline execution status."""
     try:
-        eng = _get_exec()
+        eng = get_engine()
         broker_status = eng.get_broker_status()
         nav = eng.get_nav()
         return {
@@ -191,7 +172,7 @@ async def reconciliation():
 async def l7_status():
     """L7 unified execution surface status."""
     try:
-        l7 = _get_l7()
+        l7 = get_l7()
         if l7 is None:
             return {"status": "not_available", "timestamp": datetime.utcnow().isoformat()}
         state = {}
@@ -237,7 +218,7 @@ def _get_tca():
 def _rebuild_tca():
     """Rebuild TCA engine from live broker trade history + live quotes."""
     tca = _get_tca()
-    eng = _get_exec()
+    eng = get_engine()
     broker = eng.broker
     trades = broker.get_trade_history()[-500:]
 
@@ -560,7 +541,7 @@ async def nav_history():
     Fits in system: L5 PaperBroker + AlpacaBroker → NAV comparison.
     """
     try:
-        eng = _get_exec()
+        eng = get_engine()
         broker = eng.broker
         trades = broker.get_trade_history()[-500:]
 
@@ -793,7 +774,7 @@ async def l7_blotter(limit: int = Query(100, ge=1, le=500)):
     L7._execute_equity() needs an IBKR execution path added.
     """
     try:
-        l7 = _get_l7()
+        l7 = get_l7()
         broker_type = "unknown"
 
         trades = []
@@ -847,7 +828,7 @@ async def l7_blotter(limit: int = Query(100, ge=1, le=500)):
         # --- Fallback: broker.get_trade_history() ---
         if not trades:
             try:
-                eng = _get_exec()
+                eng = get_engine()
                 broker = eng.broker
                 broker_type = type(broker).__name__
                 raw = broker.get_trade_history()[-limit:]
@@ -934,7 +915,7 @@ async def top_of_book():
         # Get held positions from broker
         broker = None
         try:
-            eng = _get_exec()
+            eng = get_engine()
             broker = eng.broker
         except Exception:
             try:

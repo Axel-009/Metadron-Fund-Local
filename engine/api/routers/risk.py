@@ -2,7 +2,7 @@
 Risk router — RISK tab
 Wraps: BetaCorridor, DecisionMatrix, OptionsEngine
 """
-# BROKER SWAP NOTE: This router accesses broker via _get_broker() which
+# BROKER SWAP NOTE: This router accesses broker via get_broker() which
 # tries ExecutionEngine (AlpacaBroker) with PaperBroker fallback.
 # Risk metrics use broker._perf_tracker for daily returns (Sharpe, Sortino, etc.)
 # Risk alerts use BetaCorridor + OptionsEngine (broker-independent).
@@ -11,57 +11,17 @@ from fastapi import APIRouter
 from datetime import datetime
 import logging
 
+from engine.api.shared import get_broker, get_engine, get_beta, get_options, get_decision
+
 logger = logging.getLogger("metadron-api.risk")
 router = APIRouter()
-
-_options = None
-_beta = None
-_decision = None
-_broker = None
-
-
-def _get_broker():
-    global _broker
-    if _broker is None:
-        try:
-            from engine.execution.execution_engine import ExecutionEngine
-            eng = ExecutionEngine()
-            _broker = eng.broker
-        except Exception:
-            from engine.execution.paper_broker import PaperBroker
-            _broker = PaperBroker()
-    return _broker
-
-
-def _get_options():
-    global _options
-    if _options is None:
-        from engine.execution.options_engine import OptionsEngine
-        _options = OptionsEngine()
-    return _options
-
-
-def _get_beta():
-    global _beta
-    if _beta is None:
-        from engine.portfolio.beta_corridor import BetaCorridor
-        _beta = BetaCorridor()
-    return _beta
-
-
-def _get_decision():
-    global _decision
-    if _decision is None:
-        from engine.execution.decision_matrix import DecisionMatrix
-        _decision = DecisionMatrix()
-    return _decision
 
 
 @router.get("/portfolio")
 async def risk_portfolio():
     """Full risk metrics: VaR, beta, drawdown, Sharpe, Sortino."""
     try:
-        beta = _get_beta()
+        beta = get_beta()
         analytics = beta.get_corridor_analytics()
         history = beta.get_history()
         latest = history[-1] if history else None
@@ -83,7 +43,7 @@ async def risk_portfolio():
 async def risk_greeks():
     """Aggregate portfolio Greeks: delta, gamma, theta, vega, rho."""
     try:
-        opt = _get_options()
+        opt = get_options()
         greeks = opt.get_portfolio_greeks()
         return {**greeks, "timestamp": datetime.utcnow().isoformat()}
     except Exception as e:
@@ -95,7 +55,7 @@ async def risk_greeks():
 async def risk_options_hedge():
     """Current hedge requirements and cost drag."""
     try:
-        opt = _get_options()
+        opt = get_options()
         hedge = opt.compute_hedge_requirements()
         return {**(hedge if isinstance(hedge, dict) else {}), "timestamp": datetime.utcnow().isoformat()}
     except Exception as e:
@@ -107,7 +67,7 @@ async def risk_options_hedge():
 async def risk_options_strategies():
     """Regime → strategy mapping."""
     try:
-        opt = _get_options()
+        opt = get_options()
         matrix = opt.regime_strategy_matrix()
         return {"strategies": matrix, "timestamp": datetime.utcnow().isoformat()}
     except Exception as e:
@@ -119,7 +79,7 @@ async def risk_options_strategies():
 async def risk_beta_stress():
     """Beta under stress scenarios."""
     try:
-        beta = _get_beta()
+        beta = get_beta()
         df = beta.stress_test_beta()
         result = df.to_dict(orient="records") if hasattr(df, "to_dict") else []
         return {"scenarios": result, "timestamp": datetime.utcnow().isoformat()}
@@ -132,7 +92,7 @@ async def risk_beta_stress():
 async def risk_beta_history():
     """Historical beta time-series."""
     try:
-        beta = _get_beta()
+        beta = get_beta()
         df = beta.get_beta_history_df()
         if hasattr(df, "to_dict"):
             records = df.tail(200).reset_index().to_dict(orient="records")
@@ -152,8 +112,8 @@ async def risk_beta_history():
 async def risk_alerts():
     """Top risk alerts derived from current engine state."""
     try:
-        beta = _get_beta()
-        opt = _get_options()
+        beta = get_beta()
+        opt = get_options()
 
         alerts = []
         # Beta corridor alerts
@@ -191,7 +151,7 @@ async def risk_alerts():
 
         # Always include portfolio risk context even when no alerts fire
         try:
-            broker = _get_broker()
+            broker = get_broker()
             summary = broker.get_portfolio_summary()
             dd = broker.get_drawdown() if hasattr(broker, "get_drawdown") else {}
             # Add context alerts for key metrics
@@ -219,11 +179,10 @@ async def risk_alerts():
 async def order_distribution():
     """Order type distribution from recent trades."""
     try:
-        beta = _get_beta()  # Use beta to get broker access
+        beta = get_beta()  # Use beta to get broker access
         # Get trades from the execution engine broker
         try:
-            from engine.execution.execution_engine import ExecutionEngine
-            eng = ExecutionEngine()
+            eng = get_engine()
             trades = eng.broker.get_trade_history()[-200:]
         except Exception:
             trades = []
@@ -265,8 +224,8 @@ async def risk_metrics():
     try:
         import numpy as np
 
-        beta = _get_beta()
-        broker = _get_broker()
+        beta = get_beta()
+        broker = get_broker()
         history = beta.get_history()
 
         # ── Pull real daily returns from the broker's NAV series ──────────
@@ -352,8 +311,7 @@ async def risk_metrics():
 async def risk_fills():
     """Recent order fills from broker."""
     try:
-        from engine.execution.execution_engine import ExecutionEngine
-        eng = ExecutionEngine()
+        eng = get_engine()
         trades = eng.broker.get_trade_history()[-20:]
         fills = []
         for t in trades:
@@ -383,7 +341,7 @@ async def risk_fills():
 async def risk_options_positions():
     """Options positions from OptionsEngine."""
     try:
-        opt = _get_options()
+        opt = get_options()
         greeks = opt.get_portfolio_greeks()
         positions = []
         # Get positions if available
@@ -418,7 +376,7 @@ async def risk_options_positions():
 async def risk_futures_positions():
     """Futures positions from broker."""
     try:
-        broker = _get_broker()
+        broker = get_broker()
         positions = broker.get_all_positions()
         futures = []
         total_pnl = 0
@@ -462,7 +420,7 @@ async def risk_futures_positions():
 async def risk_margin():
     """Margin information from broker."""
     try:
-        broker = _get_broker()
+        broker = get_broker()
         state = broker.get_portfolio_summary()
         s = state if isinstance(state, dict) else {}
         nav = s.get("nav", 0)
@@ -498,7 +456,7 @@ async def risk_margin():
 async def risk_liquidity_scoring():
     """Liquidity risk scoring for portfolio positions."""
     try:
-        broker = _get_broker()
+        broker = get_broker()
         positions = broker.get_all_positions()
         scoring = []
         for ticker, pos in positions.items():
