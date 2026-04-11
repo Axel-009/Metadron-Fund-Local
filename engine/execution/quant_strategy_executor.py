@@ -33,6 +33,44 @@ from typing import Optional
 
 logger = logging.getLogger(__name__)
 
+# ---------------------------------------------------------------------------
+# Intelligence Platform: quant-trading sub-repo integration
+# Provides: ArbitrageDetector (stat arb, triangular FX, index arb, cross-asset
+# RV, calendar spread) and UniverseScanner (momentum/value screens, pair finder).
+# The 12 strategies above are simplified re-implementations; these provide the
+# full-featured originals for optional use.
+# ---------------------------------------------------------------------------
+try:
+    import importlib.util as _ilu
+    _arb_spec = _ilu.spec_from_file_location(
+        "arbitrage_detector",
+        str(__import__("pathlib").Path(__file__).resolve().parent.parent.parent
+            / "intelligence_platform" / "quant-trading" / "arbitrage_detector.py"),
+    )
+    _arb_mod = _ilu.module_from_spec(_arb_spec)
+    _arb_spec.loader.exec_module(_arb_mod)
+    ArbitrageDetector = _arb_mod.ArbitrageDetector
+    ARBITRAGE_DETECTOR_AVAILABLE = True
+except (ImportError, FileNotFoundError, AttributeError, Exception):
+    ArbitrageDetector = None
+    ARBITRAGE_DETECTOR_AVAILABLE = False
+    logger.info("quant-trading ArbitrageDetector unavailable — inline strategies only")
+
+try:
+    _us_spec = _ilu.spec_from_file_location(
+        "universe_scanner",
+        str(__import__("pathlib").Path(__file__).resolve().parent.parent.parent
+            / "intelligence_platform" / "quant-trading" / "universe_scanner.py"),
+    )
+    _us_mod = _ilu.module_from_spec(_us_spec)
+    _us_spec.loader.exec_module(_us_mod)
+    UniverseScanner = _us_mod.UniverseScanner
+    UNIVERSE_SCANNER_AVAILABLE = True
+except (ImportError, FileNotFoundError, AttributeError, Exception):
+    UniverseScanner = None
+    UNIVERSE_SCANNER_AVAILABLE = False
+    logger.info("quant-trading UniverseScanner unavailable")
+
 
 # ---------------------------------------------------------------------------
 # Bollinger Bands W-Bottom (Bollinger Bands Pattern Recognition backtest.py)

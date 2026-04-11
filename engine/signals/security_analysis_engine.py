@@ -61,6 +61,40 @@ try:
 except ImportError:
     AGENT_SKILLS_AVAILABLE = False
 
+# --- Mav-Analysis: MultiAssetAnalyzer (technical scan, cross-asset momentum,
+#     sector relative value, vol surface, unusual flow detection) ---------------
+try:
+    import importlib.util as _ilu
+    _mav_spec = _ilu.spec_from_file_location(
+        "multi_asset_analysis",
+        str(__import__("pathlib").Path(__file__).resolve().parent.parent.parent
+            / "intelligence_platform" / "Mav-Analysis" / "multi_asset_analysis.py"),
+    )
+    _mav_mod = _ilu.module_from_spec(_mav_spec)
+    _mav_spec.loader.exec_module(_mav_mod)
+    MultiAssetAnalyzer = _mav_mod.MultiAssetAnalyzer
+    MAV_ANALYSIS_AVAILABLE = True
+except (ImportError, FileNotFoundError, AttributeError, Exception):
+    MultiAssetAnalyzer = None
+    MAV_ANALYSIS_AVAILABLE = False
+    logger.info("Mav-Analysis MultiAssetAnalyzer unavailable")
+
+# --- stock-chain: AssetClassAnalyzer (cross-asset correlation, risk parity,
+#     HMM regime detection, sector rotation, Information Ratio) ----------------
+try:
+    _sc_spec = _ilu.spec_from_file_location(
+        "asset_class_analyzer",
+        str(__import__("pathlib").Path(__file__).resolve().parent.parent.parent
+            / "intelligence_platform" / "stock-chain" / "asset_class_analyzer.py"),
+    )
+    _sc_mod = _ilu.module_from_spec(_sc_spec)
+    _sc_spec.loader.exec_module(_sc_mod)
+    AssetClassAnalyzer = _sc_mod.AssetClassAnalyzer
+    STOCK_CHAIN_AVAILABLE = True
+except (ImportError, FileNotFoundError, AttributeError, Exception):
+    AssetClassAnalyzer = None
+    STOCK_CHAIN_AVAILABLE = False
+    logger.info("stock-chain AssetClassAnalyzer unavailable")
 
 
 # ---------------------------------------------------------------------------

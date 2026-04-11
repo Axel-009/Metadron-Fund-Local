@@ -30,6 +30,35 @@ from typing import Optional, List
 
 from ..data.openbb_data import get_adj_close, get_macro_data, get_returns
 
+# ---------------------------------------------------------------------------
+# Intelligence Platform: ML-Macro-Market integration
+# Provides: HiddenMarkovRegimeModel, FactorModel, NowcastingEngine,
+# MacroMLEngine (regime detection, factor exposure, nowcasting, trade ideas).
+# ---------------------------------------------------------------------------
+try:
+    import importlib.util as _ilu
+    _macro_ml_spec = _ilu.spec_from_file_location(
+        "macro_ml_engine",
+        str(__import__("pathlib").Path(__file__).resolve().parent.parent.parent
+            / "intelligence_platform" / "ML-Macro-Market" / "macro_ml_engine.py"),
+    )
+    _macro_ml_mod = _ilu.module_from_spec(_macro_ml_spec)
+    _macro_ml_spec.loader.exec_module(_macro_ml_mod)
+    HiddenMarkovRegimeModel = _macro_ml_mod.HiddenMarkovRegimeModel
+    MacroMLFactorModel = _macro_ml_mod.FactorModel
+    NowcastingEngine = _macro_ml_mod.NowcastingEngine
+    MacroMLEngine = _macro_ml_mod.MacroMLEngine
+    MACRO_ML_AVAILABLE = True
+except (ImportError, FileNotFoundError, AttributeError, Exception):
+    HiddenMarkovRegimeModel = None
+    MacroMLFactorModel = None
+    NowcastingEngine = None
+    MacroMLEngine = None
+    MACRO_ML_AVAILABLE = False
+    __import__("logging").getLogger(__name__).info(
+        "ML-Macro-Market integration unavailable — production macro engine only"
+    )
+
 
 # ---------------------------------------------------------------------------
 # Regime definitions

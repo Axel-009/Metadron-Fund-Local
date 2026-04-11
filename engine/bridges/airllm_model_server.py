@@ -41,6 +41,24 @@ try:
 except ImportError:
     logger.warning("Air-LLM library not found — server will start in degraded mode")
 
+# ─── InvestmentLLMProcessor (structured NLP from Air-LLM integration) ──
+_llm_processor_available = False
+_InvestmentLLMProcessor = None
+try:
+    import importlib.util as _ilu
+    _airllm_integ_spec = _ilu.spec_from_file_location(
+        "airllm_integration",
+        str(PLATFORM_ROOT / "intelligence_platform" / "Air-LLM"
+            / "investment_platform_integration.py"),
+    )
+    _airllm_integ_mod = _ilu.module_from_spec(_airllm_integ_spec)
+    _airllm_integ_spec.loader.exec_module(_airllm_integ_mod)
+    _InvestmentLLMProcessor = _airllm_integ_mod.InvestmentLLMProcessor
+    _llm_processor_available = True
+    logger.info("InvestmentLLMProcessor: AVAILABLE (sentiment, earnings, thesis)")
+except (ImportError, FileNotFoundError, AttributeError, Exception):
+    logger.info("InvestmentLLMProcessor unavailable — raw generation only")
+
 
 # ─── Model Manager ─────────────────────────────────────────────────
 
@@ -220,6 +238,37 @@ def create_app():
     @app.get("/model-info")
     async def model_info():
         return manager.get_info()
+
+    # ─── Structured NLP endpoints via InvestmentLLMProcessor ──────
+    if _llm_processor_available and _InvestmentLLMProcessor is not None:
+        _processor = _InvestmentLLMProcessor()
+
+        @app.post("/analyze-sentiment")
+        async def analyze_sentiment(request: GenerateRequest):
+            """Analyze financial text sentiment using InvestmentLLMProcessor."""
+            try:
+                result = _processor.analyze_sentiment(request.prompt)
+                return {"sentiment": result, "processor": "InvestmentLLMProcessor"}
+            except Exception as e:
+                raise HTTPException(status_code=500, detail=str(e))
+
+        @app.post("/analyze-earnings")
+        async def analyze_earnings(request: GenerateRequest):
+            """Parse earnings transcript using InvestmentLLMProcessor."""
+            try:
+                result = _processor.parse_earnings_transcript(request.prompt)
+                return {"analysis": result, "processor": "InvestmentLLMProcessor"}
+            except Exception as e:
+                raise HTTPException(status_code=500, detail=str(e))
+
+        @app.post("/generate-thesis")
+        async def generate_thesis(request: GenerateRequest):
+            """Generate trade thesis using InvestmentLLMProcessor."""
+            try:
+                result = _processor.generate_trade_thesis(request.prompt)
+                return {"thesis": result, "processor": "InvestmentLLMProcessor"}
+            except Exception as e:
+                raise HTTPException(status_code=500, detail=str(e))
 
     return app
 

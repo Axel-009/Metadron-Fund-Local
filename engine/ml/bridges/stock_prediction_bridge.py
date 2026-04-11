@@ -18,6 +18,28 @@ except Exception:
 
 logger = logging.getLogger(__name__)
 
+# ---------------------------------------------------------------------------
+# Intelligence Platform: Stock-techincal-prediction-model integration
+# Provides: MultiAssetPredictor with LSTM, XGBoost, RF, Transformer ensemble.
+# Requires tensorflow + xgboost + sklearn; falls back to ES bridge if absent.
+# ---------------------------------------------------------------------------
+try:
+    import importlib.util as _ilu
+    _map_spec = _ilu.spec_from_file_location(
+        "multi_asset_predictor",
+        str(__import__("pathlib").Path(__file__).resolve().parent.parent.parent.parent
+            / "intelligence_platform" / "Stock-techincal-prediction-model"
+            / "multi_asset_predictor.py"),
+    )
+    _map_mod = _ilu.module_from_spec(_map_spec)
+    _map_spec.loader.exec_module(_map_mod)
+    MultiAssetPredictor = _map_mod.MultiAssetPredictor
+    MULTI_ASSET_PREDICTOR_AVAILABLE = True
+except (ImportError, FileNotFoundError, AttributeError, Exception):
+    MultiAssetPredictor = None
+    MULTI_ASSET_PREDICTOR_AVAILABLE = False
+    logger.info("MultiAssetPredictor unavailable — ES bridge only")
+
 
 class StockPredictionBridge:
     """
@@ -171,3 +193,46 @@ class StockPredictionBridge:
             "predicted_return": predicted_return,
             "confidence": confidence,
         }
+
+    def predict_with_ensemble(
+        self, ticker: str, returns: np.ndarray, ohlcv_df=None,
+    ) -> dict:
+        """
+        Enhanced prediction using MultiAssetPredictor ensemble if available.
+
+        When the full ML stack (tensorflow, xgboost, sklearn) is present,
+        uses LSTM + XGBoost + RF + Transformer ensemble from
+        intelligence_platform/Stock-techincal-prediction-model.
+        Falls back to the deterministic ES bridge otherwise.
+
+        Args:
+            ticker: Stock ticker symbol.
+            returns: Array of historical returns.
+            ohlcv_df: Optional OHLCV DataFrame for full feature engineering.
+
+        Returns:
+            dict with signal, predicted_return, confidence, and source indicator.
+        """
+        if MULTI_ASSET_PREDICTOR_AVAILABLE and MultiAssetPredictor is not None and ohlcv_df is not None:
+            try:
+                predictor = MultiAssetPredictor()
+                result = predictor.predict(ohlcv_df)
+                confidence = float(result.get("confidence", 0.5))
+                pred_return = float(result.get("predicted_return", 0.0))
+                if pred_return > 0:
+                    signal = SignalType.ML_AGENT_BUY
+                else:
+                    signal = SignalType.ML_AGENT_SELL
+                return {
+                    "signal": signal,
+                    "predicted_return": pred_return,
+                    "confidence": confidence,
+                    "source": "multi_asset_predictor_ensemble",
+                }
+            except Exception as e:
+                logger.warning(f"MultiAssetPredictor failed for {ticker}: {e}")
+
+        # Fallback to deterministic ES bridge
+        base = self.predict(ticker, returns)
+        base["source"] = "evolution_strategy_bridge"
+        return base

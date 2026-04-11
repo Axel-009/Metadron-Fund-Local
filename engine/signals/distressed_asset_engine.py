@@ -47,6 +47,61 @@ from typing import Dict, List, Optional, Tuple
 
 logger = logging.getLogger(__name__)
 
+# ---------------------------------------------------------------------------
+# Intelligence Platform distress sub-repo integrations
+# Unique models not in this engine: Springate S-Score, bond analytics (duration,
+# convexity, DV01, Z-spread, OAS), credit rating transitions, ECL,
+# distress bond scanner, event-driven opportunities, Z-prime for private firms.
+# ---------------------------------------------------------------------------
+try:
+    import importlib.util as _ilu
+    _dp_spec = _ilu.spec_from_file_location(
+        "distress_prediction",
+        str(__import__("pathlib").Path(__file__).resolve().parent.parent.parent
+            / "intelligence_platform" / "FinancialDistressPrediction"
+            / "distress_prediction_engine.py"),
+    )
+    _dp_mod = _ilu.module_from_spec(_dp_spec)
+    _dp_spec.loader.exec_module(_dp_mod)
+    DistressPredictionEngine = _dp_mod.DistressPredictionEngine
+    DISTRESS_PREDICTION_AVAILABLE = True
+except (ImportError, FileNotFoundError, AttributeError, Exception):
+    DistressPredictionEngine = None
+    DISTRESS_PREDICTION_AVAILABLE = False
+    logger.info("FinancialDistressPrediction engine unavailable")
+
+try:
+    _ca_spec = _ilu.spec_from_file_location(
+        "credit_analysis",
+        str(__import__("pathlib").Path(__file__).resolve().parent.parent.parent
+            / "intelligence_platform" / "financial-distressed-repo"
+            / "credit_analysis_engine.py"),
+    )
+    _ca_mod = _ilu.module_from_spec(_ca_spec)
+    _ca_spec.loader.exec_module(_ca_mod)
+    CreditAnalysisEngine = _ca_mod.CreditAnalysisEngine
+    CREDIT_ANALYSIS_AVAILABLE = True
+except (ImportError, FileNotFoundError, AttributeError, Exception):
+    CreditAnalysisEngine = None
+    CREDIT_ANALYSIS_AVAILABLE = False
+    logger.info("financial-distressed-repo CreditAnalysisEngine unavailable")
+
+try:
+    _ds_spec = _ilu.spec_from_file_location(
+        "distress_scanner",
+        str(__import__("pathlib").Path(__file__).resolve().parent.parent.parent
+            / "intelligence_platform" / "sophisticated-distress-analysis"
+            / "distress_scanner.py"),
+    )
+    _ds_mod = _ilu.module_from_spec(_ds_spec)
+    _ds_spec.loader.exec_module(_ds_mod)
+    DistressScanner = _ds_mod.DistressScanner
+    DISTRESS_SCANNER_AVAILABLE = True
+except (ImportError, FileNotFoundError, AttributeError, Exception):
+    DistressScanner = None
+    DISTRESS_SCANNER_AVAILABLE = False
+    logger.info("sophisticated-distress-analysis DistressScanner unavailable")
+
 
 # ---------------------------------------------------------------------------
 # Enums
@@ -1142,3 +1197,53 @@ class DistressedAssetEngine:
         t = 1.0 / (1.0 + p * x)
         y = 1.0 - (((((a5 * t + a4) * t) + a3) * t + a2) * t + a1) * t * np.exp(-x * x / 2)
         return 0.5 * (1.0 + sign * y)
+
+    # -----------------------------------------------------------------------
+    # Intelligence Platform sub-engine accessors
+    # -----------------------------------------------------------------------
+    def get_springate_s_score(self, financials: dict) -> float | None:
+        """
+        Compute Springate S-Score via FinancialDistressPrediction engine.
+
+        The Springate model is only available in the intelligence_platform
+        sub-repo — it is not duplicated in this engine.
+        """
+        if DISTRESS_PREDICTION_AVAILABLE and DistressPredictionEngine is not None:
+            try:
+                dpe = DistressPredictionEngine()
+                return dpe.calculate_springate_s(financials)
+            except Exception as e:
+                logger.warning(f"Springate S-Score calculation failed: {e}")
+        return None
+
+    def get_credit_analysis(self, ticker: str) -> dict | None:
+        """
+        Full credit analysis via financial-distressed-repo CreditAnalysisEngine.
+
+        Provides bond analytics (duration, convexity, DV01), Z-spread, OAS,
+        rating transition probabilities, and expected credit loss — capabilities
+        unique to the credit analysis sub-repo.
+        """
+        if CREDIT_ANALYSIS_AVAILABLE and CreditAnalysisEngine is not None:
+            try:
+                cae = CreditAnalysisEngine()
+                return cae.full_credit_analysis(ticker)
+            except Exception as e:
+                logger.warning(f"Credit analysis failed for {ticker}: {e}")
+        return None
+
+    def scan_distressed_bonds(self, bond_data: list) -> list:
+        """
+        Scan for distressed bonds via sophisticated-distress-analysis scanner.
+
+        Provides bond-level distress scanning, Z-prime for private firms,
+        credit spread analysis, and event-driven opportunities — capabilities
+        unique to the sophisticated distress scanner.
+        """
+        if DISTRESS_SCANNER_AVAILABLE and DistressScanner is not None:
+            try:
+                scanner = DistressScanner()
+                return scanner.scan_distressed_bonds(bond_data)
+            except Exception as e:
+                logger.warning(f"Distressed bond scan failed: {e}")
+        return []

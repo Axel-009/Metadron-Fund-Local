@@ -43,6 +43,27 @@ except ImportError:
     def get_company_news(*a, **kw): return __import__("pandas").DataFrame()
     def get_company_filings(*a, **kw): return __import__("pandas").DataFrame()
 
+# ---------------------------------------------------------------------------
+# Intelligence Platform: TradeTheEvent integration
+# Provides: EventDrivenStrategy with cross-asset macro event scanning,
+# credit rating change logic, second-derivative effects, structured reports.
+# ---------------------------------------------------------------------------
+try:
+    import importlib.util as _ilu
+    _tte_spec = _ilu.spec_from_file_location(
+        "event_driven_strategy",
+        str(__import__("pathlib").Path(__file__).resolve().parent.parent.parent
+            / "intelligence_platform" / "TradeTheEvent" / "event_driven_strategy.py"),
+    )
+    _tte_mod = _ilu.module_from_spec(_tte_spec)
+    _tte_spec.loader.exec_module(_tte_mod)
+    EventDrivenStrategy = _tte_mod.EventDrivenStrategy
+    TRADE_THE_EVENT_AVAILABLE = True
+except (ImportError, FileNotFoundError, AttributeError, Exception):
+    EventDrivenStrategy = None
+    TRADE_THE_EVENT_AVAILABLE = False
+    logger.info("TradeTheEvent EventDrivenStrategy unavailable")
+
 
 # ---------------------------------------------------------------------------
 # Enums

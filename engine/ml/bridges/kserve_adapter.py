@@ -19,6 +19,27 @@ except Exception:
 
 logger = logging.getLogger(__name__)
 
+# ---------------------------------------------------------------------------
+# InvestmentModelServer from Kserve integration — manifest gen, A/B testing,
+# IC tracking, batch predict orchestration.
+# ---------------------------------------------------------------------------
+try:
+    import importlib.util as _ilu
+    _kserve_spec = _ilu.spec_from_file_location(
+        "kserve_integration",
+        str(__import__("pathlib").Path(__file__).resolve().parent.parent.parent.parent
+            / "intelligence_platform" / "Kserve"
+            / "investment_platform_integration.py"),
+    )
+    _kserve_mod = _ilu.module_from_spec(_kserve_spec)
+    _kserve_spec.loader.exec_module(_kserve_mod)
+    InvestmentModelServer = _kserve_mod.InvestmentModelServer
+    KSERVE_INTEGRATION_AVAILABLE = True
+except (ImportError, FileNotFoundError, AttributeError, Exception):
+    InvestmentModelServer = None
+    KSERVE_INTEGRATION_AVAILABLE = False
+    logger.info("Kserve InvestmentModelServer unavailable — transport-only mode")
+
 
 class CircuitState:
     CLOSED = "CLOSED"
@@ -197,3 +218,39 @@ class KServeAdapter:
             logger.warning("KServe inference failed for %s: %s", model_name, exc)
             self._record_failure()
             return self._fallback_predict(features)
+
+    def batch_predict(
+        self,
+        model_name: str,
+        feature_batch: list[np.ndarray],
+        endpoint: str | None = None,
+    ) -> list[dict]:
+        """
+        Batch inference via InvestmentModelServer if available, else sequential.
+
+        Uses intelligence_platform/Kserve InvestmentModelServer.batch_predict()
+        for optimized batching when available.
+        """
+        if KSERVE_INTEGRATION_AVAILABLE and InvestmentModelServer is not None:
+            try:
+                server = InvestmentModelServer()
+                return server.batch_predict(model_name, feature_batch)
+            except Exception as exc:
+                logger.warning("InvestmentModelServer batch_predict failed: %s", exc)
+
+        # Fallback: sequential inference
+        return [self.infer(model_name, f, endpoint) for f in feature_batch]
+
+    def get_model_server(self):
+        """
+        Get the InvestmentModelServer instance for manifest generation,
+        A/B testing, and IC tracking.
+
+        Returns None if Kserve integration is unavailable.
+        """
+        if KSERVE_INTEGRATION_AVAILABLE and InvestmentModelServer is not None:
+            try:
+                return InvestmentModelServer()
+            except Exception as exc:
+                logger.warning("Failed to create InvestmentModelServer: %s", exc)
+        return None

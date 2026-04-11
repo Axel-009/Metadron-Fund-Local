@@ -37,6 +37,24 @@ except ImportError:
     logger.warning("MiroFish integration module unavailable — MonteCarloRiskEngine disabled")
 
 try:
+    import importlib.util as _ilu
+    _nvidia_spec = _ilu.spec_from_file_location(
+        "nvidia_integration",
+        str(__import__("pathlib").Path(__file__).resolve().parent.parent.parent
+            / "intelligence_platform" / "nividia-repo" / "investment_platform_integration.py"),
+    )
+    _nvidia_mod = _ilu.module_from_spec(_nvidia_spec)
+    _nvidia_spec.loader.exec_module(_nvidia_mod)
+    GPUAccelerator = _nvidia_mod.GPUAccelerator
+    VaRResult = _nvidia_mod.VaRResult
+    GPU_AVAILABLE = True
+except (ImportError, FileNotFoundError, AttributeError, Exception):
+    GPUAccelerator = None
+    VaRResult = None
+    GPU_AVAILABLE = False
+    logger.info("nvidia-repo GPU accelerator unavailable — CPU-only Monte Carlo")
+
+try:
     from engine.data.openbb_data import get_adj_close
 except ImportError:
     get_adj_close = None
@@ -382,6 +400,113 @@ class MonteCarloRiskEngine:
             ticker_risks=ticker_risks,
             risk_budget_utilization=risk_budget_utilization,
         )
+
+    def gpu_portfolio_var(
+        self,
+        returns_matrix: np.ndarray,
+        portfolio_value: float = 100_000.0,
+        n_simulations: int = 100_000,
+    ) -> dict:
+        """
+        GPU-accelerated portfolio VaR via nvidia-repo GPUAccelerator.
+
+        Falls back to CPU numpy if GPU is unavailable.
+
+        Args:
+            returns_matrix: (T, N) matrix of historical returns for N assets.
+            portfolio_value: Total portfolio value.
+            n_simulations: Number of MC simulations.
+
+        Returns:
+            dict with var_95, var_99, cvar_95, cvar_99, gpu_accelerated flag.
+        """
+        if GPU_AVAILABLE and GPUAccelerator is not None:
+            try:
+                gpu = GPUAccelerator()
+                result = gpu.monte_carlo_var(
+                    returns_matrix, portfolio_value, n_simulations,
+                )
+                return {
+                    "var_95": result.var_95,
+                    "var_99": result.var_99,
+                    "cvar_95": result.cvar_95,
+                    "cvar_99": result.cvar_99,
+                    "gpu_accelerated": result.gpu_accelerated,
+                    "n_simulations": result.n_simulations,
+                    "computation_time_ms": result.computation_time_ms,
+                }
+            except Exception as e:
+                logger.warning(f"GPU VaR failed, falling back to CPU: {e}")
+
+        # CPU fallback
+        mu = np.mean(returns_matrix, axis=0)
+        cov = np.cov(returns_matrix, rowvar=False)
+        n_assets = returns_matrix.shape[1]
+        weights = np.ones(n_assets) / n_assets
+        rng = np.random.default_rng(42)
+        try:
+            L = np.linalg.cholesky(cov)
+        except np.linalg.LinAlgError:
+            L = np.eye(n_assets) * np.sqrt(np.diag(cov))
+        z = rng.standard_normal((n_simulations, n_assets))
+        sims = mu + z @ L.T
+        port_returns = sims @ weights
+        pnl = port_returns * portfolio_value
+        var_95 = float(-np.percentile(pnl, 5))
+        var_99 = float(-np.percentile(pnl, 1))
+        losses = -pnl
+        cvar_95 = float(np.mean(losses[losses >= np.percentile(losses, 95)]))
+        cvar_99 = float(np.mean(losses[losses >= np.percentile(losses, 99)]))
+        return {
+            "var_95": var_95, "var_99": var_99,
+            "cvar_95": cvar_95, "cvar_99": cvar_99,
+            "gpu_accelerated": False,
+            "n_simulations": n_simulations,
+            "computation_time_ms": 0.0,
+        }
+
+    def mirofish_stress_test(
+        self,
+        ticker: str,
+        shock_magnitude: float = 0.10,
+        shock_type: str = "price",
+        portfolio_value: float = 100_000.0,
+    ) -> dict:
+        """
+        Run MiroFish agent-based stress test for a ticker.
+
+        Uses MarketSimulator.stress_test() to model agent-based recovery
+        dynamics after a shock event.
+
+        Args:
+            ticker: Stock ticker symbol.
+            shock_magnitude: Shock size (e.g., 0.10 = 10%).
+            shock_type: One of 'price', 'volatility', 'liquidity', 'correlation'.
+            portfolio_value: Position size for loss scaling.
+
+        Returns:
+            dict with drawdown, recovery_time, agent_impacts, or empty if unavailable.
+        """
+        if not self._available or MarketSimulator is None:
+            return {"available": False, "reason": "MiroFish unavailable"}
+
+        try:
+            sim = MarketSimulator(initial_price=100.0)
+            sim.initialize_agents()
+            # Run a warm-up simulation to build price history
+            fv_path = [100.0] * 51
+            sim.run_simulation(50, fv_path)
+            stress_result = sim.stress_test(shock_magnitude, shock_type)
+            return {
+                "available": True,
+                "ticker": ticker,
+                "shock_type": shock_type,
+                "shock_magnitude": shock_magnitude,
+                "result": stress_result,
+            }
+        except Exception as e:
+            logger.warning(f"MiroFish stress test failed for {ticker}: {e}")
+            return {"available": False, "reason": str(e)}
 
     def _default_risk(self, ticker: str, timestamp: datetime) -> TickerRisk:
         """Return conservative default risk when data is unavailable."""
