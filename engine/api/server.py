@@ -40,6 +40,7 @@ from engine.api.routers import (
     flows,
     flow_runs,
     api_keys,
+    models,
 )
 from engine.bridges.prometheus_metrics import create_metrics_router
 
@@ -89,6 +90,7 @@ app.include_router(velocity.router, prefix="/api/engine/velocity", tags=["Veloci
 app.include_router(flows.router, prefix="/api/engine/flows", tags=["Flows"])
 app.include_router(flow_runs.router, prefix="/api/engine/flow-runs", tags=["FlowRuns"])
 app.include_router(api_keys.router, prefix="/api/engine/api-keys", tags=["ApiKeys"])
+app.include_router(models.router, prefix="/api/models", tags=["Models"])
 
 # ─── Prometheus metrics (scraped by Contabo monitoring stack) ──────
 _metrics_router = create_metrics_router(app)
