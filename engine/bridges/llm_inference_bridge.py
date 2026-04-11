@@ -1,9 +1,17 @@
 """
-Metadron Capital — Unified LLM Inference Bridge
+Metadron Capital — Unified LLM Inference Bridge (Parallel Ensemble)
 
-Provides a single interface for all LLM inference across the platform,
-routing through Brain Power (Xiaomi Mimo V2 Pro) as the primary backend
-and Air-LLM (meta-llama/Llama-3.1-70B) as a local fallback.
+All models run simultaneously and constantly in parallel.
+Brain Power (Xiaomi Mimo V2 Pro) is the orchestrating intelligence
+that receives outputs from all other models and synthesizes, corrects,
+or navigates the final decision/output.
+
+Architecture:
+    [Air-LLM 70B]  ──────┐
+    [Qwen 2.5-7B]  ──────┤──► [Brain Power / Xiaomi Mimo] ──► Final Output
+    [AI-Newton]    ──────┤       (synthesize / correct / navigate)
+    [AlphaOptimizer]─────┤
+    [DeepLearning] ──────┘
 
 PM2 manages this as a persistent FastAPI service on port 8002.
 """
@@ -18,6 +26,7 @@ import asyncio
 from pathlib import Path
 from typing import Optional
 from dataclasses import dataclass, field
+from concurrent.futures import ThreadPoolExecutor
 
 logger = logging.getLogger("llm-bridge")
 logging.basicConfig(
@@ -27,29 +36,37 @@ logging.basicConfig(
 
 PLATFORM_ROOT = Path(__file__).resolve().parent.parent.parent
 
-# ─── Brain Power Backend ─────────────────────────────────────────────
+# ─── Backend Imports ──────────────────────────────────────────────────
 
 try:
     from engine.bridges.brain_power import BrainPowerClient
     _brain_power_available = True
 except ImportError:
     _brain_power_available = False
-    logger.warning("BrainPowerClient not available — brain power fallback disabled")
-
-# ─── Air-LLM In-Process Backend ──────────────────────────────────────
+    logger.warning("BrainPowerClient not available — Brain Power orchestration disabled")
 
 try:
     from engine.bridges.airllm_model_server import AirLLMModelManager
     _airllm_available = True
 except ImportError:
     _airllm_available = False
-    logger.warning("AirLLMModelManager not available — Air-LLM fallback disabled")
+    logger.warning("AirLLMModelManager not available — Air-LLM disabled")
+
+try:
+    from engine.bridges.qwen_model_server import QwenModelManager
+    _qwen_available = True
+except ImportError:
+    _qwen_available = False
+    logger.warning("QwenModelManager not available — Qwen disabled")
+
+# Thread pool for parallel model execution
+_executor = ThreadPoolExecutor(max_workers=4, thread_name_prefix="llm-ensemble")
 
 
 @dataclass
 class LLMBackend:
     name: str
-    backend_type: str  # "brain_power" | "airllm"
+    backend_type: str  # "brain_power" | "airllm" | "qwen"
     available: bool = False
     model_id: str = ""
     capabilities: list = field(default_factory=list)
@@ -65,22 +82,29 @@ class LLMBackend:
 
 
 class LLMInferenceBridge:
-    """Unified LLM inference — Brain Power primary, Air-LLM local fallback."""
+    """Parallel ensemble — all models run simultaneously.
+
+    Brain Power (Xiaomi Mimo V2 Pro) is the orchestrator that synthesizes
+    outputs from Air-LLM and Qwen into a final response. If Brain Power
+    API key is not configured, returns merged local model outputs.
+    """
 
     def __init__(self):
         self.backends: dict[str, LLMBackend] = {}
         self._brain_power_client: Optional[BrainPowerClient] = None
         self._airllm_manager: Optional[AirLLMModelManager] = None
+        self._qwen_manager: Optional[QwenModelManager] = None
         self._initialize_backends()
 
     def _initialize_backends(self):
-        """Register Brain Power as primary and Air-LLM as local fallback."""
+        """Register all backends for parallel ensemble execution."""
         self.backends["brain_power"] = LLMBackend(
             name="Brain Power (Xiaomi Mimo V2 Pro)",
             backend_type="brain_power",
             model_id="xiaomi-mimo-v2-pro",
             capabilities=["text", "reasoning", "code", "analysis", "long_context",
-                          "sentiment", "earnings", "sec_filing", "trade_thesis", "narrative"],
+                          "sentiment", "earnings", "sec_filing", "trade_thesis",
+                          "narrative", "orchestration", "synthesis"],
         )
         self.backends["airllm"] = LLMBackend(
             name="Air-LLM (Llama-3.1-70B)",
@@ -88,36 +112,281 @@ class LLMInferenceBridge:
             model_id=os.environ.get("AIRLLM_MODEL_PATH", "meta-llama/Llama-3.1-70B"),
             capabilities=["text", "reasoning", "code", "analysis"],
         )
+        self.backends["qwen"] = LLMBackend(
+            name="Qwen 2.5-7B-Instruct",
+            backend_type="qwen",
+            model_id=os.environ.get("QWEN_MODEL_PATH", "Qwen/Qwen2.5-7B-Instruct"),
+            capabilities=["text", "reasoning", "code", "analysis"],
+        )
         self._probe_backends()
 
     def _probe_backends(self):
         """Check backend availability."""
+        # Brain Power (orchestrator)
         if _brain_power_available:
             self._brain_power_client = BrainPowerClient()
             self.backends["brain_power"].available = True
             if self._brain_power_client.is_stub:
-                logger.info("Brain Power backend: STUB MODE (key not configured)")
+                logger.info("Brain Power orchestrator: STUB MODE (key not configured)")
             else:
-                logger.info("Brain Power backend: AVAILABLE")
+                logger.info("Brain Power orchestrator: AVAILABLE")
         else:
-            logger.warning("Brain Power backend: BrainPowerClient import failed")
+            logger.warning("Brain Power orchestrator: import failed")
 
+        # Air-LLM (cuda:0)
         if _airllm_available:
             self._airllm_manager = AirLLMModelManager()
             self.backends["airllm"].available = True
-            logger.info("Air-LLM backend: AVAILABLE (lazy-load on first request)")
+            logger.info("Air-LLM backend: AVAILABLE (cuda:0, lazy-load)")
         else:
-            logger.warning("Air-LLM backend: AirLLMModelManager import failed")
+            logger.warning("Air-LLM backend: import failed")
 
-    def select_backend(self, task_type: str, preferred: Optional[str] = None) -> Optional[str]:
-        """Select backend — prefer the requested one, then Brain Power, then Air-LLM."""
-        if preferred and self.backends.get(preferred, LLMBackend(name="", backend_type="")).available:
-            return preferred
-        if self.backends.get("brain_power", LLMBackend(name="", backend_type="")).available:
-            return "brain_power"
-        if self.backends.get("airllm", LLMBackend(name="", backend_type="")).available:
-            return "airllm"
-        return None
+        # Qwen (cuda:1)
+        if _qwen_available:
+            self._qwen_manager = QwenModelManager()
+            self.backends["qwen"].available = True
+            logger.info("Qwen backend: AVAILABLE (cuda:1, lazy-load)")
+        else:
+            logger.warning("Qwen backend: import failed")
+
+    # ─── Parallel Model Execution ─────────────────────────────────
+
+    async def _run_airllm(self, prompt: str, max_tokens: int, temperature: float) -> dict:
+        """Run Air-LLM inference in thread pool."""
+        if not self._airllm_manager:
+            return {"text": "", "error": "Air-LLM not available", "backend": "airllm"}
+        try:
+            result = await asyncio.get_event_loop().run_in_executor(
+                _executor,
+                lambda: self._airllm_manager.generate(
+                    prompt=prompt, max_tokens=max_tokens, temperature=temperature,
+                ),
+            )
+            self.backends["airllm"].request_count += 1
+            return {"text": result.get("text", ""), "tokens_used": result.get("tokens_generated", 0), "backend": "airllm"}
+        except Exception as e:
+            self.backends["airllm"].request_count += 1
+            self.backends["airllm"].error_count += 1
+            logger.error(f"Air-LLM parallel inference error: {e}")
+            return {"text": "", "error": str(e), "backend": "airllm"}
+
+    async def _run_qwen(self, prompt: str, max_tokens: int, temperature: float) -> dict:
+        """Run Qwen inference in thread pool."""
+        if not self._qwen_manager:
+            return {"text": "", "error": "Qwen not available", "backend": "qwen"}
+        try:
+            result = await asyncio.get_event_loop().run_in_executor(
+                _executor,
+                lambda: self._qwen_manager.generate(
+                    prompt=prompt, max_tokens=max_tokens, temperature=temperature,
+                ),
+            )
+            self.backends["qwen"].request_count += 1
+            return {"text": result.get("text", ""), "tokens_used": result.get("tokens_generated", 0), "backend": "qwen"}
+        except Exception as e:
+            self.backends["qwen"].request_count += 1
+            self.backends["qwen"].error_count += 1
+            logger.error(f"Qwen parallel inference error: {e}")
+            return {"text": "", "error": str(e), "backend": "qwen"}
+
+    async def _orchestrate_brain_power(
+        self,
+        prompt: str,
+        model_outputs: dict,
+        ml_context: Optional[dict] = None,
+        system_prompt: Optional[str] = None,
+        max_tokens: int = 2048,
+        temperature: float = 0.3,
+    ) -> dict:
+        """Brain Power synthesizes outputs from all parallel models.
+
+        If Brain Power API key is not configured (stub mode), returns
+        a merged consensus from the local models.
+        """
+        # Build synthesis context for Brain Power
+        synthesis_parts = [
+            "You are Brain Power (Xiaomi Mimo V2 Pro), the orchestrating intelligence "
+            "for Metadron Capital's parallel ensemble system. Multiple models have "
+            "simultaneously processed the same request. Your job is to synthesize, "
+            "correct, or navigate their outputs into the best final response.\n",
+        ]
+
+        if system_prompt:
+            synthesis_parts.append(f"Task system prompt: {system_prompt}\n")
+
+        synthesis_parts.append("=== MODEL OUTPUTS ===\n")
+        for backend_name, output in model_outputs.items():
+            if output.get("error"):
+                synthesis_parts.append(f"[{backend_name}] ERROR: {output['error']}\n")
+            elif output.get("text"):
+                synthesis_parts.append(f"[{backend_name}]\n{output['text']}\n")
+
+        if ml_context:
+            synthesis_parts.append("\n=== ML ENGINE CONTEXT ===\n")
+            synthesis_parts.append(json.dumps(ml_context, indent=2, default=str))
+            synthesis_parts.append("\n")
+
+        synthesis_parts.append(
+            "\n=== ORIGINAL PROMPT ===\n"
+            f"{prompt}\n\n"
+            "Synthesize the above model outputs into a single, authoritative response. "
+            "Correct any errors, resolve disagreements, and integrate ML context if provided."
+        )
+
+        synthesis_prompt = "\n".join(synthesis_parts)
+
+        # Check if Brain Power is available and not in stub mode
+        if (self._brain_power_client and not self._brain_power_client.is_stub):
+            try:
+                messages = [{"role": "user", "content": synthesis_prompt}]
+                result = await asyncio.to_thread(
+                    self._brain_power_client.chat,
+                    messages=messages,
+                    max_tokens=max_tokens,
+                    temperature=temperature,
+                )
+                self.backends["brain_power"].request_count += 1
+                usage = result.get("usage", {})
+                return {
+                    "text": result.get("text", ""),
+                    "tokens_used": usage.get("input_tokens", 0) + usage.get("output_tokens", 0),
+                    "orchestrator": "brain_power",
+                    "stub": False,
+                }
+            except Exception as e:
+                self.backends["brain_power"].request_count += 1
+                self.backends["brain_power"].error_count += 1
+                logger.error(f"Brain Power orchestration error: {e}")
+                # Fall through to local consensus
+
+        # Stub mode or Brain Power unavailable — merge local model outputs
+        return self._build_local_consensus(model_outputs)
+
+    def _build_local_consensus(self, model_outputs: dict) -> dict:
+        """Build a merged response from local model outputs when Brain Power is unavailable."""
+        valid_outputs = {k: v for k, v in model_outputs.items() if v.get("text") and not v.get("error")}
+
+        if not valid_outputs:
+            return {
+                "text": "[Ensemble] No model produced output.",
+                "tokens_used": 0,
+                "orchestrator": "local_consensus",
+                "stub": True,
+            }
+
+        if len(valid_outputs) == 1:
+            name, out = next(iter(valid_outputs.items()))
+            return {
+                "text": (
+                    f"[Brain Power synthesis pending — API key not yet provided. "
+                    f"Local model consensus:]\n\n"
+                    f"[Source: {name}]\n{out['text']}"
+                ),
+                "tokens_used": out.get("tokens_used", 0),
+                "orchestrator": "local_consensus",
+                "stub": True,
+            }
+
+        # Multiple outputs — concatenate with headers
+        parts = [
+            "[Brain Power synthesis pending — API key not yet provided. "
+            "Local model consensus:]\n"
+        ]
+        total_tokens = 0
+        for name, out in valid_outputs.items():
+            parts.append(f"\n--- [{name}] ---\n{out['text']}")
+            total_tokens += out.get("tokens_used", 0)
+
+        return {
+            "text": "\n".join(parts),
+            "tokens_used": total_tokens,
+            "orchestrator": "local_consensus",
+            "stub": True,
+        }
+
+    # ─── Primary Ensemble Endpoint ────────────────────────────────
+
+    async def ensemble(
+        self,
+        prompt: str,
+        task_type: str = "text",
+        max_tokens: int = 2048,
+        temperature: float = 0.3,
+        system_prompt: Optional[str] = None,
+        ml_context: Optional[dict] = None,
+    ) -> dict:
+        """Run all models in parallel, Brain Power orchestrates final output.
+
+        This is the primary inference method. All other endpoints route here.
+
+        Args:
+            prompt: The user/system prompt.
+            task_type: Task classification for metrics.
+            max_tokens: Max tokens for generation.
+            temperature: Sampling temperature.
+            system_prompt: Optional system-level instruction.
+            ml_context: Optional dict with alpha_signals, regime, patterns, agent_scores.
+
+        Returns:
+            {
+                "text": str,
+                "orchestrator": str,
+                "model_outputs": {backend: {text, tokens_used}},
+                "latency_ms": float,
+                "task_type": str,
+                "ml_context_provided": bool,
+                "stub": bool,
+            }
+        """
+        start_time = time.time()
+
+        # Run Air-LLM and Qwen in parallel
+        airllm_task = self._run_airllm(prompt, max_tokens, temperature)
+        qwen_task = self._run_qwen(prompt, max_tokens, temperature)
+
+        airllm_result, qwen_result = await asyncio.gather(
+            airllm_task, qwen_task, return_exceptions=True
+        )
+
+        # Handle exceptions from gather
+        if isinstance(airllm_result, Exception):
+            airllm_result = {"text": "", "error": str(airllm_result), "backend": "airllm"}
+        if isinstance(qwen_result, Exception):
+            qwen_result = {"text": "", "error": str(qwen_result), "backend": "qwen"}
+
+        model_outputs = {
+            "airllm": airllm_result,
+            "qwen": qwen_result,
+        }
+
+        # Brain Power orchestrates the final synthesis
+        final = await self._orchestrate_brain_power(
+            prompt=prompt,
+            model_outputs=model_outputs,
+            ml_context=ml_context,
+            system_prompt=system_prompt,
+            max_tokens=max_tokens,
+            temperature=temperature,
+        )
+
+        latency_ms = (time.time() - start_time) * 1000
+
+        return {
+            "text": final.get("text", ""),
+            "orchestrator": final.get("orchestrator", "unknown"),
+            "model_outputs": {
+                k: {"text": v.get("text", "")[:200] + "..." if len(v.get("text", "")) > 200 else v.get("text", ""),
+                     "error": v.get("error")}
+                for k, v in model_outputs.items()
+            },
+            "latency_ms": round(latency_ms, 1),
+            "tokens_used": final.get("tokens_used", 0),
+            "task_type": task_type,
+            "ml_context_provided": ml_context is not None,
+            "stub": final.get("stub", False),
+        }
+
+    # ─── Legacy single-backend infer (routes through ensemble) ────
 
     async def infer(
         self,
@@ -130,141 +399,28 @@ class LLMInferenceBridge:
         images: Optional[list] = None,
         audio: Optional[str] = None,
     ) -> dict:
-        """Run inference through selected backend.
+        """Run inference through the parallel ensemble.
 
-        Returns:
-            {
-                "text": str,
-                "backend": str,
-                "latency_ms": float,
-                "tokens_used": int,
-                "task_type": str,
-            }
+        All requests now route through the ensemble. The preferred_backend
+        parameter is kept for API compatibility but all models always run.
         """
-        backend_name = self.select_backend(task_type, preferred_backend)
-        if not backend_name:
-            return {
-                "text": "",
-                "backend": "none",
-                "error": "No LLM backend available",
-                "latency_ms": 0,
-                "tokens_used": 0,
-                "task_type": task_type,
-            }
-
-        backend = self.backends[backend_name]
-        start_time = time.time()
-
-        try:
-            if backend_name == "brain_power":
-                result = await self._infer_brain_power(prompt, max_tokens, temperature, system_prompt)
-            elif backend_name == "airllm":
-                result = await self._infer_airllm(prompt, max_tokens, temperature)
-            else:
-                raise RuntimeError(f"Unknown backend: {backend_name}")
-
-            latency_ms = (time.time() - start_time) * 1000
-            backend.request_count += 1
-            backend.avg_latency_ms = (
-                (backend.avg_latency_ms * (backend.request_count - 1) + latency_ms)
-                / backend.request_count
-            )
-
-            return {
-                "text": result.get("text", ""),
-                "backend": backend_name,
-                "latency_ms": round(latency_ms, 1),
-                "tokens_used": result.get("tokens_used", 0),
-                "task_type": task_type,
-                "stub": result.get("stub", False),
-            }
-
-        except Exception as e:
-            backend.request_count += 1
-            backend.error_count += 1
-            logger.error(f"{backend_name} inference error: {e}")
-
-            # Try fallback if primary failed
-            fallback_name = None
-            if backend_name == "brain_power" and self.backends.get("airllm", LLMBackend(name="", backend_type="")).available:
-                fallback_name = "airllm"
-            elif backend_name == "airllm" and self.backends.get("brain_power", LLMBackend(name="", backend_type="")).available:
-                fallback_name = "brain_power"
-
-            if fallback_name:
-                logger.info(f"Falling back to {fallback_name}")
-                try:
-                    if fallback_name == "brain_power":
-                        result = await self._infer_brain_power(prompt, max_tokens, temperature, system_prompt)
-                    else:
-                        result = await self._infer_airllm(prompt, max_tokens, temperature)
-                    fb = self.backends[fallback_name]
-                    fb.request_count += 1
-                    latency_ms = (time.time() - start_time) * 1000
-                    return {
-                        "text": result.get("text", ""),
-                        "backend": fallback_name,
-                        "latency_ms": round(latency_ms, 1),
-                        "tokens_used": result.get("tokens_used", 0),
-                        "task_type": task_type,
-                        "fallback_from": backend_name,
-                    }
-                except Exception as e2:
-                    logger.error(f"Fallback {fallback_name} also failed: {e2}")
-
-            return {
-                "text": "",
-                "backend": backend_name,
-                "error": str(e),
-                "latency_ms": (time.time() - start_time) * 1000,
-                "tokens_used": 0,
-                "task_type": task_type,
-            }
-
-    async def _infer_brain_power(
-        self, prompt: str, max_tokens: int, temperature: float,
-        system_prompt: Optional[str],
-    ) -> dict:
-        """Inference via Brain Power (Xiaomi Mimo V2 Pro)."""
-        if not self._brain_power_client:
-            raise RuntimeError("Brain Power client not initialized")
-
-        messages = []
-        if system_prompt:
-            messages.append({"role": "system", "content": system_prompt})
-        messages.append({"role": "user", "content": prompt})
-
-        result = await asyncio.to_thread(
-            self._brain_power_client.chat,
-            messages=messages,
-            max_tokens=max_tokens,
-            temperature=temperature,
-        )
-
-        usage = result.get("usage", {})
-        return {
-            "text": result.get("text", ""),
-            "tokens_used": usage.get("input_tokens", 0) + usage.get("output_tokens", 0),
-            "stub": result.get("stub", False),
-        }
-
-    async def _infer_airllm(
-        self, prompt: str, max_tokens: int, temperature: float,
-    ) -> dict:
-        """Inference via Air-LLM in-process (Llama-3.1-70B layer-by-layer)."""
-        if not self._airllm_manager:
-            raise RuntimeError("Air-LLM manager not initialized")
-
-        result = await asyncio.to_thread(
-            self._airllm_manager.generate,
+        result = await self.ensemble(
             prompt=prompt,
+            task_type=task_type,
             max_tokens=max_tokens,
             temperature=temperature,
+            system_prompt=system_prompt,
         )
 
+        # Reshape to legacy response format
         return {
             "text": result.get("text", ""),
-            "tokens_used": result.get("tokens_generated", 0),
+            "backend": result.get("orchestrator", "ensemble"),
+            "latency_ms": result.get("latency_ms", 0),
+            "tokens_used": result.get("tokens_used", 0),
+            "task_type": task_type,
+            "stub": result.get("stub", False),
+            "ensemble": True,
         }
 
     def get_status(self) -> dict:
@@ -273,6 +429,7 @@ class LLMInferenceBridge:
             name: {
                 "available": b.available,
                 "model_id": b.model_id,
+                "role": "orchestrator" if name == "brain_power" else "parallel_model",
                 "capabilities": b.capabilities,
                 "request_count": b.request_count,
                 "error_rate": round(b.error_rate, 3),
@@ -295,9 +452,12 @@ def create_app():
         sys.exit(1)
 
     app = FastAPI(
-        title="Metadron LLM Inference Bridge",
-        description="Unified LLM inference via Brain Power (Xiaomi Mimo V2 Pro) + Air-LLM (Llama-3.1-70B)",
-        version="2.1.0",
+        title="Metadron LLM Inference Bridge — Parallel Ensemble",
+        description=(
+            "Parallel ensemble: Air-LLM + Qwen run simultaneously, "
+            "Brain Power (Xiaomi Mimo V2 Pro) orchestrates final output."
+        ),
+        version="3.0.0",
     )
 
     app.add_middleware(
@@ -317,12 +477,38 @@ def create_app():
         temperature: float = 0.3
         system_prompt: Optional[str] = None
 
+    class EnsembleRequest(BaseModel):
+        prompt: str
+        task_type: str = "text"
+        max_tokens: int = 2048
+        temperature: float = 0.3
+        system_prompt: Optional[str] = None
+        ml_context: Optional[dict] = None
+
     @app.get("/health")
     async def health():
-        return {"status": "healthy", "backends": bridge.get_status()}
+        return {
+            "status": "healthy",
+            "architecture": "parallel_ensemble",
+            "orchestrator": "brain_power",
+            "backends": bridge.get_status(),
+        }
+
+    @app.post("/ensemble")
+    async def ensemble(request: EnsembleRequest):
+        """Primary endpoint — parallel ensemble with Brain Power orchestration."""
+        return await bridge.ensemble(
+            prompt=request.prompt,
+            task_type=request.task_type,
+            max_tokens=request.max_tokens,
+            temperature=request.temperature,
+            system_prompt=request.system_prompt,
+            ml_context=request.ml_context,
+        )
 
     @app.post("/infer")
     async def infer(request: InferenceRequest):
+        """Legacy endpoint — routes through ensemble internally."""
         return await bridge.infer(
             prompt=request.prompt,
             task_type=request.task_type,
@@ -336,57 +522,77 @@ def create_app():
     async def backends():
         return bridge.get_status()
 
-    # ─── Investment-Specific Endpoints ─────────────────────────
+    # ─── Investment-Specific Endpoints (routed through ensemble) ───
 
     @app.post("/analyze/sentiment")
     async def analyze_sentiment(request: InferenceRequest):
-        request.task_type = "sentiment"
-        request.system_prompt = (
-            "You are a financial sentiment analyst. Analyze the following text and return "
-            "a JSON object with: sentiment (-1.0 to 1.0), confidence (0-1), key_phrases (list), "
-            "market_impact (bearish/neutral/bullish), and reasoning (brief)."
+        return await bridge.ensemble(
+            prompt=request.prompt,
+            task_type="sentiment",
+            max_tokens=request.max_tokens,
+            temperature=request.temperature,
+            system_prompt=(
+                "You are a financial sentiment analyst. Analyze the following text and return "
+                "a JSON object with: sentiment (-1.0 to 1.0), confidence (0-1), key_phrases (list), "
+                "market_impact (bearish/neutral/bullish), and reasoning (brief)."
+            ),
         )
-        return await bridge.infer(**request.model_dump())
 
     @app.post("/analyze/earnings")
     async def analyze_earnings(request: InferenceRequest):
-        request.task_type = "earnings"
-        request.system_prompt = (
-            "You are an expert earnings analyst. Analyze the earnings transcript/report and return "
-            "a JSON with: revenue_surprise (%), eps_surprise (%), guidance (raised/maintained/lowered), "
-            "key_themes (list), risk_factors (list), and overall_signal (bullish/neutral/bearish)."
+        return await bridge.ensemble(
+            prompt=request.prompt,
+            task_type="earnings",
+            max_tokens=request.max_tokens,
+            temperature=request.temperature,
+            system_prompt=(
+                "You are an expert earnings analyst. Analyze the earnings transcript/report and return "
+                "a JSON with: revenue_surprise (%), eps_surprise (%), guidance (raised/maintained/lowered), "
+                "key_themes (list), risk_factors (list), and overall_signal (bullish/neutral/bearish)."
+            ),
         )
-        return await bridge.infer(**request.model_dump())
 
     @app.post("/analyze/sec_filing")
     async def analyze_sec_filing(request: InferenceRequest):
-        request.task_type = "sec_filing"
-        request.system_prompt = (
-            "You are an SEC filing analyst. Parse the filing and extract: filing_type, "
-            "material_changes (list), risk_factors (list with severity), insider_transactions, "
-            "related_party_transactions, and investment_implications."
+        return await bridge.ensemble(
+            prompt=request.prompt,
+            task_type="sec_filing",
+            max_tokens=request.max_tokens,
+            temperature=request.temperature,
+            system_prompt=(
+                "You are an SEC filing analyst. Parse the filing and extract: filing_type, "
+                "material_changes (list), risk_factors (list with severity), insider_transactions, "
+                "related_party_transactions, and investment_implications."
+            ),
         )
-        return await bridge.infer(**request.model_dump())
 
     @app.post("/generate/trade_thesis")
     async def generate_trade_thesis(request: InferenceRequest):
-        request.task_type = "trade_thesis"
-        request.system_prompt = (
-            "You are a quantitative portfolio manager at Metadron Capital. Generate a trade thesis "
-            "with: ticker, direction (long/short), conviction (1-10), entry_price, stop_loss, "
-            "target_price, timeframe, catalyst, risk_factors, and position_size_suggestion."
+        return await bridge.ensemble(
+            prompt=request.prompt,
+            task_type="trade_thesis",
+            max_tokens=request.max_tokens,
+            temperature=request.temperature,
+            system_prompt=(
+                "You are a quantitative portfolio manager at Metadron Capital. Generate a trade thesis "
+                "with: ticker, direction (long/short), conviction (1-10), entry_price, stop_loss, "
+                "target_price, timeframe, catalyst, risk_factors, and position_size_suggestion."
+            ),
         )
-        return await bridge.infer(**request.model_dump())
 
     @app.post("/generate/narrative")
     async def generate_narrative(request: InferenceRequest):
-        request.task_type = "narrative"
-        request.system_prompt = (
-            "You are the chief strategist at Metadron Capital. Generate a market narrative "
-            "covering: regime_assessment, macro_outlook, sector_rotation, key_risks, "
-            "opportunities, and portfolio_positioning. Be concise and actionable."
+        return await bridge.ensemble(
+            prompt=request.prompt,
+            task_type="narrative",
+            max_tokens=request.max_tokens,
+            temperature=request.temperature,
+            system_prompt=(
+                "You are the chief strategist at Metadron Capital. Generate a market narrative "
+                "covering: regime_assessment, macro_outlook, sector_rotation, key_risks, "
+                "opportunities, and portfolio_positioning. Be concise and actionable."
+            ),
         )
-        return await bridge.infer(**request.model_dump())
 
     return app
 
@@ -407,7 +613,7 @@ def main():
     signal.signal(signal.SIGINT, handle_signal)
     signal.signal(signal.SIGTERM, handle_signal)
 
-    logger.info(f"Starting LLM Inference Bridge on {host}:{port}")
+    logger.info(f"Starting LLM Inference Bridge (Parallel Ensemble) on {host}:{port}")
     app = create_app()
     uvicorn.run(app, host=host, port=port, log_level="info")
 
