@@ -13,7 +13,6 @@ Usage in TECH tab API:
 
 import logging
 import logging.handlers
-import os
 import threading
 from datetime import datetime
 from collections import deque
@@ -130,4 +129,17 @@ class EngineErrorHandler(logging.Handler):
             log_engine_error(
                 engine=record.name,
                 message=record.getMessage(),
-                severity="CRITICAL" if record.
+                severity="CRITICAL" if record.levelno >= logging.CRITICAL else "ERROR",
+                detail=self.format(record) if record.exc_info else None,
+            )
+
+
+def install_global_handler():
+    """Install the centralized error handler on the root logger.
+
+    Call this once at startup (e.g., in API server or run_open.py).
+    """
+    handler = EngineErrorHandler()
+    handler.setLevel(logging.ERROR)
+    logging.getLogger().addHandler(handler)
+    logger.info("Centralized error handler installed on root logger")

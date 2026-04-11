@@ -20,7 +20,8 @@ target/
 *.pkl
 
 # Runtime logs and data directories
-logs/
+logs/*
+!logs/.gitkeep
 data/paul_patterns/
 data/gsd_gradients/
 data/gsd_planning/
