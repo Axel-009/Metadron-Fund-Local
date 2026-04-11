@@ -2,7 +2,8 @@
 Metadron Capital — Unified LLM Inference Bridge
 
 Provides a single interface for all LLM inference across the platform,
-routing everything through Brain Power (Xiaomi Mimo V2 Pro).
+routing through Brain Power (Xiaomi Mimo V2 Pro) as the primary backend
+and Air-LLM (meta-llama/Llama-3.1-70B) as a local fallback.
 
 PM2 manages this as a persistent FastAPI service on port 8002.
 """
@@ -33,13 +34,22 @@ try:
     _brain_power_available = True
 except ImportError:
     _brain_power_available = False
-    logger.warning("BrainPowerClient not available — bridge in fallback mode")
+    logger.warning("BrainPowerClient not available — brain power fallback disabled")
+
+# ─── Air-LLM In-Process Backend ──────────────────────────────────────
+
+try:
+    from engine.bridges.airllm_model_server import AirLLMModelManager
+    _airllm_available = True
+except ImportError:
+    _airllm_available = False
+    logger.warning("AirLLMModelManager not available — Air-LLM fallback disabled")
 
 
 @dataclass
 class LLMBackend:
     name: str
-    backend_type: str  # "brain_power"
+    backend_type: str  # "brain_power" | "airllm"
     available: bool = False
     model_id: str = ""
     capabilities: list = field(default_factory=list)
@@ -55,21 +65,28 @@ class LLMBackend:
 
 
 class LLMInferenceBridge:
-    """Unified LLM inference — all calls routed through Brain Power (Xiaomi Mimo V2 Pro)."""
+    """Unified LLM inference — Brain Power primary, Air-LLM local fallback."""
 
     def __init__(self):
         self.backends: dict[str, LLMBackend] = {}
         self._brain_power_client: Optional[BrainPowerClient] = None
+        self._airllm_manager: Optional[AirLLMModelManager] = None
         self._initialize_backends()
 
     def _initialize_backends(self):
-        """Register Brain Power as the sole LLM backend."""
+        """Register Brain Power as primary and Air-LLM as local fallback."""
         self.backends["brain_power"] = LLMBackend(
             name="Brain Power (Xiaomi Mimo V2 Pro)",
             backend_type="brain_power",
             model_id="xiaomi-mimo-v2-pro",
             capabilities=["text", "reasoning", "code", "analysis", "long_context",
                           "sentiment", "earnings", "sec_filing", "trade_thesis", "narrative"],
+        )
+        self.backends["airllm"] = LLMBackend(
+            name="Air-LLM (Llama-3.1-70B)",
+            backend_type="airllm",
+            model_id=os.environ.get("AIRLLM_MODEL_PATH", "meta-llama/Llama-3.1-70B"),
+            capabilities=["text", "reasoning", "code", "analysis"],
         )
         self._probe_backends()
 
@@ -85,10 +102,21 @@ class LLMInferenceBridge:
         else:
             logger.warning("Brain Power backend: BrainPowerClient import failed")
 
+        if _airllm_available:
+            self._airllm_manager = AirLLMModelManager()
+            self.backends["airllm"].available = True
+            logger.info("Air-LLM backend: AVAILABLE (lazy-load on first request)")
+        else:
+            logger.warning("Air-LLM backend: AirLLMModelManager import failed")
+
     def select_backend(self, task_type: str, preferred: Optional[str] = None) -> Optional[str]:
-        """Select backend — always Brain Power."""
+        """Select backend — prefer the requested one, then Brain Power, then Air-LLM."""
+        if preferred and self.backends.get(preferred, LLMBackend(name="", backend_type="")).available:
+            return preferred
         if self.backends.get("brain_power", LLMBackend(name="", backend_type="")).available:
             return "brain_power"
+        if self.backends.get("airllm", LLMBackend(name="", backend_type="")).available:
+            return "airllm"
         return None
 
     async def infer(
@@ -102,7 +130,7 @@ class LLMInferenceBridge:
         images: Optional[list] = None,
         audio: Optional[str] = None,
     ) -> dict:
-        """Run inference through Brain Power.
+        """Run inference through selected backend.
 
         Returns:
             {
@@ -118,7 +146,7 @@ class LLMInferenceBridge:
             return {
                 "text": "",
                 "backend": "none",
-                "error": "Brain Power backend not available",
+                "error": "No LLM backend available",
                 "latency_ms": 0,
                 "tokens_used": 0,
                 "task_type": task_type,
@@ -128,7 +156,12 @@ class LLMInferenceBridge:
         start_time = time.time()
 
         try:
-            result = await self._infer_brain_power(prompt, max_tokens, temperature, system_prompt)
+            if backend_name == "brain_power":
+                result = await self._infer_brain_power(prompt, max_tokens, temperature, system_prompt)
+            elif backend_name == "airllm":
+                result = await self._infer_airllm(prompt, max_tokens, temperature)
+            else:
+                raise RuntimeError(f"Unknown backend: {backend_name}")
 
             latency_ms = (time.time() - start_time) * 1000
             backend.request_count += 1
@@ -149,7 +182,36 @@ class LLMInferenceBridge:
         except Exception as e:
             backend.request_count += 1
             backend.error_count += 1
-            logger.error(f"Brain Power inference error: {e}")
+            logger.error(f"{backend_name} inference error: {e}")
+
+            # Try fallback if primary failed
+            fallback_name = None
+            if backend_name == "brain_power" and self.backends.get("airllm", LLMBackend(name="", backend_type="")).available:
+                fallback_name = "airllm"
+            elif backend_name == "airllm" and self.backends.get("brain_power", LLMBackend(name="", backend_type="")).available:
+                fallback_name = "brain_power"
+
+            if fallback_name:
+                logger.info(f"Falling back to {fallback_name}")
+                try:
+                    if fallback_name == "brain_power":
+                        result = await self._infer_brain_power(prompt, max_tokens, temperature, system_prompt)
+                    else:
+                        result = await self._infer_airllm(prompt, max_tokens, temperature)
+                    fb = self.backends[fallback_name]
+                    fb.request_count += 1
+                    latency_ms = (time.time() - start_time) * 1000
+                    return {
+                        "text": result.get("text", ""),
+                        "backend": fallback_name,
+                        "latency_ms": round(latency_ms, 1),
+                        "tokens_used": result.get("tokens_used", 0),
+                        "task_type": task_type,
+                        "fallback_from": backend_name,
+                    }
+                except Exception as e2:
+                    logger.error(f"Fallback {fallback_name} also failed: {e2}")
+
             return {
                 "text": "",
                 "backend": backend_name,
@@ -186,6 +248,25 @@ class LLMInferenceBridge:
             "stub": result.get("stub", False),
         }
 
+    async def _infer_airllm(
+        self, prompt: str, max_tokens: int, temperature: float,
+    ) -> dict:
+        """Inference via Air-LLM in-process (Llama-3.1-70B layer-by-layer)."""
+        if not self._airllm_manager:
+            raise RuntimeError("Air-LLM manager not initialized")
+
+        result = await asyncio.to_thread(
+            self._airllm_manager.generate,
+            prompt=prompt,
+            max_tokens=max_tokens,
+            temperature=temperature,
+        )
+
+        return {
+            "text": result.get("text", ""),
+            "tokens_used": result.get("tokens_generated", 0),
+        }
+
     def get_status(self) -> dict:
         """Return status of all backends."""
         return {
@@ -215,8 +296,8 @@ def create_app():
 
     app = FastAPI(
         title="Metadron LLM Inference Bridge",
-        description="Unified LLM inference via Brain Power (Xiaomi Mimo V2 Pro)",
-        version="2.0.0",
+        description="Unified LLM inference via Brain Power (Xiaomi Mimo V2 Pro) + Air-LLM (Llama-3.1-70B)",
+        version="2.1.0",
     )
 
     app.add_middleware(
