@@ -777,6 +777,61 @@ def _create_metrics(registry: "CollectorRegistry"):
         registry=registry,
     )
 
+
+    # ─── Model Ensemble Metrics ──────────────────────────────────────
+
+    # Per-model online status (1=online, 0=offline)
+    metrics["model_online"] = Gauge(
+        "metadron_model_online",
+        "Model online status",
+        ["model_name", "port"],
+        registry=registry,
+    )
+
+    # Per-model inference latency
+    metrics["model_inference_latency"] = Histogram(
+        "metadron_model_inference_latency_seconds",
+        "Inference latency per model",
+        ["model_name"],
+        buckets=[0.1, 0.5, 1.0, 2.0, 5.0, 10.0, 30.0],
+        registry=registry,
+    )
+
+    # Per-model inference counter
+    metrics["model_inference_counter"] = Counter(
+        "metadron_model_inference_total",
+        "Total inference requests per model",
+        ["model_name", "status"],
+        registry=registry,
+    )
+
+    # Ensemble synthesis latency (end-to-end)
+    metrics["ensemble_synthesis_latency"] = Histogram(
+        "metadron_ensemble_synthesis_latency_seconds",
+        "End-to-end ensemble synthesis latency",
+        buckets=[0.5, 1.0, 2.0, 5.0, 10.0, 30.0, 60.0],
+        registry=registry,
+    )
+
+    # Brain Power orchestration active
+    metrics["brain_power_orchestrating"] = Gauge(
+        "metadron_brain_power_orchestrating",
+        "Brain Power currently orchestrating (1=active, 0=stub/inactive)",
+        registry=registry,
+    )
+
+    # Pre-initialize model online gauges
+    for model_name, port in [
+        ("brain_power", "api"),
+        ("air_llm", "8002"),
+        ("qwen_2_5_7b", "7860"),
+        ("ai_newton", "in-process"),
+        ("alpha_optimizer", "in-process"),
+        ("deep_learning_engine", "in-process"),
+        ("metadron_cube", "in-process"),
+    ]:
+        metrics["model_online"].labels(model_name=model_name, port=port).set(0)
+
     return metrics
 
 
