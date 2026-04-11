@@ -59,6 +59,23 @@ except ImportError:
     _qwen_available = False
     logger.warning("QwenModelManager not available — Qwen disabled")
 
+# ─── Prometheus Metrics ──────────────────────────────────────────────
+
+_prom_metrics = None
+
+
+def _get_prom_metrics():
+    """Lazy-load Prometheus metrics to avoid import-time errors."""
+    global _prom_metrics
+    if _prom_metrics is None:
+        try:
+            from engine.bridges.prometheus_metrics import get_metrics
+            _prom_metrics = get_metrics()
+        except Exception:
+            _prom_metrics = {}
+    return _prom_metrics
+
+
 # Thread pool for parallel model execution
 _executor = ThreadPoolExecutor(max_workers=4, thread_name_prefix="llm-ensemble")
 
@@ -122,22 +139,34 @@ class LLMInferenceBridge:
 
     def _probe_backends(self):
         """Check backend availability."""
+        metrics = _get_prom_metrics()
+
         # Brain Power (orchestrator)
         if _brain_power_available:
             self._brain_power_client = BrainPowerClient()
             self.backends["brain_power"].available = True
             if self._brain_power_client.is_stub:
                 logger.info("Brain Power orchestrator: STUB MODE (key not configured)")
+                if metrics and "brain_power_orchestrating" in metrics:
+                    metrics["brain_power_orchestrating"].set(0)
             else:
                 logger.info("Brain Power orchestrator: AVAILABLE")
+                if metrics and "brain_power_orchestrating" in metrics:
+                    metrics["brain_power_orchestrating"].set(1)
+                if metrics and "model_online" in metrics:
+                    metrics["model_online"].labels(model_name="brain_power", port="api").set(1)
         else:
             logger.warning("Brain Power orchestrator: import failed")
+            if metrics and "brain_power_orchestrating" in metrics:
+                metrics["brain_power_orchestrating"].set(0)
 
         # Air-LLM (cuda:0)
         if _airllm_available:
             self._airllm_manager = AirLLMModelManager()
             self.backends["airllm"].available = True
             logger.info("Air-LLM backend: AVAILABLE (cuda:0, lazy-load)")
+            if metrics and "model_online" in metrics:
+                metrics["model_online"].labels(model_name="air_llm", port="8002").set(1)
         else:
             logger.warning("Air-LLM backend: import failed")
 
@@ -146,6 +175,8 @@ class LLMInferenceBridge:
             self._qwen_manager = QwenModelManager()
             self.backends["qwen"].available = True
             logger.info("Qwen backend: AVAILABLE (cuda:1, lazy-load)")
+            if metrics and "model_online" in metrics:
+                metrics["model_online"].labels(model_name="qwen_2_5_7b", port="7860").set(1)
         else:
             logger.warning("Qwen backend: import failed")
 
@@ -155,6 +186,9 @@ class LLMInferenceBridge:
         """Run Air-LLM inference in thread pool."""
         if not self._airllm_manager:
             return {"text": "", "error": "Air-LLM not available", "backend": "airllm"}
+
+        metrics = _get_prom_metrics()
+        start_time = time.time()
         try:
             result = await asyncio.get_event_loop().run_in_executor(
                 _executor,
@@ -162,18 +196,43 @@ class LLMInferenceBridge:
                     prompt=prompt, max_tokens=max_tokens, temperature=temperature,
                 ),
             )
+            latency = time.time() - start_time
             self.backends["airllm"].request_count += 1
-            return {"text": result.get("text", ""), "tokens_used": result.get("tokens_generated", 0), "backend": "airllm"}
+
+            # Prometheus instrumentation
+            if metrics:
+                if "model_online" in metrics:
+                    metrics["model_online"].labels(model_name="air_llm", port="8002").set(1)
+                if "model_inference_latency" in metrics:
+                    metrics["model_inference_latency"].labels(model_name="air_llm").observe(latency)
+                if "model_inference_counter" in metrics:
+                    metrics["model_inference_counter"].labels(model_name="air_llm", status="success").inc()
+
+            return {"text": result.get("text", ""), "tokens_used": result.get("tokens_generated", 0), "backend": "airllm", "latency_ms": round(latency * 1000, 1)}
         except Exception as e:
+            latency = time.time() - start_time
             self.backends["airllm"].request_count += 1
             self.backends["airllm"].error_count += 1
             logger.error(f"Air-LLM parallel inference error: {e}")
+
+            # Prometheus instrumentation
+            if metrics:
+                if "model_online" in metrics:
+                    metrics["model_online"].labels(model_name="air_llm", port="8002").set(0)
+                if "model_inference_latency" in metrics:
+                    metrics["model_inference_latency"].labels(model_name="air_llm").observe(latency)
+                if "model_inference_counter" in metrics:
+                    metrics["model_inference_counter"].labels(model_name="air_llm", status="error").inc()
+
             return {"text": "", "error": str(e), "backend": "airllm"}
 
     async def _run_qwen(self, prompt: str, max_tokens: int, temperature: float) -> dict:
         """Run Qwen inference in thread pool."""
         if not self._qwen_manager:
             return {"text": "", "error": "Qwen not available", "backend": "qwen"}
+
+        metrics = _get_prom_metrics()
+        start_time = time.time()
         try:
             result = await asyncio.get_event_loop().run_in_executor(
                 _executor,
@@ -181,12 +240,34 @@ class LLMInferenceBridge:
                     prompt=prompt, max_tokens=max_tokens, temperature=temperature,
                 ),
             )
+            latency = time.time() - start_time
             self.backends["qwen"].request_count += 1
-            return {"text": result.get("text", ""), "tokens_used": result.get("tokens_generated", 0), "backend": "qwen"}
+
+            # Prometheus instrumentation
+            if metrics:
+                if "model_online" in metrics:
+                    metrics["model_online"].labels(model_name="qwen_2_5_7b", port="7860").set(1)
+                if "model_inference_latency" in metrics:
+                    metrics["model_inference_latency"].labels(model_name="qwen_2_5_7b").observe(latency)
+                if "model_inference_counter" in metrics:
+                    metrics["model_inference_counter"].labels(model_name="qwen_2_5_7b", status="success").inc()
+
+            return {"text": result.get("text", ""), "tokens_used": result.get("tokens_generated", 0), "backend": "qwen", "latency_ms": round(latency * 1000, 1)}
         except Exception as e:
+            latency = time.time() - start_time
             self.backends["qwen"].request_count += 1
             self.backends["qwen"].error_count += 1
             logger.error(f"Qwen parallel inference error: {e}")
+
+            # Prometheus instrumentation
+            if metrics:
+                if "model_online" in metrics:
+                    metrics["model_online"].labels(model_name="qwen_2_5_7b", port="7860").set(0)
+                if "model_inference_latency" in metrics:
+                    metrics["model_inference_latency"].labels(model_name="qwen_2_5_7b").observe(latency)
+                if "model_inference_counter" in metrics:
+                    metrics["model_inference_counter"].labels(model_name="qwen_2_5_7b", status="error").inc()
+
             return {"text": "", "error": str(e), "backend": "qwen"}
 
     async def _orchestrate_brain_power(
@@ -203,6 +284,8 @@ class LLMInferenceBridge:
         If Brain Power API key is not configured (stub mode), returns
         a merged consensus from the local models.
         """
+        metrics = _get_prom_metrics()
+
         # Build synthesis context for Brain Power
         synthesis_parts = [
             "You are Brain Power (Xiaomi Mimo V2 Pro), the orchestrating intelligence "
@@ -237,6 +320,7 @@ class LLMInferenceBridge:
 
         # Check if Brain Power is available and not in stub mode
         if (self._brain_power_client and not self._brain_power_client.is_stub):
+            start_time = time.time()
             try:
                 messages = [{"role": "user", "content": synthesis_prompt}]
                 result = await asyncio.to_thread(
@@ -245,8 +329,21 @@ class LLMInferenceBridge:
                     max_tokens=max_tokens,
                     temperature=temperature,
                 )
+                latency = time.time() - start_time
                 self.backends["brain_power"].request_count += 1
                 usage = result.get("usage", {})
+
+                # Prometheus instrumentation
+                if metrics:
+                    if "model_online" in metrics:
+                        metrics["model_online"].labels(model_name="brain_power", port="api").set(1)
+                    if "model_inference_latency" in metrics:
+                        metrics["model_inference_latency"].labels(model_name="brain_power").observe(latency)
+                    if "model_inference_counter" in metrics:
+                        metrics["model_inference_counter"].labels(model_name="brain_power", status="success").inc()
+                    if "brain_power_orchestrating" in metrics:
+                        metrics["brain_power_orchestrating"].set(1)
+
                 return {
                     "text": result.get("text", ""),
                     "tokens_used": usage.get("input_tokens", 0) + usage.get("output_tokens", 0),
@@ -254,10 +351,25 @@ class LLMInferenceBridge:
                     "stub": False,
                 }
             except Exception as e:
+                latency = time.time() - start_time
                 self.backends["brain_power"].request_count += 1
                 self.backends["brain_power"].error_count += 1
                 logger.error(f"Brain Power orchestration error: {e}")
+
+                # Prometheus instrumentation
+                if metrics:
+                    if "model_online" in metrics:
+                        metrics["model_online"].labels(model_name="brain_power", port="api").set(0)
+                    if "model_inference_latency" in metrics:
+                        metrics["model_inference_latency"].labels(model_name="brain_power").observe(latency)
+                    if "model_inference_counter" in metrics:
+                        metrics["model_inference_counter"].labels(model_name="brain_power", status="error").inc()
+
                 # Fall through to local consensus
+        else:
+            # Stub mode
+            if metrics and "brain_power_orchestrating" in metrics:
+                metrics["brain_power_orchestrating"].set(0)
 
         # Stub mode or Brain Power unavailable — merge local model outputs
         return self._build_local_consensus(model_outputs)
@@ -338,6 +450,7 @@ class LLMInferenceBridge:
                 "stub": bool,
             }
         """
+        metrics = _get_prom_metrics()
         start_time = time.time()
 
         # Run Air-LLM and Qwen in parallel
@@ -370,6 +483,10 @@ class LLMInferenceBridge:
         )
 
         latency_ms = (time.time() - start_time) * 1000
+
+        # Record ensemble synthesis latency
+        if metrics and "ensemble_synthesis_latency" in metrics:
+            metrics["ensemble_synthesis_latency"].observe((time.time() - start_time))
 
         return {
             "text": final.get("text", ""),
