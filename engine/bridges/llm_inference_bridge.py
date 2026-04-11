@@ -1,13 +1,8 @@
 """
 Metadron Capital — Unified LLM Inference Bridge
 
-Provides a single interface for all LLM inference across the platform:
-  - Qwen 2.5-7b Omni (local GPU, multimodal: text/image/audio/video)
-  - Air-LLM (local GPU, efficient 70B+ inference on limited VRAM)
-  - Anthropic Claude (cloud API, primary reasoning engine)
-
-The bridge auto-routes requests to the best available backend based on
-task type, model availability, and latency requirements.
+Provides a single interface for all LLM inference across the platform,
+routing everything through Brain Power (Xiaomi Mimo V2 Pro).
 
 PM2 manages this as a persistent FastAPI service on port 8002.
 """
@@ -31,12 +26,20 @@ logging.basicConfig(
 
 PLATFORM_ROOT = Path(__file__).resolve().parent.parent.parent
 
-# ─── Backend Registry ────────────────────────────────────────────────
+# ─── Brain Power Backend ─────────────────────────────────────────────
+
+try:
+    from engine.bridges.brain_power import BrainPowerClient
+    _brain_power_available = True
+except ImportError:
+    _brain_power_available = False
+    logger.warning("BrainPowerClient not available — bridge in fallback mode")
+
 
 @dataclass
 class LLMBackend:
     name: str
-    backend_type: str  # "local_qwen", "local_airllm", "cloud_anthropic"
+    backend_type: str  # "brain_power"
     available: bool = False
     model_id: str = ""
     capabilities: list = field(default_factory=list)
@@ -52,152 +55,40 @@ class LLMBackend:
 
 
 class LLMInferenceBridge:
-    """Unified LLM inference across Qwen, Air-LLM, and Anthropic."""
+    """Unified LLM inference — all calls routed through Brain Power (Xiaomi Mimo V2 Pro)."""
 
     def __init__(self):
         self.backends: dict[str, LLMBackend] = {}
-        self._qwen_model = None
-        self._qwen_processor = None
-        self._airllm_model = None
-        self._anthropic_client = None
+        self._brain_power_client: Optional[BrainPowerClient] = None
         self._initialize_backends()
 
     def _initialize_backends(self):
-        """Register all available LLM backends."""
-        # Qwen 2.5-7b Omni (local multimodal)
-        self.backends["qwen"] = LLMBackend(
-            name="Qwen 2.5-7b Omni",
-            backend_type="local_qwen",
-            model_id=os.environ.get("QWEN_MODEL_PATH", "Qwen/Qwen2.5-Omni-7B"),
-            capabilities=["text", "image", "audio", "video", "speech_synthesis"],
+        """Register Brain Power as the sole LLM backend."""
+        self.backends["brain_power"] = LLMBackend(
+            name="Brain Power (Xiaomi Mimo V2 Pro)",
+            backend_type="brain_power",
+            model_id="xiaomi-mimo-v2-pro",
+            capabilities=["text", "reasoning", "code", "analysis", "long_context",
+                          "sentiment", "earnings", "sec_filing", "trade_thesis", "narrative"],
         )
-
-        # Air-LLM (local efficient inference)
-        self.backends["airllm"] = LLMBackend(
-            name="Air-LLM",
-            backend_type="local_airllm",
-            model_id=os.environ.get("AIRLLM_MODEL_PATH", "meta-llama/Llama-3.1-70B"),
-            capabilities=["text", "reasoning", "long_context"],
-        )
-
-        # Anthropic Claude (cloud API — primary)
-        self.backends["anthropic"] = LLMBackend(
-            name="Anthropic Claude",
-            backend_type="cloud_anthropic",
-            model_id=os.environ.get("ANTHROPIC_MODEL", "claude-opus-4-6"),
-            capabilities=["text", "reasoning", "code", "analysis", "long_context"],
-        )
-
         self._probe_backends()
 
     def _probe_backends(self):
-        """Check which backends are available."""
-        # Anthropic — check for API key
-        api_key = os.environ.get("ANTHROPIC_API_KEY", "")
-        if api_key and api_key.startswith("sk-"):
-            try:
-                import anthropic
-                self._anthropic_client = anthropic.Anthropic(api_key=api_key)
-                self.backends["anthropic"].available = True
-                logger.info("Anthropic Claude backend: AVAILABLE")
-            except ImportError:
-                logger.warning("anthropic package not installed")
-        else:
-            logger.info("Anthropic Claude backend: NO API KEY")
-
-        # Qwen — check for model files / transformers
-        try:
-            import torch
-            if torch.cuda.is_available():
-                self.backends["qwen"].available = True
-                logger.info(f"Qwen backend: AVAILABLE (GPU: {torch.cuda.get_device_name(0)})")
+        """Check backend availability."""
+        if _brain_power_available:
+            self._brain_power_client = BrainPowerClient()
+            self.backends["brain_power"].available = True
+            if self._brain_power_client.is_stub:
+                logger.info("Brain Power backend: STUB MODE (key not configured)")
             else:
-                logger.info("Qwen backend: NO GPU (CPU-only mode available)")
-                self.backends["qwen"].available = True  # CPU fallback
-        except ImportError:
-            logger.info("Qwen backend: torch not installed")
-
-        # Air-LLM — check for airllm package
-        try:
-            sys.path.insert(0, str(PLATFORM_ROOT / "intelligence_platform" / "Air-LLM" / "air_llm"))
-            import airllm
-            self.backends["airllm"].available = True
-            logger.info("Air-LLM backend: AVAILABLE")
-        except ImportError:
-            logger.info("Air-LLM backend: airllm not installed")
-
-    def _load_qwen(self):
-        """Lazy-load Qwen model on first inference request."""
-        if self._qwen_model is not None:
-            return
-
-        logger.info("Loading Qwen 2.5-7b model...")
-        try:
-            from transformers import Qwen2_5OmniForConditionalGeneration, Qwen2_5OmniProcessor
-            model_path = self.backends["qwen"].model_id
-
-            import torch
-            device_map = "auto" if torch.cuda.is_available() else "cpu"
-            self._qwen_model = Qwen2_5OmniForConditionalGeneration.from_pretrained(
-                model_path, device_map=device_map, torch_dtype="auto"
-            )
-            self._qwen_processor = Qwen2_5OmniProcessor.from_pretrained(model_path)
-            logger.info("Qwen model loaded successfully")
-        except Exception as e:
-            logger.error(f"Failed to load Qwen model: {e}")
-            self.backends["qwen"].available = False
-
-    def _load_airllm(self):
-        """Lazy-load Air-LLM model."""
-        if self._airllm_model is not None:
-            return
-
-        logger.info("Loading Air-LLM model...")
-        try:
-            sys.path.insert(0, str(PLATFORM_ROOT / "intelligence_platform" / "Air-LLM" / "air_llm"))
-            from airllm import AutoModel
-            model_path = self.backends["airllm"].model_id
-            self._airllm_model = AutoModel.from_pretrained(model_path)
-            logger.info("Air-LLM model loaded successfully")
-        except Exception as e:
-            logger.error(f"Failed to load Air-LLM model: {e}")
-            self.backends["airllm"].available = False
+                logger.info("Brain Power backend: AVAILABLE")
+        else:
+            logger.warning("Brain Power backend: BrainPowerClient import failed")
 
     def select_backend(self, task_type: str, preferred: Optional[str] = None) -> Optional[str]:
-        """Select the best backend for a given task type.
-
-        Routing logic:
-          - Multimodal (image/audio/video) → Qwen
-          - Long reasoning / analysis → Anthropic (primary) > Air-LLM (fallback)
-          - Sentiment / NLP → Anthropic > Air-LLM > Qwen
-          - Code generation → Anthropic
-          - General text → Anthropic > Qwen > Air-LLM
-        """
-        if preferred and preferred in self.backends and self.backends[preferred].available:
-            return preferred
-
-        task_routing = {
-            "multimodal": ["qwen", "anthropic"],
-            "image": ["qwen", "anthropic"],
-            "audio": ["qwen"],
-            "video": ["qwen"],
-            "speech": ["qwen"],
-            "reasoning": ["anthropic", "airllm", "qwen"],
-            "analysis": ["anthropic", "airllm"],
-            "sentiment": ["anthropic", "airllm", "qwen"],
-            "code": ["anthropic"],
-            "text": ["anthropic", "qwen", "airllm"],
-            "earnings": ["anthropic", "airllm"],
-            "sec_filing": ["anthropic", "airllm"],
-            "trade_thesis": ["anthropic", "airllm"],
-            "narrative": ["anthropic", "airllm", "qwen"],
-        }
-
-        candidates = task_routing.get(task_type, ["anthropic", "qwen", "airllm"])
-        for candidate in candidates:
-            if candidate in self.backends and self.backends[candidate].available:
-                return candidate
-
+        """Select backend — always Brain Power."""
+        if self.backends.get("brain_power", LLMBackend(name="", backend_type="")).available:
+            return "brain_power"
         return None
 
     async def infer(
@@ -211,15 +102,15 @@ class LLMInferenceBridge:
         images: Optional[list] = None,
         audio: Optional[str] = None,
     ) -> dict:
-        """Run inference on the best available backend.
+        """Run inference through Brain Power.
 
         Returns:
             {
-                "text": str,           # Generated text
-                "backend": str,        # Which backend was used
-                "latency_ms": float,   # Response time
-                "tokens_used": int,    # Approximate token count
-                "task_type": str,      # Task classification
+                "text": str,
+                "backend": str,
+                "latency_ms": float,
+                "tokens_used": int,
+                "task_type": str,
             }
         """
         backend_name = self.select_backend(task_type, preferred_backend)
@@ -227,7 +118,7 @@ class LLMInferenceBridge:
             return {
                 "text": "",
                 "backend": "none",
-                "error": "No available backend for this task type",
+                "error": "Brain Power backend not available",
                 "latency_ms": 0,
                 "tokens_used": 0,
                 "task_type": task_type,
@@ -237,14 +128,7 @@ class LLMInferenceBridge:
         start_time = time.time()
 
         try:
-            if backend_name == "anthropic":
-                result = await self._infer_anthropic(prompt, max_tokens, temperature, system_prompt)
-            elif backend_name == "qwen":
-                result = await self._infer_qwen(prompt, max_tokens, images, audio)
-            elif backend_name == "airllm":
-                result = await self._infer_airllm(prompt, max_tokens, temperature)
-            else:
-                result = {"text": "", "tokens_used": 0, "error": f"Unknown backend: {backend_name}"}
+            result = await self._infer_brain_power(prompt, max_tokens, temperature, system_prompt)
 
             latency_ms = (time.time() - start_time) * 1000
             backend.request_count += 1
@@ -259,19 +143,13 @@ class LLMInferenceBridge:
                 "latency_ms": round(latency_ms, 1),
                 "tokens_used": result.get("tokens_used", 0),
                 "task_type": task_type,
+                "stub": result.get("stub", False),
             }
 
         except Exception as e:
             backend.request_count += 1
             backend.error_count += 1
-            logger.error(f"Inference error on {backend_name}: {e}")
-
-            # Try fallback
-            fallback = self.select_backend(task_type)
-            if fallback and fallback != backend_name:
-                logger.info(f"Falling back from {backend_name} to {fallback}")
-                return await self.infer(prompt, task_type, fallback, max_tokens, temperature, system_prompt)
-
+            logger.error(f"Brain Power inference error: {e}")
             return {
                 "text": "",
                 "backend": backend_name,
@@ -281,75 +159,32 @@ class LLMInferenceBridge:
                 "task_type": task_type,
             }
 
-    async def _infer_anthropic(self, prompt: str, max_tokens: int, temperature: float,
-                                system_prompt: Optional[str]) -> dict:
-        """Inference via Anthropic Claude API."""
-        if not self._anthropic_client:
-            raise RuntimeError("Anthropic client not initialized")
+    async def _infer_brain_power(
+        self, prompt: str, max_tokens: int, temperature: float,
+        system_prompt: Optional[str],
+    ) -> dict:
+        """Inference via Brain Power (Xiaomi Mimo V2 Pro)."""
+        if not self._brain_power_client:
+            raise RuntimeError("Brain Power client not initialized")
 
-        messages = [{"role": "user", "content": prompt}]
-        kwargs = {
-            "model": self.backends["anthropic"].model_id,
-            "max_tokens": max_tokens,
-            "temperature": temperature,
-            "messages": messages,
-        }
+        messages = []
         if system_prompt:
-            kwargs["system"] = system_prompt
+            messages.append({"role": "system", "content": system_prompt})
+        messages.append({"role": "user", "content": prompt})
 
-        response = await asyncio.to_thread(
-            self._anthropic_client.messages.create, **kwargs
+        result = await asyncio.to_thread(
+            self._brain_power_client.chat,
+            messages=messages,
+            max_tokens=max_tokens,
+            temperature=temperature,
         )
 
-        text = ""
-        for block in response.content:
-            if hasattr(block, "text"):
-                text += block.text
-
+        usage = result.get("usage", {})
         return {
-            "text": text,
-            "tokens_used": response.usage.input_tokens + response.usage.output_tokens,
+            "text": result.get("text", ""),
+            "tokens_used": usage.get("input_tokens", 0) + usage.get("output_tokens", 0),
+            "stub": result.get("stub", False),
         }
-
-    async def _infer_qwen(self, prompt: str, max_tokens: int,
-                           images: Optional[list], audio: Optional[str]) -> dict:
-        """Inference via local Qwen 2.5-7b model."""
-        self._load_qwen()
-        if not self._qwen_model:
-            raise RuntimeError("Qwen model not loaded")
-
-        def _generate():
-            inputs = self._qwen_processor(text=prompt, return_tensors="pt")
-            inputs = inputs.to(self._qwen_model.device)
-            output_ids = self._qwen_model.generate(
-                **inputs, max_new_tokens=max_tokens
-            )
-            generated = self._qwen_processor.batch_decode(
-                output_ids[:, inputs.input_ids.shape[1]:],
-                skip_special_tokens=True
-            )
-            return generated[0] if generated else ""
-
-        text = await asyncio.to_thread(_generate)
-        return {"text": text, "tokens_used": len(text.split()) * 2}
-
-    async def _infer_airllm(self, prompt: str, max_tokens: int, temperature: float) -> dict:
-        """Inference via Air-LLM (efficient large model inference)."""
-        self._load_airllm()
-        if not self._airllm_model:
-            raise RuntimeError("Air-LLM model not loaded")
-
-        def _generate():
-            from transformers import AutoTokenizer
-            tokenizer = AutoTokenizer.from_pretrained(self.backends["airllm"].model_id)
-            input_ids = tokenizer(prompt, return_tensors="pt").input_ids
-            output = self._airllm_model.generate(
-                input_ids, max_new_tokens=max_tokens, temperature=temperature
-            )
-            return tokenizer.decode(output[0], skip_special_tokens=True)
-
-        text = await asyncio.to_thread(_generate)
-        return {"text": text, "tokens_used": len(text.split()) * 2}
 
     def get_status(self) -> dict:
         """Return status of all backends."""
@@ -380,8 +215,8 @@ def create_app():
 
     app = FastAPI(
         title="Metadron LLM Inference Bridge",
-        description="Unified LLM inference across Qwen 2.5-7b, Air-LLM, and Anthropic Claude",
-        version="1.0.0",
+        description="Unified LLM inference via Brain Power (Xiaomi Mimo V2 Pro)",
+        version="2.0.0",
     )
 
     app.add_middleware(
