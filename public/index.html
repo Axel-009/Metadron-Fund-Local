@@ -1,0 +1,3786 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"/>
+<script>
+// Storage polyfill for sandboxed/static environments
+(function() {
+  function makeStorage() {
+    var data = {};
+    return {
+      getItem: function(key) { return data.hasOwnProperty(key) ? data[key] : null; },
+      setItem: function(key, val) { data[key] = String(val); },
+      removeItem: function(key) { delete data[key]; },
+      clear: function() { data = {}; },
+      get length() { return Object.keys(data).length; },
+      key: function(i) { return Object.keys(data)[i] || null; }
+    };
+  }
+  var names = ["local","session"];
+  names.forEach(function(prefix) {
+    var prop = prefix + "Storage";
+    try { window[prop].setItem("__t","1"); window[prop].removeItem("__t"); }
+    catch(e) { Object.defineProperty(window, prop, { value: makeStorage(), writable: true }); }
+  });
+})();
+</script>
+
+<meta name="viewport" content="width=device-width,initial-scale=1.0"/>
+<title>Metadron Capital</title>
+<link rel="preconnect" href="https://fonts.googleapis.com"/>
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin/>
+<link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,300;0,400;0,500;0,600;0,700;1,300;1,400;1,500;1,600&family=DM+Sans:wght@300;400;500;600;700&family=DM+Mono:wght@400;500&display=swap" rel="stylesheet"/>
+<style>
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0;}
+:root{
+  --bg:#05091a;--bg-mid:#080d22;--bg-card:#0c1430;--bg-lift:#101a3a;
+  --accent:#00e5c0;--accent2:#4facfe;--gold:#bdb4a8;--gold-dim:rgba(189,180,168,0.15);
+  --text:#eef3ff;--muted:#7a90b8;--faint:#3a4e6e;
+  --border:rgba(79,172,254,0.12);--border-b:rgba(0,229,192,0.28);
+  --glow:rgba(0,229,192,0.22);--glow2:rgba(79,172,254,0.18);
+  --grid:rgba(79,172,254,0.035);--pos:#34d399;--neg:#f87171;
+}
+html{scroll-behavior:smooth;}
+body{font-family:'DM Sans',sans-serif;background:var(--bg);color:var(--text);overflow-x:hidden;line-height:1.6;}
+a{color:inherit;text-decoration:none;}
+::selection{background:rgba(0,229,192,0.18);color:var(--accent);}
+::-webkit-scrollbar{width:5px;}
+::-webkit-scrollbar-track{background:var(--bg);}
+::-webkit-scrollbar-thumb{background:var(--border-b);border-radius:3px;}
+
+/* ── GLOBAL GRID OVERLAY (disabled) ── */
+body::before{
+  display:none;
+}
+
+
+/* ── NAV ── */
+nav{
+  position:fixed;top:0;left:0;right:0;z-index:200;
+  display:flex;align-items:center;justify-content:space-between;
+  padding:0 52px;height:72px;
+  background:rgba(5,9,26,0.78);
+  backdrop-filter:blur(24px) saturate(1.4);
+  border-bottom:1px solid var(--border);
+  transition:all 0.35s ease;
+}
+nav.scrolled{background:rgba(5,9,26,0.97);border-bottom-color:var(--border-b);}
+.nav-logo{display:flex;align-items:center;gap:8px;}
+
+/* WORDMARK — terminal-matching M mark + monospace lettering */
+.nav-wordmark{
+  display:flex;align-items:center;gap:1px;
+}
+/* The M SVG icon — matches the terminal's rounded-rect M mark */
+.nav-word-msvg{
+  display:flex;align-items:center;
+  flex-shrink:0;
+}
+/* ETADRON — monospace, tight tracking, slightly italic like terminal */
+.nav-word-rest{
+  font-family:'DM Mono',monospace;
+  font-size:12px;font-weight:700;
+  letter-spacing:0.14em;color:var(--text);
+  text-transform:uppercase;
+  font-style:italic;
+  line-height:1;
+}
+.nav-word-capital{
+  font-family:'Cormorant Garamond',serif;
+  font-size:13px;font-weight:400;
+  letter-spacing:0.20em;color:var(--accent);
+  text-transform:uppercase;
+  margin-left:2px;
+}
+.nav-links{display:flex;align-items:center;list-style:none;flex:1;justify-content:space-evenly;}
+.nav-links a{font-size:12px;font-weight:500;letter-spacing:0.08em;color:var(--muted);text-transform:uppercase;transition:color 0.2s;}
+.nav-links a:hover{color:var(--accent);}
+.nav-cta{
+  display:flex;align-items:center;gap:5px;padding:7px 16px;
+  background:linear-gradient(135deg,rgba(0,229,192,0.08),rgba(79,172,254,0.08));
+  border:1px solid var(--border-b);border-radius:3px;
+  font-size:12px;font-weight:600;letter-spacing:0.08em;color:var(--accent);text-transform:uppercase;
+  transition:all 0.25s;
+}
+.nav-cta:hover{background:linear-gradient(135deg,rgba(0,229,192,0.18),rgba(79,172,254,0.14));box-shadow:0 0 24px var(--glow);}
+
+/* ══════════ HERO ══════════ */
+#hero{
+  position:relative;min-height:100vh;
+  display:flex;flex-direction:column;justify-content:center;align-items:flex-start;
+  padding:140px 8% 80px;overflow:hidden;z-index:1;
+}
+.hero-canvas{
+  position:absolute;top:0;right:0;width:55%;height:100%;
+  z-index:0;pointer-events:none;
+}
+.hero-content{position:relative;z-index:2;max-width:680px;}
+.hero-rule{
+  display:inline-flex;align-items:center;gap:10px;padding:6px 16px;
+  border:1px solid var(--border-b);border-radius:100px;
+  background:rgba(0,229,192,0.06);
+  font-family:'DM Mono',monospace;font-size:10px;letter-spacing:0.18em;color:var(--accent);
+  text-transform:uppercase;margin-bottom:32px;
+}
+.hero-rule-dot{width:6px;height:6px;border-radius:50%;background:var(--accent);animation:blink 1.5s infinite;}
+@keyframes blink{0%,100%{opacity:1;}50%{opacity:0.2;}}
+
+.hero-h1{
+  font-family:'Cormorant Garamond',serif;
+  font-size:clamp(38px,4.4vw,64px);font-weight:400;line-height:1.05;letter-spacing:-0.01em;
+  margin-bottom:28px;
+}
+.hero-h1 .accent{color:#fff;}
+.hero-h1 .gold{color:#fff;}
+.hero-h1 em{font-style:italic;}
+.hero-sub{font-size:18px;color:var(--muted);max-width:520px;line-height:1.75;margin-bottom:48px;font-weight:300;}
+.hero-btns{display:flex;gap:14px;flex-wrap:wrap;}
+.btn-prime{
+  display:inline-flex;align-items:center;gap:8px;padding:16px 36px;
+  background:linear-gradient(135deg,var(--accent),var(--accent2));
+  color:#000;border:none;border-radius:3px;
+  font-size:13px;font-weight:700;letter-spacing:0.1em;text-transform:uppercase;
+  cursor:pointer;transition:all 0.25s;font-family:'DM Sans',sans-serif;
+}
+.btn-prime:hover{transform:translateY(-2px);box-shadow:0 8px 40px rgba(0,229,192,0.35);}
+.btn-sec{
+  display:inline-flex;align-items:center;gap:8px;padding:16px 36px;
+  background:transparent;border:1px solid var(--border-b);border-radius:3px;
+  font-size:13px;font-weight:600;letter-spacing:0.1em;color:var(--text);text-transform:uppercase;
+  cursor:pointer;transition:all 0.25s;
+}
+.btn-sec:hover{border-color:var(--accent);color:var(--accent);}
+.scroll-ind{
+  position:absolute;bottom:40px;left:50%;transform:translateX(-50%);
+  display:flex;flex-direction:column;align-items:center;gap:6px;
+  font-size:10px;letter-spacing:0.15em;color:var(--faint);text-transform:uppercase;
+  font-family:'DM Mono',monospace;
+}
+.scroll-ind svg{animation:scrollBounce 1.8s ease-in-out infinite;}
+@keyframes scrollBounce{0%,100%{transform:translateY(0);}50%{transform:translateY(6px);}}
+
+/* ══════════ MARKET BELT ══════════ */
+#market-belt{
+  position:relative;z-index:1;padding:0 8%;
+  border-top:1px solid var(--border);border-bottom:1px solid var(--border);
+  background:rgba(8,13,34,0.85);backdrop-filter:blur(8px);
+}
+.belt-grid{
+  display:grid;grid-template-columns:1fr 1.6fr;gap:32px;padding:40px 0;
+  max-width:1280px;margin:0 auto;align-items:start;
+}
+.belt-section-label{
+  font-family:'DM Mono',monospace;font-size:9px;letter-spacing:0.2em;
+  color:var(--accent);text-transform:uppercase;margin-bottom:16px;
+  display:flex;align-items:center;gap:8px;
+}
+.belt-section-label::after{content:'';flex:1;height:1px;background:linear-gradient(90deg,var(--border-b),transparent);}
+.clocks{display:flex;gap:10px;flex-wrap:wrap;}
+.clock{
+  flex:1;min-width:110px;padding:16px 14px 12px;
+  background:var(--bg-card);border:1px solid var(--border);border-radius:6px;
+  display:flex;flex-direction:column;align-items:center;gap:3px;transition:border-color 0.2s;
+}
+.clock:hover{border-color:var(--border-b);}
+.clock-city{font-family:'DM Mono',monospace;font-size:8px;letter-spacing:0.12em;color:var(--faint);text-transform:uppercase;}
+.clock-time{font-family:'DM Mono',monospace;font-size:20px;font-weight:500;color:var(--accent);letter-spacing:0.04em;line-height:1;}
+.clock-sess{font-size:8px;font-weight:600;letter-spacing:0.1em;text-transform:uppercase;padding:2px 8px;border-radius:2px;}
+.clock-sess.open{background:rgba(52,211,153,0.12);color:var(--pos);}
+.clock-sess.closed{background:rgba(58,78,110,0.15);color:var(--faint);}
+.perf-g{display:grid;grid-template-columns:repeat(4,1fr);gap:10px;}
+.pc{padding:16px;background:var(--bg-card);border:1px solid var(--border);border-radius:6px;transition:border-color 0.2s,transform 0.2s;}
+.pc:hover{border-color:var(--border-b);transform:translateY(-2px);}
+.pc-lbl{font-size:9px;letter-spacing:0.12em;color:var(--faint);text-transform:uppercase;font-family:'DM Mono',monospace;margin-bottom:7px;}
+.pc-val{font-family:'DM Mono',monospace;font-size:18px;font-weight:500;line-height:1;}
+.pc-val.pos{color:var(--pos);}.pc-val.acc{color:var(--accent);}.pc-val.gld{color:var(--gold);}.pc-val.blu{color:var(--accent2);}.pc-val.neg{color:#f97316;}
+.pc-sub{font-size:9px;color:var(--faint);margin-top:5px;font-family:'DM Mono',monospace;}
+.belt-disc{margin-top:16px;font-size:10px;color:var(--faint);font-style:italic;text-align:center;line-height:1.6;}
+
+/* ══════════ SECTIONS SHARED ══════════ */
+section{position:relative;z-index:1;padding:110px 8%;}
+.sec-eyebrow{
+  font-family:'DM Mono',monospace;font-size:10px;letter-spacing:0.22em;
+  color:var(--accent);text-transform:uppercase;margin-bottom:18px;
+  display:flex;align-items:center;gap:10px;
+}
+.sec-eyebrow::before{content:'';display:inline-block;width:24px;height:1px;background:var(--accent);}
+.sec-title{
+  font-family:'Cormorant Garamond',serif;
+  font-size:clamp(26px,2.8vw,42px);font-weight:400;line-height:1.08;letter-spacing:-0.005em;margin-bottom:24px;
+}
+.sec-title .accent{color:var(--gold);}
+.sec-title .italic{font-style:italic;color:var(--gold);}
+.sec-body{font-size:17px;color:var(--muted);max-width:560px;line-height:1.8;font-weight:300;}
+.rule-line{width:52px;height:2px;margin:22px 0;background:linear-gradient(90deg,var(--accent),var(--accent2),transparent);}
+
+/* ══════════ ABOUT ══════════ */
+#about{border-top:1px solid var(--border);}
+.about-layout{max-width:1280px;margin:0 auto;display:grid;grid-template-columns:1.05fr 1fr;gap:90px;align-items:center;}
+.terminal{background:var(--bg-card);border:1px solid var(--border);border-radius:10px;overflow:hidden;position:relative;}
+.terminal::before{content:'';position:absolute;top:0;left:0;right:0;height:2px;background:linear-gradient(90deg,var(--accent),var(--accent2),transparent);}
+.t-bar{padding:12px 20px;border-bottom:1px solid var(--border);display:flex;align-items:center;gap:8px;}
+.t-dot{width:11px;height:11px;border-radius:50%;}
+.t-label{margin-left:8px;font-family:'DM Mono',monospace;font-size:10px;color:var(--faint);letter-spacing:0.1em;}
+.t-body{padding:28px 28px 24px;font-family:'DM Mono',monospace;font-size:12px;line-height:2;}
+.tk{color:var(--accent);}.tv{color:var(--accent2);}.ts{color:var(--gold);}.tn{color:#a78bfa;}.tc{color:var(--faint);}
+.about-stats{display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-top:32px;}
+.as-card{padding:22px;background:var(--bg-card);border:1px solid var(--border);border-radius:6px;transition:all 0.25s;}
+.as-card:hover{border-color:var(--border-b);transform:translateY(-2px);}
+.as-n{font-family:'Cormorant Garamond',serif;font-size:44px;font-weight:600;color:var(--accent);line-height:1;margin-bottom:6px;}
+.as-d{font-size:12px;color:var(--faint);letter-spacing:0.06em;}
+
+/* ══════════ VISION ══════════ */
+#vision{border-top:1px solid var(--border);background:linear-gradient(180deg,transparent,rgba(0,229,192,0.018) 50%,transparent);}
+.vision-wrap{max-width:1280px;margin:0 auto;position:relative;z-index:1;}
+.vision-cards{display:grid;grid-template-columns:repeat(3,1fr);gap:22px;margin-top:60px;}
+.vc{
+  padding:36px;background:rgba(12,20,48,0.45);backdrop-filter:blur(10px);border:1px solid rgba(79,172,254,0.12);border-radius:10px;
+  position:relative;overflow:hidden;transition:all 0.3s;
+}
+.vc:hover{border-color:rgba(0,229,192,0.35);background:rgba(12,20,48,0.65);transform:translateY(-5px);box-shadow:0 24px 60px rgba(0,0,0,0.5);}
+.vc::after{content:'';position:absolute;bottom:0;left:0;right:0;height:1px;background:linear-gradient(90deg,transparent,var(--accent),transparent);opacity:0;transition:opacity 0.3s;}
+.vc:hover::after{opacity:1;}
+.vc-num{font-family:'Cormorant Garamond',serif;font-size:64px;font-weight:300;color:rgba(0,229,192,0.08);line-height:1;position:absolute;top:16px;right:20px;pointer-events:none;}
+.vc-icon{width:48px;height:48px;margin-bottom:24px;background:linear-gradient(135deg,rgba(0,229,192,0.1),rgba(79,172,254,0.1));border:1px solid var(--border-b);border-radius:8px;display:flex;align-items:center;justify-content:center;color:var(--accent);}
+.vc-title{font-family:'Cormorant Garamond',serif;font-size:24px;font-weight:600;letter-spacing:-0.01em;margin-bottom:14px;}
+.vc-body{font-size:14px;color:var(--muted);line-height:1.8;font-weight:300;}
+
+/* ══════════ CUBE SECTION ══════════ */
+#cube-section{border-top:1px solid var(--border);background:linear-gradient(180deg,transparent,rgba(79,172,254,0.025) 50%,transparent);}
+.cube-layout{max-width:1280px;margin:0 auto;display:grid;grid-template-columns:1fr 1.2fr;gap:80px;align-items:center;}
+.cube-canvas-wrap{position:relative;height:480px;display:flex;align-items:center;justify-content:center;}
+#cube-canvas{display:block;}
+.cube-glow-ring{position:absolute;inset:0;border-radius:50%;background:radial-gradient(circle,rgba(0,229,192,0.06) 0%,transparent 70%);animation:pulseRing 5s ease-in-out infinite;}
+@keyframes pulseRing{0%,100%{transform:scale(1);opacity:0.8;}50%{transform:scale(1.08);opacity:1;}}
+.cube-data{display:flex;flex-direction:column;gap:2px;}
+.cube-row{display:flex;align-items:center;gap:14px;padding:14px 18px;background:var(--bg-card);border:1px solid var(--border);border-radius:6px;transition:border-color 0.2s;}
+.cube-row:hover{border-color:var(--border-b);}
+.cube-badge{padding:3px 10px;border-radius:3px;font-family:'DM Mono',monospace;font-size:9px;letter-spacing:0.08em;font-weight:700;flex-shrink:0;width:64px;text-align:center;}
+.cb1{background:rgba(0,229,192,0.12);color:var(--accent);}.cb2{background:rgba(79,172,254,0.12);color:var(--accent2);}.cb3{background:rgba(167,139,250,0.12);color:#a78bfa;}.cb4{background:rgba(189,180,168,0.12);color:var(--gold);}.cb5{background:rgba(52,211,153,0.12);color:var(--pos);}
+.cube-name{color:var(--muted);font-size:13px;flex:1;}
+.cube-val{font-family:'DM Mono',monospace;font-size:13px;color:var(--accent);font-weight:500;}
+.cube-conviction{margin-top:12px;padding:18px 20px;background:linear-gradient(135deg,rgba(0,229,192,0.06),rgba(79,172,254,0.04));border:1px solid var(--border-b);border-radius:8px;display:flex;justify-content:space-between;align-items:center;}
+.cube-conv-label{font-family:'DM Mono',monospace;font-size:10px;color:var(--muted);letter-spacing:0.1em;}
+.cube-conv-val{font-family:'Cormorant Garamond',serif;font-size:32px;font-weight:600;color:var(--accent);}
+
+/* ══════════ STRATEGY ══════════ */
+#strategy{border-top:1px solid var(--border);}
+.strat-layout{max-width:1280px;margin:0 auto;display:grid;grid-template-columns:1fr 1fr;gap:80px;align-items:start;}
+.pillars{display:flex;flex-direction:column;gap:0;margin-top:40px;}
+.pillar{padding:20px 22px;border:1px solid rgba(79,172,254,0.12);border-radius:6px;margin-bottom:3px;display:grid;grid-template-columns:42px 1fr;gap:14px;transition:all 0.2s;cursor:default;background:rgba(12,20,48,0.45);backdrop-filter:blur(8px);}
+.pillar:hover{border-color:rgba(0,229,192,0.3);background:rgba(12,20,48,0.7);}
+.p-num{font-family:'Cormorant Garamond',serif;font-size:22px;font-weight:600;color:var(--accent);opacity:0.6;padding-top:2px;}
+.p-title{font-weight:600;font-size:15px;margin-bottom:5px;letter-spacing:-0.01em;}
+.p-desc{font-size:13px;color:var(--muted);line-height:1.7;font-weight:300;}
+.sv-wrap{background:var(--bg-card);border:1px solid var(--border);border-radius:10px;overflow:hidden;position:relative;}
+.sv-wrap::before{content:'';position:absolute;top:0;left:0;right:0;height:2px;background:linear-gradient(90deg,var(--accent),var(--accent2),transparent);}
+.sv-header{padding:12px 20px;border-bottom:1px solid var(--border);display:flex;align-items:center;gap:8px;font-family:'DM Mono',monospace;font-size:9px;letter-spacing:0.12em;color:var(--faint);}
+.sv-dot{width:7px;height:7px;border-radius:50%;background:var(--accent);animation:blink 1.5s infinite;}
+
+/* ══════════ AI/FUTURE ══════════ */
+#ai-future{border-top:1px solid var(--border);background:linear-gradient(135deg,transparent,rgba(79,172,254,0.02) 50%,transparent);}
+.ai-layout{max-width:1280px;margin:0 auto;}
+.ai-grid{display:grid;grid-template-columns:1.1fr 1fr;gap:80px;align-items:center;margin-top:60px;}
+.ai-features{display:flex;flex-direction:column;gap:28px;}
+.aif{display:flex;gap:20px;align-items:flex-start;padding:18px;border-radius:8px;background:rgba(8,13,34,0.35);backdrop-filter:blur(6px);border:1px solid rgba(79,172,254,0.08);}
+.aif-icon{width:44px;height:44px;flex-shrink:0;background:linear-gradient(135deg,rgba(0,229,192,0.08),rgba(79,172,254,0.08));border:1px solid var(--border-b);border-radius:8px;display:flex;align-items:center;justify-content:center;color:var(--accent);}
+.aif-title{font-weight:600;font-size:16px;margin-bottom:6px;letter-spacing:-0.01em;}
+.aif-desc{font-size:14px;color:var(--muted);line-height:1.75;font-weight:300;}
+.manifesto{padding:40px;background:var(--bg-card);border:1px solid var(--border);border-radius:12px;position:relative;overflow:hidden;}
+.manifesto::before{content:'';position:absolute;top:0;left:0;right:0;height:3px;background:linear-gradient(90deg,var(--accent),var(--accent2));}
+.manifesto::after{content:'"\201D';position:absolute;bottom:-20px;right:20px;font-family:'Cormorant Garamond',serif;font-size:200px;line-height:1;color:rgba(0,229,192,0.04);pointer-events:none;}
+.mq{font-family:'Cormorant Garamond',serif;font-size:24px;font-weight:500;line-height:1.5;letter-spacing:-0.01em;color:var(--text);margin-bottom:32px;}
+.mq em{font-style:italic;color:var(--accent);}
+.m-metrics{display:grid;grid-template-columns:1fr 1fr;gap:10px;}
+.mm{padding:16px;background:var(--bg-mid);border:1px solid var(--border);border-radius:6px;}
+.mm-val{font-family:'Cormorant Garamond',serif;font-size:30px;font-weight:600;color:var(--accent);line-height:1;margin-bottom:4px;}
+.mm-lbl{font-size:9px;color:var(--faint);letter-spacing:0.12em;text-transform:uppercase;font-family:'DM Mono',monospace;}
+
+/* ══════════ LEADERSHIP ══════════ */
+#leadership{border-top:1px solid var(--border);}
+.lead-layout{max-width:1280px;margin:0 auto;}
+.lead-header{display:flex;flex-direction:column;align-items:center;text-align:center;gap:20px;margin-bottom:28px;max-width:700px;margin-left:auto;margin-right:auto;}
+.lead-cards{display:flex;gap:24px;flex-wrap:wrap;justify-content:center;}
+.lc{flex:0 0 340px;padding:36px;background:var(--bg-card);border:1px solid var(--border);border-radius:12px;display:flex;flex-direction:column;gap:22px;position:relative;overflow:hidden;transition:all 0.3s;}
+.lc:hover{border-color:var(--border-b);transform:translateY(-5px);box-shadow:0 28px 70px rgba(0,0,0,0.55);}
+.lc::before{content:'';position:absolute;top:0;right:0;width:140px;height:140px;background:radial-gradient(circle at top right,rgba(0,229,192,0.05) 0%,transparent 70%);}
+.lc-photo{position:relative;width:88px;height:88px;}
+.lc-photo img{width:88px;height:88px;border-radius:50%;object-fit:cover;object-position:center top;border:2px solid var(--border-b);filter:grayscale(20%) contrast(1.05);}
+.lc-online{position:absolute;bottom:3px;right:3px;width:13px;height:13px;border-radius:50%;background:var(--pos);border:2px solid var(--bg-card);}
+.lc-name{font-family:'Cormorant Garamond',serif;font-size:26px;font-weight:600;letter-spacing:-0.01em;line-height:1.1;}
+.lc-aka{font-family:'DM Mono',monospace;font-size:11px;color:var(--accent);letter-spacing:0.1em;margin-top:4px;}
+.lc-role{display:inline-flex;align-items:center;gap:7px;padding:5px 14px;width:fit-content;background:linear-gradient(135deg,rgba(0,229,192,0.08),rgba(79,172,254,0.06));border:1px solid var(--border-b);border-radius:100px;font-size:11px;font-weight:600;color:var(--accent);letter-spacing:0.07em;text-transform:uppercase;}
+.lc-bio{font-size:14px;color:var(--muted);line-height:1.78;font-weight:300;}
+.lc-tags{display:flex;flex-wrap:wrap;gap:7px;}
+.tag{padding:4px 11px;background:var(--bg-lift);border:1px solid var(--border);border-radius:100px;font-size:11px;color:var(--muted);letter-spacing:0.04em;}
+.lc-alum{display:flex;gap:8px;flex-wrap:wrap;align-items:center;padding-top:14px;border-top:1px solid var(--border);}
+.alum-lbl{font-size:9px;color:var(--faint);letter-spacing:0.12em;text-transform:uppercase;font-family:'DM Mono',monospace;}
+.atag{padding:3px 10px;background:var(--gold-dim);border:1px solid rgba(189,180,168,0.22);border-radius:3px;font-size:10px;color:var(--gold);letter-spacing:0.06em;font-weight:600;}
+.lc-naked{background:none!important;border:none!important;border-radius:0!important;padding:0 16px!important;align-items:center;text-align:center;max-width:640px;flex:0 0 640px!important;width:640px!important;margin:0 auto;}.lc-naked::before{display:none!important;}.lc-naked:hover{transform:none!important;box-shadow:none!important;border-color:transparent!important;}.lc-naked .lc-photo{width:130px;height:130px;margin:0 auto 8px;}.lc-naked .lc-photo img{width:130px;height:130px;border:3px solid var(--border-b);}.lc-naked .lc-online{bottom:6px;right:6px;width:16px;height:16px;border:3px solid var(--bg-base);}.lc-naked .lc-name{font-size:32px;}.lc-naked>div{align-items:center;justify-content:center;text-align:center;}.lc-naked .lc-role{margin:0 auto;}.lc-naked .lc-tags{justify-content:center;}.lc-naked .lc-alum{justify-content:center;border-top:1px solid rgba(122,144,184,0.18);}.lc-naked .lc-bio{font-size:15px;color:var(--muted);max-width:640px;width:100%;line-height:1.78;font-weight:300;text-align:center;margin:0 auto;}.lc-ph{flex:0 0 280px;padding:36px;background:var(--bg-lift);border:1px dashed var(--border);border-radius:12px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:16px;text-align:center;}
+.lc-ph-icon{width:72px;height:72px;border-radius:50%;background:var(--bg-card);border:2px solid var(--border);display:flex;align-items:center;justify-content:center;color:var(--faint);}
+.lc-ph-title{font-family:'Cormorant Garamond',serif;font-size:22px;font-weight:500;color:var(--faint);}
+.lc-ph-sub{font-size:13px;color:var(--faint);line-height:1.7;font-weight:300;}
+
+/* ══════════ STORY / TIMELINE ══════════ */
+#story{border-top:1px solid var(--border);}
+.story-wrap{max-width:900px;margin:0 auto;position:relative;z-index:1;}
+.timeline{margin-top:56px;padding-left:36px;position:relative;}
+.timeline::before{content:'';position:absolute;left:6px;top:6px;bottom:6px;width:1px;background:linear-gradient(180deg,var(--accent),var(--accent2),transparent);}
+.ti{position:relative;padding-bottom:52px;}
+.ti-panel{
+  background:rgba(8,14,32,0.55);
+  backdrop-filter:blur(12px);
+  -webkit-backdrop-filter:blur(12px);
+  border:1px solid rgba(79,172,254,0.15);
+  border-radius:10px;
+  padding:24px 28px;
+  border-left:2px solid rgba(0,229,192,0.4);
+}
+.ti:last-child{padding-bottom:0;}
+.ti-dot{position:absolute;left:-31px;top:5px;width:14px;height:14px;border-radius:50%;background:var(--bg);border:2px solid var(--accent);box-shadow:0 0 14px var(--glow);}
+.ti-year{font-family:'DM Mono',monospace;font-size:10px;color:#00e5c0;letter-spacing:0.14em;margin-bottom:8px;text-shadow:0 0 14px rgba(0,229,192,0.8),0 2px 10px rgba(5,9,26,1);}
+.ti-title{font-family:'Cormorant Garamond',serif;font-size:26px;font-weight:600;letter-spacing:-0.01em;margin-bottom:10px;color:var(--text);}
+.ti-body{font-size:15px;color:var(--muted);line-height:1.8;font-weight:300;max-width:640px;}
+
+/* ══════════ CTA ══════════ */
+#cta{border-top:1px solid var(--border);text-align:center;padding:160px 8%;}
+.cta-wrap{max-width:680px;margin:0 auto;}
+.cta-h{font-family:'Cormorant Garamond',serif;font-size:clamp(26px,3vw,44px);font-weight:400;line-height:1.08;letter-spacing:-0.01em;margin-bottom:22px;}
+.cta-h .accent{color:var(--gold);}
+.cta-h .italic{font-style:italic;color:var(--gold);}
+.cta-sub{font-size:18px;color:var(--muted);line-height:1.75;margin-bottom:48px;font-weight:300;}
+.cta-btns{display:flex;gap:14px;justify-content:center;flex-wrap:wrap;}
+.cta-disc{margin-top:32px;font-size:11px;color:rgba(122,144,184,0.85);line-height:1.7;font-style:italic;}
+
+/* ══════════ FOOTER ══════════ */
+footer{position:relative;z-index:1;padding:36px 8%;border-top:1px solid var(--border);display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:16px;}
+.f-brand{font-family:'Cormorant Garamond',serif;font-size:16px;font-weight:600;letter-spacing:0.1em;color:var(--muted);text-transform:uppercase;}
+.f-brand span{color:var(--accent);}
+.f-links{display:flex;gap:24px;list-style:none;}
+.f-links a{font-size:11px;color:var(--faint);letter-spacing:0.08em;transition:color 0.2s;}
+.f-links a:hover{color:var(--accent);}
+.f-copy{font-size:11px;color:var(--faint);}
+
+/* ══════════ PEOPLE CARDS TRANSLUCENT ══════════ */
+#people-cards .vc{background:rgba(12,20,48,0.35);backdrop-filter:blur(8px);border-color:rgba(79,172,254,0.15);}
+#people-cards .vc:hover{background:rgba(12,20,48,0.55);}
+
+/* ══════════ ANIMATIONS ══════════ */
+.fade-up{opacity:0;transform:translateY(28px);transition:opacity 0.75s ease,transform 0.75s ease;}
+.fade-up.vis{opacity:1;transform:translateY(0);}
+.d1{transition-delay:0.1s;}.d2{transition-delay:0.2s;}.d3{transition-delay:0.3s;}.d4{transition-delay:0.4s;}
+
+/* ══════════ RESPONSIVE ══════════ */
+@media(max-width:900px){
+  nav{padding:0 24px;}.nav-links{display:none;}
+  section,#hero{padding:80px 24px;}
+  #market-belt{padding:0 24px;}
+  .belt-grid,.about-layout,.strat-layout,.ai-grid,.lead-header{grid-template-columns:1fr;gap:40px;}
+  .vision-cards{grid-template-columns:1fr;}
+  .cube-layout{grid-template-columns:1fr;}
+  .perf-g{grid-template-columns:repeat(2,1fr);}
+  footer{flex-direction:column;text-align:center;}
+  .f-links{justify-content:center;}
+  .hero-canvas{width:100%;height:50%;top:auto;bottom:0;opacity:0.4;}
+}
+</style>
+</head>
+<body>
+
+<!-- Fixed background canvas for scroll story scenes -->
+<canvas id="story-canvas" style="position:fixed;top:0;left:0;width:100%;height:100%;z-index:0;pointer-events:none;"></canvas>
+
+
+<!-- ══════════ NAV ══════════ -->
+<nav id="nav">
+  <div class="nav-logo">
+    <svg width="38" height="38" viewBox="0 0 38 38" fill="none">
+      <!-- Outer hexagon -->
+      <polygon points="19,2 35,10.5 35,27.5 19,36 3,27.5 3,10.5" fill="none" stroke="#00e5c0" stroke-width="1.3"/>
+      <!-- Middle hexagon -->
+      <polygon points="19,8 30,14.2 30,25.8 19,32 8,25.8 8,14.2" fill="rgba(0,229,192,0.06)" stroke="#00e5c0" stroke-width="0.7"/>
+      <!-- Inner hexagon -->
+      <polygon points="19,14 25,17.5 25,24 19,27.5 13,24 13,17.5" fill="rgba(0,229,192,0.18)" stroke="#4facfe" stroke-width="0.5"/>
+      <!-- M square — small, centered inside inner hex -->
+      <rect x="13.5" y="13.5" width="11" height="11" rx="2" stroke="#00d4aa" stroke-width="1.1" fill="rgba(0,20,20,0.5)"/>
+      <path d="M16 22.5V15.5l3 3.5 3-3.5v7" stroke="#00d4aa" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round" fill="none"/>
+      <!-- Connector lines -->
+      <line x1="19" y1="2" x2="19" y2="8" stroke="#00e5c0" stroke-width="0.6" opacity="0.5"/>
+      <line x1="35" y1="10.5" x2="30" y2="14.2" stroke="#00e5c0" stroke-width="0.6" opacity="0.5"/>
+      <line x1="35" y1="27.5" x2="30" y2="25.8" stroke="#00e5c0" stroke-width="0.6" opacity="0.5"/>
+      <line x1="19" y1="36" x2="19" y2="32" stroke="#00e5c0" stroke-width="0.6" opacity="0.5"/>
+      <line x1="3" y1="27.5" x2="8" y2="25.8" stroke="#00e5c0" stroke-width="0.6" opacity="0.5"/>
+      <line x1="3" y1="10.5" x2="8" y2="14.2" stroke="#00e5c0" stroke-width="0.6" opacity="0.5"/>
+    </svg>
+    <div class="nav-wordmark">
+      <span class="nav-word-rest">etadron</span>
+      <span class="nav-word-capital">Capital</span>
+    </div>
+  </div>
+  <ul class="nav-links">
+    <li><a href="#about">About</a></li>
+    <li><a href="#vision">Vision</a></li>
+    <li><a href="#cube-section">The Cube</a></li>
+    <li><a href="#strategy">Strategy</a></li>
+    <li><a href="#leadership">Leadership</a></li>
+    <li><a href="#people">People</a></li>
+    <li><a href="#story">Story</a></li>
+  </ul>
+  <a href="login.html" class="nav-cta">
+    Investor Portal
+    <svg width="12" height="12" viewBox="0 0 12 12" fill="none"><path d="M2 6h8M6 2l4 4-4 4" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/></svg>
+  </a>
+</nav>
+
+<!-- ══════════ HERO ══════════ -->
+<section id="hero">
+  <canvas class="hero-canvas" id="hero-canvas"></canvas>
+  <div class="hero-content">
+    <div class="hero-rule fade-up">
+      <span class="hero-rule-dot"></span>
+      Multi-Asset · Quantitative · Systematic
+    </div>
+    <h1 class="hero-h1 fade-up d1">
+      Capital<br/>
+      engineered<br/>
+      for the<br/>
+      <span class="accent">intelligence</span><br/>
+      <span class="gold">economy.</span>
+    </h1>
+    <p class="hero-sub fade-up d2">
+      A quantitative investment platform that turns market fragmentation into measurable, repeatable performance. We deploy capital where behavioural bias, structural dislocation, and regime transition create opportunities invisible to conventional analysis.
+    </p>
+    <div class="hero-btns fade-up d3">
+      <a href="#about" class="btn-prime">
+        Our Approach
+        <svg width="14" height="14" viewBox="0 0 14 14" fill="none"><path d="M3 7h8M8 4l3 3-3 3" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>
+      </a>
+      <a href="login.html" class="btn-sec">Investor Portal</a>
+    </div>
+  </div>
+  <div class="scroll-ind">
+    <span>Scroll</span>
+    <svg width="14" height="18" viewBox="0 0 14 18" fill="none"><rect x="1" y="1" width="12" height="16" rx="6" stroke="#3a4e6e" stroke-width="1.2"/><rect x="6" y="4" width="2" height="5" rx="1" fill="#00e5c0"/></svg>
+  </div>
+</section>
+
+<!-- ══════════ MARKET BELT ══════════ -->
+<div id="market-belt">
+  <div class="belt-grid">
+    <div>
+      <div class="belt-section-label">Global Sessions</div>
+      <div class="clocks" id="clocks"></div>
+    </div>
+    <div>
+      <div class="belt-section-label">Live Performance</div>
+      <div class="perf-g">
+        <div class="pc"><div class="pc-lbl">Win Rate</div><div class="pc-val pos" id="pf-wr">68.4%</div><div class="pc-sub">Since inception</div></div>
+        <div class="pc"><div class="pc-lbl">Sharpe Ratio</div><div class="pc-val acc" id="pf-sh">2.14</div><div class="pc-sub">Trailing 12m</div></div>
+        <div class="pc"><div class="pc-lbl">Daily PnL</div><div class="pc-val pos" id="pf-dp">+0.34%</div><div class="pc-sub">Updated live</div></div>
+        <div class="pc"><div class="pc-lbl">Monthly Ret.</div><div class="pc-val pos" id="pf-mr">+3.8%</div><div class="pc-sub">April 2026</div></div>
+        <div class="pc"><div class="pc-lbl">Inception Ret.</div><div class="pc-val gld" id="pf-ir">+41.2%</div><div class="pc-sub">Net of fees</div></div>
+        <div class="pc"><div class="pc-lbl">Daily NAV</div><div class="pc-val blu" id="pf-nv">$1,412.80</div><div class="pc-sub">Per unit · Apr 2</div></div>
+        <div class="pc"><div class="pc-lbl">Max Drawdown</div><div class="pc-val neg" id="pf-dd">-4.1%</div><div class="pc-sub">Trailing 12m</div></div>
+        <div class="pc"><div class="pc-lbl">Sortino Ratio</div><div class="pc-val acc" id="pf-so">3.02</div><div class="pc-sub">Annualised</div></div>
+      </div>
+      <p class="belt-disc">Performance figures are indicative and illustrative only. Past performance does not guarantee future results. Not investment advice.</p>
+    </div>
+  </div>
+</div>
+
+<!-- ══════════ ABOUT ══════════ -->
+<section id="about">
+  <div class="about-layout">
+    <div class="fade-up">
+      <div class="terminal">
+        <div class="t-bar">
+          <div class="t-dot" style="background:#ef4444"></div>
+          <div class="t-dot" style="background:#f59e0b"></div>
+          <div class="t-dot" style="background:#22c55e"></div>
+          <span class="t-label">METADRON CUBE · SIGNAL ENGINE</span>
+        </div>
+        <div class="t-body">
+          <div><span class="tk">class</span> <span class="tv">MetadronCapital</span>:</div>
+          <div style="padding-left:20px"><span class="tk">strategy</span> = <span class="ts">"structural_alpha"</span></div>
+          <div style="padding-left:20px"><span class="tk">edge</span> = <span class="ts">"multi_asset_quantitative"</span></div>
+          <div style="padding-left:20px"><span class="tk">universe</span> = [<span class="ts">"equities"</span>, <span class="ts">"fixed_income"</span>, <span class="ts">"futures"</span>]</div>
+          <div style="padding-left:20px"><span class="tk">cycle</span> = <span class="ts">"24/7"</span></div>
+          <div style="padding-left:20px;margin-top:6px"><span class="tk">def</span> <span class="tv">compute_edge</span>():</div>
+          <div style="padding-left:40px"><span class="tk">cube</span> = <span class="tv">MetadronCube</span>.run()</div>
+          <div style="padding-left:40px"><span class="tk">return</span> cube.execute_if_valid()</div>
+          <div style="margin-top:10px"><span class="tc"># Live signal output:</span></div>
+          <div><span class="tk">signal</span> = { <span class="ts">"edge"</span>: <span class="tn" id="ab-edge">+0.724</span>, <span class="ts">"conf"</span>: <span class="tn" id="ab-conf">0.88</span>, <span class="ts">"regime"</span>: <span class="ts" id="ab-reg">"BULL"</span> }</div>
+        </div>
+      </div>
+      <div class="about-stats">
+        <div class="as-card"><div class="as-n">5</div><div class="as-d">Sleeve Allocation Strategy</div></div>
+        <div class="as-card"><div class="as-n">24/7</div><div class="as-d">Cross-Asset Coverage</div></div>
+        <div class="as-card"><div class="as-n">100+</div><div class="as-d">Inefficiency Signals Tracked</div></div>
+        <div class="as-card"><div class="as-n">4-Gate</div><div class="as-d">Conviction-Gated Execution</div></div>
+      </div>
+    </div>
+    <div class="fade-up d2">
+      <div class="sec-eyebrow">About</div>
+      <h2 class="sec-title">Engineered where <span class="accent">complexity</span> meets <span class="italic">conviction.</span></h2>
+      <div class="rule-line"></div>
+      <p class="sec-body">Academic research has long documented that market inefficiencies are not random. They are driven by behavioural persistence, informational asymmetry, and institutional constraints that create predictable patterns of mispricing. Most investment firms acknowledge this. Very few have built the infrastructure to act on it systematically. Metadron Capital was founded on a single premise: that these inefficiencies can be identified, classified, and harvested through superior architecture.</p>
+      <br/>
+      <p class="sec-body">Our approach replaces discretionary judgement with a rigorous, multi-layered validation process. Every position is the output of quantitative models that interrogate macro conditions, factor exposures, regime state, and portfolio-level risk before capital moves. The result is a portfolio constructed by evidence, not opinion.</p>
+    </div>
+  </div>
+</section>
+
+<!-- ══════════ VISION ══════════ -->
+<section id="vision" style="position:relative;overflow:hidden;">
+  <canvas id="retina-canvas" style="position:absolute;inset:0;width:100%;height:100%;z-index:0;pointer-events:none;opacity:0.55;"></canvas>
+  <div class="vision-wrap">
+    <div class="fade-up">
+      <div class="sec-eyebrow">Vision</div>
+      <h2 class="sec-title">A <span class="accent">quantitative</span> framework for capital.</h2>
+      <div class="rule-line"></div>
+      <p class="sec-body">We believe the next generation of outperformance will come from platforms that learn and adapt in real time. Markets evolve. Regimes shift. Factor premia rotate. A static allocation framework cannot capture the dynamics of a living system. Metadron's vision is a continuously improving investment architecture that becomes more precise with every market cycle it observes.</p>
+    </div>
+    <div class="vision-cards">
+      <div class="vc fade-up d1">
+        <div class="vc-num">01</div>
+        <div class="vc-icon">
+          <svg width="22" height="22" viewBox="0 0 22 22" fill="none"><circle cx="11" cy="11" r="9" stroke="currentColor" stroke-width="1.3"/><path d="M7 11h8M11 7v8" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/></svg>
+        </div>
+        <div class="vc-title">Conviction Over Consensus</div>
+        <div class="vc-body">Capital is allocated only when multiple independent signals converge. No single indicator, however strong, is sufficient to generate a position. This convergence requirement dramatically reduces false positives and concentrates risk in the highest probability outcomes.</div>
+      </div>
+      <div class="vc fade-up d2">
+        <div class="vc-num">02</div>
+        <div class="vc-icon">
+          <svg width="22" height="22" viewBox="0 0 22 22" fill="none"><rect x="3" y="7" width="16" height="11" rx="2" stroke="currentColor" stroke-width="1.3"/><path d="M6 14l3-4 3 3 2-2.5 2 1.5" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"/><path d="M14 4h6M17 2v4" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/></svg>
+        </div>
+        <div class="vc-title">Structural Edge Extraction</div>
+        <div class="vc-body">Every trade originates from a documented market inefficiency. The system classifies and scores opportunities across mean-reversion, event-driven, credit dislocation, and contagion dynamics. When conditions shift, capital reallocates before the thesis breaks.</div>
+      </div>
+      <div class="vc fade-up d3">
+        <div class="vc-num">03</div>
+        <div class="vc-icon">
+          <svg width="22" height="22" viewBox="0 0 22 22" fill="none"><polygon points="11,2 20,7 20,17 11,22 2,17 2,7" stroke="currentColor" stroke-width="1.3" fill="none"/><circle cx="11" cy="12" r="3" stroke="currentColor" stroke-width="1.3"/><path d="M11 2v4M11 17v3" stroke="currentColor" stroke-width="1.1" opacity="0.5"/></svg>
+        </div>
+        <div class="vc-title">Five Sleeves, Zero Ego</div>
+        <div class="vc-body">Portfolio construction follows a regime-aware tactical allocation model. Sleeve weightings shift dynamically based on state variables including momentum, volatility, credit spreads, and liquidity conditions. The allocation is objective, measurable, and fully attributable.</div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ══════════ THE CUBE ══════════ -->
+<section id="cube-section">
+  <div class="cube-layout">
+    <div class="cube-canvas-wrap fade-up">
+      <div class="cube-glow-ring"></div>
+      <canvas id="cipher-canvas" width="440" height="440"></canvas>
+    </div>
+    <div class="fade-up d2">
+      <div class="sec-eyebrow">The Metadron Cube</div>
+      <h2 class="sec-title">The <em class="accent">engine</em> behind every decision.</h2>
+      <div class="rule-line"></div>
+      <p class="sec-body" style="margin-bottom:32px;">The Metadron Cube is our proprietary decision engine. It ingests over 100 real-time signal inputs spanning liquidity flows, carry-to-volatility ratios, credit impulse, regime classification, and contagion risk. These signals are synthesised into a single composite conviction score. If the score does not clear the threshold, capital does not move. That discipline has been central to our drawdown management.</p>
+      <div class="cube-data">
+        <div class="cube-row"><div class="cube-badge cb1">L1</div><div class="cube-name">Liquidity & Plumbing Tensor</div><div class="cube-val" id="cv1">+0.724</div></div>
+        <div class="cube-row"><div class="cube-badge cb2">L2</div><div class="cube-name">Carry vs. Volatility Spread</div><div class="cube-val" id="cv2">+0.412</div></div>
+        <div class="cube-row"><div class="cube-badge cb3">L3</div><div class="cube-name">Credit & Collateral Impulse</div><div class="cube-val" id="cv3">+0.183</div></div>
+        <div class="cube-row"><div class="cube-badge cb4">L4</div><div class="cube-name">Regime Classification</div><div class="cube-val" id="cv4">BULL · 0.84</div></div>
+        <div class="cube-row"><div class="cube-badge cb5">L5</div><div class="cube-name">Kill-Switch Risk Gate</div><div class="cube-val" style="color:var(--pos);">CLEAR</div></div>
+        <div class="cube-conviction">
+          <span class="cube-conv-label">Unified Conviction Score</span>
+          <span class="cube-conv-val" id="cv-total">0.86 / 1.00</span>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ══════════ STRATEGY ══════════ -->
+<section id="strategy">
+  <div class="strat-layout">
+    <div>
+      <div class="sec-eyebrow fade-up">Strategy</div>
+      <h2 class="sec-title fade-up">Multi-asset, cross-market, relentless.</h2>
+      <div class="rule-line fade-up"></div>
+      <p class="sec-body fade-up">Our investment process is designed to extract returns from structural market phenomena that most participants either misunderstand or lack the infrastructure to capture. Each strategy sleeve targets a distinct source of return, ensuring genuine diversification at the portfolio level rather than correlated bets labelled differently.</p>
+      <div class="pillars fade-up d1">
+        <div class="pillar"><div class="p-num">01</div><div><div class="p-title">Liquidity Plumbing</div><div class="p-desc">We decompose central bank balance sheets, dealer reserve flows, Treasury General Account movements, and collateral velocity to map where liquidity is accumulating before it surfaces in price. Positioning ahead of these flows has been a consistent source of early-cycle alpha.</div></div></div>
+        <div class="pillar"><div class="p-num">02</div><div><div class="p-title">Carry vs. Volatility</div><div class="p-desc">Carry strategies are normalised against realised and implied volatility to isolate genuine risk premium from disguised duration exposure. This distinction, overlooked by most systematic strategies, has materially improved the portfolio's risk-adjusted return profile.</div></div></div>
+        <div class="pillar"><div class="p-num">03</div><div><div class="p-title">Event-Driven &amp; Dislocations</div><div class="p-desc">Merger arbitrage, distressed credit, spinoffs, activist situations, and contingent value rights are modelled across twelve event categories. Our quantitative approach identifies the dislocation window and sizes positions to capture the information asymmetry at its widest point.</div></div></div>
+        <div class="pillar"><div class="p-num">04</div><div><div class="p-title">Regime Intelligence</div><div class="p-desc">A proprietary regime classifier distinguishes between trending, ranging, stress, and crash environments with sub-daily resolution. A contagion graph maps systemic linkages so that when correlations spike and traditional diversification fails, our allocation has already rotated to a defensive posture.</div></div></div>
+        <div class="pillar"><div class="p-num">05</div><div><div class="p-title">Execution &amp; Kill Switch</div><div class="p-desc">Position sizing follows a Kelly-optimised framework bounded by portfolio-level drawdown gates and a strict beta corridor. An automated circuit breaker activates during periods of systemic stress, reducing gross exposure before losses compound. Capital preservation in tail events is not a feature. It is a design principle.</div></div></div>
+      </div>
+    </div>
+    <div class="fade-up d2" style="padding-top:160px;">
+      <div style="width:100%;">
+        <div style="font-family:'DM Mono',monospace;font-size:8px;letter-spacing:0.12em;color:var(--faint);text-transform:uppercase;margin-bottom:10px;">Live Trading Terminal — Dashboard View</div>
+        <img src="terminal-dashboard.jpg" loading="lazy" alt="Metadron Live Dashboard" style="display:block;width:100%;border-radius:12px;border:1px solid rgba(0,229,192,0.18);box-shadow:0 12px 60px rgba(0,0,0,0.7);" />
+      </div>
+      <div style="margin-top:16px;width:100%;">
+        <div style="font-family:'DM Mono',monospace;font-size:8px;letter-spacing:0.12em;color:var(--faint);text-transform:uppercase;margin-bottom:10px;">Metadron Cube — Signal Architecture</div>
+        <img src="cube-signal.jpg" loading="lazy" alt="Metadron WRAP Dashboard" style="display:block;width:100%;border-radius:12px;border:1px solid rgba(0,229,192,0.18);box-shadow:0 12px 60px rgba(0,0,0,0.7);" />
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ══════════ AI / FUTURE ══════════ -->
+<section id="ai-future">
+  <div class="ai-layout">
+    <div class="fade-up">
+      <div class="sec-eyebrow">The Intelligence Layer</div>
+      <h2 class="sec-title">Where quantitative intelligence meets cross-asset discipline.</h2>
+      <div class="rule-line"></div>
+    </div>
+    <div class="ai-grid">
+      <div class="ai-features">
+        <div class="aif fade-up d1">
+          <div class="aif-icon"><svg width="20" height="20" viewBox="0 0 20 20" fill="none"><circle cx="10" cy="10" r="8" stroke="currentColor" stroke-width="1.3"/><path d="M6 10l3 3 5-6" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"/></svg></div>
+          <div><div class="aif-title">Faster Than the Narrative</div><div class="aif-desc">Our models process thousands of securities across the 11 GICS sectors in real time. By the time a narrative forms around a market move, the Cube has already identified the signal, validated it against regime conditions, and repositioned accordingly. Speed without accuracy is reckless. We have both.</div></div>
+        </div>
+        <div class="aif fade-up d2">
+          <div class="aif-icon"><svg width="20" height="20" viewBox="0 0 20 20" fill="none"><path d="M3 10h14M10 3v14" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/><circle cx="10" cy="10" r="3" stroke="currentColor" stroke-width="1.3"/></svg></div>
+          <div><div class="aif-title">Adaptive, Not Static</div><div class="aif-desc">The platform continuously retrains its signal weightings as market conditions evolve. What worked in a low-volatility carry regime will not work in a stress-driven deleveraging cycle. Our architecture recognises these transitions and adapts allocation weightings accordingly, keeping the portfolio aligned with where the opportunity set actually is.</div></div>
+        </div>
+        <div class="aif fade-up d3">
+          <div class="aif-icon"><svg width="20" height="20" viewBox="0 0 20 20" fill="none"><rect x="3" y="3" width="14" height="14" rx="2" stroke="currentColor" stroke-width="1.3"/><path d="M7 10l2 2 4-4" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/></svg></div>
+          <div><div class="aif-title">Every Dollar Has a Reason</div><div class="aif-desc">Every position in the portfolio carries full attribution from signal origination through to execution. Investors can trace each trade to a specific market condition, a specific model output, and a specific risk budget. This level of transparency is rare in quantitative strategies and central to our investor reporting.</div></div>
+        </div>
+        <div class="aif fade-up d4">
+          <div class="aif-icon"><svg width="20" height="20" viewBox="0 0 20 20" fill="none"><path d="M4 16L10 4l6 12" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"/><path d="M6 12h8" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/></svg></div>
+          <div><div class="aif-title">The Map Rewrites Itself</div><div class="aif-desc">Alpha decays. Every successful strategy attracts capital and compresses its own returns over time. The Cube is designed to detect this decay and continuously scan for the next generation of mispricings before they become crowded. This self-renewing quality is what separates a platform from a strategy.</div></div>
+        </div>
+      </div>
+      <div class="fade-up d2" style="padding:40px 0;">
+        <div style="background:rgba(0,229,192,0.05);border:1px solid rgba(0,229,192,0.15);border-radius:12px;padding:28px 36px;backdrop-filter:blur(8px);margin-bottom:32px;"><p class="mq" style="margin-bottom:0;">Structural inefficiencies are <em style="color:var(--gold);">persistent, repeatable, and engineerable</em> but only for platforms with the architecture to observe the full surface. The next decade of outperformance will belong to those who built the infrastructure to capture what others cannot see.</p></div>
+        <div class="m-metrics">
+          <div class="mm"><div class="mm-val">100+</div><div class="mm-lbl">Signal Inputs</div></div>
+          <div class="mm"><div class="mm-val">24/7</div><div class="mm-lbl">Market Coverage</div></div>
+          <div class="mm"><div class="mm-val">&lt;50ms</div><div class="mm-lbl">Signal Latency</div></div>
+          <div class="mm"><div class="mm-val">5-Layer</div><div class="mm-lbl">Cube Architecture</div></div>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+
+<!-- ══════════ LEADERSHIP ══════════ -->
+<section id="leadership">
+  <div class="lead-layout">
+    <div class="lead-header">
+      <div class="fade-up">
+        <div class="sec-eyebrow" style="justify-content:center;">Leadership</div>
+        <h2 class="sec-title" style="text-align:center;">Built by Practitioners, Powered by Machines <span class="accent">for the Future</span></h2>
+        <div class="rule-line"></div>
+      </div>
+      <div class="fade-up d2">
+        <p style="font-size:15px;color:var(--muted);max-width:640px;line-height:1.78;font-weight:300;text-align:center;margin:0 auto;">Our leadership comes from the institutional trading floors of Morgan Stanley, Dodge &amp; Cox, and Bank of America Merrill Lynch. Years of managing live capital across fixed income, rates, and multi-asset portfolios provided the empirical foundation for everything Metadron builds. The insight was always the same: the greatest source of alpha is not information. It is the infrastructure to act on it.</p>
+      </div>
+    </div>
+    <div class="lead-cards">
+      <div class="lc lc-naked fade-up">
+        <div class="lc-photo">
+          <img src="aj.jpg" loading="lazy" alt="Ahmed Jamal"/>
+          <div class="lc-online"></div>
+        </div>
+        <div>
+          <div class="lc-name">Ahmed Jamal</div>
+          <div class="lc-aka">AJ &nbsp;·&nbsp; Trader</div>
+        </div>
+        <div class="lc-role">
+          <svg width="10" height="10" viewBox="0 0 10 10" fill="none"><polygon points="5,1 9,3 9,7 5,9 1,7 1,3" stroke="currentColor" stroke-width="1"/></svg>
+          Founder &amp; CEO
+        </div>
+        <p class="lc-bio">Ahmed Jamal is a multi-asset investment professional based in New York. He spent years managing institutional capital at Morgan Stanley, Dodge &amp; Cox, and Bank of America Merrill Lynch before founding Metadron Capital. His experience across rates, credit, and multi-asset mandates provides the empirical foundation for the platform's investment process. MSc Management, Cass Business School.</p>
+        <div class="lc-tags">
+          <span class="tag">Multi-Asset</span>
+          <span class="tag">Quantitative</span>
+          <span class="tag">Multi-Asset</span>
+          <span class="tag">Systematic Alpha</span>
+          <span class="tag">Morgan Stanley</span>
+        </div>
+        <div class="lc-alum">
+          <span class="alum-lbl">Alumni</span>
+          <span class="atag">Morgan Stanley</span>
+          <span class="atag">Dodge &amp; Cox</span>
+          <span class="atag">BofA Merrill Lynch</span>
+          <span class="atag">Cass Business School</span>
+        </div>
+      </div>
+    </div>
+    </div>
+  </div>
+</section>
+
+<!-- ══════════ PEOPLE & AI ══════════ -->
+<section id="people" style="position:relative;overflow:hidden;border-top:1px solid var(--border);">
+  <canvas id="brain-canvas" style="position:absolute;inset:0;width:100%;height:100%;z-index:0;pointer-events:none;opacity:0.85;"></canvas>
+  <div style="position:relative;z-index:1;max-width:1280px;margin:0 auto;">
+    <div class="fade-up" style="text-align:center;margin-bottom:64px;">
+      <div class="sec-eyebrow" style="justify-content:center;">Our People &amp; Culture</div>
+      <h2 class="sec-title" style="text-align:center;">Where quantitative edge meets<br/><span class="italic">institutional discipline.</span></h2>
+      <div class="rule-line" style="margin:22px auto;"></div>
+      <p class="sec-body" style="max-width:640px;margin:0 auto;text-align:center;">We are building a team of practitioners and engineers who have managed real capital, experienced real drawdowns, and understand that the difference between a good idea and a profitable position is execution infrastructure. Metadron is where institutional market knowledge meets quantitative engineering at production scale.</p>
+    </div>
+    <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:22px;" class="fade-up d1" id="people-cards">
+      <div class="vc" style="text-align:center;padding:40px 28px;">
+        <div class="vc-num">01</div>
+        <div class="vc-icon" style="margin:0 auto 24px;">
+          <svg width="22" height="22" viewBox="0 0 22 22" fill="none"><circle cx="11" cy="7" r="4" stroke="currentColor" stroke-width="1.3"/><path d="M3 20c0-4.418 3.582-8 8-8s8 3.582 8 8" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/></svg>
+        </div>
+        <div class="vc-title">Practitioners Who Build</div>
+        <div class="vc-body">Every team member brings direct experience managing capital, building production-grade systems, or both. We do not hire theorists. We hire practitioners who have seen what works and what fails in live markets.</div>
+      </div>
+      <div class="vc" style="text-align:center;padding:40px 28px;">
+        <div class="vc-num">02</div>
+        <div class="vc-icon" style="margin:0 auto 24px;">
+          <svg width="22" height="22" viewBox="0 0 22 22" fill="none"><rect x="2" y="8" width="18" height="11" rx="2" stroke="currentColor" stroke-width="1.3"/><path d="M7 8V6a4 4 0 0 1 8 0v2" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/><circle cx="11" cy="13" r="1.5" fill="currentColor"/></svg>
+        </div>
+        <div class="vc-title">Machines With Mentors</div>
+        <div class="vc-body">Human judgement defines the investment framework. Machine execution delivers the consistency, speed, and discipline that no discretionary process can match. This synthesis of human insight and machine precision is the foundation of our performance.</div>
+      </div>
+      <div class="vc" style="text-align:center;padding:40px 28px;">
+        <div class="vc-num">03</div>
+        <div class="vc-icon" style="margin:0 auto 24px;">
+          <svg width="22" height="22" viewBox="0 0 22 22" fill="none"><path d="M4 11h14M11 4v14" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/><circle cx="11" cy="11" r="8" stroke="currentColor" stroke-width="1.3"/></svg>
+        </div>
+        <div class="vc-title">Scaling the Edge</div>
+        <div class="vc-body">We are selectively building out capabilities in regime modelling, low-latency signal processing, and portfolio construction research. If you think in probabilities and build for production, we want to hear from you.</div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ══════════ STORY / TIMELINE ══════════ -->
+<section id="story" style="position:relative;overflow:hidden;">
+  <!-- AI Trading Floor Canvas Simulation — 3D Spider Web Network v3 -->
+  <canvas id="tradingFloorCanvas" style="position:absolute;inset:0;z-index:0;width:100%;height:100%;"></canvas>
+  <script>
+  (function(){
+    const cvs = document.getElementById('tradingFloorCanvas');
+    const ctx = cvs.getContext('2d');
+    let W, H, dpr;
+
+    function resize(){
+      dpr = window.devicePixelRatio || 1;
+      const rect = cvs.parentElement.getBoundingClientRect();
+      W = rect.width; H = rect.height;
+      cvs.width = W * dpr; cvs.height = H * dpr;
+      cvs.style.width = W + 'px'; cvs.style.height = H + 'px';
+      ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    }
+    window.addEventListener('resize', resize);
+    resize();
+
+    const DARK = '#05091a';
+    const TEAL = '#00e5c8';
+    const BLUE = '#1a6bff';
+    const CYAN = '#00d4ff';
+    const GREEN = '#4dff91';
+    const RED = '#ff5252';
+
+    // ── NODES — spider-web placement ──
+    function spiderWebPositions(total){
+      const positions = [];
+      // Center hub
+      positions.push({x:0.5, y:0.5, z:0.1});
+      // Rings radiating outward
+      const rings = [
+        {r:0.12, count:6, z:0.15},
+        {r:0.24, count:10, z:0.3},
+        {r:0.36, count:14, z:0.5},
+        {r:0.46, count:16, z:0.7}
+      ];
+      for(const ring of rings){
+        for(let i=0; i<ring.count && positions.length<total; i++){
+          const angle = (Math.PI*2/ring.count)*i + (ring.r>0.2 ? Math.PI/ring.count : 0);
+          const jitter = 0.015;
+          positions.push({
+            x: 0.5 + Math.cos(angle)*ring.r + (Math.random()-0.5)*jitter,
+            y: 0.5 + Math.sin(angle)*ring.r*(0.85) + (Math.random()-0.5)*jitter,
+            z: ring.z + Math.random()*0.15
+          });
+        }
+      }
+      // Fill remaining with outer scattered
+      while(positions.length < total){
+        const angle = Math.random()*Math.PI*2;
+        const r = 0.35 + Math.random()*0.15;
+        positions.push({
+          x: 0.5 + Math.cos(angle)*r + (Math.random()-0.5)*0.03,
+          y: 0.5 + Math.sin(angle)*r*0.85 + (Math.random()-0.5)*0.03,
+          z: 0.6 + Math.random()*0.4
+        });
+      }
+      return positions;
+    }
+
+    class Node {
+      constructor(i, total){
+        const pos = nodePositions[i];
+        this.x = pos.x;
+        this.y = pos.y;
+        this.z = pos.z;
+        this.baseX = this.x; this.baseY = this.y;
+        this.phase = Math.random() * Math.PI * 2;
+        this.speed = 0.15 + Math.random() * 0.25; // SLOWER
+        this.color = [TEAL, CYAN, BLUE, TEAL, CYAN][Math.floor(Math.random()*5)];
+        this.pulsePhase = Math.random() * Math.PI * 2;
+
+        // OHLC candlestick data for realistic charts
+        this.candles = [];
+        let close = 150 + Math.random() * 200;
+        for(let j = 0; j < 30; j++){
+          const open = close;
+          close = open + (Math.random() - 0.48) * 12;
+          const high = Math.max(open, close) + Math.random() * 6;
+          const low = Math.min(open, close) - Math.random() * 6;
+          const vol = 20 + Math.random() * 80;
+          this.candles.push({ o: open, h: high, l: low, c: close, v: vol });
+        }
+
+        this.hasChart = Math.random() < 0.5;
+        this.chartW = 80 + Math.random() * 60;
+        this.chartH = 45 + Math.random() * 30;
+        this.chartTicker = ['AAPL','MSFT','SPY','QQQ','BTC','ETH','ES','NQ','GLD','VIX','TLT','AMZN','NVDA','GOOG'][Math.floor(Math.random()*14)];
+        this.chartColor = Math.random() < 0.6 ? GREEN : RED;
+        this.isAgent = Math.random() < 0.15;
+        this.sx = 0; this.sy = 0; this.scale = 1;
+      }
+      update(t){
+        this.phase += 0.001 * this.speed; // SLOWER drift
+        this.pulsePhase += 0.01; // SLOWER pulse
+        const parallax = 1 - this.z * 0.5;
+        const worldDriftX = Math.sin(t * 0.000025) * 0.015 * parallax; // SLOWER world
+        const worldDriftY = Math.cos(t * 0.00003) * 0.008 * parallax;
+        this.x = this.baseX + Math.sin(this.phase) * 0.008 + worldDriftX;
+        this.y = this.baseY + Math.cos(this.phase * 0.7) * 0.005 + worldDriftY;
+        this.sx = this.x * W;
+        this.sy = this.y * H;
+        this.scale = 0.45 + (1 - this.z) * 0.75; // MORE depth range
+        // Update candles slowly
+        if(this.hasChart && Math.random() < 0.015){
+          this.candles.shift();
+          const prev = this.candles[this.candles.length-1];
+          const open = prev.c;
+          const close = open + (Math.random() - 0.48) * 12;
+          const high = Math.max(open, close) + Math.random() * 6;
+          const low = Math.min(open, close) - Math.random() * 6;
+          const vol = 20 + Math.random() * 80;
+          this.candles.push({ o: open, h: high, l: low, c: close, v: vol });
+        }
+      }
+      draw(t){
+        const da = 0.25 + (1 - this.z) * 0.75; // depth alpha
+        const s = this.scale;
+        ctx.save();
+
+        if(this.isAgent){
+          const sz = 10 * s + 5;
+          ctx.globalAlpha = da * (0.4 + Math.sin(this.pulsePhase) * 0.08);
+          ctx.fillStyle = this.color;
+          ctx.globalAlpha *= 0.3;
+          ctx.beginPath();
+          ctx.moveTo(this.sx - sz*0.45, this.sy + sz*0.3);
+          ctx.lineTo(this.sx + sz*0.45, this.sy + sz*0.3);
+          ctx.lineTo(this.sx + sz*0.35, this.sy - sz*0.5);
+          ctx.lineTo(this.sx - sz*0.35, this.sy - sz*0.5);
+          ctx.closePath();
+          ctx.fill();
+          ctx.strokeStyle = this.color;
+          ctx.lineWidth = 0.6 * s;
+          ctx.globalAlpha = da * 0.45;
+          ctx.stroke();
+          const headY = this.sy - sz * 0.75;
+          ctx.beginPath();
+          ctx.arc(this.sx, headY, sz*0.25, 0, Math.PI*2);
+          ctx.fillStyle = DARK;
+          ctx.globalAlpha = da * 0.7;
+          ctx.fill();
+          ctx.strokeStyle = this.color;
+          ctx.stroke();
+          ctx.shadowColor = this.color;
+          ctx.shadowBlur = 8 * s;
+          ctx.fillStyle = this.color;
+          ctx.globalAlpha = da * (0.6 + Math.sin(this.pulsePhase*1.3)*0.25);
+          ctx.fillRect(this.sx - sz*0.16, headY - sz*0.06, sz*0.32, sz*0.09);
+          ctx.shadowBlur = 0;
+        } else {
+          const r = 1.8 * s + 1;
+          ctx.globalAlpha = da * (0.5 + Math.sin(this.pulsePhase) * 0.15);
+          ctx.shadowColor = this.color;
+          ctx.shadowBlur = 10 * s;
+          ctx.fillStyle = this.color;
+          ctx.beginPath();
+          ctx.arc(this.sx, this.sy, r, 0, Math.PI*2);
+          ctx.fill();
+          ctx.shadowBlur = 0;
+          ctx.globalAlpha *= 0.2;
+          ctx.strokeStyle = this.color;
+          ctx.lineWidth = 0.4;
+          ctx.beginPath();
+          ctx.arc(this.sx, this.sy, r * 2.8, 0, Math.PI*2);
+          ctx.stroke();
+        }
+
+        // ── REALISTIC CHART PANEL ──
+        if(this.hasChart && da > 0.25){
+          const cw = this.chartW * s;
+          const ch = this.chartH * s;
+          if(cw > 30 && ch > 18){
+            const cx = this.sx - cw/2;
+            const cy = this.sy - ch - 12 * s;
+            const candles = this.candles;
+            const minL = Math.min(...candles.map(c=>c.l));
+            const maxH = Math.max(...candles.map(c=>c.h));
+            const range = maxH - minL || 1;
+            const maxV = Math.max(...candles.map(c=>c.v));
+            const headerH = 10 * s;
+            const volH = ch * 0.18;
+            const chartAreaH = ch - headerH - volH - 2*s;
+            const chartTop = cy + headerH;
+
+            // 3D shadow
+            ctx.globalAlpha = da * 0.25;
+            ctx.fillStyle = 'rgba(0,0,0,0.4)';
+            ctx.fillRect(cx + 3*s, cy + 4*s, cw, ch);
+
+            // Panel bg
+            ctx.globalAlpha = da * 0.5;
+            ctx.fillStyle = 'rgba(5,9,26,0.82)';
+            ctx.fillRect(cx, cy, cw, ch);
+
+            // Border
+            ctx.strokeStyle = this.color;
+            ctx.lineWidth = 0.6 * s;
+            ctx.globalAlpha = da * 0.45;
+            ctx.strokeRect(cx, cy, cw, ch);
+
+            // Header bar
+            ctx.fillStyle = this.color;
+            ctx.globalAlpha = da * 0.12;
+            ctx.fillRect(cx, cy, cw, headerH);
+
+            // Ticker label
+            ctx.globalAlpha = da * 0.6;
+            ctx.fillStyle = this.color;
+            ctx.font = 'bold ' + (7*s) + 'px monospace';
+            ctx.fillText(this.chartTicker, cx + 4*s, cy + headerH - 2*s);
+
+            // Price
+            const lastPrice = candles[candles.length-1].c.toFixed(2);
+            ctx.font = (5.5*s) + 'px monospace';
+            ctx.globalAlpha = da * 0.4;
+            ctx.fillText(lastPrice, cx + cw - 38*s, cy + headerH - 2.5*s);
+
+            // Horizontal price grid lines
+            ctx.globalAlpha = da * 0.06;
+            ctx.strokeStyle = this.color;
+            ctx.lineWidth = 0.3;
+            for(let g = 0; g < 4; g++){
+              const gy = chartTop + (g / 3) * chartAreaH;
+              ctx.beginPath();
+              ctx.moveTo(cx + 1, gy);
+              ctx.lineTo(cx + cw - 1, gy);
+              ctx.stroke();
+            }
+
+            // Candlesticks
+            const barW = (cw - 4*s) / candles.length;
+            for(let i = 0; i < candles.length; i++){
+              const c = candles[i];
+              const bx = cx + 2*s + i * barW;
+              const isUp = c.c >= c.o;
+              const color = isUp ? GREEN : RED;
+
+              const highY = chartTop + (1 - (c.h - minL)/range) * chartAreaH;
+              const lowY = chartTop + (1 - (c.l - minL)/range) * chartAreaH;
+              const openY = chartTop + (1 - (c.o - minL)/range) * chartAreaH;
+              const closeY = chartTop + (1 - (c.c - minL)/range) * chartAreaH;
+
+              // Wick
+              ctx.globalAlpha = da * 0.4;
+              ctx.strokeStyle = color;
+              ctx.lineWidth = 0.4 * s;
+              ctx.beginPath();
+              ctx.moveTo(bx + barW/2, highY);
+              ctx.lineTo(bx + barW/2, lowY);
+              ctx.stroke();
+
+              // Body
+              const bodyTop = Math.min(openY, closeY);
+              const bodyH = Math.max(1, Math.abs(closeY - openY));
+              ctx.fillStyle = color;
+              ctx.globalAlpha = da * (isUp ? 0.5 : 0.35);
+              ctx.fillRect(bx + barW*0.15, bodyTop, barW*0.7, bodyH);
+
+              // Volume bar
+              const volBarH = (c.v / maxV) * volH;
+              ctx.globalAlpha = da * 0.12;
+              ctx.fillStyle = color;
+              ctx.fillRect(bx + barW*0.2, cy + ch - volBarH, barW*0.6, volBarH);
+            }
+
+            // Separator line above volume
+            ctx.globalAlpha = da * 0.08;
+            ctx.strokeStyle = this.color;
+            ctx.lineWidth = 0.3;
+            ctx.beginPath();
+            ctx.moveTo(cx, cy + ch - volH);
+            ctx.lineTo(cx + cw, cy + ch - volH);
+            ctx.stroke();
+          }
+        }
+        ctx.restore();
+      }
+    }
+
+    // ── SPIDER WEB CONNECTIONS ──
+    function drawWeb(nodes, t){
+      const maxDist2D = 350;
+      const maxDistZ = 0.55;
+      ctx.save();
+      for(let i = 0; i < nodes.length; i++){
+        const a = nodes[i];
+        for(let j = i+1; j < nodes.length; j++){
+          const b = nodes[j];
+          if(Math.abs(a.z - b.z) > maxDistZ) continue;
+          const dx = a.sx - b.sx, dy = a.sy - b.sy;
+          const dist = Math.sqrt(dx*dx + dy*dy);
+          if(dist > maxDist2D) continue;
+          const proximity = 1 - dist / maxDist2D;
+          const depthAvg = 0.25 + (1 - (a.z + b.z)/2) * 0.75;
+          ctx.globalAlpha = proximity * 0.35 * depthAvg;
+          ctx.strokeStyle = a.color;
+          ctx.lineWidth = Math.max(0.3, proximity * 1.2 * ((a.scale + b.scale)/2));
+          ctx.beginPath();
+          ctx.moveTo(a.sx, a.sy);
+          ctx.lineTo(b.sx, b.sy);
+          ctx.stroke();
+        }
+      }
+      ctx.restore();
+    }
+
+    // ── CONCENTRIC WEB RINGS ──
+    function drawWebRings(t){
+      ctx.save();
+      const cx = W * 0.5 + Math.sin(t*0.00002)*15;
+      const cy = H * 0.42 + Math.cos(t*0.000025)*10;
+      const maxR = Math.max(W, H) * 0.55;
+      const spokes = 16;
+      for(let i = 0; i < spokes; i++){
+        const angle = (i / spokes) * Math.PI * 2 + t * 0.000012; // SLOWER
+        ctx.globalAlpha = 0.04 + Math.sin(t*0.0006 + i)*0.015;
+        ctx.strokeStyle = TEAL;
+        ctx.lineWidth = 0.35;
+        ctx.beginPath();
+        ctx.moveTo(cx, cy);
+        ctx.lineTo(cx + Math.cos(angle)*maxR, cy + Math.sin(angle)*maxR);
+        ctx.stroke();
+      }
+      for(let r = 60; r < maxR; r += 80){
+        ctx.globalAlpha = 0.03 + (1 - r/maxR) * 0.035;
+        ctx.strokeStyle = TEAL;
+        ctx.lineWidth = 0.3;
+        ctx.beginPath();
+        ctx.arc(cx, cy, r + Math.sin(t*0.0003+r*0.008)*4, 0, Math.PI*2); // SLOWER
+        ctx.stroke();
+      }
+      ctx.restore();
+    }
+
+    // ── TRAVELING PULSES (SLOWER) ──
+    class Pulse {
+      constructor(nodes){ this.reset(nodes); }
+      reset(nodes){
+        this.from = Math.floor(Math.random() * nodes.length);
+        this.to = Math.floor(Math.random() * nodes.length);
+        if(this.to === this.from) this.to = (this.from+1) % nodes.length;
+        this.t = 0;
+        this.speed = 0.0015 + Math.random() * 0.004; // MUCH SLOWER
+        this.color = [TEAL, CYAN, BLUE, GREEN][Math.floor(Math.random()*4)];
+        this.size = 1.2 + Math.random() * 1.5;
+      }
+      update(nodes){ this.t += this.speed; if(this.t > 1) this.reset(nodes); }
+      draw(nodes){
+        const a = nodes[this.from], b = nodes[this.to];
+        const px = a.sx + (b.sx - a.sx) * this.t;
+        const py = a.sy + (b.sy - a.sy) * this.t;
+        ctx.save();
+        ctx.globalAlpha = 0.6;
+        ctx.shadowColor = this.color;
+        ctx.shadowBlur = 10;
+        ctx.fillStyle = this.color;
+        ctx.beginPath();
+        ctx.arc(px, py, this.size, 0, Math.PI*2);
+        ctx.fill();
+        ctx.shadowBlur = 0;
+        ctx.globalAlpha = 0.15;
+        ctx.strokeStyle = this.color;
+        ctx.lineWidth = 0.6;
+        const trailT = Math.max(0, this.t - 0.06);
+        ctx.beginPath();
+        ctx.moveTo(a.sx + (b.sx - a.sx)*trailT, a.sy + (b.sy - a.sy)*trailT);
+        ctx.lineTo(px, py);
+        ctx.stroke();
+        ctx.restore();
+      }
+    }
+
+    // ── DATA PARTICLES (full height rise) ──
+    class DataParticle {
+      constructor(){ this.reset(); }
+      reset(){
+        this.x = Math.random() * W;
+        this.y = H + 5 + Math.random() * 30;
+        this.vy = -(0.15 + Math.random() * 0.5); // SLOWER rise
+        this.vx = (Math.random() - 0.5) * 0.15;
+        this.size = 7 + Math.random() * 4;
+        this.color = [TEAL, CYAN, BLUE, GREEN][Math.floor(Math.random()*4)];
+        const r = Math.random();
+        if(r < 0.25) this.text = ['+2.41%','-1.13%','+0.72%','+3.24%','-0.38%','+1.87%','-2.05%','+0.56%'][Math.floor(Math.random()*8)];
+        else if(r < 0.45) this.text = (Math.random()*500+80).toFixed(2);
+        else if(r < 0.7) this.text = ['AAPL','MSFT','SPY','QQQ','BTC','ETH','VIX','GLD','ES','NQ','NVDA','AMZN','TLT','GOOG'][Math.floor(Math.random()*14)];
+        else this.text = null;
+      }
+      update(){
+        this.x += this.vx;
+        this.y += this.vy;
+        // Reset only when fully past the top
+        if(this.y < -30) this.reset();
+      }
+      draw(){
+        // Fade in from bottom, stay visible, fade out near top
+        let alpha;
+        const fromBottom = (H - this.y) / H;
+        if(fromBottom < 0.1) alpha = fromBottom / 0.1;
+        else if(this.y < 50) alpha = this.y / 50;
+        else alpha = 1;
+        alpha *= 0.3;
+        ctx.save();
+        ctx.globalAlpha = alpha;
+        ctx.fillStyle = this.color;
+        if(this.text){
+          ctx.font = this.size + 'px monospace';
+          ctx.fillText(this.text, this.x, this.y);
+        } else {
+          ctx.beginPath();
+          ctx.arc(this.x, this.y, 1.2, 0, Math.PI*2);
+          ctx.fill();
+        }
+        ctx.restore();
+      }
+    }
+
+    // ── 3D FLOOR GRID ──
+    function drawFloor(t){
+      ctx.save();
+      const floorY = H * 0.92;
+      const vanishY = H * 0.3;
+      const cx = W / 2 + Math.sin(t*0.00004)*10;
+      ctx.strokeStyle = TEAL;
+      ctx.lineWidth = 0.4;
+      for(let i = 0; i < 20; i++){
+        const ratio = i / 20;
+        const y = vanishY + (floorY - vanishY) * ratio * ratio;
+        ctx.globalAlpha = 0.025 + ratio * 0.06;
+        ctx.beginPath();
+        const spread = 0.12 + ratio * 0.88;
+        ctx.moveTo(cx - W*0.55*spread, y);
+        ctx.lineTo(cx + W*0.55*spread, y);
+        ctx.stroke();
+      }
+      for(let i = -12; i <= 12; i++){
+        ctx.globalAlpha = 0.035;
+        ctx.beginPath();
+        ctx.moveTo(cx + i * W*0.05, floorY);
+        ctx.lineTo(cx + i * 2, vanishY);
+        ctx.stroke();
+      }
+      ctx.restore();
+    }
+
+    // ── GLOW ORBS ──
+    class GlowOrb {
+      constructor(){
+        this.x = Math.random(); this.y = Math.random();
+        this.r = 90 + Math.random() * 200;
+        this.color = [TEAL, BLUE, CYAN][Math.floor(Math.random()*3)];
+        this.phase = Math.random() * Math.PI * 2;
+      }
+      draw(t){
+        ctx.save();
+        const px = this.x*W + Math.sin(t*0.0002+this.phase)*20;
+        const py = this.y*H + Math.cos(t*0.00025+this.phase)*15;
+        const grad = ctx.createRadialGradient(px,py,0,px,py,this.r);
+        grad.addColorStop(0, this.color);
+        grad.addColorStop(1, 'transparent');
+        ctx.globalAlpha = 0.025 + Math.sin(t*0.0003+this.phase)*0.01;
+        ctx.fillStyle = grad;
+        ctx.fillRect(px-this.r, py-this.r, this.r*2, this.r*2);
+        ctx.restore();
+      }
+    }
+
+    // ── INIT ──
+    const NODE_TOTAL = 47;
+    const nodePositions = spiderWebPositions(NODE_TOTAL);
+    const nodes = [];
+    for(let i = 0; i < NODE_TOTAL; i++) nodes.push(new Node(i, NODE_TOTAL));
+    const pulses = [];
+    for(let i = 0; i < 30; i++) pulses.push(new Pulse(nodes));
+    const particles = [];
+    for(let i = 0; i < 55; i++){
+      const p = new DataParticle();
+      p.y = Math.random() * (H + 100); // Spread across full height initially
+      particles.push(p);
+    }
+    const orbs = [];
+    for(let i = 0; i < 6; i++) orbs.push(new GlowOrb());
+
+    let animId;
+    let isVisible = false;
+    const observer = new IntersectionObserver(entries => {
+      entries.forEach(e => { isVisible = e.isIntersecting; if(isVisible && !animId) loop(); });
+    }, { threshold: 0.05 });
+    observer.observe(cvs.parentElement);
+
+    function loop(){
+      if(!isVisible){ animId = null; return; }
+      const t = performance.now();
+      ctx.fillStyle = DARK;
+      ctx.fillRect(0, 0, W, H);
+
+      orbs.forEach(o => o.draw(t));
+      drawFloor(t);
+      drawWebRings(t);
+      nodes.forEach(n => n.update(t));
+      nodes.sort((a,b) => b.z - a.z);
+      drawWeb(nodes, t);
+      pulses.forEach(p => { p.update(nodes); p.draw(nodes); });
+      nodes.forEach(n => n.draw(t));
+      particles.forEach(p => { p.update(); p.draw(); });
+
+      // Scanlines
+      ctx.save();
+      ctx.globalAlpha = 0.018;
+      ctx.fillStyle = '#000';
+      for(let y = 0; y < H; y += 3) ctx.fillRect(0, y, W, 1);
+      ctx.restore();
+
+      // Vignette
+      const vg = ctx.createRadialGradient(W/2, H/2, W*0.15, W/2, H/2, W*0.65);
+      vg.addColorStop(0, 'transparent');
+      vg.addColorStop(1, 'rgba(5,9,26,0.4)');
+      ctx.fillStyle = vg;
+      ctx.fillRect(0, 0, W, H);
+
+      animId = requestAnimationFrame(loop);
+    }
+    setTimeout(() => { resize(); if(isVisible) loop(); }, 100);
+  })();
+  </script>
+
+\n
+
+  <div style="position:absolute;inset:0;z-index:1;background:linear-gradient(135deg,rgba(5,9,26,0.50) 0%,rgba(5,9,26,0.35) 40%,rgba(5,9,26,0.32) 60%,rgba(5,9,26,0.50) 100%);pointer-events:none;"></div>
+  <div class="story-wrap" style="position:relative;z-index:2;">
+    <div class="fade-up">
+      <div class="sec-eyebrow">The Story</div>
+      <h2 class="sec-title" style="color:#eef3ff;text-shadow:0 2px 24px rgba(5,9,26,1);">From trading desks to engineered alpha.</h2>
+      <div class="rule-line"></div>
+    </div>
+    <div class="timeline fade-up d1">
+      <div class="ti">
+        <div class="ti-dot"></div>
+          <div class="ti-panel">
+        <div class="ti-year">The Foundation</div>
+        <div class="ti-title">The desk.</div>
+        <div class="ti-body">The early career was spent on institutional desks at Dodge &amp; Cox and Bank of America Merrill Lynch, managing capital across rates, credit, and multi-asset mandates. The lesson that emerged was not about markets. It was about the people trading them. Discretionary bias, narrative addiction, and herd behaviour produce inefficiencies that repeat with remarkable regularity.</div>
+      
+          </div>
+        </div><div class="ti">
+        <div class="ti-dot"></div>
+          <div class="ti-panel">
+        <div class="ti-year">The Insight</div>
+        <div class="ti-title">Signal, not story.</div>
+        <div class="ti-body">The conviction crystallised after years of watching talented traders lose money to their own psychology. Markets do not reward the smartest narrative. They reward disciplined, systematic extraction of mispricing. The question became: what if we could build an architecture that removes the human weaknesses while preserving the human insights?</div>
+      
+          </div>
+        </div><div class="ti">
+        <div class="ti-dot"></div>
+          <div class="ti-panel">
+        <div class="ti-year">The Build</div>
+        <div class="ti-title">Engineering the Cube.</div>
+        <div class="ti-body">That question became the Metadron Cube. Built from scratch over two years of development and backtesting, the platform integrates regime-aware tactical allocation with automated capital preservation. Every design decision was informed by real experience of what breaks when markets turn.</div>
+      
+          </div>
+        </div><div class="ti">
+        <div class="ti-dot"></div>
+          <div class="ti-panel">
+        <div class="ti-year">The Mission</div>
+        <div class="ti-title">The mission.</div>
+        <div class="ti-body">Metadron Capital exists to answer a question that the traditional asset management industry has avoided: can a small, focused team with superior technology consistently outperform larger institutions burdened by bureaucracy, career risk, and legacy infrastructure? Our track record is the beginning of that answer.</div>
+      
+          </div>
+        </div></div>
+  </div>
+</section>
+
+<!-- ══════════ CTA ══════════ -->
+<section id="cta" style="position:relative;overflow:hidden;">
+  <!-- Bank Vault SVG Background — Realistic 3D -->
+<div id="vault-bg" style="position:absolute;inset:0;z-index:0;display:flex;align-items:center;justify-content:center;overflow:hidden;">
+  <!-- Metallic gradient background -->
+  <div style="position:absolute;inset:0;background:linear-gradient(160deg,#05091a 0%,#070b1e 30%,#080c20 60%,#05091a 100%);"></div>
+
+  <style>
+    @keyframes vaultSpin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
+    @keyframes vaultSpinReverse { from { transform: rotate(0deg); } to { transform: rotate(-360deg); } }
+    @keyframes glowPulse { 0%, 100% { opacity: 0.18; } 50% { opacity: 0.32; } }
+    @keyframes floatVault {
+      0%   { transform: translateY(0px) rotateX(0deg); }
+      33%  { transform: translateY(-8px) rotateX(0.6deg); }
+      66%  { transform: translateY(-4px) rotateX(-0.3deg); }
+      100% { transform: translateY(0px) rotateX(0deg); }
+    }
+    .vault-3d-wrapper {
+      position:relative; z-index:1;
+      display: flex; align-items: center; justify-content: center;
+    }
+    .vault-3d-wrapper svg {
+      max-width: 80vw; max-height: 70vh;
+      width: 800px; height: 800px;
+      filter: drop-shadow(0 0 60px rgba(0,229,192,0.04)) drop-shadow(0 30px 80px rgba(0,0,0,0.95)) brightness(0.7);
+    }
+    .vault-svg-group {
+      animation: floatVault 6s ease-in-out infinite;
+      transform-origin: center;
+      transform-box: fill-box;
+    }
+    .spoke-wheel {
+      animation: vaultSpin 30s linear infinite;
+      transform-origin: 400px 400px;
+      will-change: transform;
+      transform: translateZ(0);
+      backface-visibility: hidden;
+    }
+    .inner-ring-spin {
+      animation: vaultSpinReverse 45s linear infinite;
+      transform-origin: 400px 400px;
+      will-change: transform;
+      transform: translateZ(0);
+      backface-visibility: hidden;
+    }
+    .glow-pulse {
+      animation: glowPulse 4s ease-in-out infinite;
+    }
+  </style>
+
+  <div class="vault-3d-wrapper">
+<svg viewBox="0 0 800 800" xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" role="img" aria-label="Bank vault door">
+<defs>
+
+  <!-- FRAME GRADIENT - deep bevel steel -->
+  <linearGradient id="frameGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+    <stop offset="0%"   stop-color="#4a4d52"/>
+    <stop offset="8%"   stop-color="#6a6d72"/>
+    <stop offset="20%"  stop-color="#2a2d32"/>
+    <stop offset="40%"  stop-color="#1a1d22"/>
+    <stop offset="60%"  stop-color="#2a2d32"/>
+    <stop offset="80%"  stop-color="#3a3d42"/>
+    <stop offset="92%"  stop-color="#5a5d62"/>
+    <stop offset="100%" stop-color="#3a3d42"/>
+  </linearGradient>
+
+  <!-- FRAME TOP BEVEL -->
+  <linearGradient id="frameBevelTop" x1="0%" y1="0%" x2="0%" y2="100%">
+    <stop offset="0%"   stop-color="#7a7d82"/>
+    <stop offset="30%"  stop-color="#4a4d52"/>
+    <stop offset="100%" stop-color="#1a1d22"/>
+  </linearGradient>
+  <!-- FRAME LEFT BEVEL -->
+  <linearGradient id="frameBevelLeft" x1="0%" y1="0%" x2="100%" y2="0%">
+    <stop offset="0%"   stop-color="#6a6d72"/>
+    <stop offset="40%"  stop-color="#3a3d42"/>
+    <stop offset="100%" stop-color="#1a1d22"/>
+  </linearGradient>
+  <!-- FRAME RIGHT BEVEL -->
+  <linearGradient id="frameBevelRight" x1="0%" y1="0%" x2="100%" y2="0%">
+    <stop offset="0%"   stop-color="#1a1d22"/>
+    <stop offset="60%"  stop-color="#3a3d42"/>
+    <stop offset="100%" stop-color="#5a5d62"/>
+  </linearGradient>
+  <!-- FRAME BOTTOM BEVEL -->
+  <linearGradient id="frameBevelBottom" x1="0%" y1="0%" x2="0%" y2="100%">
+    <stop offset="0%"   stop-color="#1a1d22"/>
+    <stop offset="70%"  stop-color="#3a3d42"/>
+    <stop offset="100%" stop-color="#5a5d62"/>
+  </linearGradient>
+
+  <!-- DOOR FACE - circular, brushed steel -->
+  <radialGradient id="doorFaceGrad" cx="42%" cy="38%" r="60%">
+    <stop offset="0%"   stop-color="#8a8d92"/>
+    <stop offset="20%"  stop-color="#6a6d72"/>
+    <stop offset="45%"  stop-color="#4a4d52"/>
+    <stop offset="70%"  stop-color="#3a3d42"/>
+    <stop offset="100%" stop-color="#1e2126"/>
+  </radialGradient>
+
+  <!-- DOOR OUTER RING BEVEL -->
+  <linearGradient id="doorOuterRingGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+    <stop offset="0%"   stop-color="#9a9da2"/>
+    <stop offset="20%"  stop-color="#c8cbd0"/>
+    <stop offset="50%"  stop-color="#5a5d62"/>
+    <stop offset="80%"  stop-color="#2a2d32"/>
+    <stop offset="100%" stop-color="#6a6d72"/>
+  </linearGradient>
+
+  <!-- DOOR INNER BEVEL RING -->
+  <linearGradient id="doorInnerRingGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+    <stop offset="0%"   stop-color="#2a2d32"/>
+    <stop offset="25%"  stop-color="#6a6d72"/>
+    <stop offset="50%"  stop-color="#b0b3b8"/>
+    <stop offset="75%"  stop-color="#4a4d52"/>
+    <stop offset="100%" stop-color="#2a2d32"/>
+  </linearGradient>
+
+  <!-- SPOKE WHEEL HUB -->
+  <radialGradient id="hubGrad" cx="40%" cy="35%" r="65%">
+    <stop offset="0%"   stop-color="#c8cbd0"/>
+    <stop offset="25%"  stop-color="#9a9da2"/>
+    <stop offset="55%"  stop-color="#5a5d62"/>
+    <stop offset="85%"  stop-color="#2a2d32"/>
+    <stop offset="100%" stop-color="#1a1d22"/>
+  </radialGradient>
+
+  <!-- SPOKE GRADIENT -->
+  <linearGradient id="spokeGrad" x1="0%" y1="0%" x2="0%" y2="100%">
+    <stop offset="0%"   stop-color="#b0b3b8"/>
+    <stop offset="30%"  stop-color="#7a7d82"/>
+    <stop offset="70%"  stop-color="#4a4d52"/>
+    <stop offset="100%" stop-color="#2a2d32"/>
+  </linearGradient>
+
+  <!-- LOCKING BOLT GRADIENT -->
+  <linearGradient id="boltGrad" x1="0%" y1="0%" x2="100%" y2="0%">
+    <stop offset="0%"   stop-color="#c8cbd0"/>
+    <stop offset="15%"  stop-color="#9a9da2"/>
+    <stop offset="40%"  stop-color="#6a6d72"/>
+    <stop offset="70%"  stop-color="#3a3d42"/>
+    <stop offset="100%" stop-color="#1a1d22"/>
+  </linearGradient>
+  <linearGradient id="boltGradV" x1="0%" y1="0%" x2="0%" y2="100%">
+    <stop offset="0%"   stop-color="#c8cbd0"/>
+    <stop offset="15%"  stop-color="#9a9da2"/>
+    <stop offset="40%"  stop-color="#6a6d72"/>
+    <stop offset="70%"  stop-color="#3a3d42"/>
+    <stop offset="100%" stop-color="#1a1d22"/>
+  </linearGradient>
+
+  <!-- RIVET GRADIENT -->
+  <radialGradient id="rivetGrad" cx="35%" cy="30%" r="65%">
+    <stop offset="0%"   stop-color="#c8cbd0"/>
+    <stop offset="40%"  stop-color="#7a7d82"/>
+    <stop offset="75%"  stop-color="#3a3d42"/>
+    <stop offset="100%" stop-color="#1a1d22"/>
+  </radialGradient>
+
+  <!-- HINGE GRADIENT -->
+  <linearGradient id="hingeGrad" x1="0%" y1="0%" x2="100%" y2="0%">
+    <stop offset="0%"   stop-color="#9a9da2"/>
+    <stop offset="30%"  stop-color="#6a6d72"/>
+    <stop offset="70%"  stop-color="#3a3d42"/>
+    <stop offset="100%" stop-color="#1a1d22"/>
+  </linearGradient>
+
+  <!-- TEAL ACCENT GLOW -->
+  <radialGradient id="tealGlow" cx="50%" cy="50%" r="50%">
+    <stop offset="0%"   stop-color="#00e5c0" stop-opacity="0.15"/>
+    <stop offset="60%"  stop-color="#00e5c0" stop-opacity="0.04"/>
+    <stop offset="100%" stop-color="#00e5c0" stop-opacity="0"/>
+  </radialGradient>
+
+  <!-- OUTER AMBIENT GLOW -->
+  <radialGradient id="ambientGlow" cx="50%" cy="50%" r="50%">
+    <stop offset="0%"   stop-color="#00e5c0" stop-opacity="0"/>
+    <stop offset="65%"  stop-color="#00e5c0" stop-opacity="0.04"/>
+    <stop offset="100%" stop-color="#00e5c0" stop-opacity="0.12"/>
+  </radialGradient>
+
+  <!-- VIGNETTE / SHADOW OVERLAY -->
+  <radialGradient id="vignetteGrad" cx="50%" cy="50%" r="50%">
+    <stop offset="0%"   stop-color="transparent"/>
+    <stop offset="70%"  stop-color="transparent"/>
+    <stop offset="100%" stop-color="#05091a" stop-opacity="0.85"/>
+  </radialGradient>
+
+  <!-- BRUSHED METAL TEXTURE FILTER -->
+  <filter id="brushedMetal" x="-5%" y="-5%" width="110%" height="110%">
+    <feTurbulence type="fractalNoise" baseFrequency="0.65 0.01" numOctaves="3" seed="2" result="noise"/>
+    <feColorMatrix type="saturate" values="0" in="noise" result="greyNoise"/>
+    <feBlend in="SourceGraphic" in2="greyNoise" mode="overlay" result="blended"/>
+    <feComposite in="blended" in2="SourceGraphic" operator="in"/>
+  </filter>
+
+  <!-- SUBTLE NOISE FILTER for surface texture -->
+  <filter id="noiseFilter" x="0%" y="0%" width="100%" height="100%">
+    <feTurbulence type="fractalNoise" baseFrequency="0.9" numOctaves="4" seed="5" result="noise"/>
+    <feColorMatrix type="saturate" values="0" in="noise" result="grey"/>
+    <feBlend in="SourceGraphic" in2="grey" mode="soft-light" result="out"/>
+    <feComposite in="out" in2="SourceGraphic" operator="in"/>
+  </filter>
+
+  <!-- DROP SHADOW FOR BOLTS -->
+  <filter id="boltShadow" x="-20%" y="-20%" width="140%" height="140%">
+    <feDropShadow dx="2" dy="3" stdDeviation="3" flood-color="#000" flood-opacity="0.6"/>
+  </filter>
+
+  <!-- INNER GLOW for door face -->
+  <filter id="doorGlow" x="-5%" y="-5%" width="110%" height="110%">
+    <feGaussianBlur stdDeviation="4" result="blur"/>
+    <feComposite in="SourceGraphic" in2="blur" operator="over"/>
+  </filter>
+
+  <!-- CLIP for circular door -->
+  <clipPath id="circleClip">
+    <circle cx="400" cy="400" r="268"/>
+  </clipPath>
+  <clipPath id="doorClip">
+    <circle cx="400" cy="400" r="255"/>
+  </clipPath>
+
+  <!-- SPOKE WHEEL RIM GRADIENT -->
+  <linearGradient id="wheelRimGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+    <stop offset="0%"   stop-color="#b0b3b8"/>
+    <stop offset="35%"  stop-color="#6a6d72"/>
+    <stop offset="65%"  stop-color="#3a3d42"/>
+    <stop offset="100%" stop-color="#9a9da2"/>
+  </linearGradient>
+
+  <!-- GAUGE GRADIENT -->
+  <radialGradient id="gaugeGrad" cx="40%" cy="35%" r="60%">
+    <stop offset="0%"   stop-color="#3a3d42"/>
+    <stop offset="70%"  stop-color="#1e2126"/>
+    <stop offset="100%" stop-color="#0d1015"/>
+  </radialGradient>
+
+  <!-- LATCH GRADIENT -->
+  <linearGradient id="latchGrad" x1="0%" y1="0%" x2="0%" y2="100%">
+    <stop offset="0%"   stop-color="#9a9da2"/>
+    <stop offset="50%"  stop-color="#5a5d62"/>
+    <stop offset="100%" stop-color="#2a2d32"/>
+  </linearGradient>
+
+  <!-- INNER DECORATIVE RING GRAD -->
+  <linearGradient id="innerDecRingGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+    <stop offset="0%"   stop-color="#6a6d72"/>
+    <stop offset="50%"  stop-color="#3a3d42"/>
+    <stop offset="100%" stop-color="#5a5d62"/>
+  </linearGradient>
+
+  <!-- BOLT SIDE TOP SHADOW -->
+  <linearGradient id="boltTopH" x1="0%" y1="0%" x2="0%" y2="100%">
+    <stop offset="0%"   stop-color="#c8cbd0"/>
+    <stop offset="40%"  stop-color="#7a7d82"/>
+    <stop offset="100%" stop-color="#2a2d32"/>
+  </linearGradient>
+  <linearGradient id="boltTopV" x1="0%" y1="0%" x2="100%" y2="0%">
+    <stop offset="0%"   stop-color="#c8cbd0"/>
+    <stop offset="40%"  stop-color="#7a7d82"/>
+    <stop offset="100%" stop-color="#2a2d32"/>
+  </linearGradient>
+
+</defs>
+
+<!-- ═══════════════════════════════════════════════
+     FLOATING GROUP — whole vault animates together
+═══════════════════════════════════════════════ -->
+<g class="vault-svg-group">
+
+<!-- AMBIENT TEAL GLOW behind vault -->
+<ellipse cx="400" cy="410" rx="380" ry="370" fill="url(#tealGlow)" class="glow-pulse"/>
+
+<!-- ═══════════════════════════════════
+     RECTANGULAR STEEL FRAME
+═══════════════════════════════════ -->
+<!-- Frame outer shadow -->
+<rect x="58" y="62" width="692" height="688" rx="12" fill="#0d1015" opacity="0.7"/>
+
+<!-- Frame base fill -->
+<rect x="54" y="58" width="692" height="688" rx="10" fill="url(#frameGrad)"/>
+
+<!-- Frame top bevel -->
+<rect x="54" y="58" width="692" height="62" rx="10" fill="url(#frameBevelTop)" opacity="0.85"/>
+<!-- Frame left bevel -->
+<rect x="54" y="58" width="62" height="688" rx="10" fill="url(#frameBevelLeft)" opacity="0.85"/>
+<!-- Frame right bevel -->
+<rect x="684" y="58" width="62" height="688" rx="10" fill="url(#frameBevelRight)" opacity="0.85"/>
+<!-- Frame bottom bevel -->
+<rect x="54" y="684" width="692" height="62" rx="10" fill="url(#frameBevelBottom)" opacity="0.85"/>
+
+<!-- Frame inner shadow (where door sits) -->
+<rect x="108" y="112" width="584" height="584" rx="6" fill="#0d1015" opacity="0.6"/>
+<rect x="112" y="116" width="576" height="576" rx="4" fill="#1a1d22" opacity="0.5"/>
+
+<!-- Brushed texture on frame -->
+<rect x="54" y="58" width="692" height="688" rx="10" fill="url(#noiseFilter)" opacity="0.08" filter="url(#noiseFilter)"/>
+
+<!-- ═══════════════════════════════
+     FRAME CORNER RIVETS (large)
+═══════════════════════════════ -->
+<!-- Top-left -->
+<circle cx="90" cy="94" r="12" fill="url(#rivetGrad)" filter="url(#boltShadow)"/>
+<circle cx="87" cy="91" r="4" fill="#c8cbd0" opacity="0.6"/>
+<!-- Top-right -->
+<circle cx="710" cy="94" r="12" fill="url(#rivetGrad)" filter="url(#boltShadow)"/>
+<circle cx="707" cy="91" r="4" fill="#c8cbd0" opacity="0.6"/>
+<!-- Bottom-left -->
+<circle cx="90" cy="714" r="12" fill="url(#rivetGrad)" filter="url(#boltShadow)"/>
+<circle cx="87" cy="711" r="4" fill="#c8cbd0" opacity="0.6"/>
+<!-- Bottom-right -->
+<circle cx="710" cy="714" r="12" fill="url(#rivetGrad)" filter="url(#boltShadow)"/>
+<circle cx="707" cy="711" r="4" fill="#c8cbd0" opacity="0.6"/>
+
+<!-- Frame edge rivets — top row -->
+<circle cx="200" cy="82" r="9" fill="url(#rivetGrad)"/><circle cx="197" cy="79" r="3" fill="#b0b3b8" opacity="0.5"/>
+<circle cx="300" cy="82" r="9" fill="url(#rivetGrad)"/><circle cx="297" cy="79" r="3" fill="#b0b3b8" opacity="0.5"/>
+<circle cx="400" cy="82" r="9" fill="url(#rivetGrad)"/><circle cx="397" cy="79" r="3" fill="#b0b3b8" opacity="0.5"/>
+<circle cx="500" cy="82" r="9" fill="url(#rivetGrad)"/><circle cx="497" cy="79" r="3" fill="#b0b3b8" opacity="0.5"/>
+<circle cx="600" cy="82" r="9" fill="url(#rivetGrad)"/><circle cx="597" cy="79" r="3" fill="#b0b3b8" opacity="0.5"/>
+<!-- Bottom row -->
+<circle cx="200" cy="726" r="9" fill="url(#rivetGrad)"/><circle cx="197" cy="723" r="3" fill="#b0b3b8" opacity="0.5"/>
+<circle cx="300" cy="726" r="9" fill="url(#rivetGrad)"/><circle cx="297" cy="723" r="3" fill="#b0b3b8" opacity="0.5"/>
+<circle cx="400" cy="726" r="9" fill="url(#rivetGrad)"/><circle cx="397" cy="723" r="3" fill="#b0b3b8" opacity="0.5"/>
+<circle cx="500" cy="726" r="9" fill="url(#rivetGrad)"/><circle cx="497" cy="723" r="3" fill="#b0b3b8" opacity="0.5"/>
+<circle cx="600" cy="726" r="9" fill="url(#rivetGrad)"/><circle cx="597" cy="723" r="3" fill="#b0b3b8" opacity="0.5"/>
+<!-- Left col -->
+<circle cx="78" cy="200" r="9" fill="url(#rivetGrad)"/><circle cx="75" cy="197" r="3" fill="#b0b3b8" opacity="0.5"/>
+<circle cx="78" cy="300" r="9" fill="url(#rivetGrad)"/><circle cx="75" cy="297" r="3" fill="#b0b3b8" opacity="0.5"/>
+<circle cx="78" cy="400" r="9" fill="url(#rivetGrad)"/><circle cx="75" cy="397" r="3" fill="#b0b3b8" opacity="0.5"/>
+<circle cx="78" cy="500" r="9" fill="url(#rivetGrad)"/><circle cx="75" cy="497" r="3" fill="#b0b3b8" opacity="0.5"/>
+<circle cx="78" cy="600" r="9" fill="url(#rivetGrad)"/><circle cx="75" cy="597" r="3" fill="#b0b3b8" opacity="0.5"/>
+<!-- Right col -->
+<circle cx="730" cy="200" r="9" fill="url(#rivetGrad)"/><circle cx="727" cy="197" r="3" fill="#b0b3b8" opacity="0.5"/>
+<circle cx="730" cy="300" r="9" fill="url(#rivetGrad)"/><circle cx="727" cy="297" r="3" fill="#b0b3b8" opacity="0.5"/>
+<circle cx="730" cy="400" r="9" fill="url(#rivetGrad)"/><circle cx="727" cy="397" r="3" fill="#b0b3b8" opacity="0.5"/>
+<circle cx="730" cy="500" r="9" fill="url(#rivetGrad)"/><circle cx="727" cy="497" r="3" fill="#b0b3b8" opacity="0.5"/>
+<circle cx="730" cy="600" r="9" fill="url(#rivetGrad)"/><circle cx="727" cy="597" r="3" fill="#b0b3b8" opacity="0.5"/>
+
+<!-- ═══════════════════════════════════
+     LOCKING BOLTS — thick, 3D
+═══════════════════════════════════ -->
+
+<!-- LEFT BOLTS — decorative, partially retracted (hinge side) -->
+<!-- LEFT BOLT upper -->
+<g filter="url(#boltShadow)">
+  <!-- bolt housing channel -->
+  <rect x="108" y="298" width="36" height="44" rx="4" fill="#1a1d22"/>
+  <rect x="110" y="300" width="32" height="40" rx="3" fill="#2a2d32"/>
+  <!-- bolt body -->
+  <rect x="55" y="304" width="72" height="32" rx="5" fill="url(#boltGrad)"/>
+  <rect x="55" y="304" width="72" height="8" rx="5" fill="url(#boltTopH)" opacity="0.75"/>
+  <!-- bolt tip -->  
+  <polygon points="127,304 144,312 144,324 127,336" fill="url(#boltGrad)"/>
+  <polygon points="127,304 144,312 144,316 127,310" fill="#c8cbd0" opacity="0.4"/>
+  <!-- groove detail -->
+  <rect x="64" y="318" width="56" height="5" rx="2" fill="#1a1d22" opacity="0.55"/>
+  <rect x="64" y="316" width="56" height="2" rx="1" fill="#7a7d82" opacity="0.3"/>
+</g>
+<!-- LEFT BOLT lower -->
+<g filter="url(#boltShadow)">
+  <rect x="108" y="458" width="36" height="44" rx="4" fill="#1a1d22"/>
+  <rect x="110" y="460" width="32" height="40" rx="3" fill="#2a2d32"/>
+  <rect x="55" y="464" width="72" height="32" rx="5" fill="url(#boltGrad)"/>
+  <rect x="55" y="464" width="72" height="8" rx="5" fill="url(#boltTopH)" opacity="0.75"/>
+  <polygon points="127,464 144,472 144,484 127,496" fill="url(#boltGrad)"/>
+  <polygon points="127,464 144,472 144,476 127,470" fill="#c8cbd0" opacity="0.4"/>
+  <rect x="64" y="478" width="56" height="5" rx="2" fill="#1a1d22" opacity="0.55"/>
+  <rect x="64" y="476" width="56" height="2" rx="1" fill="#7a7d82" opacity="0.3"/>
+</g>
+
+<!-- RIGHT BOLT upper (protruding right — primary locking side) -->
+<g filter="url(#boltShadow)">
+  <rect x="656" y="298" width="36" height="44" rx="4" fill="#1a1d22"/>
+  <rect x="658" y="300" width="32" height="40" rx="3" fill="#2a2d32"/>
+  <rect x="673" y="304" width="76" height="32" rx="5" fill="url(#boltGrad)"/>
+  <rect x="673" y="304" width="76" height="8" rx="5" fill="url(#boltTopH)" opacity="0.75"/>
+  <polygon points="673,304 656,312 656,324 673,336" fill="url(#boltGrad)"/>
+  <polygon points="673,304 656,312 656,316 673,310" fill="#c8cbd0" opacity="0.4"/>
+  <rect x="680" y="318" width="58" height="5" rx="2" fill="#1a1d22" opacity="0.55"/>
+  <rect x="680" y="316" width="58" height="2" rx="1" fill="#7a7d82" opacity="0.3"/>
+</g>
+<!-- RIGHT BOLT lower -->
+<g filter="url(#boltShadow)">
+  <rect x="656" y="458" width="36" height="44" rx="4" fill="#1a1d22"/>
+  <rect x="658" y="460" width="32" height="40" rx="3" fill="#2a2d32"/>
+  <rect x="673" y="464" width="76" height="32" rx="5" fill="url(#boltGrad)"/>
+  <rect x="673" y="464" width="76" height="8" rx="5" fill="url(#boltTopH)" opacity="0.75"/>
+  <polygon points="673,464 656,472 656,484 673,496" fill="url(#boltGrad)"/>
+  <polygon points="673,464 656,472 656,476 673,470" fill="#c8cbd0" opacity="0.4"/>
+  <rect x="680" y="478" width="58" height="5" rx="2" fill="#1a1d22" opacity="0.55"/>
+  <rect x="680" y="476" width="58" height="2" rx="1" fill="#7a7d82" opacity="0.3"/>
+</g>
+
+<!-- TOP BOLT left -->
+<g filter="url(#boltShadow)">
+  <rect x="291" y="108" width="44" height="36" rx="4" fill="#1a1d22"/>
+  <rect x="293" y="110" width="40" height="32" rx="3" fill="#2a2d32"/>
+  <rect x="297" y="55" width="32" height="72" rx="5" fill="url(#boltGradV)"/>
+  <rect x="297" y="55" width="8" height="72" rx="5" fill="url(#boltTopV)" opacity="0.75"/>
+  <polygon points="297,127 305,144 321,144 329,127" fill="url(#boltGradV)"/>
+  <polygon points="297,127 305,144 307,144 299,127" fill="#c8cbd0" opacity="0.4"/>
+  <rect x="311" y="64" width="5" height="56" rx="2" fill="#1a1d22" opacity="0.55"/>
+</g>
+<!-- TOP BOLT right -->
+<g filter="url(#boltShadow)">
+  <rect x="465" y="108" width="44" height="36" rx="4" fill="#1a1d22"/>
+  <rect x="467" y="110" width="40" height="32" rx="3" fill="#2a2d32"/>
+  <rect x="471" y="55" width="32" height="72" rx="5" fill="url(#boltGradV)"/>
+  <rect x="471" y="55" width="8" height="72" rx="5" fill="url(#boltTopV)" opacity="0.75"/>
+  <polygon points="471,127 479,144 495,144 503,127" fill="url(#boltGradV)"/>
+  <polygon points="471,127 479,144 481,144 473,127" fill="#c8cbd0" opacity="0.4"/>
+  <rect x="485" y="64" width="5" height="56" rx="2" fill="#1a1d22" opacity="0.55"/>
+</g>
+
+<!-- BOTTOM BOLT left -->
+<g filter="url(#boltShadow)">
+  <rect x="291" y="656" width="44" height="36" rx="4" fill="#1a1d22"/>
+  <rect x="293" y="658" width="40" height="32" rx="3" fill="#2a2d32"/>
+  <rect x="297" y="673" width="32" height="72" rx="5" fill="url(#boltGradV)"/>
+  <rect x="297" y="673" width="8" height="72" rx="5" fill="url(#boltTopV)" opacity="0.75"/>
+  <polygon points="297,673 305,656 321,656 329,673" fill="url(#boltGradV)"/>
+  <polygon points="297,673 305,656 307,656 299,673" fill="#c8cbd0" opacity="0.4"/>
+  <rect x="311" y="680" width="5" height="56" rx="2" fill="#1a1d22" opacity="0.55"/>
+</g>
+<!-- BOTTOM BOLT right -->
+<g filter="url(#boltShadow)">
+  <rect x="465" y="656" width="44" height="36" rx="4" fill="#1a1d22"/>
+  <rect x="467" y="658" width="40" height="32" rx="3" fill="#2a2d32"/>
+  <rect x="471" y="673" width="32" height="72" rx="5" fill="url(#boltGradV)"/>
+  <rect x="471" y="673" width="8" height="72" rx="5" fill="url(#boltTopV)" opacity="0.75"/>
+  <polygon points="471,673 479,656 495,656 503,673" fill="url(#boltGradV)"/>
+  <polygon points="471,673 479,656 481,656 473,673" fill="#c8cbd0" opacity="0.4"/>
+  <rect x="485" y="680" width="5" height="56" rx="2" fill="#1a1d22" opacity="0.55"/>
+</g>
+
+<!-- ═══════════════════════════════════
+     HINGE MECHANISMS — LEFT SIDE
+═══════════════════════════════════ -->
+<!-- Upper hinge -->
+<g>
+  <!-- Hinge plate back -->
+  <rect x="108" y="174" width="48" height="112" rx="6" fill="#1a1d22"/>
+  <!-- Hinge plate -->
+  <rect x="112" y="178" width="40" height="104" rx="5" fill="url(#hingeGrad)"/>
+  <!-- Hinge barrel -->
+  <rect x="126" y="172" width="14" height="120" rx="7" fill="url(#hingeGrad)"/>
+  <rect x="127" y="172" width="6" height="120" rx="3" fill="#9a9da2" opacity="0.5"/>
+  <!-- Hinge knuckles -->
+  <ellipse cx="133" cy="192" rx="9" ry="14" fill="url(#rivetGrad)"/>
+  <ellipse cx="131" cy="189" rx="4" ry="5" fill="#c8cbd0" opacity="0.4"/>
+  <ellipse cx="133" cy="232" rx="9" ry="14" fill="url(#rivetGrad)"/>
+  <ellipse cx="131" cy="229" rx="4" ry="5" fill="#c8cbd0" opacity="0.4"/>
+  <ellipse cx="133" cy="272" rx="9" ry="14" fill="url(#rivetGrad)"/>
+  <ellipse cx="131" cy="269" rx="4" ry="5" fill="#c8cbd0" opacity="0.4"/>
+  <!-- Hinge bolts -->
+  <circle cx="126" cy="200" r="5" fill="url(#rivetGrad)"/><circle cx="124" cy="198" r="2" fill="#c8cbd0" opacity="0.5"/>
+  <circle cx="148" cy="200" r="5" fill="url(#rivetGrad)"/><circle cx="146" cy="198" r="2" fill="#c8cbd0" opacity="0.5"/>
+  <circle cx="126" cy="260" r="5" fill="url(#rivetGrad)"/><circle cx="124" cy="258" r="2" fill="#c8cbd0" opacity="0.5"/>
+  <circle cx="148" cy="260" r="5" fill="url(#rivetGrad)"/><circle cx="146" cy="258" r="2" fill="#c8cbd0" opacity="0.5"/>
+</g>
+<!-- Lower hinge -->
+<g>
+  <rect x="108" y="518" width="48" height="112" rx="6" fill="#1a1d22"/>
+  <rect x="112" y="522" width="40" height="104" rx="5" fill="url(#hingeGrad)"/>
+  <rect x="126" y="516" width="14" height="120" rx="7" fill="url(#hingeGrad)"/>
+  <rect x="127" y="516" width="6" height="120" rx="3" fill="#9a9da2" opacity="0.5"/>
+  <ellipse cx="133" cy="536" rx="9" ry="14" fill="url(#rivetGrad)"/>
+  <ellipse cx="131" cy="533" rx="4" ry="5" fill="#c8cbd0" opacity="0.4"/>
+  <ellipse cx="133" cy="576" rx="9" ry="14" fill="url(#rivetGrad)"/>
+  <ellipse cx="131" cy="573" rx="4" ry="5" fill="#c8cbd0" opacity="0.4"/>
+  <ellipse cx="133" cy="616" rx="9" ry="14" fill="url(#rivetGrad)"/>
+  <ellipse cx="131" cy="613" rx="4" ry="5" fill="#c8cbd0" opacity="0.4"/>
+  <circle cx="126" cy="544" r="5" fill="url(#rivetGrad)"/><circle cx="124" cy="542" r="2" fill="#c8cbd0" opacity="0.5"/>
+  <circle cx="148" cy="544" r="5" fill="url(#rivetGrad)"/><circle cx="146" cy="542" r="2" fill="#c8cbd0" opacity="0.5"/>
+  <circle cx="126" cy="604" r="5" fill="url(#rivetGrad)"/><circle cx="124" cy="602" r="2" fill="#c8cbd0" opacity="0.5"/>
+  <circle cx="148" cy="604" r="5" fill="url(#rivetGrad)"/><circle cx="146" cy="602" r="2" fill="#c8cbd0" opacity="0.5"/>
+</g>
+
+<!-- ═══════════════════════════════════
+     CIRCULAR DOOR — main body
+═══════════════════════════════════ -->
+
+<!-- Door outer shadow ring -->
+<circle cx="402" cy="403" r="278" fill="#0d1015" opacity="0.8"/>
+
+<!-- Door outer bevel ring (thick) -->
+<circle cx="400" cy="400" r="276" fill="none" stroke="url(#doorOuterRingGrad)" stroke-width="22"/>
+
+<!-- Door main face -->
+<circle cx="400" cy="400" r="265" fill="url(#doorFaceGrad)"/>
+
+<!-- Brushed metal texture overlay on door -->
+<circle cx="400" cy="400" r="265" fill="url(#noiseFilter)" filter="url(#noiseFilter)" opacity="0.12"/>
+
+<!-- Door inner edge bevel ring -->
+<circle cx="400" cy="400" r="265" fill="none" stroke="url(#doorInnerRingGrad)" stroke-width="10"/>
+
+<!-- Door second inner ring -->
+<circle cx="400" cy="400" r="252" fill="none" stroke="#2a2d32" stroke-width="3"/>
+<circle cx="400" cy="400" r="249" fill="none" stroke="#5a5d62" stroke-width="1.5" opacity="0.6"/>
+
+<!-- Teal glow on door face (very subtle) -->
+<circle cx="400" cy="400" r="265" fill="url(#tealGlow)" class="glow-pulse"/>
+
+<!-- ═══════════════════════════════════
+     DOOR SURFACE DETAILS — rings/markings
+═══════════════════════════════════ -->
+
+<!-- Outer decorative ring with tick marks -->
+<circle cx="400" cy="400" r="230" fill="none" stroke="#3a3d42" stroke-width="18"/>
+<circle cx="400" cy="400" r="230" fill="none" stroke="#4a4d52" stroke-width="2" opacity="0.8"/>
+<circle cx="400" cy="400" r="221" fill="none" stroke="#2a2d32" stroke-width="2"/>
+
+<!-- Tick marks on the outer ring — 24 marks -->
+<g stroke="#6a6d72" stroke-width="2" opacity="0.7">
+  <!-- Generated 24 tick marks at 15° intervals -->
+  <line x1="400" y1="175" x2="400" y2="188" transform="rotate(0,400,400)"/>
+  <line x1="400" y1="175" x2="400" y2="183" transform="rotate(15,400,400)"/>
+  <line x1="400" y1="175" x2="400" y2="183" transform="rotate(30,400,400)"/>
+  <line x1="400" y1="175" x2="400" y2="188" transform="rotate(45,400,400)"/>
+  <line x1="400" y1="175" x2="400" y2="183" transform="rotate(60,400,400)"/>
+  <line x1="400" y1="175" x2="400" y2="183" transform="rotate(75,400,400)"/>
+  <line x1="400" y1="175" x2="400" y2="188" transform="rotate(90,400,400)"/>
+  <line x1="400" y1="175" x2="400" y2="183" transform="rotate(105,400,400)"/>
+  <line x1="400" y1="175" x2="400" y2="183" transform="rotate(120,400,400)"/>
+  <line x1="400" y1="175" x2="400" y2="188" transform="rotate(135,400,400)"/>
+  <line x1="400" y1="175" x2="400" y2="183" transform="rotate(150,400,400)"/>
+  <line x1="400" y1="175" x2="400" y2="183" transform="rotate(165,400,400)"/>
+  <line x1="400" y1="175" x2="400" y2="188" transform="rotate(180,400,400)"/>
+  <line x1="400" y1="175" x2="400" y2="183" transform="rotate(195,400,400)"/>
+  <line x1="400" y1="175" x2="400" y2="183" transform="rotate(210,400,400)"/>
+  <line x1="400" y1="175" x2="400" y2="188" transform="rotate(225,400,400)"/>
+  <line x1="400" y1="175" x2="400" y2="183" transform="rotate(240,400,400)"/>
+  <line x1="400" y1="175" x2="400" y2="183" transform="rotate(255,400,400)"/>
+  <line x1="400" y1="175" x2="400" y2="188" transform="rotate(270,400,400)"/>
+  <line x1="400" y1="175" x2="400" y2="183" transform="rotate(285,400,400)"/>
+  <line x1="400" y1="175" x2="400" y2="183" transform="rotate(300,400,400)"/>
+  <line x1="400" y1="175" x2="400" y2="188" transform="rotate(315,400,400)"/>
+  <line x1="400" y1="175" x2="400" y2="183" transform="rotate(330,400,400)"/>
+  <line x1="400" y1="175" x2="400" y2="183" transform="rotate(345,400,400)"/>
+</g>
+
+<!-- ═══════════════════════════════════
+     COUNTER-ROTATING INNER RING (subtle)
+═══════════════════════════════════ -->
+<g class="inner-ring-spin">
+  <circle cx="400" cy="400" r="195" fill="none" stroke="#3a3d42" stroke-width="14"/>
+  <!-- Inner ring track texture -->
+  <circle cx="400" cy="400" r="195" fill="none" stroke="#4a4d52" stroke-width="2" stroke-dasharray="6,8" opacity="0.5"/>
+  <circle cx="400" cy="400" r="195" fill="none" stroke="#2a2d32" stroke-width="3" stroke-dasharray="2,12" opacity="0.4"/>
+  <!-- Small pegs on inner ring — 12 positions -->
+  <circle cx="400" cy="209" r="5" fill="url(#rivetGrad)" transform="rotate(0,400,400)"/>
+  <circle cx="400" cy="209" r="5" fill="url(#rivetGrad)" transform="rotate(30,400,400)"/>
+  <circle cx="400" cy="209" r="5" fill="url(#rivetGrad)" transform="rotate(60,400,400)"/>
+  <circle cx="400" cy="209" r="5" fill="url(#rivetGrad)" transform="rotate(90,400,400)"/>
+  <circle cx="400" cy="209" r="5" fill="url(#rivetGrad)" transform="rotate(120,400,400)"/>
+  <circle cx="400" cy="209" r="5" fill="url(#rivetGrad)" transform="rotate(150,400,400)"/>
+  <circle cx="400" cy="209" r="5" fill="url(#rivetGrad)" transform="rotate(180,400,400)"/>
+  <circle cx="400" cy="209" r="5" fill="url(#rivetGrad)" transform="rotate(210,400,400)"/>
+  <circle cx="400" cy="209" r="5" fill="url(#rivetGrad)" transform="rotate(240,400,400)"/>
+  <circle cx="400" cy="209" r="5" fill="url(#rivetGrad)" transform="rotate(270,400,400)"/>
+  <circle cx="400" cy="209" r="5" fill="url(#rivetGrad)" transform="rotate(300,400,400)"/>
+  <circle cx="400" cy="209" r="5" fill="url(#rivetGrad)" transform="rotate(330,400,400)"/>
+</g>
+
+<!-- ═══════════════════════════════════
+     CENTRAL SPOKE WHEEL — spinning
+═══════════════════════════════════ -->
+<g class="spoke-wheel">
+
+  <!-- Wheel outer rim shadow -->
+  <circle cx="402" cy="402" r="132" fill="none" stroke="#0d1015" stroke-width="8" opacity="0.6"/>
+  <!-- Wheel outer rim -->
+  <circle cx="400" cy="400" r="130" fill="none" stroke="url(#wheelRimGrad)" stroke-width="18"/>
+  <!-- Rim bevel outer -->
+  <circle cx="400" cy="400" r="139" fill="none" stroke="#6a6d72" stroke-width="3" opacity="0.7"/>
+  <circle cx="400" cy="400" r="140" fill="none" stroke="#9a9da2" stroke-width="1.5" opacity="0.4"/>
+  <!-- Rim bevel inner -->
+  <circle cx="400" cy="400" r="121" fill="none" stroke="#2a2d32" stroke-width="3" opacity="0.8"/>
+  <circle cx="400" cy="400" r="119" fill="none" stroke="#5a5d62" stroke-width="1.5" opacity="0.5"/>
+
+  <!-- RIM GRIP KNURLING — 16 segments -->
+  <circle cx="400" cy="400" r="130" fill="none" stroke="#3a3d42" stroke-width="10" stroke-dasharray="12,13.8" opacity="0.6"/>
+  <circle cx="400" cy="400" r="130" fill="none" stroke="#7a7d82" stroke-width="3" stroke-dasharray="4,21.6" stroke-dashoffset="8" opacity="0.4"/>
+
+  <!-- Grip knobs on rim — 8 positions -->
+  <g fill="url(#rivetGrad)">
+    <circle cx="400" cy="270" r="8" transform="rotate(0,400,400)"/>
+    <circle cx="400" cy="270" r="8" transform="rotate(45,400,400)"/>
+    <circle cx="400" cy="270" r="8" transform="rotate(90,400,400)"/>
+    <circle cx="400" cy="270" r="8" transform="rotate(135,400,400)"/>
+    <circle cx="400" cy="270" r="8" transform="rotate(180,400,400)"/>
+    <circle cx="400" cy="270" r="8" transform="rotate(225,400,400)"/>
+    <circle cx="400" cy="270" r="8" transform="rotate(270,400,400)"/>
+    <circle cx="400" cy="270" r="8" transform="rotate(315,400,400)"/>
+  </g>
+  <g fill="#b0b3b8" opacity="0.4">
+    <circle cx="398" cy="268" r="3" transform="rotate(0,400,400)"/>
+    <circle cx="398" cy="268" r="3" transform="rotate(45,400,400)"/>
+    <circle cx="398" cy="268" r="3" transform="rotate(90,400,400)"/>
+    <circle cx="398" cy="268" r="3" transform="rotate(135,400,400)"/>
+    <circle cx="398" cy="268" r="3" transform="rotate(180,400,400)"/>
+    <circle cx="398" cy="268" r="3" transform="rotate(225,400,400)"/>
+    <circle cx="398" cy="268" r="3" transform="rotate(270,400,400)"/>
+    <circle cx="398" cy="268" r="3" transform="rotate(315,400,400)"/>
+  </g>
+
+  <!-- SPOKES — 6 heavy spokes -->
+  <!-- Spoke 1: 0° (top) -->
+  <rect x="390" y="283" width="20" height="118" rx="6" fill="url(#spokeGrad)" transform="rotate(0,400,400)" filter="url(#boltShadow)"/>
+  <rect x="393" y="285" width="6" height="114" rx="3" fill="#c8cbd0" opacity="0.25" transform="rotate(0,400,400)"/>
+  <!-- Spoke 2: 60° -->
+  <rect x="390" y="283" width="20" height="118" rx="6" fill="url(#spokeGrad)" transform="rotate(60,400,400)" filter="url(#boltShadow)"/>
+  <rect x="393" y="285" width="6" height="114" rx="3" fill="#c8cbd0" opacity="0.25" transform="rotate(60,400,400)"/>
+  <!-- Spoke 3: 120° -->
+  <rect x="390" y="283" width="20" height="118" rx="6" fill="url(#spokeGrad)" transform="rotate(120,400,400)" filter="url(#boltShadow)"/>
+  <rect x="393" y="285" width="6" height="114" rx="3" fill="#c8cbd0" opacity="0.25" transform="rotate(120,400,400)"/>
+  <!-- Spoke 4: 180° -->
+  <rect x="390" y="283" width="20" height="118" rx="6" fill="url(#spokeGrad)" transform="rotate(180,400,400)" filter="url(#boltShadow)"/>
+  <rect x="393" y="285" width="6" height="114" rx="3" fill="#c8cbd0" opacity="0.25" transform="rotate(180,400,400)"/>
+  <!-- Spoke 5: 240° -->
+  <rect x="390" y="283" width="20" height="118" rx="6" fill="url(#spokeGrad)" transform="rotate(240,400,400)" filter="url(#boltShadow)"/>
+  <rect x="393" y="285" width="6" height="114" rx="3" fill="#c8cbd0" opacity="0.25" transform="rotate(240,400,400)"/>
+  <!-- Spoke 6: 300° -->
+  <rect x="390" y="283" width="20" height="118" rx="6" fill="url(#spokeGrad)" transform="rotate(300,400,400)" filter="url(#boltShadow)"/>
+  <rect x="393" y="285" width="6" height="114" rx="3" fill="#c8cbd0" opacity="0.25" transform="rotate(300,400,400)"/>
+
+  <!-- ═══ SOPHISTICATED CENTER LOCK MECHANISM ═══ -->
+
+  <!-- Shadow base -->
+  <circle cx="402" cy="402" r="60" fill="#0d1015" opacity="0.6"/>
+
+  <!-- Outer lock housing — thick machined ring -->
+  <circle cx="400" cy="400" r="58" fill="url(#hubGrad)"/>
+  <circle cx="400" cy="400" r="58" fill="none" stroke="#7a7d82" stroke-width="3.5"/>
+  <circle cx="400" cy="400" r="55" fill="none" stroke="#2a2d32" stroke-width="2"/>
+  
+  <!-- Precision machined groove ring -->
+  <circle cx="400" cy="400" r="50" fill="none" stroke="#1a1d22" stroke-width="6"/>
+  <circle cx="400" cy="400" r="50" fill="none" stroke="#5a5d62" stroke-width="1.5" opacity="0.5"/>
+  <circle cx="400" cy="400" r="47" fill="none" stroke="#6a6d72" stroke-width="1" opacity="0.4"/>
+  
+  <!-- Combination dial ring with numbered graduation marks (60 ticks) -->
+  <circle cx="400" cy="400" r="50" fill="none" stroke="#4a4d52" stroke-width="3" stroke-dasharray="1.2,4.0" opacity="0.7"/>
+  <!-- Major ticks every 10 — thicker -->
+  <circle cx="400" cy="400" r="50" fill="none" stroke="#9a9da2" stroke-width="4" stroke-dasharray="2,50.4" opacity="0.6"/>
+  
+  <!-- Inner knurled collar -->
+  <circle cx="400" cy="400" r="42" fill="#1a1d22"/>
+  <circle cx="400" cy="400" r="42" fill="none" stroke="#5a5d62" stroke-width="2.5"/>
+  <circle cx="400" cy="400" r="40" fill="none" stroke="#3a3d42" stroke-width="1.5"/>
+  <!-- Knurling texture — fine cross-hatch -->
+  <circle cx="400" cy="400" r="42" fill="none" stroke="#4a4d52" stroke-width="2" stroke-dasharray="2.5,3.9" opacity="0.6"/>
+  <circle cx="400" cy="400" r="39" fill="none" stroke="#3a3d42" stroke-width="1.5" stroke-dasharray="1.5,4.8" stroke-dashoffset="2" opacity="0.4"/>
+  
+  <!-- Combination dial face -->
+  <circle cx="400" cy="400" r="35" fill="url(#hubGrad)"/>
+  <circle cx="400" cy="400" r="35" fill="none" stroke="#6a6d72" stroke-width="2"/>
+  <circle cx="400" cy="400" r="33" fill="none" stroke="#2a2d32" stroke-width="1.5"/>
+  
+  <!-- Dial number ring — indicator marks at 12 positions -->
+  <g stroke="#9a9da2" stroke-width="1.2" opacity="0.65">
+    <line x1="400" y1="367" x2="400" y2="372" transform="rotate(0,400,400)"/>
+    <line x1="400" y1="367" x2="400" y2="372" transform="rotate(30,400,400)"/>
+    <line x1="400" y1="367" x2="400" y2="372" transform="rotate(60,400,400)"/>
+    <line x1="400" y1="367" x2="400" y2="372" transform="rotate(90,400,400)"/>
+    <line x1="400" y1="367" x2="400" y2="372" transform="rotate(120,400,400)"/>
+    <line x1="400" y1="367" x2="400" y2="372" transform="rotate(150,400,400)"/>
+    <line x1="400" y1="367" x2="400" y2="372" transform="rotate(180,400,400)"/>
+    <line x1="400" y1="367" x2="400" y2="372" transform="rotate(210,400,400)"/>
+    <line x1="400" y1="367" x2="400" y2="372" transform="rotate(240,400,400)"/>
+    <line x1="400" y1="367" x2="400" y2="372" transform="rotate(270,400,400)"/>
+    <line x1="400" y1="367" x2="400" y2="372" transform="rotate(300,400,400)"/>
+    <line x1="400" y1="367" x2="400" y2="372" transform="rotate(330,400,400)"/>
+  </g>
+  <!-- Sub-ticks between majors -->
+  <g stroke="#6a6d72" stroke-width="0.8" opacity="0.4">
+    <line x1="400" y1="368" x2="400" y2="371" transform="rotate(15,400,400)"/>
+    <line x1="400" y1="368" x2="400" y2="371" transform="rotate(45,400,400)"/>
+    <line x1="400" y1="368" x2="400" y2="371" transform="rotate(75,400,400)"/>
+    <line x1="400" y1="368" x2="400" y2="371" transform="rotate(105,400,400)"/>
+    <line x1="400" y1="368" x2="400" y2="371" transform="rotate(135,400,400)"/>
+    <line x1="400" y1="368" x2="400" y2="371" transform="rotate(165,400,400)"/>
+    <line x1="400" y1="368" x2="400" y2="371" transform="rotate(195,400,400)"/>
+    <line x1="400" y1="368" x2="400" y2="371" transform="rotate(225,400,400)"/>
+    <line x1="400" y1="368" x2="400" y2="371" transform="rotate(255,400,400)"/>
+    <line x1="400" y1="368" x2="400" y2="371" transform="rotate(285,400,400)"/>
+    <line x1="400" y1="368" x2="400" y2="371" transform="rotate(315,400,400)"/>
+    <line x1="400" y1="368" x2="400" y2="371" transform="rotate(345,400,400)"/>
+  </g>
+
+  <!-- Inner dial plate -->
+  <circle cx="400" cy="400" r="26" fill="#1a1d22"/>
+  <circle cx="400" cy="400" r="26" fill="none" stroke="#4a4d52" stroke-width="1.5"/>
+  
+  <!-- Keyhole assembly — multi-layer -->
+  <!-- Keyhole backplate (dark recess) -->
+  <circle cx="400" cy="400" r="18" fill="#0d1015"/>
+  <circle cx="400" cy="400" r="18" fill="none" stroke="#3a3d42" stroke-width="2"/>
+  <circle cx="400" cy="400" r="16" fill="none" stroke="#1a1d22" stroke-width="1"/>
+  
+  <!-- Keyhole escutcheon (polished ring) -->
+  <circle cx="400" cy="400" r="14" fill="url(#rivetGrad)"/>
+  <circle cx="400" cy="400" r="14" fill="none" stroke="#7a7d82" stroke-width="1.5"/>
+  <circle cx="400" cy="400" r="12.5" fill="none" stroke="#2a2d32" stroke-width="1"/>
+  
+  <!-- Keyhole opening -->
+  <circle cx="400" cy="397" r="4" fill="#0d1015"/>
+  <rect x="397.5" y="396" width="5" height="10" rx="1.5" fill="#0d1015"/>
+  <!-- Keyhole bevel highlight -->
+  <circle cx="400" cy="397" r="4" fill="none" stroke="#3a3d42" stroke-width="0.8"/>
+  <rect x="397.5" y="396" width="5" height="10" rx="1.5" fill="none" stroke="#3a3d42" stroke-width="0.6"/>
+  <!-- Tiny highlight on keyhole escutcheon -->
+  <circle cx="396" cy="393" r="3.5" fill="#c8cbd0" opacity="0.35"/>
+  
+  <!-- Cross-hair alignment marks on dial -->
+  <line x1="389" y1="400" x2="393" y2="400" stroke="#5a5d62" stroke-width="0.8" opacity="0.5"/>
+  <line x1="407" y1="400" x2="411" y2="400" stroke="#5a5d62" stroke-width="0.8" opacity="0.5"/>
+  <line x1="400" y1="389" x2="400" y2="393" stroke="#5a5d62" stroke-width="0.8" opacity="0.5"/>
+  <line x1="400" y1="407" x2="400" y2="411" stroke="#5a5d62" stroke-width="0.8" opacity="0.5"/>
+  
+  <!-- Teal accent glow around keyhole — subtle -->
+  <circle cx="400" cy="400" r="20" fill="#00e5c0" opacity="0.04" class="glow-pulse"/>
+  <circle cx="400" cy="400" r="10" fill="#00e5c0" opacity="0.06" class="glow-pulse"/>
+
+</g>
+<!-- END SPOKE WHEEL -->
+
+<!-- ═══════════════════════════════════
+     COMBINATION LOCK DIAL — upper area
+═══════════════════════════════════ -->
+<g transform="translate(520, 265)">
+  <!-- Dial housing shadow -->
+  <circle cx="0" cy="0" r="36" fill="#0d1015" opacity="0.5"/>
+  <!-- Dial housing -->
+  <circle cx="0" cy="0" r="34" fill="#1a1d22"/>
+  <circle cx="0" cy="0" r="34" fill="none" stroke="#5a5d62" stroke-width="2.5"/>
+  <circle cx="0" cy="0" r="31" fill="none" stroke="#3a3d42" stroke-width="1.5"/>
+  <!-- Dial face -->
+  <circle cx="0" cy="0" r="28" fill="url(#gaugeGrad)"/>
+  <circle cx="0" cy="0" r="28" fill="none" stroke="#6a6d72" stroke-width="1.5"/>
+  <!-- Number ring — 40 ticks -->
+  <circle cx="0" cy="0" r="24" fill="none" stroke="#5a5d62" stroke-width="1" stroke-dasharray="0.8,2.9" opacity="0.7"/>
+  <!-- Major ticks every 10 -->
+  <g stroke="#b0b3b8" stroke-width="1.3" opacity="0.6">
+    <line x1="0" y1="-22" x2="0" y2="-17" transform="rotate(0,0,0)"/>
+    <line x1="0" y1="-22" x2="0" y2="-17" transform="rotate(36,0,0)"/>
+    <line x1="0" y1="-22" x2="0" y2="-17" transform="rotate(72,0,0)"/>
+    <line x1="0" y1="-22" x2="0" y2="-17" transform="rotate(108,0,0)"/>
+    <line x1="0" y1="-22" x2="0" y2="-17" transform="rotate(144,0,0)"/>
+    <line x1="0" y1="-22" x2="0" y2="-17" transform="rotate(180,0,0)"/>
+    <line x1="0" y1="-22" x2="0" y2="-17" transform="rotate(216,0,0)"/>
+    <line x1="0" y1="-22" x2="0" y2="-17" transform="rotate(252,0,0)"/>
+    <line x1="0" y1="-22" x2="0" y2="-17" transform="rotate(288,0,0)"/>
+    <line x1="0" y1="-22" x2="0" y2="-17" transform="rotate(324,0,0)"/>
+  </g>
+  <!-- Indicator triangle at top -->
+  <polygon points="0,-30 -4,-35 4,-35" fill="#c8cbd0" opacity="0.7"/>
+  <!-- Center knob -->
+  <circle cx="0" cy="0" r="8" fill="url(#rivetGrad)"/>
+  <circle cx="0" cy="0" r="8" fill="none" stroke="#5a5d62" stroke-width="1.2"/>
+  <circle cx="-2" cy="-2" r="3" fill="#c8cbd0" opacity="0.4"/>
+  <!-- Needle -->
+  <line x1="0" y1="0" x2="0" y2="-18" stroke="#00e5c0" stroke-width="1.2" opacity="0.7" stroke-linecap="round"/>
+</g>
+
+<!-- ═══════════════════════════════════
+     DEADBOLT THROW BAR — right side
+═══════════════════════════════════ -->
+<g filter="url(#boltShadow)">
+  <!-- Throw bar channel -->
+  <rect x="660" y="380" width="45" height="40" rx="3" fill="#1a1d22"/>
+  <rect x="662" y="382" width="41" height="36" rx="2" fill="#2a2d32"/>
+  <!-- Throw bar body (heavy) -->
+  <rect x="680" y="385" width="68" height="30" rx="4" fill="url(#boltGrad)"/>
+  <rect x="680" y="385" width="68" height="7" rx="4" fill="url(#boltTopH)" opacity="0.7"/>
+  <!-- Throw bar tip (tapered) -->
+  <polygon points="680,385 665,392 665,408 680,415" fill="url(#boltGrad)"/>
+  <polygon points="680,385 665,392 665,396 680,391" fill="#c8cbd0" opacity="0.35"/>
+  <!-- Spring retainer holes -->
+  <circle cx="700" cy="400" r="3" fill="#1a1d22" opacity="0.7"/>
+  <circle cx="715" cy="400" r="3" fill="#1a1d22" opacity="0.7"/>
+  <circle cx="730" cy="400" r="3" fill="#1a1d22" opacity="0.7"/>
+  <!-- Groove -->
+  <rect x="690" y="403" width="50" height="4" rx="1.5" fill="#1a1d22" opacity="0.5"/>
+  <rect x="690" y="401" width="50" height="1.5" rx="0.8" fill="#7a7d82" opacity="0.3"/>
+</g>
+
+<!-- ═══════════════════════════════════
+     SMALL GAUGES / MECHANICAL DETAILS
+═══════════════════════════════════ -->
+<!-- Gauge 1 — upper right of door (pressure) -->
+<g transform="translate(275, 260)">
+  <circle cx="0" cy="0" r="28" fill="#1a1d22"/>
+  <circle cx="0" cy="0" r="26" fill="url(#gaugeGrad)"/>
+  <circle cx="0" cy="0" r="26" fill="none" stroke="#5a5d62" stroke-width="2"/>
+  <circle cx="0" cy="0" r="22" fill="none" stroke="#3a3d42" stroke-width="1.5"/>
+  <!-- gauge markings -->
+  <line x1="0" y1="-18" x2="0" y2="-12" stroke="#6a6d72" stroke-width="1.5" transform="rotate(0)"/>
+  <line x1="0" y1="-18" x2="0" y2="-14" stroke="#5a5d62" stroke-width="1" transform="rotate(30)"/>
+  <line x1="0" y1="-18" x2="0" y2="-14" stroke="#5a5d62" stroke-width="1" transform="rotate(60)"/>
+  <line x1="0" y1="-18" x2="0" y2="-12" stroke="#6a6d72" stroke-width="1.5" transform="rotate(90)"/>
+  <line x1="0" y1="-18" x2="0" y2="-14" stroke="#5a5d62" stroke-width="1" transform="rotate(120)"/>
+  <line x1="0" y1="-18" x2="0" y2="-14" stroke="#5a5d62" stroke-width="1" transform="rotate(150)"/>
+  <line x1="0" y1="-18" x2="0" y2="-12" stroke="#6a6d72" stroke-width="1.5" transform="rotate(180)"/>
+  <line x1="0" y1="-18" x2="0" y2="-14" stroke="#5a5d62" stroke-width="1" transform="rotate(210)"/>
+  <line x1="0" y1="-18" x2="0" y2="-14" stroke="#5a5d62" stroke-width="1" transform="rotate(240)"/>
+  <line x1="0" y1="-18" x2="0" y2="-12" stroke="#6a6d72" stroke-width="1.5" transform="rotate(270)"/>
+  <line x1="0" y1="-18" x2="0" y2="-14" stroke="#5a5d62" stroke-width="1" transform="rotate(300)"/>
+  <line x1="0" y1="-18" x2="0" y2="-14" stroke="#5a5d62" stroke-width="1" transform="rotate(330)"/>
+  <!-- needle -->
+  <line x1="0" y1="2" x2="0" y2="-14" stroke="#00e5c0" stroke-width="1.5" stroke-linecap="round" transform="rotate(125)" opacity="0.8"/>
+  <circle cx="0" cy="0" r="3" fill="#9a9da2"/>
+  <!-- glass reflection -->
+  <ellipse cx="-6" cy="-8" rx="6" ry="4" fill="white" opacity="0.04" transform="rotate(-20)"/>
+  <!-- rivet surround -->
+  <circle cx="0" cy="0" r="28" fill="none" stroke="url(#rivetGrad)" stroke-width="3"/>
+  <circle cx="-22" cy="-16" r="4" fill="url(#rivetGrad)"/>
+  <circle cx="22" cy="-16" r="4" fill="url(#rivetGrad)"/>
+  <circle cx="-22" cy="16" r="4" fill="url(#rivetGrad)"/>
+  <circle cx="22" cy="16" r="4" fill="url(#rivetGrad)"/>
+</g>
+
+<!-- Gauge 2 — lower right area -->
+<g transform="translate(548, 552)">
+  <circle cx="0" cy="0" r="22" fill="#1a1d22"/>
+  <circle cx="0" cy="0" r="20" fill="url(#gaugeGrad)"/>
+  <circle cx="0" cy="0" r="20" fill="none" stroke="#4a4d52" stroke-width="2"/>
+  <line x1="0" y1="-14" x2="0" y2="-10" stroke="#5a5d62" stroke-width="1.2" transform="rotate(0)"/>
+  <line x1="0" y1="-14" x2="0" y2="-10" stroke="#5a5d62" stroke-width="1.2" transform="rotate(60)"/>
+  <line x1="0" y1="-14" x2="0" y2="-10" stroke="#5a5d62" stroke-width="1.2" transform="rotate(120)"/>
+  <line x1="0" y1="-14" x2="0" y2="-10" stroke="#5a5d62" stroke-width="1.2" transform="rotate(180)"/>
+  <line x1="0" y1="-14" x2="0" y2="-10" stroke="#5a5d62" stroke-width="1.2" transform="rotate(240)"/>
+  <line x1="0" y1="-14" x2="0" y2="-10" stroke="#5a5d62" stroke-width="1.2" transform="rotate(300)"/>
+  <line x1="0" y1="2" x2="0" y2="-11" stroke="#00e5c0" stroke-width="1.2" stroke-linecap="round" transform="rotate(210)" opacity="0.7"/>
+  <circle cx="0" cy="0" r="2.5" fill="#7a7d82"/>
+  <circle cx="0" cy="0" r="22" fill="none" stroke="url(#rivetGrad)" stroke-width="2.5"/>
+</g>
+
+<!-- Latch mechanism — right middle area -->
+<g transform="translate(622, 400)">
+  <!-- latch housing -->
+  <rect x="-20" y="-35" width="38" height="70" rx="6" fill="#1a1d22"/>
+  <rect x="-17" y="-32" width="32" height="64" rx="5" fill="url(#latchGrad)"/>
+  <!-- latch slot -->
+  <rect x="-8" y="-20" width="16" height="40" rx="4" fill="#0d1015"/>
+  <!-- latch body -->
+  <rect x="-5" y="-8" width="10" height="22" rx="3" fill="url(#hubGrad)"/>
+  <rect x="-5" y="-8" width="4" height="22" rx="2" fill="#9a9da2" opacity="0.3"/>
+  <!-- latch bolts -->
+  <circle cx="-10" cy="-26" r="4" fill="url(#rivetGrad)"/><circle cx="-11" cy="-27" r="1.5" fill="#c8cbd0" opacity="0.5"/>
+  <circle cx="10" cy="-26" r="4" fill="url(#rivetGrad)"/><circle cx="9" cy="-27" r="1.5" fill="#c8cbd0" opacity="0.5"/>
+  <circle cx="-10" cy="26" r="4" fill="url(#rivetGrad)"/><circle cx="-11" cy="25" r="1.5" fill="#c8cbd0" opacity="0.5"/>
+  <circle cx="10" cy="26" r="4" fill="url(#rivetGrad)"/><circle cx="9" cy="25" r="1.5" fill="#c8cbd0" opacity="0.5"/>
+</g>
+
+<!-- Latch mechanism — left-middle small detail -->
+<g transform="translate(184, 400)">
+  <rect x="-16" y="-28" width="30" height="56" rx="5" fill="#1a1d22"/>
+  <rect x="-13" y="-25" width="24" height="50" rx="4" fill="url(#latchGrad)"/>
+  <rect x="-6" y="-15" width="12" height="30" rx="3" fill="#0d1015"/>
+  <rect x="-4" y="-6" width="8" height="18" rx="2" fill="url(#hubGrad)"/>
+  <circle cx="-8" cy="-20" r="3.5" fill="url(#rivetGrad)"/>
+  <circle cx="8" cy="-20" r="3.5" fill="url(#rivetGrad)"/>
+  <circle cx="-8" cy="20" r="3.5" fill="url(#rivetGrad)"/>
+  <circle cx="8" cy="20" r="3.5" fill="url(#rivetGrad)"/>
+</g>
+
+<!-- ═══════════════════════════════════
+     DOOR SURFACE RIVETS — scattered
+═══════════════════════════════════ -->
+<!-- On the door face, cluster of rivets at specific positions -->
+<circle cx="314" cy="290" r="7" fill="url(#rivetGrad)"/><circle cx="312" cy="288" r="2.5" fill="#c8cbd0" opacity="0.5"/>
+<circle cx="486" cy="290" r="7" fill="url(#rivetGrad)"/><circle cx="484" cy="288" r="2.5" fill="#c8cbd0" opacity="0.5"/>
+<circle cx="314" cy="510" r="7" fill="url(#rivetGrad)"/><circle cx="312" cy="508" r="2.5" fill="#c8cbd0" opacity="0.5"/>
+<circle cx="486" cy="510" r="7" fill="url(#rivetGrad)"/><circle cx="484" cy="508" r="2.5" fill="#c8cbd0" opacity="0.5"/>
+
+<!-- ═══════════════════════════════════
+     AMBIENT TEAL GLOW OVERLAY
+═══════════════════════════════════ -->
+<circle cx="400" cy="400" r="395" fill="url(#ambientGlow)" class="glow-pulse"/>
+
+<!-- ═══════════════════════════════════
+     VIGNETTE
+═══════════════════════════════════ -->
+<rect x="0" y="0" width="800" height="800" fill="url(#vignetteGrad)"/>
+
+<!-- Edge shadow frame inner -->
+<rect x="54" y="58" width="692" height="688" rx="10" fill="none" stroke="#0d1015" stroke-width="4" opacity="0.5"/>
+
+</g>
+<!-- END VAULT SVG GROUP -->
+
+</svg>
+  </div>
+
+</div>
+
+</div>
+  <!-- Dark overlay for text readability -->
+  <div style="position:absolute;inset:0;z-index:0;background:radial-gradient(ellipse 70% 80% at 50% 50%,rgba(5,9,26,0.72) 0%,rgba(5,9,26,0.92) 100%);"></div>
+  <div class="cta-wrap" style="position:relative;z-index:1;">
+    <div class="sec-eyebrow fade-up" style="justify-content:center">Access</div>
+    <h2 class="cta-h fade-up d1" style="color:#fff;">Ready to invest in engineered alpha?</h2>
+    <p class="cta-sub fade-up d2" style="color:var(--muted);font-weight:300;">For qualified investors seeking a platform where technology, discipline, and institutional expertise converge to deliver consistent, risk-managed performance.</p>
+    <div class="cta-btns fade-up d3">
+      <a href="login.html" class="btn-prime">
+        Investor Portal
+        <svg width="14" height="14" viewBox="0 0 14 14" fill="none"><path d="M3 7h8M8 4l3 3-3 3" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>
+      </a>
+      <a href="mailto:contact@metadroncapital.com" class="btn-sec">Contact Us</a>
+    </div>
+    <p class="cta-disc fade-up d4">Performance figures are indicative and illustrative only. Not investment advice. Capital at risk. Metadron Capital is not a registered investment advisor.</p>
+  </div>
+</section>
+
+<!-- ══════════ FOOTER ══════════ -->
+<footer style="padding:0;border-top:1px solid var(--border);">
+  <div style="display:grid;grid-template-columns:auto 1fr auto;align-items:center;padding:16px 52px;gap:20px;">
+    <!-- Logo left -->
+    <div style="display:flex;align-items:center;gap:6px;white-space:nowrap;">
+      <svg width="16" height="16" viewBox="0 0 28 28" fill="none">
+        <rect x="1" y="1" width="26" height="26" rx="4" stroke="#00d4aa" stroke-width="1.5"/>
+        <path d="M7 20V8l7 8 7-8v12" stroke="#00d4aa" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
+        <circle cx="14" cy="12" r="2" fill="#00d4aa" fill-opacity="0.3" stroke="#00d4aa" stroke-width="1"/>
+      </svg>
+      <span style="font-family:'DM Mono',monospace;font-style:italic;font-size:13px;letter-spacing:0.15em;color:var(--muted);">ETADRON</span>
+      <span style="font-family:'Cormorant Garamond',serif;letter-spacing:0.18em;">Capital</span>
+    </div>
+    <!-- Ticker scroll middle -->
+    <div style="overflow:hidden;min-width:0;">
+      <div id="ft-ticker" style="display:inline-flex;gap:36px;animation:ftTick 30s linear infinite;white-space:nowrap;"></div>
+    </div>
+    <style>@keyframes ftTick{from{transform:translateX(0)}to{transform:translateX(-50%)}}</style>
+    <!-- Trademark right -->
+    <span style="font-family:'DM Mono',monospace;font-size:10px;letter-spacing:0.1em;color:var(--muted);white-space:nowrap;">Metadron™ All Rights Reserved</span>
+  </div>
+  <script>
+  (function(){
+    var t=[
+      {s:'SPX',v:'5,204',c:'+18.4',u:true},{s:'NDX',v:'18,102',c:'+84.2',u:true},
+      {s:'DJIA',v:'39,512',c:'+124',u:true},{s:'RUT',v:'2,058',c:'-6.3',u:false},
+      {s:'VIX',v:'16.84',c:'-0.32',u:false},{s:'US10Y',v:'4.281%',c:'-0.014',u:false},
+      {s:'US2Y',v:'4.098%',c:'-0.008',u:false},{s:'DXY',v:'104.28',c:'+0.14',u:true},
+      {s:'EURUSD',v:'1.0831',c:'-0.0012',u:false},{s:'USDJPY',v:'149.82',c:'+0.21',u:true},
+      {s:'GBPUSD',v:'1.2648',c:'+0.0008',u:true},{s:'GLD',v:'2,338',c:'+12.4',u:true},
+      {s:'CL1',v:'78.42',c:'-0.68',u:false},{s:'BTC',v:'69,842',c:'+1,204',u:true},
+      {s:'SOFR',v:'4.320',c:'+0.002',u:true},{s:'HYG',v:'77.82',c:'+0.14',u:true},
+      {s:'TLT',v:'92.18',c:'+0.42',u:true}
+    ];
+    var d=[...t,...t];
+    var el=document.getElementById('ft-ticker');
+    if(el)el.innerHTML=d.map(function(i){return '<span style="display:inline-flex;align-items:center;gap:7px;font-family:DM Mono,monospace;font-size:10px;flex-shrink:0;"><span style="color:var(--muted);">'+i.s+'</span><span style="color:var(--accent);">'+i.v+'</span><span style="color:'+(i.u?'var(--pos)':'var(--neg)')+';font-size:9px;">'+i.c+'</span></span>';}).join('');
+  })();
+  </script>
+</footer>
+
+<script>
+
+
+// ══════════════════════════════════════════════════════
+// HERO CUBE CANVAS
+// ══════════════════════════════════════════════════════
+function drawCube(canvasId, opts){
+  const canvas=document.getElementById(canvasId);
+  if(!canvas)return;
+  const ctx=canvas.getContext('2d');
+  const W=canvas.width, H=canvas.height;
+  let rot=0, rot2=0.3;
+  const makeVerts=()=>[[-1,-1,-1],[1,-1,-1],[1,1,-1],[-1,1,-1],[-1,-1,1],[1,-1,1],[1,1,1],[-1,1,1]];
+  const edges=[[0,1],[1,2],[2,3],[3,0],[4,5],[5,6],[6,7],[7,4],[0,4],[1,5],[2,6],[3,7]];
+  const faces=[[0,1,2,3],[4,7,6,5],[0,4,5,1],[2,6,7,3],[0,3,7,4],[1,5,6,2]];
+  const layers=[1.0,0.7,0.44];
+  const layerColors=['rgba(0,229,192,1)','rgba(79,172,254,0.85)','rgba(167,139,250,0.75)'];
+  function project(x,y,z,cx,cy){const f=opts.fov/(opts.fov+z);return{x:cx+x*f*opts.scale,y:cy+y*f*opts.scale};}
+  function rotateY(v,a){const c=Math.cos(a),s=Math.sin(a);return[c*v[0]+s*v[2],v[1],-s*v[0]+c*v[2]];}
+  function rotateX(v,a){const c=Math.cos(a),s=Math.sin(a);return[v[0],c*v[1]-s*v[2],s*v[1]+c*v[2]];}
+  function rotateZ(v,a){const c=Math.cos(a),s=Math.sin(a);return[c*v[0]-s*v[1],s*v[0]+c*v[1],v[2]];}
+  const particles=[];
+  for(let i=0;i<18;i++) particles.push({x:(Math.random()-0.5)*2,y:(Math.random()-0.5)*2,z:(Math.random()-0.5)*2,vx:(Math.random()-0.5)*0.006,vy:(Math.random()-0.5)*0.006,vz:(Math.random()-0.5)*0.006,r:Math.random()*1.8+0.5,life:Math.random()});
+  function draw(){
+    ctx.clearRect(0,0,W,H);
+    const cx=W/2,cy=H/2;
+    rot+=opts.speed;rot2+=opts.speed*0.6;
+    const grd=ctx.createRadialGradient(cx,cy,0,cx,cy,W*0.45);
+    grd.addColorStop(0,'rgba(0,229,192,0.04)');grd.addColorStop(0.5,'rgba(79,172,254,0.025)');grd.addColorStop(1,'transparent');
+    ctx.fillStyle=grd;ctx.fillRect(0,0,W,H);
+    layers.forEach((scale,li)=>{
+      const verts=makeVerts().map(v=>{let r=[v[0]*scale,v[1]*scale,v[2]*scale];r=rotateY(r,rot);r=rotateX(r,rot2);r=rotateZ(r,rot*0.4);return r;});
+      const proj=verts.map(v=>project(v[0],v[1],v[2],cx,cy));
+      const alpha=li===0?0.85:li===1?0.55:0.38;
+      const col=layerColors[li];
+      if(li===0){faces.forEach(f=>{const pts=f.map(i=>proj[i]);const v=verts[f[0]];if(v[2]<0)return;ctx.beginPath();ctx.moveTo(pts[0].x,pts[0].y);pts.slice(1).forEach(p=>ctx.lineTo(p.x,p.y));ctx.closePath();ctx.fillStyle='rgba(0,229,192,0.022)';ctx.fill();});}
+      edges.forEach(([a,b])=>{
+        const pa=proj[a],pb=proj[b];
+        const grad=ctx.createLinearGradient(pa.x,pa.y,pb.x,pb.y);
+        grad.addColorStop(0,col.replace(',1)',`,${alpha})`).replace(',0.85)',`,${alpha*0.9})`).replace(',0.75)',`,${alpha*0.75})`));
+        grad.addColorStop(1,'rgba(79,172,254,'+alpha*0.5+')');
+        ctx.beginPath();ctx.moveTo(pa.x,pa.y);ctx.lineTo(pb.x,pb.y);
+        ctx.strokeStyle=grad;ctx.lineWidth=li===0?1.4:li===1?0.9:0.6;ctx.stroke();
+      });
+      if(li===0){proj.forEach(p=>{ctx.beginPath();ctx.arc(p.x,p.y,3,0,Math.PI*2);ctx.fillStyle='rgba(0,229,192,0.9)';ctx.fill();ctx.beginPath();ctx.arc(p.x,p.y,6,0,Math.PI*2);ctx.fillStyle='rgba(0,229,192,0.1)';ctx.fill();});}
+    });
+    particles.forEach(p=>{
+      p.x+=p.vx;p.y+=p.vy;p.z+=p.vz;p.life+=0.004;
+      if(p.x>1.4||p.x<-1.4)p.vx*=-1;if(p.y>1.4||p.y<-1.4)p.vy*=-1;if(p.z>1.4||p.z<-1.4)p.vz*=-1;
+      const pp=project(p.x,p.y,p.z,cx,cy);
+      const a=0.3+0.3*Math.sin(p.life*3);
+      ctx.beginPath();ctx.arc(pp.x,pp.y,p.r,0,Math.PI*2);ctx.fillStyle=`rgba(0,229,192,${a})`;ctx.fill();
+    });
+    ctx.beginPath();ctx.arc(cx,cy,4,0,Math.PI*2);ctx.fillStyle='rgba(0,229,192,0.95)';ctx.fill();
+    ctx.beginPath();ctx.arc(cx,cy,10,0,Math.PI*2);ctx.fillStyle='rgba(0,229,192,0.12)';ctx.fill();
+    requestAnimationFrame(draw);
+  }
+  draw();
+}
+(function(){
+  const canvas=document.getElementById('hero-canvas');
+  if(!canvas)return;
+  function resize(){
+    const w=canvas.offsetWidth||canvas.parentElement?.offsetWidth||window.innerWidth*0.55;
+    const h=canvas.offsetHeight||canvas.parentElement?.offsetHeight||window.innerHeight;
+    canvas.width=w; canvas.height=h;
+  }
+  // Defer until layout is ready
+  function initHero(){
+    resize();
+    if(canvas.width===0||canvas.height===0){
+      requestAnimationFrame(initHero);
+      return;
+    }
+    drawCube('hero-canvas',{fov:320,scale:Math.min(canvas.width*0.36,190),speed:0.004});
+    window.addEventListener('resize',resize);
+  }
+  if(document.readyState==='complete'){
+    initHero();
+  } else {
+    window.addEventListener('load',initHero);
+  }
+})();
+// cipher-canvas handled by its own engine above
+
+// ══════════════════════════════════════════════════════
+// NAV SCROLL
+// ══════════════════════════════════════════════════════
+window.addEventListener('scroll',()=>{
+  document.getElementById('nav').classList.toggle('scrolled',window.scrollY>40);
+},{passive:true});
+
+// ══════════════════════════════════════════════════════
+// CLOCKS
+// ══════════════════════════════════════════════════════
+const zones=[
+  {city:'New York',tz:'America/New_York',open:['09:30','16:00']},
+  {city:'London',tz:'Europe/London',open:['08:00','16:30']},
+  {city:'Tokyo',tz:'Asia/Tokyo',open:['09:00','15:30']},
+  {city:'Hong Kong',tz:'Asia/Hong_Kong',open:['09:30','16:00']}
+];
+function updateClocks(){
+  const container=document.getElementById('clocks');
+  if(!container)return;
+  container.innerHTML=zones.map(z=>{
+    const now=new Date();
+    const t=now.toLocaleTimeString('en-US',{timeZone:z.tz,hour:'2-digit',minute:'2-digit',second:'2-digit',hour12:false});
+    const h=now.toLocaleString('en-US',{timeZone:z.tz,hour:'2-digit',hour12:false,minute:'2-digit'}).split(':').map(Number);
+    const mins=h[0]*60+h[1];
+    const parseT=s=>{const[a,b]=s.split(':').map(Number);return a*60+b;};
+    const isOpen=z.open&&mins>=parseT(z.open[0])&&mins<parseT(z.open[1]);
+    return `<div class="clock"><div class="clock-city">${z.city}</div><div class="clock-time">${t}</div><div class="clock-sess ${isOpen?'open':'closed'}">${isOpen?'Open':'Closed'}</div></div>`;
+  }).join('');
+}
+updateClocks();setInterval(updateClocks,1000);
+
+// ══════════════════════════════════════════════════════
+// LIVE METRICS
+// ══════════════════════════════════════════════════════
+function animPerf(){
+  document.getElementById('pf-wr').textContent=(68.0+Math.random()*0.8).toFixed(1)+'%';
+  document.getElementById('pf-sh').textContent=(2.08+Math.random()*0.12).toFixed(2);
+  document.getElementById('pf-dp').textContent='+'+(0.25+Math.random()*0.25).toFixed(2)+'%';
+  document.getElementById('pf-mr').textContent='+'+(3.6+Math.random()*0.5).toFixed(1)+'%';
+  document.getElementById('pf-ir').textContent='+'+(41.0+Math.random()*0.6).toFixed(1)+'%';
+  document.getElementById('pf-nv').textContent='$'+(1412+Math.random()*2-1).toFixed(2);
+  document.getElementById('pf-so').textContent=(2.95+Math.random()*0.15).toFixed(2);
+  ['cv1','sv1'].forEach(id=>{const el=document.getElementById(id);if(el)el.textContent='+'+(0.65+Math.random()*0.14).toFixed(3);});
+  ['cv2','sv2'].forEach(id=>{const el=document.getElementById(id);if(el)el.textContent='+'+(0.35+Math.random()*0.12).toFixed(3);});
+  ['cv3','sv3'].forEach(id=>{const el=document.getElementById(id);if(el)el.textContent='+'+(0.12+Math.random()*0.10).toFixed(3);});
+  const conv=(0.80+Math.random()*0.12).toFixed(2)+' / 1.00';
+  ['cv-total','sv-total'].forEach(id=>{const el=document.getElementById(id);if(el)el.textContent=conv;});
+  const edge=document.getElementById('ab-edge');if(edge)edge.textContent='+'+(0.68+Math.random()*0.1).toFixed(3);
+  const conf=document.getElementById('ab-conf');if(conf)conf.textContent=(0.84+Math.random()*0.08).toFixed(2);
+}
+animPerf();setInterval(animPerf,4200);
+
+// ══════════════════════════════════════════════════════
+// FADE-UP OBSERVER
+// ══════════════════════════════════════════════════════
+const io=new IntersectionObserver(entries=>{
+  entries.forEach(e=>{if(e.isIntersecting)e.target.classList.add('vis');});
+},{threshold:0.12});
+document.querySelectorAll('.fade-up').forEach(el=>io.observe(el));
+
+// ══════════════════════════════════════════════════════
+// RETINA EYE CANVAS — anatomical eye with retinal neural network
+// Sclera → iris texture → pupil → retinal vessels → NN nodes on retina
+(function(){
+  const canvas = document.getElementById('retina-canvas');
+  if(!canvas) return;
+  let W, H, cx, cy, irisR, pupilR;
+  const ctx = canvas.getContext('2d');
+
+  let irisTexLines = [], retinalVessels = [], nnNodes = [], nnEdges = [], nnPulses = [];
+  let pupilPulse = 0, blinkT = 0, blinkDir = 1, scanY = 0;
+
+  function resize(){
+    W = canvas.width = canvas.offsetWidth;
+    H = canvas.height = canvas.offsetHeight;
+    cx = W/2; cy = H/2;
+    irisR = Math.min(W,H) * 0.30;
+    pupilR = irisR * 0.36;
+    init();
+  }
+
+  function init(){
+    irisTexLines = [];
+    retinalVessels = [];
+    nnNodes = [];
+    nnEdges = [];
+    nnPulses = [];
+
+    // Iris texture — radial fiber lines from pupil edge outward
+    for(let i=0;i<180;i++){
+      const angle = (i/180)*Math.PI*2 + (Math.random()-0.5)*0.04;
+      const r0 = pupilR * 1.02;
+      const r1 = irisR * (0.7 + Math.random()*0.28);
+      const wobble = (Math.random()-0.5)*0.06;
+      irisTexLines.push({
+        angle, r0, r1, wobble,
+        opacity: 0.06 + Math.random()*0.10,
+        width: 0.4 + Math.random()*0.8
+      });
+    }
+
+    // Retinal blood vessels — branching from optic disc (right side)
+    const odx = cx + irisR * 0.42, ody = cy + irisR * 0.08; // optic disc position
+    function branch(x, y, angle, len, depth, color, w){
+      if(depth===0 || len < 4) return;
+      const ex = x + Math.cos(angle)*len;
+      const ey = y + Math.sin(angle)*len;
+      // Constrain to iris
+      const dx2 = ex-cx, dy2 = ey-cy;
+      const dist2 = Math.sqrt(dx2*dx2+dy2*dy2);
+      if(dist2 > irisR*0.88) return;
+      retinalVessels.push({x1:x,y1:y,x2:ex,y2:ey,color,w,depth});
+      const spread = 0.25 + Math.random()*0.25;
+      branch(ex,ey,angle-spread,len*(0.6+Math.random()*0.2),depth-1,color,w*0.75);
+      branch(ex,ey,angle+spread,len*(0.6+Math.random()*0.2),depth-1,color,w*0.75);
+    }
+    // Main vessel arms from optic disc
+    for(let a=0;a<6;a++){
+      const angle = (a/6)*Math.PI*2 - Math.PI*0.2;
+      branch(odx, ody, angle, irisR*0.32, 5, 'teal', 1.4);
+    }
+
+    // Neural network nodes — mapped onto the retinal surface (annular region)
+    const N = 55;
+    for(let i=0;i<N;i++){
+      const angle = Math.random()*Math.PI*2;
+      const r = irisR*(0.12 + Math.random()*0.74);
+      const dx3 = Math.cos(angle)*r, dy3 = Math.sin(angle)*r;
+      nnNodes.push({
+        x: cx+dx3, y: cy+dy3,
+        vx:(Math.random()-0.5)*0.12, vy:(Math.random()-0.5)*0.12,
+        r: 1.5+Math.random()*2,
+        pulse: Math.random()*Math.PI*2,
+        pSpeed: 0.02+Math.random()*0.025,
+        active: Math.random()>0.25
+      });
+    }
+    // Connect nearby nodes
+    for(let i=0;i<N;i++){
+      for(let j=i+1;j<N;j++){
+        const dx4=nnNodes[i].x-nnNodes[j].x, dy4=nnNodes[i].y-nnNodes[j].y;
+        const d=Math.sqrt(dx4*dx4+dy4*dy4);
+        if(d < irisR*0.35 && Math.random()<0.3) nnEdges.push({a:i,b:j});
+      }
+    }
+    // Initial pulses
+    for(let i=0;i<4;i++) nnPulses.push({edgeIdx:Math.floor(Math.random()*nnEdges.length),t:Math.random(),speed:0.006+Math.random()*0.008});
+    scanY = cy - irisR;
+  }
+
+  let frame=0;
+  function draw(){
+    ctx.clearRect(0,0,W,H);
+    frame++;
+    pupilPulse += 0.016;
+    // Blink every ~6s (very slow)
+    blinkT += 0.004 * blinkDir;
+    if(blinkT>1){blinkT=1;blinkDir=-1;}
+    if(blinkT<0){blinkT=0;blinkDir=1;}
+    scanY += 0.5; if(scanY>cy+irisR) scanY=cy-irisR;
+
+    // ── Clip everything to eye-shaped region ──
+    // Eye shape: almond/vesica piscis
+    const ew = irisR*1.55, eh = irisR*0.92;
+    ctx.save();
+    ctx.beginPath();
+    ctx.ellipse(cx, cy, ew, eh, 0, 0, Math.PI*2);
+    ctx.clip();
+
+    // Sclera fill
+    const scleraG = ctx.createRadialGradient(cx,cy,irisR,cx,cy,ew);
+    scleraG.addColorStop(0,'rgba(8,14,32,0)');
+    scleraG.addColorStop(0.4,'rgba(12,20,50,0.7)');
+    scleraG.addColorStop(1,'rgba(18,28,65,0.9)');
+    ctx.fillStyle=scleraG; ctx.fillRect(0,0,W,H);
+
+    // Subtle sclera vessels (very faint red lines at edges)
+    for(let i=0;i<8;i++){
+      const a=(i/8)*Math.PI*2;
+      const sx=cx+Math.cos(a)*irisR*1.02, sy=cy+Math.sin(a)*irisR*0.94;
+      const ex2=cx+Math.cos(a)*ew*0.9, ey2=cy+Math.sin(a)*eh*0.9;
+      ctx.strokeStyle='rgba(180,60,60,0.07)'; ctx.lineWidth=0.8;
+      ctx.beginPath(); ctx.moveTo(sx,sy); ctx.lineTo(ex2,ey2); ctx.stroke();
+    }
+
+    // Iris base — radial gradient teal/blue
+    const irisBase = ctx.createRadialGradient(cx,cy,pupilR,cx,cy,irisR);
+    irisBase.addColorStop(0,'rgba(0,60,80,0.95)');
+    irisBase.addColorStop(0.3,'rgba(0,100,120,0.8)');
+    irisBase.addColorStop(0.7,'rgba(0,80,110,0.85)');
+    irisBase.addColorStop(1,'rgba(0,40,70,0.9)');
+    ctx.beginPath(); ctx.arc(cx,cy,irisR,0,Math.PI*2);
+    ctx.fillStyle=irisBase; ctx.fill();
+
+    // Iris texture fibers
+    irisTexLines.forEach(l=>{
+      const r0=l.r0, r1=l.r1;
+      const mid = (r0+r1)/2;
+      const ctrl_angle = l.angle + l.wobble;
+      const x0=cx+Math.cos(l.angle)*r0, y0=cy+Math.sin(l.angle)*r0;
+      const xm=cx+Math.cos(ctrl_angle)*mid, ym=cy+Math.sin(ctrl_angle)*mid;
+      const x1=cx+Math.cos(l.angle)*r1, y1=cy+Math.sin(l.angle)*r1;
+      ctx.strokeStyle=`rgba(0,229,192,${l.opacity})`;
+      ctx.lineWidth=l.width;
+      ctx.beginPath(); ctx.moveTo(x0,y0); ctx.quadraticCurveTo(xm,ym,x1,y1); ctx.stroke();
+    });
+
+    // Iris rings (limbal rings)
+    for(let r2=0;r2<3;r2++){
+      const rr=irisR*(0.55+r2*0.16);
+      ctx.beginPath(); ctx.arc(cx,cy,rr,0,Math.PI*2);
+      ctx.strokeStyle=`rgba(0,200,180,${0.05+r2*0.02})`; ctx.lineWidth=r2===2?1.8:0.7; ctx.stroke();
+    }
+    // Limbal darkening
+    const limbal=ctx.createRadialGradient(cx,cy,irisR*0.78,cx,cy,irisR);
+    limbal.addColorStop(0,'rgba(0,0,0,0)');
+    limbal.addColorStop(1,'rgba(0,0,0,0.55)');
+    ctx.beginPath(); ctx.arc(cx,cy,irisR,0,Math.PI*2); ctx.fillStyle=limbal; ctx.fill();
+
+    // Retinal blood vessels (drawn inside iris zone, very subtle)
+    retinalVessels.forEach(v=>{
+      const alpha = v.depth>3?0.14:v.depth>1?0.10:0.07;
+      ctx.strokeStyle=`rgba(0,229,192,${alpha})`;
+      ctx.lineWidth=v.w*0.6;
+      ctx.beginPath(); ctx.moveTo(v.x1,v.y1); ctx.lineTo(v.x2,v.y2); ctx.stroke();
+    });
+
+    // Optic disc glow (right side)
+    const odx=cx+irisR*0.42, ody=cy+irisR*0.08;
+    const odG=ctx.createRadialGradient(odx,ody,0,odx,ody,irisR*0.14);
+    odG.addColorStop(0,'rgba(0,229,192,0.25)');
+    odG.addColorStop(1,'rgba(0,229,192,0)');
+    ctx.fillStyle=odG; ctx.beginPath(); ctx.arc(odx,ody,irisR*0.14,0,Math.PI*2); ctx.fill();
+
+    // Neural network nodes + edges (retinal NN)
+    nnNodes.forEach(n=>{
+      // Keep inside iris
+      const dx5=n.x-cx, dy5=n.y-cy;
+      const d5=Math.sqrt(dx5*dx5+dy5*dy5);
+      if(d5>irisR*0.9){n.vx*=-0.5;n.vy*=-0.5;}
+      if(d5<pupilR*1.1){n.vx+=dx5*0.002;n.vy+=dy5*0.002;}
+      n.x+=n.vx; n.y+=n.vy;
+      n.pulse+=n.pSpeed;
+    });
+    nnEdges.forEach(e=>{
+      const na=nnNodes[e.a],nb=nnNodes[e.b];
+      const a2=(0.06+0.04*Math.sin(na.pulse+nb.pulse));
+      ctx.strokeStyle=`rgba(0,229,192,${a2})`; ctx.lineWidth=0.6;
+      ctx.beginPath(); ctx.moveTo(na.x,na.y); ctx.lineTo(nb.x,nb.y); ctx.stroke();
+    });
+    // NN pulses along edges
+    if(frame%55===0 && nnPulses.length<12)
+      nnPulses.push({edgeIdx:Math.floor(Math.random()*nnEdges.length),t:0,speed:0.007+Math.random()*0.007});
+    nnPulses=nnPulses.filter(p=>p.t<=1);
+    nnPulses.forEach(p=>{
+      p.t+=p.speed;
+      const e=nnEdges[p.edgeIdx]; if(!e) return;
+      const na=nnNodes[e.a],nb=nnNodes[e.b];
+      const px3=na.x+(nb.x-na.x)*p.t, py3=na.y+(nb.y-na.y)*p.t;
+      const pg=ctx.createRadialGradient(px3,py3,0,px3,py3,7);
+      pg.addColorStop(0,'rgba(0,229,192,0.85)'); pg.addColorStop(1,'rgba(0,229,192,0)');
+      ctx.fillStyle=pg; ctx.beginPath(); ctx.arc(px3,py3,7,0,Math.PI*2); ctx.fill();
+    });
+    nnNodes.forEach(n=>{
+      if(!n.active) return;
+      const a3=0.3+0.3*Math.sin(n.pulse);
+      ctx.beginPath(); ctx.arc(n.x,n.y,n.r,0,Math.PI*2);
+      ctx.fillStyle=`rgba(0,229,192,${a3})`; ctx.fill();
+    });
+
+    // Retinal scanline
+    const sg=ctx.createLinearGradient(0,scanY-6,0,scanY+6);
+    sg.addColorStop(0,'rgba(0,229,192,0)');
+    sg.addColorStop(0.5,`rgba(0,229,192,0.08)`);
+    sg.addColorStop(1,'rgba(0,229,192,0)');
+    ctx.fillStyle=sg; ctx.fillRect(cx-irisR,scanY-6,irisR*2,12);
+
+    // Pupil
+    const pR=pupilR*(0.92+0.08*Math.sin(pupilPulse));
+    const pupilG=ctx.createRadialGradient(cx,cy,0,cx,cy,pR);
+    pupilG.addColorStop(0,'rgba(0,2,8,1)');
+    pupilG.addColorStop(0.7,'rgba(0,5,15,0.98)');
+    pupilG.addColorStop(1,'rgba(0,30,40,0.8)');
+    ctx.beginPath(); ctx.arc(cx,cy,pR,0,Math.PI*2); ctx.fillStyle=pupilG; ctx.fill();
+    // Pupil edge glow
+    ctx.beginPath(); ctx.arc(cx,cy,pR,0,Math.PI*2);
+    ctx.strokeStyle=`rgba(0,229,192,${0.35+0.15*Math.sin(pupilPulse)})`; ctx.lineWidth=1.4; ctx.stroke();
+    // Corneal reflection
+    ctx.beginPath(); ctx.arc(cx+pR*0.35,cy-pR*0.4,pR*0.1,0,Math.PI*2);
+    ctx.fillStyle='rgba(255,255,255,0.45)'; ctx.fill();
+    ctx.beginPath(); ctx.arc(cx+pR*0.5,cy-pR*0.55,pR*0.04,0,Math.PI*2);
+    ctx.fillStyle='rgba(255,255,255,0.25)'; ctx.fill();
+
+    ctx.restore(); // end clip
+
+    // ── Eyelids (drawn outside clip so they cover the eye edges naturally) ──
+    const blinkAmt = blinkT * eh * 0.08; // very subtle, not a full blink
+    // Upper eyelid
+    ctx.save();
+    ctx.beginPath();
+    ctx.moveTo(cx-ew,cy);
+    ctx.bezierCurveTo(cx-ew*0.5,cy-eh*(0.92+blinkAmt*0.1),cx+ew*0.5,cy-eh*(0.92+blinkAmt*0.1),cx+ew,cy);
+    ctx.lineTo(cx+ew,cy-eh*2); ctx.lineTo(cx-ew,cy-eh*2); ctx.closePath();
+    const elidG=ctx.createLinearGradient(cx,cy-eh,cx,cy-eh*0.5);
+    elidG.addColorStop(0,'rgba(5,9,26,1)');
+    elidG.addColorStop(1,'rgba(5,9,26,0)');
+    ctx.fillStyle=elidG; ctx.fill();
+    // Eyelid edge line
+    ctx.beginPath();
+    ctx.moveTo(cx-ew,cy);
+    ctx.bezierCurveTo(cx-ew*0.5,cy-eh*(0.92+blinkAmt*0.1),cx+ew*0.5,cy-eh*(0.92+blinkAmt*0.1),cx+ew,cy);
+    ctx.strokeStyle='rgba(0,229,192,0.18)'; ctx.lineWidth=1.2; ctx.stroke();
+    ctx.restore();
+    // Lower eyelid
+    ctx.save();
+    ctx.beginPath();
+    ctx.moveTo(cx-ew,cy);
+    ctx.bezierCurveTo(cx-ew*0.5,cy+eh*(0.92-blinkAmt*0.1),cx+ew*0.5,cy+eh*(0.92-blinkAmt*0.1),cx+ew,cy);
+    ctx.lineTo(cx+ew,cy+eh*2); ctx.lineTo(cx-ew,cy+eh*2); ctx.closePath();
+    const elidG2=ctx.createLinearGradient(cx,cy+eh,cx,cy+eh*0.5);
+    elidG2.addColorStop(0,'rgba(5,9,26,1)');
+    elidG2.addColorStop(1,'rgba(5,9,26,0)');
+    ctx.fillStyle=elidG2; ctx.fill();
+    ctx.beginPath();
+    ctx.moveTo(cx-ew,cy);
+    ctx.bezierCurveTo(cx-ew*0.5,cy+eh*(0.92-blinkAmt*0.1),cx+ew*0.5,cy+eh*(0.92-blinkAmt*0.1),cx+ew,cy);
+    ctx.strokeStyle='rgba(0,229,192,0.12)'; ctx.lineWidth=1; ctx.stroke();
+    ctx.restore();
+
+    requestAnimationFrame(draw);
+  }
+  resize();
+  window.addEventListener('resize',resize);
+  draw();
+})();
+
+// ══════════════════════════════════════════════════════
+// DETAILED ELECTRONIC CRYPTEX — Da Vinci Code style cylinder with neon rings
+(function(){
+  const canvas = document.getElementById('cipher-canvas');
+  if(!canvas) return;
+  const ctx = canvas.getContext('2d');
+  const W = canvas.width, H = canvas.height;
+  const cx = W/2, cy = H/2;
+
+  // ── Cryptex geometry ──
+  const CYL_W = 230;          // total cylinder length
+  const CYL_RY = 72;          // cylinder body radius (Y = ellipse vertical semi-axis)
+  const numRings = 5;
+  const RING_W = CYL_W / numRings;  // width of each ring slice
+  // Each ring is drawn centered at: cx + (-CYL_W/2 + RING_W/2 + i*RING_W)
+
+  const CHARS_PER_RING = 26;  // A-Z visible on ring circumference
+  const ringAlphabet = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ';
+  const ringColors  = ['#00e5c0','#4facfe','#a78bfa','#bdb4a8','#34d399'];
+  const ringLabels  = ['FED · L1','CtV · L2','CRED · L3','ML · L4','RISK · L5'];
+  const unlockWord  = ['C','U','B','E','★'];
+
+  // Ring state
+  let rings = [];
+  for(let i=0;i<numRings;i++){
+    rings.push({
+      rot: Math.random()*Math.PI*2,     // current rotation angle
+      speed: (0.010+Math.random()*0.014)*(Math.random()>0.5?1:-1),
+      locked: false,
+      lockGlow: 0,
+    });
+  }
+
+  // Phase: 0=spinning freely, 1=locking one by one, 2=all locked flash,
+  //        3=crack+explode, 4=cube emerges, 5=cube display, then loop
+  let phase=0, phaseT=0, lockedCount=0;
+  let cubeRot=0, cubeRot2=0.25;
+  let crackSegs=[]; // crack line segments
+  let explodeT=0;
+  let ringFlyX=[0,0,0,0,0]; // explosion offsets
+
+  const cubeEdges=[[0,1],[1,2],[2,3],[3,0],[4,5],[5,6],[6,7],[7,4],[0,4],[1,5],[2,6],[3,7]];
+  function mkVerts(){return[[-1,-1,-1],[1,-1,-1],[1,1,-1],[-1,1,-1],[-1,-1,1],[1,-1,1],[1,1,1],[-1,1,1]];}
+  function rY(v,a){const c=Math.cos(a),s=Math.sin(a);return[c*v[0]+s*v[2],v[1],-s*v[0]+c*v[2]];}
+  function rX(v,a){const c=Math.cos(a),s=Math.sin(a);return[v[0],c*v[1]-s*v[2],s*v[1]+c*v[2]];}
+  function proj3(x,y,z,sc){const f=420/(420+z);return{x:cx+x*f*sc,y:cy+y*f*sc};}
+
+  function hexRGB(h){return[parseInt(h.slice(1,3),16),parseInt(h.slice(3,5),16),parseInt(h.slice(5,7),16)];}
+
+  // ── Draw one ring with full cylindrical detail ──
+  function drawRing(ri, centerX, rot, alpha, flyOffY){
+    const ring = rings[ri];
+    const col = ringColors[ri];
+    const [cr,cg,cb] = hexRGB(col);
+    const rTop = cy - CYL_RY + (flyOffY||0);
+    const rBot = cy + CYL_RY + (flyOffY||0);
+    const midY = cy + (flyOffY||0);
+    const halfW = RING_W/2;
+
+    // ── Cylinder body fill (metallic dark gradient) ──
+    const bodyGrd = ctx.createLinearGradient(centerX-halfW, 0, centerX+halfW, 0);
+    bodyGrd.addColorStop(0,  `rgba(${cr},${cg},${cb},${alpha*0.06})`);
+    bodyGrd.addColorStop(0.3,`rgba(${cr},${cg},${cb},${alpha*0.14})`);
+    bodyGrd.addColorStop(0.5,`rgba(${cr},${cg},${cb},${alpha*0.18})`);
+    bodyGrd.addColorStop(0.7,`rgba(${cr},${cg},${cb},${alpha*0.14})`);
+    bodyGrd.addColorStop(1,  `rgba(${cr},${cg},${cb},${alpha*0.06})`);
+    ctx.fillStyle = bodyGrd;
+    ctx.fillRect(centerX-halfW, rTop, RING_W, CYL_RY*2);
+
+    // ── Characters on the cylindrical surface ──
+    // We simulate the curve by mapping each char's angular position to an x-offset
+    // and scaling/fading by the cosine (perspective)
+    const anglePerChar = (Math.PI*2) / CHARS_PER_RING;
+    // How many chars are visible on the front hemisphere
+    const visibleArc = Math.PI;   // front 180 degrees
+    for(let ci=0; ci<CHARS_PER_RING; ci++){
+      const angle = rot + ci * anglePerChar;
+      const cosA  = Math.cos(angle);
+      const sinA  = Math.sin(angle);
+      if(cosA < 0.04) continue;  // back face hidden
+
+      // X position: cosA maps to horizontal offset within ring width
+      const xPos = centerX + cosA * halfW * 0.72;
+      // Y position: slight vertical perspective (as if chars wrap around the drum)
+      const yPos = midY + sinA * CYL_RY * 0.22;
+
+      // Depth-based size and opacity
+      const size   = 9 + cosA * 5;        // bigger at front
+      const opac   = alpha * (0.15 + cosA * 0.85);
+      const isCenter = Math.abs(cosA - 1) < 0.15;  // the "top" char at front
+
+      const charIdx = ((ci - Math.round(rot / anglePerChar)) % CHARS_PER_RING + CHARS_PER_RING) % CHARS_PER_RING;
+      const char = ring.locked && charIdx === 0 ? unlockWord[ri] : ringAlphabet[charIdx % CHARS_PER_RING];
+
+      // Highlight the center/front character
+      if(isCenter && ring.locked){
+        // Bold glowing center char
+        ctx.save();
+        const cg2 = ctx.createRadialGradient(xPos,yPos,0,xPos,yPos,size*1.8);
+        cg2.addColorStop(0,`rgba(${cr},${cg},${cb},0.35)`);
+        cg2.addColorStop(1,`rgba(${cr},${cg},${cb},0)`);
+        ctx.fillStyle=cg2; ctx.beginPath(); ctx.arc(xPos,yPos,size*1.8,0,Math.PI*2); ctx.fill();
+        ctx.restore();
+      }
+
+      ctx.font = `${isCenter?'bold ':''} ${size}px "DM Mono",monospace`;
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+
+      // Metallic sheen effect: brighter at cos=1, dimmer at edges
+      const metalSheen = 0.6 + cosA * 0.4;
+      ctx.fillStyle = `rgba(${Math.min(255,cr+40)},${Math.min(255,cg+40)},${Math.min(255,cb+40)},${opac*metalSheen})`;
+      ctx.fillText(char, xPos, yPos);
+
+      // Tiny separator tick between each character slot
+      ctx.strokeStyle = `rgba(${cr},${cg},${cb},${alpha*cosA*0.12})`;
+      ctx.lineWidth = 0.5;
+      const tickX = centerX + Math.cos(rot + (ci+0.5)*anglePerChar) * halfW * 0.72;
+      const tickY = midY + Math.sin(rot + (ci+0.5)*anglePerChar) * CYL_RY * 0.22;
+      if(Math.cos(rot+(ci+0.5)*anglePerChar) > 0.1){
+        ctx.beginPath(); ctx.moveTo(tickX,tickY-4); ctx.lineTo(tickX,tickY+4); ctx.stroke();
+      }
+    }
+
+    // ── Top ellipse (cylinder top face) ──
+    ctx.beginPath();
+    ctx.ellipse(centerX, rTop, halfW*0.92, CYL_RY*0.28, 0, 0, Math.PI*2);
+    const topGrd = ctx.createRadialGradient(centerX,rTop,0,centerX,rTop,halfW);
+    topGrd.addColorStop(0, `rgba(${cr},${cg},${cb},${alpha*0.22})`);
+    topGrd.addColorStop(0.7,`rgba(${cr},${cg},${cb},${alpha*0.10})`);
+    topGrd.addColorStop(1,  `rgba(${cr},${cg},${cb},0)`);
+    ctx.fillStyle = topGrd; ctx.fill();
+    ctx.strokeStyle = `rgba(${cr},${cg},${cb},${alpha*0.5})`; ctx.lineWidth = 1.2; ctx.stroke();
+
+    // ── Bottom ellipse ──
+    ctx.beginPath();
+    ctx.ellipse(centerX, rBot, halfW*0.92, CYL_RY*0.28, 0, 0, Math.PI*2);
+    ctx.strokeStyle = `rgba(${cr},${cg},${cb},${alpha*0.35})`; ctx.lineWidth = 0.8; ctx.stroke();
+
+    // ── Vertical border lines (left and right edges of ring) ──
+    ctx.strokeStyle = `rgba(${cr},${cg},${cb},${alpha*0.45})`; ctx.lineWidth = 1.5;
+    ctx.beginPath(); ctx.moveTo(centerX-halfW, rTop+CYL_RY*0.28); ctx.lineTo(centerX-halfW, rBot-CYL_RY*0.28); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(centerX+halfW, rTop+CYL_RY*0.28); ctx.lineTo(centerX+halfW, rBot-CYL_RY*0.28); ctx.stroke();
+
+    // ── Groove/separator line at ring edges (depth groove between rings) ──
+    const grooveColor = `rgba(0,0,0,${alpha*0.55})`;
+    ctx.fillStyle = grooveColor;
+    ctx.fillRect(centerX-halfW, rTop+CYL_RY*0.24, 2, CYL_RY*1.52);
+    ctx.fillRect(centerX+halfW-2, rTop+CYL_RY*0.24, 2, CYL_RY*1.52);
+
+    // ── Neon strip along top of ring ──
+    const neonGrd = ctx.createLinearGradient(centerX-halfW, 0, centerX+halfW, 0);
+    neonGrd.addColorStop(0, `rgba(${cr},${cg},${cb},0)`);
+    neonGrd.addColorStop(0.5,`rgba(${cr},${cg},${cb},${alpha*(ring.locked?0.7:0.25)})`);
+    neonGrd.addColorStop(1, `rgba(${cr},${cg},${cb},0)`);
+    ctx.fillStyle = neonGrd;
+    ctx.fillRect(centerX-halfW, rTop+CYL_RY*0.2, RING_W, 2);
+
+    // ── Lock flash when newly locked ──
+    if(ring.locked){
+      ring.lockGlow = Math.max(0, ring.lockGlow - 0.025);
+      if(ring.lockGlow > 0.01){
+        ctx.fillStyle = `rgba(${cr},${cg},${cb},${ring.lockGlow*0.3})`;
+        ctx.fillRect(centerX-halfW, rTop, RING_W, CYL_RY*2);
+      }
+    }
+
+    // ── Label strip below ring ──
+    ctx.font = '7px "DM Mono",monospace';
+    ctx.textAlign = 'center'; ctx.textBaseline = 'alphabetic';
+    ctx.fillStyle = `rgba(${cr},${cg},${cb},${alpha*0.6})`;
+    ctx.fillText(ringLabels[ri], centerX, rBot + 16);
+  }
+
+  // ── End caps ──
+  function drawCaps(alpha, leftExtra, rightExtra){
+    const lx = cx - CYL_W/2 - (leftExtra||0);
+    const rx2= cx + CYL_W/2 + (rightExtra||0);
+
+    [lx,rx2].forEach((capX,side)=>{
+      // Cap face
+      ctx.beginPath(); ctx.ellipse(capX, cy, RING_W*0.42, CYL_RY, 0, 0, Math.PI*2);
+      const cg3=ctx.createRadialGradient(capX,cy,0,capX,cy,CYL_RY);
+      cg3.addColorStop(0,'rgba(0,229,192,0.18)');
+      cg3.addColorStop(0.5,'rgba(0,229,192,0.08)');
+      cg3.addColorStop(1,'rgba(0,229,192,0.02)');
+      ctx.fillStyle=cg3; ctx.fill();
+      ctx.strokeStyle=`rgba(0,229,192,${alpha*0.55})`; ctx.lineWidth=1.5; ctx.stroke();
+      // Decorative inner ring on cap
+      ctx.beginPath(); ctx.ellipse(capX, cy, RING_W*0.22, CYL_RY*0.5, 0, 0, Math.PI*2);
+      ctx.strokeStyle=`rgba(0,229,192,${alpha*0.3})`; ctx.lineWidth=0.8; ctx.stroke();
+      // Center dot
+      ctx.beginPath(); ctx.arc(capX, cy, 4, 0, Math.PI*2);
+      ctx.fillStyle=`rgba(0,229,192,${alpha*0.6})`; ctx.fill();
+      // Decorative spokes
+      for(let s=0;s<8;s++){
+        const sa=(s/8)*Math.PI*2;
+        ctx.strokeStyle=`rgba(0,229,192,${alpha*0.12})`; ctx.lineWidth=0.5;
+        ctx.beginPath();
+        ctx.moveTo(capX+Math.cos(sa)*6, cy+Math.sin(sa)*10);
+        ctx.lineTo(capX+Math.cos(sa)*RING_W*0.36, cy+Math.sin(sa)*CYL_RY*0.88);
+        ctx.stroke();
+      }
+    });
+  }
+
+  function drawCube3D(alpha){
+    cubeRot+=0.007; cubeRot2+=0.004;
+    const scale=108*(0.3+alpha*0.7);
+    const layers=[1.0,0.64,0.38];
+    const lCols=['rgba(0,229,192,1)','rgba(79,172,254,0.85)','rgba(167,139,250,0.75)'];
+    layers.forEach((s,li)=>{
+      const verts=mkVerts().map(v=>{let r=[v[0]*s,v[1]*s,v[2]*s];r=rY(r,cubeRot);r=rX(r,cubeRot2);return r;});
+      const pr=verts.map(v=>proj3(v[0],v[1],v[2],scale));
+      const al=(li===0?0.85:li===1?0.55:0.35)*alpha;
+      const col=lCols[li];
+      cubeEdges.forEach(([a,b])=>{
+        const g=ctx.createLinearGradient(pr[a].x,pr[a].y,pr[b].x,pr[b].y);
+        g.addColorStop(0,col.replace(',1)',`,${al})`).replace(',0.85)',`,${al*0.9})`).replace(',0.75)',`,${al*0.8})`));
+        g.addColorStop(1,`rgba(79,172,254,${al*0.5})`);
+        ctx.strokeStyle=g; ctx.lineWidth=li===0?2:li===1?1.2:0.7;
+        ctx.beginPath(); ctx.moveTo(pr[a].x,pr[a].y); ctx.lineTo(pr[b].x,pr[b].y); ctx.stroke();
+      });
+      if(li===0) pr.forEach(p=>{
+        ctx.beginPath(); ctx.arc(p.x,p.y,4,0,Math.PI*2); ctx.fillStyle=`rgba(0,229,192,${0.95*alpha})`; ctx.fill();
+        ctx.beginPath(); ctx.arc(p.x,p.y,10,0,Math.PI*2); ctx.fillStyle=`rgba(0,229,192,${0.12*alpha})`; ctx.fill();
+      });
+    });
+    // Center glow
+    const cgg=ctx.createRadialGradient(cx,cy,0,cx,cy,50);
+    cgg.addColorStop(0,`rgba(0,229,192,${0.18*alpha})`); cgg.addColorStop(1,'rgba(0,229,192,0)');
+    ctx.fillStyle=cgg; ctx.beginPath(); ctx.arc(cx,cy,50,0,Math.PI*2); ctx.fill();
+  }
+
+  let frame=0;
+  function draw(){
+    ctx.clearRect(0,0,W,H);
+    frame++; phaseT+=0.016;
+
+    // Ambient glow
+    const amb=ctx.createRadialGradient(cx,cy,0,cx,cy,200);
+    amb.addColorStop(0,'rgba(0,229,192,0.05)'); amb.addColorStop(1,'rgba(0,0,0,0)');
+    ctx.fillStyle=amb; ctx.fillRect(0,0,W,H);
+
+    // ── PHASE 0: all rings spinning freely ──
+    if(phase===0){
+      rings.forEach(r=>{ if(!r.locked) r.rot += r.speed; });
+      // Lock a ring every 100 frames
+      if(frame%100===0 && lockedCount<numRings){
+        rings[lockedCount].locked=true;
+        rings[lockedCount].speed=0;
+        rings[lockedCount].rot=0;
+        rings[lockedCount].lockGlow=1.0;
+        lockedCount++;
+        if(lockedCount===numRings){ phase=1; phaseT=0; }
+      }
+      // Cylinder background tube
+      const tubGrd=ctx.createLinearGradient(cx-CYL_W/2,0,cx+CYL_W/2,0);
+      tubGrd.addColorStop(0,'rgba(0,229,192,0.02)'); tubGrd.addColorStop(0.5,'rgba(0,229,192,0.06)'); tubGrd.addColorStop(1,'rgba(0,229,192,0.02)');
+      ctx.fillStyle=tubGrd; ctx.fillRect(cx-CYL_W/2,cy-CYL_RY,CYL_W,CYL_RY*2);
+      // Horizontal highlight line (metallic sheen across top)
+      const sheen=ctx.createLinearGradient(cx-CYL_W/2,0,cx+CYL_W/2,0);
+      sheen.addColorStop(0,'rgba(255,255,255,0)'); sheen.addColorStop(0.5,'rgba(255,255,255,0.04)'); sheen.addColorStop(1,'rgba(255,255,255,0)');
+      ctx.fillStyle=sheen; ctx.fillRect(cx-CYL_W/2,cy-CYL_RY,CYL_W,8);
+
+      for(let i=0;i<numRings;i++){
+        const rx3 = cx - CYL_W/2 + RING_W/2 + i*RING_W;
+        drawRing(i, rx3, rings[i].rot, 1, 0);
+      }
+      drawCaps(1, 0, 0);
+
+    // ── PHASE 1: all locked — glow + crack appear ──
+    } else if(phase===1){
+      for(let i=0;i<numRings;i++){
+        const rx3 = cx - CYL_W/2 + RING_W/2 + i*RING_W;
+        drawRing(i, rx3, 0, 1, 0);
+      }
+      drawCaps(1, 0, 0);
+      // Crack lines emerge after 1s
+      if(phaseT>1.0){
+        const cp=(phaseT-1.0)/1.5;
+        const numCracks=8;
+        for(let c=0;c<numCracks;c++){
+          const cx4=cx-CYL_W/2+20+c*(CYL_W-40)/(numCracks-1);
+          const dir=c%2===0?1:-1;
+          ctx.strokeStyle=`rgba(0,229,192,${Math.min(1,cp)*0.7})`; ctx.lineWidth=1.2;
+          ctx.shadowBlur=4; ctx.shadowColor='rgba(0,229,192,0.5)';
+          ctx.beginPath();
+          ctx.moveTo(cx4,cy-CYL_RY);
+          ctx.lineTo(cx4+dir*10,cy-CYL_RY*0.3);
+          ctx.lineTo(cx4-dir*6, cy+CYL_RY*0.2);
+          ctx.lineTo(cx4+dir*12,cy+CYL_RY*0.7);
+          ctx.lineTo(cx4-dir*4, cy+CYL_RY);
+          ctx.stroke();
+          ctx.shadowBlur=0;
+        }
+      }
+      if(phaseT>3.0){ phase=2; phaseT=0; }
+
+    // ── PHASE 2: explode — rings fly apart, cube emerges ──
+    } else if(phase===2){
+      explodeT=Math.min(1,phaseT/1.4);
+      const ease=explodeT<0.5?2*explodeT*explodeT:-1+(4-2*explodeT)*explodeT;
+      const cylAlpha=Math.max(0,1-ease*1.6);
+      const cubeAlpha=Math.min(1,Math.max(0,(ease-0.25)*1.8));
+      const splitCap=ease*180;
+
+      if(cylAlpha>0.01){
+        for(let i=0;i<numRings;i++){
+          const rx3=cx-CYL_W/2+RING_W/2+i*RING_W;
+          const flyX=(i-2)*ease*55;
+          const flyY=(i%2===0?-1:1)*ease*35;
+          ctx.save(); ctx.translate(flyX, flyY);
+          drawRing(i, rx3, ease*0.5*(i%2===0?1:-1), cylAlpha, 0);
+          ctx.restore();
+        }
+        drawCaps(cylAlpha, splitCap, splitCap);
+        // Energy burst at center
+        const burst=ctx.createRadialGradient(cx,cy,0,cx,cy,ease*120);
+        burst.addColorStop(0,`rgba(0,229,192,${ease*0.2})`); burst.addColorStop(1,'rgba(0,229,192,0)');
+        ctx.fillStyle=burst; ctx.beginPath(); ctx.arc(cx,cy,ease*120,0,Math.PI*2); ctx.fill();
+      }
+      if(cubeAlpha>0.01) drawCube3D(cubeAlpha);
+      if(explodeT>=1){ phase=3; phaseT=0; }
+
+    // ── PHASE 3: cube display ──
+    } else if(phase===3){
+      drawCube3D(1);
+      if(phaseT>5){ phase=0; phaseT=0; lockedCount=0; explodeT=0; rings.forEach(r=>{r.locked=false; r.lockGlow=0; r.speed=(0.010+Math.random()*0.014)*(Math.random()>0.5?1:-1); r.rot=Math.random()*Math.PI*2;}); }
+    }
+
+    requestAnimationFrame(draw);
+  }
+  draw();
+})();
+
+// ══════════════════════════════════════════════════════
+
+
+
+
+
+// ══════════════════════════════════════════════════════
+// ELECTRONIC BRAIN CANVAS — People section background
+// Detailed anatomical brain: hemispheres, folds, synapses, tendrils, pulses
+// ══════════════════════════════════════════════════════
+(function(){
+  const canvas = document.getElementById('brain-canvas');
+  if(!canvas) return;
+  let W, H, cx, cy;
+  const ctx = canvas.getContext('2d');
+  let nodes=[], synapses=[], tendrils=[], pulses=[], foldLines=[];
+  let rot=0, rotY2=0.12, frame=0;
+
+  function resize(){
+    W=canvas.width=canvas.offsetWidth;
+    H=canvas.height=canvas.offsetHeight;
+    cx=W/2; cy=H/2;
+    init();
+  }
+
+  // Brain-shaped 3D point distribution — cortical surface approximation
+  function brainSurface(seed){
+    const R = 0.30*Math.min(W,H);
+    const side = seed%2===0 ? 1 : -1;
+    const u = (seed*137.508) % (Math.PI*2);
+    const v = Math.acos(1 - 2*((seed*71.3)%1));
+    // Hemisphere separation
+    const hemOff = side*R*0.22;
+    // Base sphere
+    let x = hemOff + R*(0.78+side*0.08)*Math.sin(v)*Math.cos(u);
+    let y = R*0.70*Math.cos(v);
+    let z = R*0.82*Math.sin(v)*Math.sin(u);
+    // Flatten underside (cerebellum-like)
+    if(y < -R*0.3) y *= 0.55;
+    // Frontal lobe bulge
+    if(z > R*0.4 && Math.abs(x) < R*0.5) { z *= 1.12; y -= R*0.05; }
+    // Temporal lobe
+    if(y < 0 && z < 0) { x *= 1.08; y *= 0.9; }
+    // Occipital bump (back)
+    if(z < -R*0.35) z *= 1.10;
+    return {x, y, z, side};
+  }
+
+  // Generate cortical fold curves on brain surface
+  function makeFolds(R){
+    const folds = [];
+    // Simulate major sulci as arcs on surface
+    const sulci = [
+      // Central sulcus (both hemispheres)
+      {side:1, uStart:0.3, uEnd:1.2, vBand:0.4, depth:0.08},
+      {side:-1, uStart:0.3, uEnd:1.2, vBand:0.4, depth:0.08},
+      // Lateral fissure
+      {side:1, uStart:1.5, uEnd:2.8, vBand:0.6, depth:0.06},
+      {side:-1, uStart:1.5, uEnd:2.8, vBand:0.6, depth:0.06},
+      // Parieto-occipital
+      {side:1, uStart:2.5, uEnd:3.5, vBand:0.35, depth:0.07},
+      {side:-1, uStart:2.5, uEnd:3.5, vBand:0.35, depth:0.07},
+      // Frontal gyri
+      {side:1, uStart:0.1, uEnd:0.8, vBand:0.25, depth:0.05},
+      {side:-1, uStart:0.1, uEnd:0.8, vBand:0.25, depth:0.05},
+    ];
+    sulci.forEach(s=>{
+      const pts = [];
+      const steps = 18;
+      for(let i=0;i<=steps;i++){
+        const u = s.uStart + (s.uEnd-s.uStart)*(i/steps);
+        const v = Math.PI*s.vBand;
+        const hemOff = s.side*R*0.22;
+        const x = hemOff + R*(0.78+s.side*0.08)*Math.sin(v)*Math.cos(u);
+        const y = R*0.70*Math.cos(v) - R*s.depth;
+        const z = R*0.82*Math.sin(v)*Math.sin(u);
+        pts.push({x,y,z});
+      }
+      folds.push({pts, side:s.side});
+    });
+    return folds;
+  }
+
+  function init(){
+    nodes=[]; synapses=[]; tendrils=[]; pulses=[]; foldLines=[];
+    const R = 0.30*Math.min(W,H);
+
+    // Generate 280 surface nodes
+    const N=280;
+    for(let i=0;i<N;i++){
+      const p=brainSurface(i);
+      nodes.push({
+        bx:p.x, by:p.y, bz:p.z,
+        x:0, y:0, projZ:0, scale:1,
+        r: 1.0+Math.random()*2.2,
+        pulse: Math.random()*Math.PI*2,
+        pSpeed: 0.012+Math.random()*0.022,
+        active: Math.random()>0.22,
+        hue: p.side>0 ? 185+Math.floor(Math.random()*15) : 205+Math.floor(Math.random()*15),
+        side: p.side,
+        type: Math.random()<0.08 ? 'hub' : 'node'
+      });
+    }
+
+    // Connect nearby nodes — denser mesh
+    for(let i=0;i<N;i++){
+      for(let j=i+1;j<N;j++){
+        const dx=nodes[i].bx-nodes[j].bx;
+        const dy=nodes[i].by-nodes[j].by;
+        const dz=nodes[i].bz-nodes[j].bz;
+        const d=Math.sqrt(dx*dx+dy*dy+dz*dz);
+        // More connections for hub nodes
+        const threshold = nodes[i].type==='hub'||nodes[j].type==='hub' ? R*0.32 : R*0.24;
+        if(d<threshold && Math.random()<0.28){
+          synapses.push({a:i,b:j,strength:1-d/threshold, curvature:(Math.random()-0.5)*R*0.1});
+        }
+      }
+    }
+
+    // Corpus callosum-like connections across hemispheres (inter-hemispheric)
+    const leftNodes  = nodes.filter((_,i)=>i<N && nodes[i].side<0).slice(0,30);
+    const rightNodes = nodes.filter((_,i)=>i<N && nodes[i].side>0).slice(0,30);
+    for(let i=0;i<Math.min(leftNodes.length,rightNodes.length,18);i++){
+      const li = nodes.indexOf(leftNodes[i]);
+      const ri = nodes.indexOf(rightNodes[i]);
+      if(li>=0&&ri>=0) synapses.push({a:li,b:ri,strength:0.6,callosal:true});
+    }
+
+    // Cortical fold lines
+    foldLines = makeFolds(R);
+
+    // Wire tendrils — 35 wires hanging from surface
+    for(let i=0;i<35;i++){
+      const srcNode = nodes[Math.floor(Math.random()*N)];
+      const segLen = 5+Math.floor(Math.random()*8);
+      const pts=[{x:srcNode.bx,y:srcNode.by,z:srcNode.bz}];
+      let lx=srcNode.bx,ly=srcNode.by,lz=srcNode.bz;
+      for(let s=0;s<segLen;s++){
+        const gravity = s/segLen;
+        lx += (Math.random()-0.5)*R*0.14;
+        ly += (Math.random()-0.28+gravity*0.15)*R*0.14;
+        lz += (Math.random()-0.5)*R*0.14;
+        pts.push({x:lx,y:ly,z:lz});
+      }
+      tendrils.push({
+        pts,
+        hue: Math.random()>0.5?170:210,
+        phase:Math.random()*Math.PI*2,
+        width: 0.6+Math.random()*0.8
+      });
+    }
+
+    // Seed pulses
+    for(let i=0;i<12;i++){
+      pulses.push({synIdx:Math.floor(Math.random()*synapses.length),t:Math.random(),speed:0.004+Math.random()*0.007});
+    }
+  }
+
+  // Project 3D point with rotation
+  function project(px,py,pz){
+    const cosR=Math.cos(rot), sinR=Math.sin(rot);
+    const cosT=Math.cos(rotY2), sinT=Math.sin(rotY2);
+    // Rotate Y
+    const rx = cosR*px+sinR*pz;
+    const rz0= -sinR*px+cosR*pz;
+    // Tilt X
+    const ry = cosT*py-sinT*rz0;
+    const rz = sinT*py+cosT*rz0;
+    const fov=580;
+    const s=fov/(fov+rz);
+    return {x:cx+rx*s,y:cy+ry*s,z:rz,scale:s};
+  }
+
+  function draw(){
+    ctx.clearRect(0,0,W,H);
+    frame++; rot+=0.0025; // slower, more majestic rotation
+
+    // Ambient glow
+    const ag=ctx.createRadialGradient(cx,cy-0.04*Math.min(W,H),0,cx,cy,0.42*Math.min(W,H));
+    ag.addColorStop(0,'rgba(0,229,192,0.07)');
+    ag.addColorStop(0.45,'rgba(79,172,254,0.05)');
+    ag.addColorStop(1,'rgba(0,0,0,0)');
+    ctx.fillStyle=ag; ctx.fillRect(0,0,W,H);
+
+    // Project all nodes
+    nodes.forEach(n=>{
+      n.pulse+=n.pSpeed;
+      const p=project(n.bx,n.by,n.bz);
+      n.x=p.x; n.y=p.y; n.projZ=p.z; n.scale=p.scale;
+    });
+
+    // Draw cortical fold lines (sulci)
+    foldLines.forEach(fold=>{
+      const projPts=fold.pts.map(p=>project(p.x,p.y,p.z));
+      const avgZ=projPts.reduce((s,p)=>s+p.z,0)/projPts.length;
+      const depthAlpha=Math.max(0,0.08*(1-(avgZ+200)/500));
+      ctx.strokeStyle=`rgba(0,229,192,${depthAlpha})`;
+      ctx.lineWidth=0.8;
+      ctx.beginPath();
+      projPts.forEach((p,i)=>i===0?ctx.moveTo(p.x,p.y):ctx.lineTo(p.x,p.y));
+      ctx.stroke();
+    });
+
+    // Mid-line fissure (separating hemispheres)
+    const fissureTop=project(0,-0.28*Math.min(W,H)*0.9,0);
+    const fissureBot=project(0,0.28*Math.min(W,H)*0.5,0);
+    const gg=ctx.createLinearGradient(fissureTop.x,fissureTop.y,fissureBot.x,fissureBot.y);
+    gg.addColorStop(0,'rgba(0,229,192,0.18)');
+    gg.addColorStop(0.5,'rgba(79,172,254,0.12)');
+    gg.addColorStop(1,'rgba(0,229,192,0)');
+    ctx.strokeStyle=gg; ctx.lineWidth=1.2;
+    ctx.beginPath(); ctx.moveTo(fissureTop.x,fissureTop.y); ctx.lineTo(fissureBot.x,fissureBot.y); ctx.stroke();
+
+    // Sort nodes by depth
+    const sortedNodes=nodes.map((n,i)=>({n,i})).sort((a,b)=>a.n.projZ-b.n.projZ);
+
+    // Draw synapses
+    synapses.forEach(s=>{
+      const a=nodes[s.a],b=nodes[s.b];
+      const avgZ=(a.projZ+b.projZ)/2;
+      const baseAlpha=s.callosal ? s.strength*0.22 : s.strength*0.16;
+      const depthFactor=Math.max(0.1,0.4+0.6*(1-Math.max(0,(avgZ+150)/450)));
+      const alpha=baseAlpha*depthFactor;
+      if(alpha<0.015) return;
+      const g=ctx.createLinearGradient(a.x,a.y,b.x,b.y);
+      if(s.callosal){
+        // Corpus callosum connections = warmer purple
+        g.addColorStop(0,`rgba(167,139,250,${alpha})`);
+        g.addColorStop(0.5,`rgba(200,170,255,${alpha*1.3})`);
+        g.addColorStop(1,`rgba(167,139,250,${alpha})`);
+        ctx.lineWidth=s.strength*1.6;
+      } else {
+        g.addColorStop(0,`rgba(0,229,192,${alpha})`);
+        g.addColorStop(0.5,`rgba(79,172,254,${alpha*1.2})`);
+        g.addColorStop(1,`rgba(0,229,192,${alpha})`);
+        ctx.lineWidth=s.strength*1.1;
+      }
+      ctx.strokeStyle=g;
+      ctx.beginPath(); ctx.moveTo(a.x,a.y); ctx.lineTo(b.x,b.y); ctx.stroke();
+    });
+
+    // Synaptic pulses
+    if(frame%32===0&&pulses.length<28){
+      pulses.push({synIdx:Math.floor(Math.random()*synapses.length),t:0,speed:0.004+Math.random()*0.007});
+    }
+    pulses=pulses.filter(p=>p.t<=1);
+    pulses.forEach(p=>{
+      p.t+=p.speed;
+      const s=synapses[p.synIdx]; if(!s) return;
+      const a=nodes[s.a],b=nodes[s.b];
+      const px2=a.x+(b.x-a.x)*p.t,py2=a.y+(b.y-a.y)*p.t;
+      const size=s.callosal?11:7;
+      const col=s.callosal?'167,139,250':'0,229,192';
+      const pg=ctx.createRadialGradient(px2,py2,0,px2,py2,size);
+      pg.addColorStop(0,`rgba(${col},0.95)`); pg.addColorStop(1,`rgba(${col},0)`);
+      ctx.fillStyle=pg; ctx.beginPath(); ctx.arc(px2,py2,size,0,Math.PI*2); ctx.fill();
+    });
+
+    // Tendrils
+    tendrils.forEach(t=>{
+      t.phase+=0.007;
+      const pulseA=0.12+0.07*Math.sin(t.phase);
+      const projPts=t.pts.map(p=>project(p.x,p.y,p.z));
+      const g2=ctx.createLinearGradient(projPts[0].x,projPts[0].y,projPts[projPts.length-1].x,projPts[projPts.length-1].y);
+      g2.addColorStop(0,`hsla(${t.hue},85%,60%,${pulseA*1.4})`);
+      g2.addColorStop(1,`hsla(${t.hue},85%,60%,0)`);
+      ctx.strokeStyle=g2; ctx.lineWidth=t.width;
+      ctx.beginPath();
+      projPts.forEach((p,i)=>i===0?ctx.moveTo(p.x,p.y):ctx.lineTo(p.x,p.y));
+      ctx.stroke();
+      // Glowing tip
+      const tip=projPts[projPts.length-1];
+      const tg=ctx.createRadialGradient(tip.x,tip.y,0,tip.x,tip.y,4);
+      tg.addColorStop(0,`hsla(${t.hue},90%,75%,${pulseA*2.5})`);
+      tg.addColorStop(1,'rgba(0,0,0,0)');
+      ctx.fillStyle=tg; ctx.beginPath(); ctx.arc(tip.x,tip.y,4,0,Math.PI*2); ctx.fill();
+    });
+
+    // Draw nodes
+    sortedNodes.forEach(({n})=>{
+      if(!n.active) return;
+      const depthAlpha=Math.max(0.08,0.25+0.75*(1-Math.max(0,(n.projZ+200)/500)));
+      const glow=0.4+0.35*Math.sin(n.pulse);
+      const r=n.r*n.scale*(n.type==='hub'?2.6:1.6);
+
+      if(n.type==='hub'){
+        // Hub neuron — bigger, brighter, pulsing corona
+        const corona=ctx.createRadialGradient(n.x,n.y,0,n.x,n.y,r*4);
+        corona.addColorStop(0,`hsla(${n.hue},95%,75%,${glow*depthAlpha*0.6})`);
+        corona.addColorStop(1,'rgba(0,0,0,0)');
+        ctx.fillStyle=corona; ctx.beginPath(); ctx.arc(n.x,n.y,r*4,0,Math.PI*2); ctx.fill();
+      } else {
+        const ng=ctx.createRadialGradient(n.x,n.y,0,n.x,n.y,r*3);
+        ng.addColorStop(0,`hsla(${n.hue},90%,68%,${glow*depthAlpha*0.45})`);
+        ng.addColorStop(1,'rgba(0,0,0,0)');
+        ctx.fillStyle=ng; ctx.beginPath(); ctx.arc(n.x,n.y,r*3,0,Math.PI*2); ctx.fill();
+      }
+      ctx.beginPath(); ctx.arc(n.x,n.y,r,0,Math.PI*2);
+      ctx.fillStyle=`hsla(${n.hue},90%,72%,${depthAlpha*(0.55+glow*0.35)})`; ctx.fill();
+    });
+
+    // Outer brain silhouette glow
+    const R=0.30*Math.min(W,H);
+    const bg2=ctx.createRadialGradient(cx,cy-R*0.05,R*0.5,cx,cy-R*0.05,R*1.25);
+    bg2.addColorStop(0,'rgba(0,0,0,0)');
+    bg2.addColorStop(0.82,'rgba(0,229,192,0.0)');
+    bg2.addColorStop(1,'rgba(0,229,192,0.07)');
+    ctx.fillStyle=bg2; ctx.beginPath(); ctx.arc(cx,cy-R*0.05,R*1.25,0,Math.PI*2); ctx.fill();
+
+    requestAnimationFrame(draw);
+  }
+
+  function startWhenReady(){
+    if(canvas.offsetWidth>0){ resize(); draw(); }
+    else requestAnimationFrame(startWhenReady);
+  }
+  startWhenReady();
+  window.addEventListener('resize', resize);
+})();
+
+
+
+// ══════════════════════════════════════════════════════
+// SCROLL STORY BACKGROUND ENGINE
+// Scenes driven by scroll — stops completely at #people section
+//   Scene 0: Hero office (ascending particles, light shafts)
+//   Scene 1: Matrix rain (0s and 1s)
+//   Scene 2: Neural network (nodes + synapses)
+//   Scene 3: OFF — canvas hidden, no background
+// ══════════════════════════════════════════════════════
+(function(){
+  const canvas = document.getElementById('story-canvas');
+  if(!canvas) return;
+  const ctx = canvas.getContext('2d');
+  let W, H;
+
+  function resize(){
+    W = canvas.width = window.innerWidth;
+    H = canvas.height = window.innerHeight;
+    initScenes();
+  }
+  window.addEventListener('resize', resize);
+
+  // Cache the #people section top position
+  let _peopleTop = null;
+  function getPeopleTop(){
+    // Cut canvas off at #leadership (the first section after AI/Future with no canvas bg)
+    const el = document.getElementById('leadership');
+    if(!el) return;
+    _peopleTop = el.getBoundingClientRect().top + window.scrollY;
+  }
+  window.addEventListener('load', getPeopleTop);
+  window.addEventListener('resize', getPeopleTop);
+  setTimeout(getPeopleTop, 600);
+
+  let sceneAlpha = [1,0,0,0];
+  let currentScene = 0;
+  let scrollProgress = 0;
+
+  function updateScroll(){
+    const scrollY = window.scrollY;
+    const docH = document.documentElement.scrollHeight - window.innerHeight;
+    scrollProgress = docH > 0 ? scrollY / docH : 0;
+
+    if(_peopleTop === null) getPeopleTop();
+
+    // Once scrolled to #people or beyond — hide canvas completely, done
+    if(_peopleTop !== null && scrollY >= _peopleTop - 60){
+      canvas.style.opacity = '0';
+      canvas.style.visibility = 'hidden';
+      for(let i=0;i<4;i++) sceneAlpha[i]=0;
+      return;
+    }
+
+    // Restore canvas visibility above people section
+    canvas.style.opacity = '1';
+    canvas.style.visibility = 'visible';
+
+    // Map scroll 0→peoplTop into 3 scenes
+    const range = _peopleTop ? _peopleTop : docH;
+    const t = Math.min(1, scrollY / range);
+    // Scene 0: 0-35%, Scene 1: 35-65%, Scene 2: 65-100%
+    const blend = 0.12;
+    for(let i=0;i<4;i++) sceneAlpha[i]=0;
+
+    if(t < 0.35){
+      const localT = t / 0.35;
+      if(localT > 1-blend){
+        const b = (localT-(1-blend))/blend;
+        sceneAlpha[0]=1-b; sceneAlpha[1]=b;
+      } else {
+        sceneAlpha[0]=1;
+      }
+      currentScene=0;
+    } else if(t < 0.65){
+      const localT = (t-0.35)/0.30;
+      if(localT > 1-blend){
+        const b=(localT-(1-blend))/blend;
+        sceneAlpha[1]=1-b; sceneAlpha[2]=b;
+      } else {
+        sceneAlpha[1]=1;
+      }
+      currentScene=1;
+    } else {
+      const localT=(t-0.65)/0.35;
+      sceneAlpha[2]=1;
+      currentScene=2;
+    }
+  }
+  window.addEventListener('scroll', updateScroll, {passive:true});
+
+  // ══ SCENE 0: OFFICE — ascending particles, light shafts, perspective grid ══
+  let officeParticles=[], officeLines=[];
+  function initOffice(){
+    officeParticles=[];
+    officeLines=[];
+    for(let i=0;i<60;i++){
+      officeParticles.push({
+        x:Math.random()*W, y:Math.random()*H,
+        vx:(Math.random()-0.5)*0.4, vy:-(0.3+Math.random()*0.7),
+        size:1.5+Math.random()*2.5, opacity:0.2+Math.random()*0.5,
+        hue:Math.random()<0.7?210:170,
+        type:Math.random()<0.4?'person':'light'
+      });
+    }
+    for(let i=0;i<8;i++){
+      officeLines.push({
+        x:W*(0.1+i*0.1), opacity:0.03+Math.random()*0.06, width:20+Math.random()*60
+      });
+    }
+  }
+
+  function drawOffice(alpha){
+    ctx.save(); ctx.globalAlpha=alpha;
+    const bg=ctx.createLinearGradient(0,0,0,H);
+    bg.addColorStop(0,'rgba(5,9,26,0.0)'); bg.addColorStop(0.5,'rgba(10,15,35,0.3)'); bg.addColorStop(1,'rgba(15,20,45,0.5)');
+    ctx.fillStyle=bg; ctx.fillRect(0,0,W,H);
+    officeLines.forEach(l=>{
+      const g=ctx.createLinearGradient(l.x,0,l.x,H*0.7);
+      g.addColorStop(0,`rgba(79,172,254,${l.opacity*3})`); g.addColorStop(0.5,`rgba(79,172,254,${l.opacity})`); g.addColorStop(1,'rgba(0,229,192,0)');
+      ctx.fillStyle=g; ctx.fillRect(l.x-l.width/2,0,l.width,H*0.7);
+    });
+    /* perspective grid lines removed */
+    officeParticles.forEach(p=>{
+      p.x+=p.vx; p.y+=p.vy;
+      if(p.y<-10){p.y=H+10;p.x=Math.random()*W;}
+      if(p.x<0)p.x=W; if(p.x>W)p.x=0;
+      if(p.type==='person'){
+        ctx.fillStyle=`hsla(${p.hue},70%,70%,${p.opacity*0.8})`;
+        ctx.beginPath(); ctx.arc(p.x,p.y,p.size,0,Math.PI*2); ctx.fill();
+        ctx.strokeStyle=`hsla(${p.hue},60%,60%,${p.opacity*0.5})`; ctx.lineWidth=p.size*0.8;
+        ctx.beginPath(); ctx.moveTo(p.x,p.y+p.size); ctx.lineTo(p.x,p.y+p.size*3.5); ctx.stroke();
+      } else {
+        ctx.beginPath(); ctx.arc(p.x,p.y,p.size*0.5,0,Math.PI*2);
+        ctx.fillStyle=`hsla(${p.hue},90%,80%,${p.opacity*0.6})`; ctx.fill();
+      }
+    });
+    /* horizontal scan lines removed */
+    const vig=ctx.createRadialGradient(W/2,H/2,H*0.25,W/2,H/2,H*0.85);
+    vig.addColorStop(0,'rgba(0,0,0,0)'); vig.addColorStop(1,'rgba(0,0,0,0.45)');
+    ctx.fillStyle=vig; ctx.fillRect(0,0,W,H);
+    ctx.restore();
+  }
+
+  // ══ SCENE 1: MATRIX RAIN — pure 0s and 1s ══
+  let matrixCols=[];
+  let matrixFrame=0;
+  function initMatrix(){
+    matrixCols=[];
+    const cols=Math.floor(W/38);
+    for(let i=0;i<cols;i++){
+      matrixCols.push({
+        x:i*38+9, y:Math.random()*H*2,
+        speed:0.4+Math.random()*1.0,
+        chars:[], length:8+Math.floor(Math.random()*20),
+        phase:Math.random()*Math.PI*2
+      });
+      for(let j=0;j<30;j++) matrixCols[i].chars.push(Math.random()>0.5?'1':'0');
+    }
+  }
+  function drawMatrix(alpha){
+    ctx.save(); ctx.globalAlpha=alpha;
+    ctx.fillStyle='rgba(5,9,26,0.38)'; ctx.fillRect(0,0,W,H);
+    ctx.font='11px "DM Mono",monospace';
+    matrixFrame++;
+    matrixCols.forEach(col=>{
+      col.y+=col.speed;
+      if(col.y>H+col.length*18) col.y=-col.length*18;
+      if(matrixFrame%25===0) col.chars[Math.floor(Math.random()*col.chars.length)]=Math.random()>0.5?'1':'0';
+      for(let j=0;j<col.length;j++){
+        const cy=col.y-j*18;
+        if(cy<0||cy>H) continue;
+        const t=j/col.length;
+        const bright=j===0?1:(1-t*0.85);
+        ctx.fillStyle=j===0?`rgba(220,255,240,${bright*0.55})`:`rgba(0,229,192,${bright*0.35})`;
+        ctx.fillText(col.chars[j%col.chars.length],col.x-6,cy);
+      }
+    });
+    ctx.restore();
+  }
+
+  // ══ SCENE 2: NEURAL NETWORK — nodes + synaptic connections ══
+  let neurons=[], synapses2=[], neuralPulses2=[];
+  function initNeural(){
+    neurons=[]; synapses2=[]; neuralPulses2=[];
+    const N=80;
+    for(let i=0;i<N;i++){
+      neurons.push({
+        x:W*0.1+Math.random()*W*0.8, y:H*0.05+Math.random()*H*0.9,
+        vx:(Math.random()-0.5)*0.15, vy:(Math.random()-0.5)*0.15,
+        pulse:Math.random()*Math.PI*2, speed:0.02+Math.random()*0.025,
+        r:1.5+Math.random()*2,
+        hue:Math.random()<0.6?170:(Math.random()<0.5?210:260),
+        type:Math.random()<0.15?'major':'minor'
+      });
+    }
+    for(let i=0;i<N;i++){
+      for(let j=i+1;j<N;j++){
+        const dx=neurons[i].x-neurons[j].x, dy=neurons[i].y-neurons[j].y;
+        const d=Math.sqrt(dx*dx+dy*dy);
+        if(d<W*0.18&&Math.random()<0.3) synapses2.push({a:i,b:j});
+      }
+    }
+    for(let i=0;i<6;i++) neuralPulses2.push({synIdx:Math.floor(Math.random()*synapses2.length),t:Math.random(),speed:0.006+Math.random()*0.008});
+  }
+  let neuralFrame2=0;
+  function drawNeural(alpha){
+    ctx.save(); ctx.globalAlpha=alpha;
+    ctx.fillStyle='rgba(5,9,26,0.12)'; ctx.fillRect(0,0,W,H);
+    neuralFrame2++;
+    neurons.forEach(n=>{
+      n.x+=n.vx; n.y+=n.vy; n.pulse+=n.speed;
+      if(n.x<50)n.vx=Math.abs(n.vx); if(n.x>W-50)n.vx=-Math.abs(n.vx);
+      if(n.y<50)n.vy=Math.abs(n.vy); if(n.y>H-50)n.vy=-Math.abs(n.vy);
+    });
+    synapses2.forEach(s=>{
+      const a=neurons[s.a],b=neurons[s.b];
+      const g=ctx.createLinearGradient(a.x,a.y,b.x,b.y);
+      g.addColorStop(0,`rgba(0,229,192,0.12)`); g.addColorStop(0.5,`rgba(79,172,254,0.09)`); g.addColorStop(1,`rgba(0,229,192,0.12)`);
+      ctx.strokeStyle=g; ctx.lineWidth=0.7;
+      ctx.beginPath(); ctx.moveTo(a.x,a.y); ctx.lineTo(b.x,b.y); ctx.stroke();
+    });
+    if(neuralFrame2%55===0&&neuralPulses2.length<20) neuralPulses2.push({synIdx:Math.floor(Math.random()*synapses2.length),t:0,speed:0.007+Math.random()*0.007});
+    neuralPulses2=neuralPulses2.filter(p=>p.t<=1);
+    neuralPulses2.forEach(p=>{
+      p.t+=p.speed;
+      const s=synapses2[p.synIdx]; if(!s) return;
+      const a=neurons[s.a],b=neurons[s.b];
+      const px=a.x+(b.x-a.x)*p.t, py=a.y+(b.y-a.y)*p.t;
+      const pg=ctx.createRadialGradient(px,py,0,px,py,8);
+      pg.addColorStop(0,'rgba(0,229,192,0.85)'); pg.addColorStop(1,'rgba(0,229,192,0)');
+      ctx.fillStyle=pg; ctx.beginPath(); ctx.arc(px,py,8,0,Math.PI*2); ctx.fill();
+    });
+    neurons.forEach(n=>{
+      const a=0.3+0.3*Math.sin(n.pulse);
+      const r=n.type==='major'?n.r*2:n.r;
+      if(n.type==='major'){
+        const g=ctx.createRadialGradient(n.x,n.y,0,n.x,n.y,r*3);
+        g.addColorStop(0,`hsla(${n.hue},90%,70%,${a*0.6})`); g.addColorStop(1,'rgba(0,0,0,0)');
+        ctx.fillStyle=g; ctx.beginPath(); ctx.arc(n.x,n.y,r*3,0,Math.PI*2); ctx.fill();
+      }
+      ctx.beginPath(); ctx.arc(n.x,n.y,r,0,Math.PI*2);
+      ctx.fillStyle=`hsla(${n.hue},90%,70%,${a})`; ctx.fill();
+    });
+    const bgrd=ctx.createRadialGradient(W/2,H*0.45,0,W/2,H*0.45,W*0.35);
+    bgrd.addColorStop(0,'rgba(0,229,192,0.015)'); bgrd.addColorStop(0.6,'rgba(79,172,254,0.025)'); bgrd.addColorStop(1,'rgba(0,0,0,0)');
+    ctx.fillStyle=bgrd; ctx.fillRect(0,0,W,H);
+    ctx.restore();
+  }
+
+  function initScenes(){ initOffice(); initMatrix(); initNeural(); }
+
+  // ══ MAIN LOOP ══
+  function frame(){
+    if(sceneAlpha[0]>0.01&&sceneAlpha[1]<0.01&&sceneAlpha[2]<0.01){
+      ctx.clearRect(0,0,W,H);
+      drawOffice(sceneAlpha[0]);
+    } else {
+      if(sceneAlpha[1]>0.01) drawMatrix(sceneAlpha[1]);
+      if(sceneAlpha[2]>0.01) drawNeural(sceneAlpha[2]);
+      if(sceneAlpha[0]>0.01){ ctx.save();ctx.globalAlpha=sceneAlpha[0];drawOffice(1);ctx.restore(); }
+    }
+    requestAnimationFrame(frame);
+  }
+
+  resize();
+  updateScroll();
+  frame();
+})();
+
+  /* ── Monte Carlo Canvas ── */
+  (function(){
+    const canvas = document.getElementById('mc-canvas');
+    if(!canvas) return;
+    const ctx = canvas.getContext('2d');
+    const W = canvas.width, H = canvas.height;
+    const PATHS = 500, DAYS = 252;
+    const MU = 0.00045, SIGMA = 0.0088;
+    const PAD = {top:48, right:28, bottom:52, left:52};
+    const cW = W - PAD.left - PAD.right;
+    const cH = H - PAD.top - PAD.bottom;
+
+    // generate paths
+    const paths = [];
+    for(let p=0;p<PATHS;p++){
+      let val=1;
+      const path=[val];
+      for(let d=0;d<DAYS;d++){
+        const z=(Math.random()+Math.random()+Math.random()+Math.random()-2)*1.41;
+        val*=Math.exp((MU-0.5*SIGMA*SIGMA)+SIGMA*z);
+        path.push(val);
+      }
+      paths.push(path);
+    }
+
+    // find value range
+    let minV=Infinity, maxV=-Infinity;
+    paths.forEach(p=>p.forEach(v=>{if(v<minV)minV=v;if(v>maxV)maxV=v;}));
+    minV=Math.min(minV,0.7); maxV=Math.max(maxV,1.5);
+    const range=maxV-minV;
+
+    const xOf=d=>PAD.left+d*(cW/DAYS);
+    const yOf=v=>PAD.top+cH-(((v-minV)/range)*cH);
+
+    // background — dark to match terminal
+    ctx.fillStyle='rgba(10,13,20,0.92)';
+    ctx.fillRect(0,0,W,H);
+
+    // grid lines
+    ctx.strokeStyle='rgba(122,144,184,0.1)';
+    ctx.lineWidth=0.5;
+    for(let i=0;i<=5;i++){
+      const y=PAD.top+(cH/5)*i;
+      ctx.beginPath(); ctx.moveTo(PAD.left,y); ctx.lineTo(PAD.left+cW,y); ctx.stroke();
+    }
+    for(let i=0;i<=6;i++){
+      const x=PAD.left+(cW/6)*i;
+      ctx.beginPath(); ctx.moveTo(x,PAD.top); ctx.lineTo(x,PAD.top+cH); ctx.stroke();
+    }
+
+    // draw paths - colour by final value
+    paths.forEach(path=>{
+      const fin=path[path.length-1];
+      let color;
+      if(fin>=1.15) color='rgba(0,229,192,0.12)';
+      else if(fin>=1.0) color='rgba(0,229,192,0.07)';
+      else if(fin>=0.9) color='rgba(79,172,254,0.08)';
+      else color='rgba(220,50,80,0.1)';
+      ctx.strokeStyle=color;
+      ctx.lineWidth=0.7;
+      ctx.beginPath();
+      path.forEach((v,d)=>{ d===0?ctx.moveTo(xOf(d),yOf(v)):ctx.lineTo(xOf(d),yOf(v)); });
+      ctx.stroke();
+    });
+
+    // percentile bands
+    const pctBands=[[5,95],[25,75],[45,55]];
+    const bandColors=['rgba(0,229,192,0.06)','rgba(0,229,192,0.10)','rgba(0,229,192,0.18)'];
+    pctBands.forEach((band,bi)=>{
+      const lo=band[0]/100, hi=band[1]/100;
+      ctx.fillStyle=bandColors[bi];
+      ctx.beginPath();
+      for(let d=0;d<=DAYS;d++){
+        const vals=paths.map(p=>p[d]).sort((a,b)=>a-b);
+        const y=yOf(vals[Math.floor(lo*PATHS)]);
+        d===0?ctx.moveTo(xOf(d),y):ctx.lineTo(xOf(d),y);
+      }
+      for(let d=DAYS;d>=0;d--){
+        const vals=paths.map(p=>p[d]).sort((a,b)=>a-b);
+        const y=yOf(vals[Math.floor(hi*PATHS)]);
+        ctx.lineTo(xOf(d),y);
+      }
+      ctx.closePath(); ctx.fill();
+    });
+
+    // median line
+    ctx.strokeStyle='rgba(0,229,192,0.85)';
+    ctx.lineWidth=2;
+    ctx.shadowColor='rgba(0,229,192,0.4)';
+    ctx.shadowBlur=6;
+    ctx.beginPath();
+    for(let d=0;d<=DAYS;d++){
+      const vals=paths.map(p=>p[d]).sort((a,b)=>a-b);
+      const med=vals[Math.floor(0.5*PATHS)];
+      d===0?ctx.moveTo(xOf(d),yOf(med)):ctx.lineTo(xOf(d),yOf(med));
+    }
+    ctx.stroke();
+    ctx.shadowBlur=0;
+
+    // baseline at 1.0
+    const y1=yOf(1.0);
+    ctx.strokeStyle='rgba(201,168,76,0.5)';
+    ctx.lineWidth=1;
+    ctx.setLineDash([6,4]);
+    ctx.beginPath(); ctx.moveTo(PAD.left,y1); ctx.lineTo(PAD.left+cW,y1); ctx.stroke();
+    ctx.setLineDash([]);
+
+    // Y axis labels
+    ctx.fillStyle='rgba(122,144,184,0.8)';
+    ctx.font='10px DM Mono, monospace';
+    ctx.textAlign='right';
+    for(let i=0;i<=5;i++){
+      const v=minV+(range/5)*i;
+      const y=yOf(v);
+      ctx.fillText((v*100-100).toFixed(0)+'%',PAD.left-6,y+3);
+    }
+
+    // X axis labels
+    ctx.textAlign='center';
+    ['0','42','84','126','168','210','252'].forEach((lbl,i)=>{
+      ctx.fillText(lbl==='0'?'Day 0':lbl==='252'?'252':lbl,PAD.left+(cW/6)*i,PAD.top+cH+16);
+    });
+
+    // Legend
+    const lg=[
+      {color:'rgba(0,229,192,0.9)',label:'Median Path'},
+      {color:'rgba(0,229,192,0.4)',label:'50th Pct Band'},
+      {color:'rgba(220,50,80,0.6)',label:'Drawdown Paths'},
+    ];
+    ctx.textAlign='left';
+    lg.forEach((item,i)=>{
+      const lx=PAD.left+i*140, ly=12;
+      ctx.fillStyle=item.color;
+      ctx.fillRect(lx,ly-7,18,3);
+      ctx.fillStyle='rgba(122,144,184,0.7)';
+      ctx.font='9px DM Mono,monospace';
+      ctx.fillText(item.label,lx+22,ly);
+    });
+
+    // Title
+    ctx.fillStyle='rgba(238,243,255,0.55)';
+    ctx.font='bold 11px DM Mono,monospace';
+    ctx.textAlign='left';
+    ctx.fillText('RETURN DISTRIBUTION — 500 PATHS',PAD.left, PAD.top-16);
+  })();
+</script>
+</body>
+</html>
