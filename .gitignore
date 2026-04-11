@@ -47,3 +47,6 @@ vite.config.ts.*
 *.db-shm
 *.db-wal
 Qwen 2.5-7b/assets/Qwen2.5_Omni.pdf
+
+# graphifyy output
+graphify-out/

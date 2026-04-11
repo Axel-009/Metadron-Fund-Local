@@ -6,6 +6,7 @@ Pure-numpy implementation with deterministic weights seeded from ticker hash.
 
 import logging
 import hashlib
+from pathlib import Path
 
 import numpy as np
 
@@ -18,7 +19,6 @@ except Exception:
 
 logger = logging.getLogger(__name__)
 
-# ---------------------------------------------------------------------------
 # Intelligence Platform: Stock-techincal-prediction-model integration
 # Provides: MultiAssetPredictor with LSTM, XGBoost, RF, Transformer ensemble.
 # Requires tensorflow + xgboost + sklearn; falls back to ES bridge if absent.
@@ -39,6 +39,27 @@ except (ImportError, FileNotFoundError, AttributeError, Exception):
     MultiAssetPredictor = None
     MULTI_ASSET_PREDICTOR_AVAILABLE = False
     logger.info("MultiAssetPredictor unavailable — ES bridge only")
+
+# ---------------------------------------------------------------------------
+# Intelligence Platform: Stock-prediction stacking autoencoder (optional)
+# Provides latent feature extraction before XGBoost prediction.
+# Requires tensorflow>=2.0; falls back to raw OHLCV features if absent.
+# ---------------------------------------------------------------------------
+try:
+    import importlib.util as _ilu2
+    _ae_spec = _ilu2.spec_from_file_location(
+        "stock_autoencoder",
+        str(Path(__file__).resolve().parent.parent.parent.parent
+            / "intelligence_platform" / "Stock-prediction"
+            / "stacking" / "autoencoder.py"),
+    )
+    _ae_mod = _ilu2.module_from_spec(_ae_spec)
+    _ae_spec.loader.exec_module(_ae_mod)
+    Autoencoder = getattr(_ae_mod, "Autoencoder", None) or getattr(_ae_mod, "Model", None)
+    AUTOENCODER_AVAILABLE = Autoencoder is not None
+except Exception:
+    Autoencoder = None
+    AUTOENCODER_AVAILABLE = False
 
 
 class StockPredictionBridge:

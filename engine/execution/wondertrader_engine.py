@@ -28,6 +28,22 @@ from typing import Optional, Dict, List, Tuple
 
 logger = logging.getLogger(__name__)
 
+# ---------------------------------------------------------------------------
+# wtpy — WonderTrader native Python API (optional, falls back to pure-numpy)
+# ---------------------------------------------------------------------------
+try:
+    from wtpy import WtBtEngine, EngineType, WtDtServo  # noqa: F401
+    from wtpy.apps import WtCtaOptimizer
+    WTPY_AVAILABLE = True
+except ImportError:
+    WTPY_AVAILABLE = False
+
+try:
+    from wtpy.wrapper import WtDataHelper
+    WTPY_DATA_HELPER_AVAILABLE = True
+except ImportError:
+    WTPY_DATA_HELPER_AVAILABLE = False
+
 
 # ---------------------------------------------------------------------------
 # Data structures
@@ -383,12 +399,22 @@ class WonderTraderEngine:
         # Execution history for quality tracking
         self._execution_log: List[Dict] = []
 
+        if WTPY_AVAILABLE:
+            logger.info("WonderTraderEngine: wtpy native bindings loaded (C++ backend)")
+        else:
+            logger.info("WonderTraderEngine: wtpy unavailable — running pure-numpy simulation")
+
         logger.info(
             "WonderTraderEngine initialised (MA=%d/%d, channel=%d, ROC=%d, "
             "latency=%.1fms +/- %.1fms)",
             fast_ma, slow_ma, channel_lookback, roc_period,
             base_latency_ms, latency_jitter_ms,
         )
+
+    @property
+    def has_native_wtpy(self) -> bool:
+        """True if wtpy C++ bindings are available, False if running pure-numpy simulation."""
+        return WTPY_AVAILABLE
 
     # ------------------------------------------------------------------
     # 1. CTA Signal Generation

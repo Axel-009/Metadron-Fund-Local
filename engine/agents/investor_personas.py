@@ -20,6 +20,7 @@ Consensus thresholds:
 import logging
 from datetime import datetime
 from enum import Enum
+from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
 logger = logging.getLogger(__name__)
@@ -49,10 +50,8 @@ except ImportError:
 # ---------------------------------------------------------------------------
 # Upstream agent imports (all wrapped)
 # ---------------------------------------------------------------------------
-_INTELLIGENCE_BASE = (
-    "/home/user/Metadron-Capital/intelligence_platform"
-    "/ai-hedgefund/src/agents"
-)
+_REPO_ROOT = Path(__file__).resolve().parent.parent.parent   # engine/agents/../../.. = repo root
+_INTELLIGENCE_BASE = str(_REPO_ROOT / "intelligence_platform" / "ai-hedgefund" / "src" / "agents")
 
 _PERSONA_NAMES: List[str] = [
     "warren_buffett", "charlie_munger", "ben_graham", "peter_lynch",
@@ -638,7 +637,7 @@ class InvestorPersonaManager:
         import sys
 
         # Ensure intelligence_platform path is importable
-        ip_root = "/home/user/Metadron-Capital/intelligence_platform/ai-hedgefund"
+        ip_root = str(_REPO_ROOT / "intelligence_platform" / "ai-hedgefund")
         if ip_root not in sys.path:
             sys.path.insert(0, ip_root)
 

@@ -1332,6 +1332,18 @@ class L7UnifiedExecutionSurface:
             except Exception as e:
                 logger.warning("L7: BetaCorridor init failed: %s", e)
 
+        # AI Hedge Fund HFT Bridge (optional — enhances HFT order routing)
+        try:
+            from engine.execution.ai_hedgefund_hft_bridge import AiHedgeFundHFTBridge
+            self._aihf_hft = AiHedgeFundHFTBridge()
+            if self._aihf_hft.is_available():
+                logger.info("L7: AI Hedge Fund HFT bridge active")
+            else:
+                logger.debug("L7: AI Hedge Fund HFT bridge loaded but engine unavailable")
+        except Exception as _exc:
+            logger.debug("L7: AiHedgeFundHFTBridge not loaded: %s", _exc)
+            self._aihf_hft = None
+
         # --- L7-specific components ---
         self._router = MultiProductRouter()
         self._risk_engine = L7RiskEngine(initial_nav=initial_cash)

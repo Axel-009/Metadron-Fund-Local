@@ -1,5 +1,26 @@
 # Metadron Capital — AI Investment Platform
 
+## MCP Plugins (Claude Code Agents)
+
+Install these once on your local terminal — not server-side:
+
+### Sequential Thinking
+Structured step-by-step reasoning for complex trade/execution decisions.
+```
+claude mcp add sequential-thinking -- npx -y @modelcontextprotocol/server-sequential-thinking
+```
+Agents will use this automatically for multi-step analysis tasks.
+
+### Context7 (Library Documentation)
+Up-to-date, version-specific docs — no more hallucinated APIs.
+```
+claude mcp add --scope user context7 -- npx -y @upstash/context7-mcp
+```
+Add to CLAUDE.md rule: "Always use Context7 when working with library APIs or code examples."
+
+---
+
+
 ## Session Bootstrap
 
 > **START HERE:** Read `Architecture_DNA/AI_SESSION_INSTRUCTIONS.md` first — it explains the two-zone architecture (repos/ archive vs intelligence_platform/ unified system), change flow rules, and how to add new repos. Then continue below.

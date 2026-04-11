@@ -52,25 +52,7 @@ module.exports = {
       out_file: path.join(ROOT, 'logs/pm2/express-frontend-out.log'),
       merge_logs: true, restart_delay: 3000, max_restarts: 10, min_uptime: '5s',
     },
-    // MIROFISH
-    {
-      name: 'mirofish-backend', script: 'python3', args: 'run.py',
-      cwd: path.join(ROOT, 'mirofish/backend'), interpreter: 'none',
-      env: { FLASK_PORT: '5001', PYTHONUNBUFFERED: '1' },
-      instances: 1, autorestart: true, watch: false, max_memory_restart: '1G',
-      error_file: path.join(ROOT, 'logs/pm2/mirofish-backend-error.log'),
-      out_file: path.join(ROOT, 'logs/pm2/mirofish-backend-out.log'),
-      merge_logs: true, restart_delay: 3000, max_restarts: 10,
-    },
-    {
-      name: 'mirofish-frontend', script: 'npm', args: 'run dev',
-      cwd: path.join(ROOT, 'mirofish/frontend'), interpreter: 'none',
-      env: { PORT: '5174', NODE_ENV: 'development' },
-      instances: 1, autorestart: true, watch: false, max_memory_restart: '512M',
-      error_file: path.join(ROOT, 'logs/pm2/mirofish-frontend-error.log'),
-      out_file: path.join(ROOT, 'logs/pm2/mirofish-frontend-out.log'),
-      merge_logs: true, restart_delay: 3000, max_restarts: 10,
-    },
+    // MIROFISH REMOVED — engine/simulation/ is the canonical simulation layer (updated version)
     // QWEN 2.5-7B MODEL SERVER
     {
       name: 'qwen-model-server', script: 'python3',

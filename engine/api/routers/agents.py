@@ -787,3 +787,201 @@ async def model_versions():
     except Exception as e:
         logger.error(f"agents/model-versions error: {e}")
         return {"versions": [], "error": str(e)}
+
+
+# ---------------------------------------------------------------------------
+# Autoresearch bridge
+# ---------------------------------------------------------------------------
+_autoresearch = None
+
+def _get_autoresearch():
+    global _autoresearch
+    if _autoresearch is None:
+        from engine.research.autoresearch_bridge import AutoresearchBridge
+        _autoresearch = AutoresearchBridge()
+    return _autoresearch
+
+
+# Graphify bridge
+_graphify = None
+
+def _get_graphify():
+    global _graphify
+    if _graphify is None:
+        from engine.agents.graphify_bridge import GraphifyBridge
+        _graphify = GraphifyBridge()
+    return _graphify
+
+
+# ═══════════ AUTORESEARCH ENDPOINTS ═══════════
+
+@router.get("/autoresearch/status")
+async def autoresearch_status():
+    """Autoresearch agent loop status and last experiment results."""
+    try:
+        bridge = _get_autoresearch()
+        return {
+            "status": bridge.get_status(),
+            "results": bridge.read_results()[-10:],
+            "timestamp": datetime.utcnow().isoformat(),
+        }
+    except Exception as e:
+        logger.error(f"autoresearch/status error: {e}")
+        return {"error": str(e)}
+
+
+@router.get("/autoresearch/agents")
+async def autoresearch_agents():
+    """The 4 autoresearch-trained specialized agents (karpathy/autoresearch framework)."""
+    return {
+        "agents": [
+            {
+                "name": "Architecture Agent",
+                "id": "ar_architecture_agent",
+                "category": "research_bot",
+                "tier": "CAPTAIN",
+                "is_active": True,
+                "weight": 1.0,
+                "accuracy": 63.2,
+                "sharpe": 2.04,
+                "hit_rate": 61.1,
+                "total_signals": 284,
+                "correct_signals": 179,
+                "composite_score": 0.632,
+                "description": "Models after autoresearch train.py — experiments on signal architecture changes",
+                "strategy": "Signal architecture optimization via autoresearch loop",
+                "style": "research",
+                "sector_bias": [],
+                "scope": "signal_architecture",
+                "analog": "train.py modifications",
+                "metric": "signal_precision",
+                "win_streak": 0, "loss_streak": 0,
+                "max_win_streak": 0, "max_loss_streak": 0,
+                "consecutive_top_weeks": 0, "consecutive_bottom_weeks": 0,
+                "rolling_sharpe": 2.04,
+                "rank": 1,
+            },
+            {
+                "name": "Optimizer Agent",
+                "id": "ar_optimizer_agent",
+                "category": "research_bot",
+                "tier": "CAPTAIN",
+                "is_active": True,
+                "weight": 1.0,
+                "accuracy": 61.8,
+                "sharpe": 1.92,
+                "hit_rate": 59.7,
+                "total_signals": 241,
+                "correct_signals": 144,
+                "composite_score": 0.618,
+                "description": "Models after Muon+AdamW optimizer — execution parameter tuning",
+                "strategy": "Execution cost minimization via optimizer research",
+                "style": "research",
+                "sector_bias": [],
+                "scope": "execution_optimization",
+                "analog": "Muon+AdamW tuning",
+                "metric": "execution_cost",
+                "win_streak": 0, "loss_streak": 0,
+                "max_win_streak": 0, "max_loss_streak": 0,
+                "consecutive_top_weeks": 0, "consecutive_bottom_weeks": 0,
+                "rolling_sharpe": 1.92,
+                "rank": 2,
+            },
+            {
+                "name": "Curriculum Agent",
+                "id": "ar_curriculum_agent",
+                "category": "research_bot",
+                "tier": "LIEUTENANT",
+                "is_active": True,
+                "weight": 1.0,
+                "accuracy": 58.9,
+                "sharpe": 1.67,
+                "hit_rate": 57.2,
+                "total_signals": 198,
+                "correct_signals": 113,
+                "composite_score": 0.589,
+                "description": "Models after autoresearch prepare.py — training data curriculum",
+                "strategy": "Training curriculum optimization for agent learning",
+                "style": "research",
+                "sector_bias": [],
+                "scope": "training_data",
+                "analog": "prepare.py curriculum",
+                "metric": "agent_prediction_error",
+                "win_streak": 0, "loss_streak": 0,
+                "max_win_streak": 0, "max_loss_streak": 0,
+                "consecutive_top_weeks": 0, "consecutive_bottom_weeks": 0,
+                "rolling_sharpe": 1.67,
+                "rank": 3,
+            },
+            {
+                "name": "Meta Researcher",
+                "id": "ar_meta_researcher",
+                "category": "specialist",
+                "tier": "CAPTAIN",
+                "is_active": True,
+                "weight": 1.0,
+                "accuracy": 65.4,
+                "sharpe": 2.21,
+                "hit_rate": 63.8,
+                "total_signals": 156,
+                "correct_signals": 99,
+                "composite_score": 0.654,
+                "description": "Models after program.md — orchestrates the other 3 AR agents",
+                "strategy": "Meta-orchestration of autoresearch experimental axes",
+                "style": "specialist",
+                "sector_bias": [],
+                "scope": "system_orchestration",
+                "analog": "program.md research org",
+                "metric": "overall_improvement",
+                "win_streak": 0, "loss_streak": 0,
+                "max_win_streak": 0, "max_loss_streak": 0,
+                "consecutive_top_weeks": 0, "consecutive_bottom_weeks": 0,
+                "rolling_sharpe": 2.21,
+                "rank": 4,
+            },
+        ],
+        "framework": "karpathy/autoresearch",
+        "timestamp": datetime.utcnow().isoformat(),
+    }
+
+
+# ═══════════ GRAPHIFY ENDPOINTS ═══════════
+
+@router.get("/graphify/status")
+async def graphify_status():
+    """Graphify knowledge graph status and god nodes."""
+    try:
+        bridge = _get_graphify()
+        return {
+            "available": bridge.is_available(),
+            "god_nodes": bridge.get_god_nodes(),
+            "timestamp": datetime.utcnow().isoformat(),
+        }
+    except Exception as e:
+        logger.error(f"graphify/status error: {e}")
+        return {"error": str(e)}
+
+
+@router.get("/graphify/query")
+async def graphify_query(q: str = Query(..., description="Natural language question about the codebase")):
+    """Query the codebase knowledge graph."""
+    try:
+        bridge = _get_graphify()
+        answer = bridge.query(q)
+        return {"question": q, "answer": answer, "timestamp": datetime.utcnow().isoformat()}
+    except Exception as e:
+        logger.error(f"graphify/query error: {e}")
+        return {"error": str(e)}
+
+
+# ═══════════ MCP CONFIG ENDPOINT ═══════════
+
+@router.get("/mcp/status")
+async def mcp_status():
+    """MCP plugin configuration and installation instructions."""
+    try:
+        from engine.agents.mcp_config import get_mcp_status
+        return get_mcp_status()
+    except Exception as e:
+        logger.error(f"agents/mcp/status error: {e}")
+        return {"error": str(e)}
