@@ -1185,8 +1185,8 @@ class ExchangeCoreEngine:
                 broker_price = broker._get_current_price(ticker)
                 if broker_price > 0:
                     ref_price = broker_price
-            except Exception:
-                pass
+            except Exception as e:
+                logger.error("ExchangeCore: broker reference price fetch failed for ticker=%s: %s", ticker, e, exc_info=True)
             self.seed_order_book(ticker, ref_price, num_levels=20, qty_per_level=500)
 
         # Run through matching engine

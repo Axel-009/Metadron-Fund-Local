@@ -12,9 +12,12 @@ Usage in TECH tab API:
 """
 
 import logging
+import logging.handlers
+import os
 import threading
 from datetime import datetime
 from collections import deque
+from pathlib import Path
 from typing import Optional
 
 logger = logging.getLogger("metadron.errors")
@@ -22,6 +25,25 @@ logger = logging.getLogger("metadron.errors")
 # Thread-safe in-memory error buffer (last 500 errors per session)
 _error_buffer: deque = deque(maxlen=500)
 _lock = threading.Lock()
+
+# ─── Disk persistence via RotatingFileHandler ─────────────────
+_REPO_ROOT = Path(__file__).resolve().parent.parent.parent
+_LOG_DIR = _REPO_ROOT / "logs"
+_LOG_FILE = _LOG_DIR / "metadron_errors.log"
+
+_LOG_DIR.mkdir(parents=True, exist_ok=True)
+
+_file_handler = logging.handlers.RotatingFileHandler(
+    _LOG_FILE,
+    maxBytes=10 * 1024 * 1024,  # 10 MB
+    backupCount=5,
+)
+_file_handler.setLevel(logging.WARNING)
+_file_handler.setFormatter(
+    logging.Formatter("%(asctime)s | %(levelname)s | %(name)s | %(message)s")
+)
+logger.addHandler(_file_handler)
+logger.setLevel(logging.DEBUG)
 
 
 def log_engine_error(
@@ -48,7 +70,7 @@ def log_engine_error(
     with _lock:
         _error_buffer.append(entry)
 
-    # Also log to Python logging
+    # Also log to Python logging (now persisted to disk via RotatingFileHandler)
     if severity == "CRITICAL":
         logger.critical(f"[{engine}] {message}")
     elif severity == "ERROR":
@@ -108,17 +130,4 @@ class EngineErrorHandler(logging.Handler):
             log_engine_error(
                 engine=record.name,
                 message=record.getMessage(),
-                severity="CRITICAL" if record.levelno >= logging.CRITICAL else "ERROR",
-                detail=self.format(record) if record.exc_info else None,
-            )
-
-
-def install_global_handler():
-    """Install the centralized error handler on the root logger.
-
-    Call this once at startup (e.g., in API server or run_open.py).
-    """
-    handler = EngineErrorHandler()
-    handler.setLevel(logging.ERROR)
-    logging.getLogger().addHandler(handler)
-    logger.info("Centralized error handler installed on root logger")
+                severity="CRITICAL" if record.

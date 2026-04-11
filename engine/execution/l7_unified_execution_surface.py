@@ -1665,15 +1665,15 @@ class L7UnifiedExecutionSurface:
                 p = self._broker._get_current_price(ticker)
                 if p > 0:
                     return p
-            except Exception:
-                pass
+            except Exception as e:
+                logger.error("L7: broker price fetch failed for ticker=%s: %s", ticker, e, exc_info=True)
         if self._paper and hasattr(self._paper, '_get_current_price'):
             try:
                 p = self._paper._get_current_price(ticker)
                 if p > 0:
                     return p
-            except Exception:
-                pass
+            except Exception as e:
+                logger.error("L7: paper broker price fetch failed for ticker=%s: %s", ticker, e, exc_info=True)
         return 0.0
 
     def _get_portfolio_state(self) -> Tuple[float, float, dict, float, float, float]:
@@ -1694,8 +1694,8 @@ class L7UnifiedExecutionSurface:
                 gross = exposures.get("gross", 0.0)
                 net = exposures.get("net", 0.0)
                 return nav, cash, positions, daily_pnl, gross, net
-        except Exception:
-            pass
+        except Exception as e:
+            logger.error("L7: portfolio state retrieval failed: %s", e, exc_info=True)
 
         return self._initial_cash, self._initial_cash, {}, 0.0, 0.0, 0.0
 
@@ -1714,8 +1714,8 @@ class L7UnifiedExecutionSurface:
         if self._options_engine:
             try:
                 self._options_engine.update_regime(regime)
-            except Exception:
-                pass
+            except Exception as e:
+                logger.warning("L7: options engine regime update failed for regime=%s: %s", regime, e)
 
         # Every 60 heartbeats (~1 hour): intraday learning optimization
         if self._heartbeat_count % 60 == 0:

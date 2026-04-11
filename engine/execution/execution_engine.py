@@ -794,8 +794,8 @@ class MLVoteEnsemble:
                 # Linear model: score = sigmoid(X @ w)
                 score = 1 / (1 + np.exp(-features @ weights))
                 return 1 if score > 0.5 else -1
-        except Exception:
-            pass
+        except Exception as e:
+            logger.warning("Tier-1 neural model weight loading failed for ticker=%s: %s", ticker, e)
 
         # Fallback: momentum-based (not random noise)
         # Short momentum weighted more than medium
@@ -1254,9 +1254,9 @@ class ExecutionEngine:
                 if nav and nav > 0:
                     logger.info("NAV resolved from Alpaca: $%.2f", nav)
                     return nav
-            except Exception:
-                pass
-        
+            except Exception as e:
+                logger.error("NAV resolution from Alpaca broker failed: %s", e, exc_info=True)
+
         # Try broker state
         if hasattr(self.broker, 'state') and hasattr(self.broker.state, 'nav'):
             nav = self.broker.state.nav
@@ -1507,7 +1507,8 @@ class ExecutionEngine:
                         stats = get_market_stats(ticker)
                         if stats:
                             security_data[ticker] = stats
-                    except Exception:
+                    except Exception as e:
+                        logger.warning("SecurityAnalysis: get_market_stats failed for ticker=%s: %s", ticker, e)
                         continue
 
                 if security_data:
@@ -1571,7 +1572,8 @@ class ExecutionEngine:
                         ).strftime("%Y-%m-%d"))
                         if isinstance(adj, pd.DataFrame) and not adj.empty and "Close" in adj.columns:
                             price_dict[ticker] = adj["Close"]
-                    except Exception:
+                    except Exception as e:
+                        logger.warning("PatternDiscovery: get_adj_close failed for ticker=%s: %s", ticker, e)
                         continue
 
                 if price_dict:
@@ -1788,8 +1790,8 @@ class ExecutionEngine:
                 for ds in self.distress.get_critical():
                     if ds.ticker and ds.ticker not in selected_tickers:
                         selected_tickers.append(ds.ticker)
-            except Exception:
-                pass
+            except Exception as e:
+                logger.warning("Distressed/fallen angel ticker retrieval failed: %s", e)
 
         if not selected_tickers:
             selected_tickers = ["SPY", "QQQ", "IWM", "XLK", "XLF"]
@@ -1847,7 +1849,8 @@ class ExecutionEngine:
                     p = get_adj_close([ticker], start=datetime.now().strftime("%Y-%m-%d"))
                     if not p.empty:
                         spot = float(p[ticker].iloc[-1])
-                except Exception:
+                except Exception as e:
+                    logger.warning("Options: spot price fetch failed for ticker=%s: %s", ticker, e)
                     continue
                 if spot <= 0:
                     continue
@@ -1889,9 +1892,9 @@ class ExecutionEngine:
                             "alpha": sig.alpha_pred,
                             "momentum": sig.momentum_1m,
                         })
-                except Exception:
-                    pass
-            
+                except Exception as e:
+                    logger.error("Options: chain processing failed for ticker=%s: %s", ticker, e, exc_info=True)
+
             if options_candidates:
                 for o in options_candidates:
                     o["score"] = abs(o["alpha"]) * abs(o["delta"]) * (1 + abs(o["momentum"]))
@@ -2032,8 +2035,8 @@ class ExecutionEngine:
                 "sleeve_beta": sleeve_beta,
                 "hedge_requirement": abu_hedge,
             }
-        except Exception:
-            pass
+        except Exception as e:
+            logger.error("AlphaBetaUnleashed beta computation failed: %s", e, exc_info=True)
         result["stages"]["beta"] = {
             "target_beta": beta_state.target_beta,
             "current_beta": beta_state.current_beta,
@@ -2072,8 +2075,8 @@ class ExecutionEngine:
                 with open(_credit_path) as _f:
                     _credit_data = _json.load(_f)
                     _credit_map = _credit_data.get("ratings", {})
-        except Exception:
-            pass
+        except Exception as e:
+            logger.warning("Credit classification JSON load failed: %s", e)
 
         def _get_sleeve_budget(ticker: str) -> float:
             """Route ticker to its credit-appropriate sleeve budget."""
@@ -2106,7 +2109,8 @@ class ExecutionEngine:
                     ticker_rets = rets.iloc[:, 0]
                 else:
                     continue
-            except Exception:
+            except Exception as e:
+                logger.warning("ML voting: get_returns failed for ticker=%s: %s", ticker, e)
                 continue
 
             # Vote
@@ -2286,8 +2290,8 @@ class ExecutionEngine:
                             self.learning.record_sector_feedback(
                                 sector, "OVERWEIGHT", recent_ret
                             )
-                    except Exception:
-                        pass
+                    except Exception as e:
+                        logger.warning("Learning loop: sector feedback recording failed for sector=%s: %s", sector, e)
 
             # Apply learned tier weights to ensemble (continuous adaptation)
             weight_changes = self.learning.apply_to_ensemble(self.ensemble)
