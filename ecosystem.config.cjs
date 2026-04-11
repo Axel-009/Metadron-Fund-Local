@@ -141,24 +141,11 @@ module.exports = {
       env: { PYTHONUNBUFFERED: '1', LLM_BRIDGE_PORT: '8002',
         QWEN_MODEL_PATH: process.env.QWEN_MODEL_PATH || 'Qwen/Qwen2.5-Omni-7B',
         AIRLLM_MODEL_PATH: process.env.AIRLLM_MODEL_PATH || 'meta-llama/Llama-3.1-70B',
-        ANTHROPIC_MODEL: process.env.ANTHROPIC_MODEL || 'claude-opus-4-6' },
+        XIAOMI_MIMO_API_KEY: process.env.XIAOMI_MIMO_API_KEY || '' },
       instances: 1, autorestart: true, watch: false, max_memory_restart: '8G',
       error_file: path.join(ROOT, 'logs/pm2/llm-bridge-error.log'),
       out_file: path.join(ROOT, 'logs/pm2/llm-bridge-out.log'),
       merge_logs: true, restart_delay: 5000, max_restarts: 10, min_uptime: '10s', kill_timeout: 30000,
-    },
-    // AIR-LLM MODEL SERVER (FIX: file now exists at engine/bridges/airllm_model_server.py)
-    {
-      name: 'airllm-model-server', script: 'python3',
-      args: '-m uvicorn engine.bridges.airllm_model_server:create_app --factory --host 0.0.0.0 --port 8003 --log-level info',
-      cwd: ROOT, interpreter: 'none',
-      env: { PYTHONUNBUFFERED: '1', AIRLLM_PORT: '8003',
-        AIRLLM_MODEL_PATH: process.env.AIRLLM_MODEL_PATH || 'meta-llama/Llama-3.1-70B',
-        CUDA_VISIBLE_DEVICES: process.env.AIRLLM_GPU_DEVICES || '1' },
-      instances: 1, autorestart: true, watch: false, max_memory_restart: '12G',
-      error_file: path.join(ROOT, 'logs/pm2/airllm-server-error.log'),
-      out_file: path.join(ROOT, 'logs/pm2/airllm-server-out.log'),
-      merge_logs: true, restart_delay: 10000, max_restarts: 5, min_uptime: '30s', kill_timeout: 30000,
     },
     // AI-NEWTON DISCOVERY SERVICE (FIX: now points to wrapper that delegates to worker)
     {
