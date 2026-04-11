@@ -41,13 +41,11 @@ module.exports = {
     },
     {
       name: 'express-frontend',
-      // FIX: production uses built output instead of dev server
-      script: 'npm', args: 'run dev', cwd: ROOT, interpreter: 'none',
+      script: process.env.NODE_ENV === 'production' ? 'node' : 'npm',
+      args: process.env.NODE_ENV === 'production' ? 'dist/index.cjs' : 'run dev',
+      cwd: ROOT, interpreter: 'none',
       env: { PORT: '5000', NODE_ENV: 'development' },
       env_production: { PORT: '5000', NODE_ENV: 'production' },
-      // In production, override script/args to serve the built bundle:
-      //   script: 'node', args: 'dist/index.cjs'
-      // To apply: pm2 start ecosystem.config.cjs --env production
       instances: 1, autorestart: true, watch: false, max_memory_restart: '1G',
       log_date_format: 'YYYY-MM-DD HH:mm:ss Z',
       error_file: path.join(ROOT, 'logs/pm2/express-frontend-error.log'),
