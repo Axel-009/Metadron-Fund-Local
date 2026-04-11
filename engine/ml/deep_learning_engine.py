@@ -9,6 +9,9 @@ No torch, tensorflow, or gym dependency required.
 """
 
 import logging
+import time
+import json
+from dataclasses import dataclass, field
 from typing import Dict, List, Optional, Tuple
 
 import numpy as np
@@ -43,6 +46,25 @@ def _he_init(rows: int, cols: int) -> np.ndarray:
 
 
 # ---------------------------------------------------------------------------
+# Ensemble Advisor Metrics
+# ---------------------------------------------------------------------------
+
+@dataclass
+class EnsembleAdvisorMetrics:
+    """Track ensemble advisor call statistics."""
+    calls_made: int = 0
+    calls_succeeded: int = 0
+    calls_failed: int = 0
+    total_latency_ms: float = 0.0
+
+    @property
+    def avg_latency_ms(self) -> float:
+        if self.calls_succeeded == 0:
+            return 0.0
+        return self.total_latency_ms / self.calls_succeeded
+
+
+# ---------------------------------------------------------------------------
 # TradingEnvironment
 # ---------------------------------------------------------------------------
 
@@ -67,6 +89,9 @@ class TradingEnvironment:
         returns: np.ndarray,
         features: np.ndarray,
         initial_cash: float = 100_000,
+        use_ensemble_advisor: bool = False,
+        ensemble_url: str = "http://localhost:8002/ensemble",
+        ensemble_bias_weight: float = 0.2,
     ) -> None:
         """Initialise the trading environment.
 
@@ -78,6 +103,14 @@ class TradingEnvironment:
             2-D array of shape ``(T, 50)`` — pre-computed feature matrix.
         initial_cash : float
             Starting portfolio value.
+        use_ensemble_advisor : bool
+            If True, query the LLM ensemble for action bias before the agent
+            selects its action. Default False — does not break existing usage.
+        ensemble_url : str
+            URL for the ensemble endpoint.
+        ensemble_bias_weight : float
+            Weight of ensemble bias on action logits (0-1). Default 0.2 means
+            20% ensemble bias, 80% RL agent.
         """
         self.returns = np.asarray(returns, dtype=np.float64)
         self.features = np.asarray(features, dtype=np.float64)
@@ -87,6 +120,12 @@ class TradingEnvironment:
         )
         self.initial_cash = float(initial_cash)
 
+        # Ensemble advisor config
+        self.use_ensemble_advisor = use_ensemble_advisor
+        self.ensemble_url = ensemble_url
+        self.ensemble_bias_weight = float(ensemble_bias_weight)
+        self.ensemble_metrics = EnsembleAdvisorMetrics()
+
         # Mutable state — set properly in reset()
         self._step_idx: int = 0
         self._cash: float = self.initial_cash
@@ -95,6 +134,68 @@ class TradingEnvironment:
         self._portfolio_values: List[float] = []
         self._realised_pnl: float = 0.0
         self._done: bool = False
+
+    # ---- ensemble advisor ----------------------------------------------------
+
+    def _query_ensemble_advisor(self, obs: np.ndarray) -> Optional[np.ndarray]:
+        """Query the LLM ensemble for action bias.
+
+        Returns a 3-element bias array [hold, buy, sell] or None on failure.
+        Uses a 500ms timeout to avoid blocking training.
+        """
+        if not self.use_ensemble_advisor:
+            return None
+
+        try:
+            import urllib.request
+
+            payload = json.dumps({
+                "prompt": (
+                    "Given the current trading state, what action bias "
+                    "(buy/sell/hold confidence) do you recommend?"
+                ),
+                "ml_context": {
+                    "state_features": obs.tolist(),
+                    "current_position": float(self._position),
+                    "current_pnl": float(self._realised_pnl),
+                },
+            }).encode("utf-8")
+
+            req = urllib.request.Request(
+                self.ensemble_url,
+                data=payload,
+                headers={"Content-Type": "application/json"},
+                method="POST",
+            )
+
+            start = time.time()
+            self.ensemble_metrics.calls_made += 1
+
+            with urllib.request.urlopen(req, timeout=0.5) as resp:
+                data = json.loads(resp.read().decode("utf-8"))
+
+            latency_ms = (time.time() - start) * 1000
+            self.ensemble_metrics.calls_succeeded += 1
+            self.ensemble_metrics.total_latency_ms += latency_ms
+
+            # Parse directional suggestion from response text
+            text = data.get("text", "").lower()
+            bias = np.zeros(3, dtype=np.float64)  # [hold, buy, sell]
+
+            # Look for directional keywords
+            if "buy" in text or "long" in text or "bullish" in text:
+                bias[1] = 1.0  # buy bias
+            elif "sell" in text or "short" in text or "bearish" in text:
+                bias[2] = 1.0  # sell bias
+            else:
+                bias[0] = 1.0  # hold bias
+
+            return bias
+
+        except Exception as e:
+            self.ensemble_metrics.calls_failed += 1
+            logger.debug("Ensemble advisor call failed (non-blocking): %s", e)
+            return None
 
     # ---- public interface --------------------------------------------------
 
@@ -175,7 +276,43 @@ class TradingEnvironment:
             "position": self._position,
             "step": self._step_idx,
         }
+
+        # --- ensemble advisor bias (returned in info for agent to use) ---
+        if self.use_ensemble_advisor:
+            ensemble_bias = self._query_ensemble_advisor(obs)
+            if ensemble_bias is not None:
+                info["ensemble_bias"] = ensemble_bias
+                info["ensemble_bias_weight"] = self.ensemble_bias_weight
+
         return obs, reward, self._done, info
+
+    def get_ensemble_bias_logits(self, logits: np.ndarray, info: dict) -> np.ndarray:
+        """Apply ensemble advisor bias to action logits.
+
+        Call this from the agent's action selection to blend ensemble
+        suggestions as a soft bias. The RL agent still decides.
+
+        Parameters
+        ----------
+        logits : np.ndarray
+            Raw action logits from the actor network (3-dim).
+        info : dict
+            Info dict from step() which may contain ensemble_bias.
+
+        Returns
+        -------
+        np.ndarray
+            Adjusted logits with ensemble bias applied.
+        """
+        if "ensemble_bias" not in info:
+            return logits
+
+        bias = info["ensemble_bias"]
+        weight = info.get("ensemble_bias_weight", self.ensemble_bias_weight)
+
+        # Soft blend: (1 - weight) * original_logits + weight * bias
+        adjusted = (1.0 - weight) * logits + weight * bias
+        return adjusted
 
     # ---- internals ---------------------------------------------------------
 
@@ -426,6 +563,12 @@ class PPOAgent:
         logits = h2 @ self.actor_w3 + self.actor_b3
         return _softmax(logits)
 
+    def _actor_logits(self, state: np.ndarray) -> np.ndarray:
+        """Return raw action logits (pre-softmax)."""
+        h1 = _tanh(state @ self.actor_w1 + self.actor_b1)
+        h2 = _tanh(h1 @ self.actor_w2 + self.actor_b2)
+        return h2 @ self.actor_w3 + self.actor_b3
+
     def _critic_forward(self, state: np.ndarray) -> float:
         """Return scalar value estimate."""
         h1 = _tanh(state @ self.critic_w1 + self.critic_b1)
@@ -435,13 +578,22 @@ class PPOAgent:
 
     # ---- action selection --------------------------------------------------
 
-    def select_action(self, state: np.ndarray) -> Tuple[int, float]:
+    def select_action(
+        self,
+        state: np.ndarray,
+        info: Optional[dict] = None,
+        env: Optional["TradingEnvironment"] = None,
+    ) -> Tuple[int, float]:
         """Sample an action from the policy.
 
         Parameters
         ----------
         state : np.ndarray
             50-d observation vector.
+        info : dict, optional
+            Info dict from env.step() that may contain ensemble_bias.
+        env : TradingEnvironment, optional
+            Environment instance for applying ensemble bias.
 
         Returns
         -------
@@ -450,7 +602,13 @@ class PPOAgent:
         log_prob : float
             Log-probability of the chosen action under the current policy.
         """
-        probs = self._actor_forward(state)
+        logits = self._actor_logits(state)
+
+        # Apply ensemble bias if available
+        if info is not None and env is not None and "ensemble_bias" in info:
+            logits = env.get_ensemble_bias_logits(logits, info)
+
+        probs = _softmax(logits)
         probs = np.clip(probs, 1e-8, None)
         probs /= probs.sum()
         action = np.random.choice(self.action_dim, p=probs)
