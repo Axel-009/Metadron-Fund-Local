@@ -159,6 +159,50 @@ try:
 except ImportError:
     QSTraderBacktestRunner = None
 
+# ---------------------------------------------------------------------------
+# Signal engines — previously only in run_open.py / ExecutionEngine.run_pipeline()
+# Now wired into live loop for continuous signal generation + ensemble feeding.
+# ---------------------------------------------------------------------------
+try:
+    from .signals.contagion_engine import ContagionEngine
+except ImportError:
+    ContagionEngine = None
+
+try:
+    from .signals.stat_arb_engine import StatArbEngine
+except ImportError:
+    StatArbEngine = None
+
+try:
+    from .signals.fixed_income_engine import FixedIncomeEngine
+except ImportError:
+    FixedIncomeEngine = None
+
+try:
+    from .signals.pattern_discovery_engine import PatternDiscoveryEngine
+except ImportError:
+    PatternDiscoveryEngine = None
+
+try:
+    from .signals.social_prediction_engine import SocialPredictionEngine
+except ImportError:
+    SocialPredictionEngine = None
+
+try:
+    from .signals.distressed_asset_engine import DistressedAssetEngine
+except ImportError:
+    DistressedAssetEngine = None
+
+try:
+    from .signals.cvr_engine import CVREngine
+except ImportError:
+    CVREngine = None
+
+try:
+    from .signals.event_driven_engine import EventDrivenEngine
+except ImportError:
+    EventDrivenEngine = None
+
 try:
     from intelligence_platform.plugins.gsd_paul_plugin import GSDPlugin, PaulPlugin
 except ImportError:
@@ -428,6 +472,8 @@ class LiveLoopOrchestrator:
         self._last_alpha_output: Any = None
         self._last_decision_result: Any = None
         self._last_scan_slate: Any = None          # latest AllocationSlate from FullUniverseScan
+        self._last_contagion_output: Any = None    # ContagionEngine scenarios
+        self._last_fi_output: Any = None           # FixedIncomeEngine summary
         self._scan_task: Any = None                # background asyncio task for run_full_cycle
 
         # Initialize components
@@ -481,6 +527,15 @@ class LiveLoopOrchestrator:
             ("paul_orchestrator", lambda: self._init_paul_orchestrator()),
             ("gsd_workflow", lambda: GSDWorkflowBridge() if GSDWorkflowBridge else None),
             ("backtest_runner", lambda: QSTraderBacktestRunner() if QSTraderBacktestRunner else None),
+            # Signal engines — feed MLVoteEnsemble Tiers 6-10
+            ("contagion_engine", lambda: ContagionEngine() if ContagionEngine else None),
+            ("stat_arb_engine", lambda: StatArbEngine() if StatArbEngine else None),
+            ("fixed_income_engine", lambda: FixedIncomeEngine() if FixedIncomeEngine else None),
+            ("pattern_discovery", lambda: PatternDiscoveryEngine() if PatternDiscoveryEngine else None),
+            ("social_prediction", lambda: SocialPredictionEngine() if SocialPredictionEngine else None),
+            ("distressed_assets", lambda: DistressedAssetEngine() if DistressedAssetEngine else None),
+            ("cvr_engine", lambda: CVREngine() if CVREngine else None),
+            ("event_driven", lambda: EventDrivenEngine() if EventDrivenEngine else None),
         ]
 
         for name, factory in component_factories:
@@ -749,6 +804,9 @@ class LiveLoopOrchestrator:
             - MacroEngine.analyze()
             - MetadronCube.compute()
             - SecurityAnalysisEngine.analyze()
+            - ContagionEngine.run_all_scenarios()
+            - StatArbEngine.scan_pairs()
+            - FixedIncomeEngine.get_summary()
         """
         pr = PhaseResult(phase=LoopPhase.SIGNALS.value, timestamp=datetime.now().isoformat())
         t0 = time.monotonic()
@@ -826,6 +884,62 @@ class LiveLoopOrchestrator:
                 pr.data["security_analysis_error"] = str(exc)
                 logger.warning("SecurityAnalysis error: %s", exc)
 
+        # Contagion Engine — cross-asset contagion graph + shock scenarios
+        contagion = self._get("contagion_engine")
+        if contagion:
+            try:
+                scenarios = contagion.run_all_scenarios()
+                pr.data["contagion_scenarios"] = len(scenarios) if scenarios else 0
+                self._last_contagion_output = scenarios
+                signals_count += 1
+            except Exception as exc:
+                pr.data["contagion_error"] = str(exc)
+                logger.warning("ContagionEngine error: %s", exc)
+
+        # StatArb Engine — Medallion mean-reversion + cointegration pairs
+        stat_arb = self._get("stat_arb_engine")
+        if stat_arb:
+            try:
+                universe = self._get("universe")
+                tickers = []
+                if universe and hasattr(universe, "get_all"):
+                    tickers = [s.ticker for s in universe.get_all()[:50]]
+                if tickers and hasattr(stat_arb, "scan_pairs"):
+                    from .data.openbb_data import get_adj_close
+                    import pandas as pd
+                    price_data = {}
+                    try:
+                        prices_df = get_adj_close(
+                            tickers[:30],
+                            start=(datetime.now() - timedelta(days=120)).strftime("%Y-%m-%d"),
+                        )
+                        if isinstance(prices_df, pd.DataFrame) and not prices_df.empty:
+                            for col in prices_df.columns:
+                                if col in tickers:
+                                    price_data[col] = prices_df[col]
+                    except Exception:
+                        pass
+                    if price_data:
+                        pairs = stat_arb.scan_pairs(price_data)
+                        pr.data["stat_arb_pairs"] = len(pairs) if pairs else 0
+                        signals_count += 1
+            except Exception as exc:
+                pr.data["stat_arb_error"] = str(exc)
+                logger.warning("StatArbEngine error: %s", exc)
+
+        # Fixed Income Engine — yield curve, credit spreads, FI signals
+        fi_engine = self._get("fixed_income_engine")
+        if fi_engine:
+            try:
+                fi_summary = fi_engine.get_summary()
+                pr.data["fixed_income"] = "updated"
+                pr.data["fi_yield_10y"] = fi_summary.get("treasury_10y", 0.0) if fi_summary else 0.0
+                self._last_fi_output = fi_summary
+                signals_count += 1
+            except Exception as exc:
+                pr.data["fixed_income_error"] = str(exc)
+                logger.warning("FixedIncomeEngine error: %s", exc)
+
         # Store signals for change detection
         new_signals = {
             "macro_regime": pr.data.get("macro_regime", ""),
@@ -841,12 +955,19 @@ class LiveLoopOrchestrator:
         return pr
 
     def run_intelligence_phase(self) -> PhaseResult:
-        """Phase 3: ML intelligence and agent scoring.
+        """Phase 3: ML intelligence, signal engine analysis, and agent scoring.
 
         Runs at 5-minute cadence:
             - FullUniverseScan.run_full_cycle() — 4-run universe scan (async background)
             - AlphaOptimizer.optimize()
-            - ML vote ensemble scoring
+            - PatternDiscoveryEngine.discover() — symbolic regression patterns
+            - Feed MLVoteEnsemble Tiers 6-10:
+                T6: SocialPredictionEngine → set_social_snapshot()
+                T7: DistressedAssetEngine → set_distress_signals()
+                T8: EventDrivenEngine → set_event_signals()
+                T9: CVREngine → set_cvr_signals()
+                T10: CreditQuality → set_credit_scores()
+            - ML vote ensemble scoring (all 10 tiers active)
             - Agent sector bot scoring
         """
         pr = PhaseResult(phase=LoopPhase.INTELLIGENCE.value, timestamp=datetime.now().isoformat())
@@ -940,22 +1061,140 @@ class LiveLoopOrchestrator:
                 pr.data["alpha_error"] = str(exc)
                 logger.warning("AlphaOptimizer error: %s", exc)
 
-        # ML Vote Ensemble (accessed via execution engine)
+        # ── Feed MLVoteEnsemble Tiers 6-10 before voting ──────────────────
+        # These engines generate signals that the ensemble needs for
+        # full 10-tier voting. Without this, Tiers 6-10 vote zero/neutral.
         exec_engine = self._get("execution_engine")
-        if exec_engine and hasattr(exec_engine, "ensemble"):
+        ensemble = getattr(exec_engine, "ensemble", None) if exec_engine else None
+
+        # Pattern Discovery Engine (enrichment features for AlphaOptimizer)
+        pattern_disc = self._get("pattern_discovery")
+        if pattern_disc:
             try:
-                ensemble = exec_engine.ensemble
-                if hasattr(ensemble, "vote") and self._last_alpha_output:
-                    signals = getattr(self._last_alpha_output, "signals", [])
-                    for sig in signals[:20]:  # Top 20 signals
-                        ticker = getattr(sig, "ticker", "")
+                import pandas as pd
+                universe = self._get("universe")
+                tickers = []
+                if universe and hasattr(universe, "get_all"):
+                    tickers = [s.ticker for s in universe.get_all()[:30]]
+                if tickers and hasattr(pattern_disc, "discover"):
+                    from .data.openbb_data import get_adj_close
+                    price_dict = {}
+                    try:
+                        prices_df = get_adj_close(
+                            tickers[:20],
+                            start=(datetime.now() - timedelta(days=90)).strftime("%Y-%m-%d"),
+                        )
+                        if isinstance(prices_df, pd.DataFrame) and not prices_df.empty:
+                            for col in prices_df.columns:
+                                if col in tickers:
+                                    price_dict[col] = prices_df[col]
+                    except Exception:
+                        pass
+                    if price_dict:
+                        discoveries = pattern_disc.discover(price_dict)
+                        pr.data["pattern_discoveries"] = len(discoveries) if discoveries else 0
+                        items += pr.data.get("pattern_discoveries", 0)
+            except Exception as exc:
+                pr.data["pattern_discovery_error"] = str(exc)
+                logger.warning("PatternDiscovery error: %s", exc)
+
+        # Tier 6: Social Prediction Engine → ensemble.set_social_snapshot()
+        social = self._get("social_prediction")
+        if social and ensemble:
+            try:
+                snapshots = social.analyze()
+                if snapshots and hasattr(ensemble, "set_social_snapshot"):
+                    ensemble.set_social_snapshot(snapshots)
+                    pr.data["social_snapshots"] = len(snapshots)
+                    items += 1
+            except Exception as exc:
+                pr.data["social_error"] = str(exc)
+                logger.warning("SocialPrediction error: %s", exc)
+
+        # Tier 7: Distressed Asset Engine → ensemble.set_distress_signals()
+        distressed = self._get("distressed_assets")
+        if distressed and ensemble:
+            try:
+                distress_scores = distressed.analyze()
+                if distress_scores and hasattr(ensemble, "set_distress_signals"):
+                    ensemble.set_distress_signals(distress_scores)
+                    pr.data["distressed_signals"] = len(distress_scores)
+                    items += 1
+            except Exception as exc:
+                pr.data["distressed_error"] = str(exc)
+                logger.warning("DistressedAssets error: %s", exc)
+
+        # Tier 8: Event-Driven Engine → ensemble.set_event_signals()
+        events = self._get("event_driven")
+        if events and ensemble:
+            try:
+                regime_mult = 1.0
+                if self._last_macro_snapshot:
+                    regime = getattr(self._last_macro_snapshot, "regime", None)
+                    if regime and hasattr(regime, "value"):
+                        regime_str = regime.value
+                        regime_mult = {"TRENDING": 1.2, "RANGE": 1.0, "STRESS": 0.6, "CRASH": 0.3}.get(regime_str, 1.0)
+                event_result = events.analyze(regime_multiplier=regime_mult)
+                if event_result and hasattr(ensemble, "set_event_signals"):
+                    event_dict = {}
+                    for pos in getattr(event_result, "positions", []):
+                        ticker = getattr(pos, "ticker", "")
                         if ticker:
-                            try:
-                                vote = ensemble.vote(ticker)
-                                items += 1
-                            except Exception:
-                                pass
-                    pr.data["ensemble_votes"] = items
+                            event_dict[ticker] = {
+                                "category": getattr(pos, "category", ""),
+                                "signal": getattr(pos, "signal", ""),
+                                "confidence": getattr(pos, "confidence", 0.5),
+                            }
+                    ensemble.set_event_signals(event_dict)
+                    pr.data["event_signals"] = len(event_dict)
+                    items += 1
+            except Exception as exc:
+                pr.data["event_error"] = str(exc)
+                logger.warning("EventDriven error: %s", exc)
+
+        # Tier 9: CVR Engine → ensemble.set_cvr_signals()
+        cvr = self._get("cvr_engine")
+        if cvr and ensemble:
+            try:
+                cvr_valuations = cvr.analyze()
+                if cvr_valuations and hasattr(ensemble, "set_cvr_signals"):
+                    ensemble.set_cvr_signals(cvr_valuations)
+                    pr.data["cvr_signals"] = len(cvr_valuations)
+                    items += 1
+            except Exception as exc:
+                pr.data["cvr_error"] = str(exc)
+                logger.warning("CVREngine error: %s", exc)
+
+        # Tier 10: Credit quality scores (from SecurityAnalysis or UniverseClassifier)
+        if ensemble and hasattr(ensemble, "set_credit_scores"):
+            try:
+                credit_scores = {}
+                sa = self._get("security_analysis")
+                if sa and hasattr(sa, "get_credit_scores"):
+                    credit_scores = sa.get_credit_scores()
+                if credit_scores:
+                    ensemble.set_credit_scores(credit_scores)
+                    pr.data["credit_scores_fed"] = len(credit_scores)
+                    items += 1
+            except Exception as exc:
+                pr.data["credit_scores_error"] = str(exc)
+                logger.warning("CreditScores error: %s", exc)
+
+        # ML Vote Ensemble — now with all 10 tiers fed
+        if ensemble and hasattr(ensemble, "vote") and self._last_alpha_output:
+            try:
+                signals = getattr(self._last_alpha_output, "signals", [])
+                vote_count = 0
+                for sig in signals[:20]:  # Top 20 signals
+                    ticker = getattr(sig, "ticker", "")
+                    if ticker:
+                        try:
+                            vote = ensemble.vote(ticker)
+                            vote_count += 1
+                        except Exception:
+                            pass
+                pr.data["ensemble_votes"] = vote_count
+                items += vote_count
             except Exception as exc:
                 pr.data["ensemble_error"] = str(exc)
                 logger.warning("MLEnsemble error: %s", exc)
