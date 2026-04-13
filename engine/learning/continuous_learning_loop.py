@@ -325,6 +325,17 @@ class ContinuousLearningLoop:
             return
         logger.info("Running graphify knowledge graph refresh...")
         try:
+            # Kill switch: graphify bypassed — reroute context through LLM review
+            if hasattr(self._graphify, "is_killed") and self._graphify.is_killed:
+                logger.info("Graphify KILLED — bypassing to LLM review path (learning loop uninterrupted)")
+                self._last_graphify = {
+                    "available": False,
+                    "kill_switch": True,
+                    "cached_god_nodes": len(getattr(self._graphify, "_cached_god_nodes", [])),
+                    "rerouted_to": "llm_review",
+                }
+                return
+
             if not self._graphify.is_available():
                 logger.info("Graphify graph not generated — skipping")
                 self._last_graphify = {"available": False}

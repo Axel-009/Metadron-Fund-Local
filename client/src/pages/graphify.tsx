@@ -237,11 +237,84 @@ function ReportViewer({ report }: { report: GraphifyReport | null }) {
   );
 }
 
+function KillSwitchPanel() {
+  const [acting, setActing] = useState(false);
+  const { data: status, refetch } = useEngineQuery<GraphifyStatus>("/graphify/status", { refetchInterval: 10000 });
+  const killed = (status as any)?.kill_switch ?? false;
+
+  const toggle = async () => {
+    setActing(true);
+    try {
+      await fetch(`/api/engine/graphify/${killed ? "resume" : "kill"}`, { method: "POST" });
+      refetch();
+    } catch {}
+    setActing(false);
+  };
+
+  return (
+    <div className={`border rounded p-4 space-y-2 ${killed ? "border-terminal-negative/50 bg-terminal-negative/5" : "border-terminal-border"}`}>
+      <div className="flex items-center justify-between">
+        <h3 className="text-terminal-text-primary text-xs font-bold tracking-wider">KILL SWITCH</h3>
+        <span className={`text-[10px] px-2 py-0.5 rounded ${killed ? "bg-terminal-negative/20 text-terminal-negative" : "bg-terminal-positive/20 text-terminal-positive"}`}>
+          {killed ? "KILLED — BYPASSED" : "ACTIVE"}
+        </span>
+      </div>
+      <p className="text-[10px] text-terminal-text-muted">
+        {killed
+          ? "Graphify bypassed. Learning loop continues via LLM review. Cached data still accessible."
+          : "Graphify processing normally. Kill to bypass without interrupting the learning loop."}
+      </p>
+      <button onClick={toggle} disabled={acting}
+        className={`px-3 py-1.5 text-[10px] font-mono rounded border ${killed
+          ? "bg-terminal-positive/20 text-terminal-positive border-terminal-positive/30"
+          : "bg-terminal-negative/20 text-terminal-negative border-terminal-negative/30"}`}>
+        {acting ? "..." : killed ? "RESUME GRAPHIFY" : "KILL GRAPHIFY"}
+      </button>
+    </div>
+  );
+}
+
+function RunLogPanel() {
+  const { data } = useEngineQuery<{ entries: Array<{ run_type: string; timestamp: string; duration_s: number; signature: string }> }>(
+    "/graphify/run-log?limit=20", { refetchInterval: 30000 }
+  );
+
+  return (
+    <div className="border border-terminal-border rounded overflow-hidden">
+      <div className="px-4 py-2 border-b border-terminal-border">
+        <h3 className="text-terminal-text-primary text-xs font-bold tracking-wider">PROCESS RUN LOG (timestamped + signed)</h3>
+      </div>
+      <div className="max-h-[200px] overflow-y-auto">
+        <table className="w-full text-[10px]">
+          <thead className="sticky top-0 bg-terminal-bg">
+            <tr className="text-terminal-text-muted border-b border-terminal-border">
+              <th className="text-left px-3 py-1">TYPE</th>
+              <th className="text-left px-3 py-1">TIMESTAMP</th>
+              <th className="text-right px-3 py-1">DURATION</th>
+              <th className="text-left px-3 py-1">SIGNATURE</th>
+            </tr>
+          </thead>
+          <tbody>
+            {(data?.entries || []).slice(-20).reverse().map((e, i) => (
+              <tr key={i} className="border-b border-terminal-border/20">
+                <td className="px-3 py-1 text-terminal-accent font-mono">{e.run_type}</td>
+                <td className="px-3 py-1 text-terminal-text-faint">{e.timestamp}</td>
+                <td className="px-3 py-1 text-right text-terminal-text-primary">{e.duration_s}s</td>
+                <td className="px-3 py-1 text-terminal-text-muted font-mono">{e.signature?.slice(0, 12)}...</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+}
+
 // ═══════════ MAIN PAGE ═══════════
 
 export default function GraphifyPage() {
-  const { data: status } = useEngineQuery<GraphifyStatus>("/graphify/status", 60_000);
-  const { data: report } = useEngineQuery<GraphifyReport>("/graphify/report", 120_000);
+  const { data: status } = useEngineQuery<GraphifyStatus>("/graphify/status", { refetchInterval: 60000 });
+  const { data: report } = useEngineQuery<GraphifyReport>("/graphify/report", { refetchInterval: 120000 });
 
   return (
     <div className="h-full overflow-y-auto p-4 space-y-4">
@@ -249,12 +322,13 @@ export default function GraphifyPage() {
       <div className="flex items-center justify-between">
         <div>
           <h1 className="text-terminal-text-primary text-sm font-bold tracking-wider">GRAPHIFY KNOWLEDGE GRAPH</h1>
-          <p className="text-[10px] text-terminal-text-muted">Codebase architecture analysis, concept mapping, and agent-queryable knowledge graph</p>
+          <p className="text-[10px] text-terminal-text-muted">Codebase architecture analysis — all processes timestamped, logged, and hash-signed</p>
         </div>
       </div>
 
-      {/* Status + Generate */}
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+      {/* Kill Switch + Status + Generate */}
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
+        <KillSwitchPanel />
         <StatusPanel status={status} />
         <GenerateButton />
       </div>
@@ -267,6 +341,9 @@ export default function GraphifyPage() {
         <QueryInterface />
         <ReportViewer report={report} />
       </div>
+
+      {/* Process Run Log — timestamped audit trail */}
+      <RunLogPanel />
     </div>
   );
 }
