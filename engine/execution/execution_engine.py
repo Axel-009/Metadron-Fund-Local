@@ -39,6 +39,14 @@ from dataclasses import dataclass, field
 from typing import Optional
 from datetime import datetime, timezone, timedelta
 
+try:
+    from ..utils.money import D, money, to_float, safe_div
+except ImportError:
+    from decimal import Decimal as D  # type: ignore
+    def money(v): return round(float(v), 2)  # type: ignore
+    def to_float(v): return float(v)  # type: ignore
+    def safe_div(n, d, default=0): return n / d if d != 0 else default  # type: ignore
+
 from ..data.universe_engine import (
     UniverseEngine, get_engine, SECTOR_ETFS,
     MACRO_ONLY_TICKERS, TRADEABLE_ETFS, AssetClass,

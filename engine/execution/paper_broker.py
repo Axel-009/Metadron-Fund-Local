@@ -44,6 +44,7 @@ import numpy as np
 import pandas as pd
 
 from ..data.openbb_data import get_adj_close
+from ..utils.money import D, money, to_float, safe_div
 
 
 # ---------------------------------------------------------------------------
@@ -140,13 +141,29 @@ class Position:
     stop_loss: Optional[float] = None
     take_profit: Optional[float] = None
 
+    # ── Decimal-precise financial properties ──────────────────
     @property
     def market_value(self) -> float:
-        return self.quantity * self.current_price
+        return to_float(money(D(self.quantity) * D(self.current_price)))
 
     @property
     def cost_basis(self) -> float:
-        return abs(self.quantity) * self.avg_cost
+        return to_float(money(D(abs(self.quantity)) * D(self.avg_cost)))
+
+    def settle_buy(self, qty: int, price: float) -> None:
+        """Settle a buy fill with Decimal-precise cost averaging."""
+        d_cost = D(self.avg_cost) * D(self.quantity) + D(price) * D(qty)
+        new_qty = self.quantity + qty
+        self.avg_cost = to_float(safe_div(d_cost, new_qty)) if new_qty != 0 else 0.0
+        self.quantity = new_qty
+
+    def settle_sell(self, qty: int, price: float) -> float:
+        """Settle a sell fill. Returns realized P&L with Decimal precision."""
+        d_pnl = D(price - self.avg_cost) * D(qty)
+        self.quantity -= qty
+        realized = to_float(money(d_pnl))
+        self.realized_pnl = to_float(money(D(self.realized_pnl) + d_pnl))
+        return realized
 
 
 @dataclass

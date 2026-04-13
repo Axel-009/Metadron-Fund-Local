@@ -13,6 +13,14 @@ from enum import Enum
 
 from ..data.openbb_data import get_market_stats, get_adj_close
 
+try:
+    from ..utils.money import D, money, to_float, safe_div
+except ImportError:
+    from decimal import Decimal as D  # type: ignore
+    def money(v): return round(float(v), 2)  # type: ignore
+    def to_float(v): return float(v)  # type: ignore
+    def safe_div(n, d, default=0): return n / d if d != 0 else default  # type: ignore
+
 # ---- Configuration --------------------------------------------------------
 ALPHA = 0.02                  # 2% secular alpha headstart
 R_LOW = 0.07                  # Gamma corridor lower bound

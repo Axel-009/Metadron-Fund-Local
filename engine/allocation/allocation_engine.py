@@ -14,6 +14,14 @@ from typing import Optional
 
 import numpy as np
 
+try:
+    from engine.utils.money import D, money, to_float, safe_div
+except ImportError:
+    from decimal import Decimal as D  # type: ignore
+    def money(v): return round(float(v), 2)  # type: ignore
+    def to_float(v): return float(v)  # type: ignore
+    def safe_div(n, d, default=0): return n / d if d != 0 else default  # type: ignore
+
 logger = logging.getLogger("metadron.allocation")
 
 # ─── Prometheus instrumentation ──────────────────────────────────
@@ -637,21 +645,23 @@ class AllocationEngine:
     def _size_position(
         self, sig: ScanSignal, total_capital: float
     ) -> Optional[PositionAllocation]:
-        """Compute position size and dollar amount for a signal."""
+        """Compute position size and dollar amount for a signal (Decimal precision)."""
         bucket = sig.bucket or self._infer_bucket(sig)
         cap = self._bucket_cap(bucket)
         if cap is None or cap <= 0:
             return None
 
-        base_size = sig.confidence * cap * self._leverage_multiplier
-        base_size = min(base_size, cap)  # never exceed bucket cap
-        dollar_amount = base_size * total_capital
+        d_conf = D(sig.confidence)
+        d_cap = D(cap)
+        d_lev = D(self._leverage_multiplier)
+        base_size = min(d_conf * d_cap * d_lev, d_cap)
+        dollar_amount = to_float(money(base_size * D(total_capital)))
 
         return PositionAllocation(
             ticker=sig.ticker,
             bucket=bucket,
             instrument_type=sig.instrument_type,
-            position_size=round(base_size, 6),
+            position_size=round(to_float(base_size), 6),
             dollar_amount=dollar_amount,
             confidence=sig.confidence,
             alpha_score=sig.alpha_score,
