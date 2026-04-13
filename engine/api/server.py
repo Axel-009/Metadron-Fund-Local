@@ -45,6 +45,7 @@ from engine.api.routers import (
     flow_runs,
     api_keys,
     models,
+    graphify,
 )
 try:
     from engine.api.routers import allocation
@@ -149,6 +150,7 @@ app.include_router(flows.router, prefix="/api/engine/flows", tags=["Flows"])
 app.include_router(flow_runs.router, prefix="/api/engine/flow-runs", tags=["FlowRuns"])
 app.include_router(api_keys.router, prefix="/api/engine/api-keys", tags=["ApiKeys"])
 app.include_router(models.router, prefix="/api/models", tags=["Models"])
+app.include_router(graphify.router, prefix="/api/engine/graphify", tags=["Graphify"])
 if _allocation_available:
     app.include_router(allocation.router, prefix="/api/allocation", tags=["Allocation"])
 

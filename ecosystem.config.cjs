@@ -146,6 +146,18 @@ module.exports = {
       out_file: path.join(ROOT, 'logs/pm2/learning-loop-out.log'),
       merge_logs: true, restart_delay: 10000, max_restarts: 10, min_uptime: '30s',
     },
+    // GRAPHIFY — Nightly codebase knowledge graph regeneration
+    {
+      name: 'graphify-nightly', script: 'graphify',
+      args: '.',
+      cwd: ROOT, interpreter: 'none',
+      env: { PYTHONUNBUFFERED: '1' },
+      cron_restart: '0 2 * * *',   // Run at 2am daily
+      autorestart: false, watch: false, max_memory_restart: '2G',
+      error_file: path.join(ROOT, 'logs/pm2/graphify-error.log'),
+      out_file: path.join(ROOT, 'logs/pm2/graphify-out.log'),
+      merge_logs: true, kill_timeout: 300000,  // 5 min timeout for graph generation
+    },
     // AUTORESEARCH — Overnight autonomous model training (karpathy framework)
     {
       name: 'autoresearch-overnight', script: 'python3',

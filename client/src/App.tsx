@@ -37,6 +37,7 @@ import MoneyVelocityPage from "@/pages/money-velocity";
 import ThinkingTab from "@/pages/thinking-tab";
 import CollateralTab from "@/pages/collateral-tab";
 import ChatTab from "@/pages/chat-tab";
+import GraphifyPage from "@/pages/graphify";
 
 // ═══════════ TAB GROUPS (7 categories) ═══════════
 export const TAB_GROUPS = [
@@ -64,6 +65,7 @@ export const TAB_GROUPS = [
     { path: "/agents", label: "AGENTS" },
     { path: "/chat", label: "CHAT" },
     { path: "/tech", label: "TECH" },
+    { path: "/graphify", label: "GRAPHIFY" },
   ]},
   { group: "ANALYSIS", tabs: [
     { path: "/strategy", label: "STRAT" },
@@ -459,6 +461,7 @@ function AppRouter() {
       <Route path="/thinking" component={ThinkingTab} />
       <Route path="/collateral" component={CollateralTab} />
       <Route path="/chat" component={ChatTab} />
+      <Route path="/graphify" component={GraphifyPage} />
       <Route component={NotFound} />
     </Switch>
   );
