@@ -55,6 +55,41 @@ scrape_configs:
     static_configs:
       - targets: ["localhost:9100"]
 
+  # Qwen 2.5-7B Model Server (port 8004)
+  - job_name: "metadron-qwen"
+    metrics_path: "/health"
+    scrape_interval: 30s
+    static_configs:
+      - targets: ["localhost:8004"]
+    relabel_configs:
+      - source_labels: [__address__]
+        target_label: instance
+        replacement: "qwen-server"
+
+  # Llama 3.1-8B Model Server (port 8005)
+  - job_name: "metadron-llama"
+    metrics_path: "/health"
+    scrape_interval: 30s
+    static_configs:
+      - targets: ["localhost:8005"]
+    relabel_configs:
+      - source_labels: [__address__]
+        target_label: instance
+        replacement: "llama-server"
+
+  # Netdata (GEX44 system + GPU metrics)
+  - job_name: "netdata"
+    metrics_path: "/api/v1/allmetrics"
+    params:
+      format: ["prometheus"]
+    scrape_interval: 15s
+    static_configs:
+      - targets: ["localhost:19999"]
+    relabel_configs:
+      - source_labels: [__address__]
+        target_label: instance
+        replacement: "gex44-netdata"
+
   # Express Frontend
   - job_name: "metadron-frontend"
     metrics_path: "/metrics"

@@ -136,6 +136,54 @@ scrape_configs:
     scrape_interval: 15s
 
   # ---------------------------------------------------------------------------
+  # Netdata — GEX44 Real-Time System + GPU Monitoring
+  # Exposes: CPU per-core, RAM, disk I/O, network per-interface, GPU temp/VRAM
+  # ---------------------------------------------------------------------------
+  - job_name: 'netdata-gex44'
+    metrics_path: '/api/v1/allmetrics'
+    params:
+      format: ['prometheus']
+    static_configs:
+      - targets: ['10.0.0.1:19999']
+        labels:
+          host:      'gex44'
+          env:       'prod'
+          component: 'system'
+    scrape_interval: 15s
+
+  # ---------------------------------------------------------------------------
+  # Qwen 2.5-7B Model Server (port 8004)
+  # ---------------------------------------------------------------------------
+  - job_name: 'qwen-model-server'
+    metrics_path: '/health'
+    static_configs:
+      - targets: ['10.0.0.1:8004']
+        labels:
+          host:      'gex44'
+          env:       'prod'
+          component: 'intelligence'
+          model:     'qwen-2.5-7b'
+    scrape_interval: 30s
+
+  # ---------------------------------------------------------------------------
+  # Llama 3.1-8B Model Server (port 8005)
+  # ---------------------------------------------------------------------------
+  - job_name: 'llama-model-server'
+    metrics_path: '/health'
+    static_configs:
+      - targets: ['10.0.0.1:8005']
+        labels:
+          host:      'gex44'
+          env:       'prod'
+          component: 'intelligence'
+          model:     'llama-3.1-8b'
+    scrape_interval: 30s
+
+  # ---------------------------------------------------------------------------
+  # Blackbox Exporter — TCP Probes: add new model server ports
+  # ---------------------------------------------------------------------------
+
+  # ---------------------------------------------------------------------------
   # Blackbox Exporter — HTTP Probes (http_2xx module)
   # Tests: external website availability, SSL cert validity, redirect chains
   # ---------------------------------------------------------------------------
@@ -169,9 +217,13 @@ scrape_configs:
       module: ['tcp_connect']
     static_configs:
       - targets:
-          - '10.0.0.1:5000'
-          - '10.0.0.1:8001'
-          - '10.0.0.1:8002'
+          - '10.0.0.1:5000'    # Express Frontend
+          - '10.0.0.1:8001'    # Engine API
+          - '10.0.0.1:8002'    # LLM Inference Bridge
+          - '10.0.0.1:8003'    # Air-LLM
+          - '10.0.0.1:8004'    # Qwen 2.5-7B
+          - '10.0.0.1:8005'    # Llama 3.1-8B
+          - '10.0.0.1:19999'   # Netdata
     relabel_configs:
       - source_labels: [__address__]
         target_label:  __param_target

@@ -187,6 +187,29 @@ def create_app():
             "error_rate": round(manager.error_rate, 3),
         }
 
+    @app.get("/cuda-health")
+    async def cuda_health():
+        """CUDA memory health check — detect leaks, report VRAM usage."""
+        try:
+            import torch
+            if not torch.cuda.is_available():
+                return {"cuda_available": False}
+            idx = int(manager.device.split(":")[-1]) if ":" in manager.device else 0
+            allocated = torch.cuda.memory_allocated(idx)
+            reserved = torch.cuda.memory_reserved(idx)
+            total = torch.cuda.get_device_properties(idx).total_mem
+            return {
+                "cuda_available": True,
+                "device": manager.device,
+                "allocated_mb": round(allocated / 1024**2, 1),
+                "reserved_mb": round(reserved / 1024**2, 1),
+                "total_mb": round(total / 1024**2, 1),
+                "utilization_pct": round(allocated / total * 100, 1) if total > 0 else 0,
+                "leak_risk": allocated > 0.90 * total,
+            }
+        except Exception as e:
+            return {"cuda_available": False, "error": str(e)}
+
     return app
 
 

@@ -112,3 +112,101 @@ groups:
         annotations:
           summary: "Monte Carlo VaR 95% exceeds $300K limit"
           description: "Portfolio VaR breached $300K on $20M NAV."
+
+  # ─── GPU / CUDA Health ─────────────────────────────────────────
+  - name: metadron_gpu
+    rules:
+      - alert: GPUVRAMCritical
+        expr: nvidia_smi_memory_used_bytes / nvidia_smi_memory_total_bytes > 0.95
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: "GPU VRAM usage above 95% — OOM risk"
+          description: "VRAM at {{ $value | humanizePercentage }}. Reduce model load or restart inference servers."
+
+      - alert: GPUTemperatureHigh
+        expr: nvidia_smi_temperature_gpu > 85
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "GPU temperature above 85°C"
+
+      - alert: GPUUtilizationSaturation
+        expr: nvidia_smi_utilization_gpu > 95
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "GPU utilization above 95% for 10 minutes — inference bottleneck"
+
+  # ─── Model Server Health ───────────────────────────────────────
+  - name: metadron_model_servers
+    rules:
+      - alert: QwenServerDown
+        expr: up{job="metadron-qwen"} == 0 or up{job="qwen-model-server"} == 0
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Qwen 2.5-7B model server (port 8004) is down"
+
+      - alert: LlamaServerDown
+        expr: up{job="metadron-llama"} == 0 or up{job="llama-model-server"} == 0
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Llama 3.1-8B model server (port 8005) is down"
+
+      - alert: AirLLMServerDown
+        expr: up{job="metadron-airllm"} == 0
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Air-LLM model server (port 8003) is down"
+
+      - alert: LLMBridgeDown
+        expr: up{job="metadron-llm-bridge"} == 0
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: "LLM Inference Bridge (port 8002) is down — all inference offline"
+
+      - alert: ModelInferenceLatencyHigh
+        expr: metadron_llm_duration_seconds{quantile="0.95"} > 30
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Model inference p95 latency exceeds 30 seconds"
+
+  # ─── Netdata / System Health ───────────────────────────────────
+  - name: metadron_system
+    rules:
+      - alert: NetdataDown
+        expr: up{job="netdata"} == 0 or up{job="netdata-gex44"} == 0
+        for: 3m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Netdata agent on GEX44 is down"
+
+      - alert: DiskSpaceCritical
+        expr: (node_filesystem_avail_bytes{mountpoint="/"} / node_filesystem_size_bytes{mountpoint="/"}) < 0.10
+        for: 5m
+        labels:
+          severity: critical
+        annotations:
+          summary: "GEX44 root disk below 10% free — model cache may fill disk"
+
+      - alert: RAMPressureHigh
+        expr: (1 - node_memory_MemAvailable_bytes / node_memory_MemTotal_bytes) > 0.90
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "GEX44 RAM usage above 90% — PM2 services may OOM"
