@@ -112,34 +112,46 @@ function MetadronLogo() {
 }
 
 function LiveMetrics() {
-  const [latency, setLatency] = useState(13.34);
-  const [pnl, setPnl] = useState(422.18);
-  const [nasdaq, setNasdaq] = useState(444);
+  // Real data: P&L from Alpaca broker, SPY from FMP/OpenBB, LAT from API round-trip
+  const { data: portfolio } = useEngineQuery<{ nav: number; total_pnl: number }>("/portfolio/live", { refetchInterval: 15000 });
+  const { data: macro } = useEngineQuery<{ spy_return_1d?: number; spy_price?: number }>("/macro/snapshot", { refetchInterval: 30000 });
+  const [latency, setLatency] = useState(0);
 
+  // Measure actual API latency
   useEffect(() => {
-    const interval = setInterval(() => {
-      setLatency(12 + Math.random() * 4);
-      setPnl(400 + Math.random() * 60 - 10);
-      setNasdaq(430 + Math.floor(Math.random() * 30));
-    }, 3000);
+    const measure = async () => {
+      const t0 = performance.now();
+      try { await fetch("/api/engine/health"); } catch {}
+      setLatency(performance.now() - t0);
+    };
+    measure();
+    const interval = setInterval(measure, 10000);
     return () => clearInterval(interval);
   }, []);
+
+  const pnl = portfolio?.total_pnl ?? 0;
+  const spyReturn = macro?.spy_return_1d ?? 0;
+  const pnlPositive = pnl >= 0;
 
   return (
     <div className="flex items-center gap-4 text-[10px] font-mono tabular-nums">
       <StatusBadge status="live" />
       <div className="flex items-center gap-1.5">
         <span className="text-terminal-text-faint">LAT</span>
-        <span className="text-terminal-text-primary">{latency.toFixed(2)}ms</span>
+        <span className="text-terminal-text-primary">{latency.toFixed(1)}ms</span>
       </div>
       <div className="flex items-center gap-1.5">
-        <span className="text-terminal-text-faint">+P&L</span>
-        <span className="text-terminal-positive">+${pnl.toFixed(2)}</span>
+        <span className="text-terminal-text-faint">P&L</span>
+        <span className={pnlPositive ? "text-terminal-positive" : "text-terminal-negative"}>
+          {pnlPositive ? "+" : ""}${pnl.toFixed(2)}
+        </span>
       </div>
       <div className="flex items-center gap-1.5">
-        <span className="text-terminal-text-faint">+{nasdaq}</span>
-        <span className="w-1.5 h-1.5 rounded-full bg-terminal-positive" />
-        <span className="text-terminal-text-muted">NASDAQ</span>
+        <span className="text-terminal-text-faint">SPY</span>
+        <span className={spyReturn >= 0 ? "text-terminal-positive" : "text-terminal-negative"}>
+          {spyReturn >= 0 ? "+" : ""}{(spyReturn * 100).toFixed(2)}%
+        </span>
+        <span className={`w-1.5 h-1.5 rounded-full ${spyReturn >= 0 ? "bg-terminal-positive" : "bg-terminal-negative"}`} />
       </div>
     </div>
   );

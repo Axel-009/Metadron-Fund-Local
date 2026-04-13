@@ -166,11 +166,10 @@ if _metrics_router:
 
 @app.get("/api/engine/health")
 async def health():
+    """Public health check — minimal info only. No provider fingerprinting."""
     return {
         "status": "ok",
-        "service": "Metadron Capital Engine API",
         "timestamp": datetime.utcnow().isoformat(),
-        "engines_loaded": True,
     }
 
 

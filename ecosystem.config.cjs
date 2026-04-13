@@ -89,7 +89,11 @@ module.exports = {
       instances: 1, autorestart: true, watch: false, max_memory_restart: '4G',
       error_file: path.join(ROOT, 'logs/pm2/live-loop-error.log'),
       out_file: path.join(ROOT, 'logs/pm2/live-loop-out.log'),
-      merge_logs: true, restart_delay: 10000, max_restarts: 5, min_uptime: '30s', kill_timeout: 15000,
+      // max_restarts: 10 — after 10 restarts, PM2 stops the process.
+      // Each restart is logged to Prometheus (pm2_process_restarts counter)
+      // and visible in TECH tab. At restart #10, manual override required via
+      // pm2 start live-loop to resume.
+      merge_logs: true, restart_delay: 10000, max_restarts: 10, min_uptime: '30s', kill_timeout: 15000,
     },
     // SCHEDULED TASKS
     {

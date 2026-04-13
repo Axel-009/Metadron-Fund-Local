@@ -170,7 +170,12 @@ class AlpacaBroker:
             )
 
         if paper is None:
-            paper_str = os.environ.get("ALPACA_PAPER_TRADE", "True")
+            paper_str = os.environ.get("ALPACA_PAPER_TRADE", "")
+            if not paper_str:
+                raise RuntimeError(
+                    "ALPACA_PAPER_TRADE not set — must be explicitly 'True' (paper) or 'False' (live). "
+                    "This is a safety requirement. Set it in .env or the API Vault."
+                )
             self.paper = paper_str.lower() not in ("false", "0", "no", "off")
         else:
             self.paper = paper
