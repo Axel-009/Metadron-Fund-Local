@@ -78,6 +78,7 @@ class ContinuousLearningLoop:
 
         self._last_pattern_recognition = {}
         self._last_stock_predictions = {}
+        self._last_graphify = {}              # Separate context — not nested under patterns
 
     def _is_market_hours(self): now = datetime.now(); return 9 <= now.hour < 16 and now.weekday() < 5
     def _is_overnight(self): now = datetime.now(); return now.hour >= 20 or now.hour < 6
@@ -91,6 +92,7 @@ class ContinuousLearningLoop:
             "agent_scores": self._last_agent_scores,
             "pattern_recognition": self._last_pattern_recognition,
             "stock_predictions": self._last_stock_predictions,
+            "graphify": self._last_graphify,
         }
 
     def _task_signal_feedback(self):
@@ -308,21 +310,56 @@ class ContinuousLearningLoop:
             logger.error(f"Autoresearch check failed: {e}")
 
     def _task_graphify_refresh(self):
-        """Refresh graphify knowledge graph status and feed god-nodes into ML context."""
+        """Refresh graphify knowledge graph — separate from autoresearch.
+
+        Loads god-nodes + agent performance into its own ML context field.
+        Agent learning and performance data feeds graphify so the knowledge
+        graph reflects which architectural nodes are most active and which
+        agents are performing best against them.
+        """
         if not self._graphify:
             return
-        logger.info("Running graphify knowledge graph check...")
+        logger.info("Running graphify knowledge graph refresh...")
         try:
             if not self._graphify.is_available():
                 logger.info("Graphify graph not generated — skipping")
+                self._last_graphify = {"available": False}
                 return
+
             god_nodes = self._graphify.get_god_nodes()
-            if god_nodes:
-                self._last_patterns["graphify"] = {
-                    "god_nodes": god_nodes[:10],
-                    "node_count": len(god_nodes),
-                }
-                logger.info(f"Graphify: {len(god_nodes)} god nodes loaded into ML context")
+
+            # Build graphify context with agent performance overlay
+            agent_performance = {}
+            try:
+                scores_path = DATA_PATH / "agents" / "scores.json"
+                if scores_path.exists():
+                    with open(scores_path) as f:
+                        agent_performance = json.load(f)
+            except Exception:
+                pass
+
+            self._last_graphify = {
+                "available": True,
+                "god_nodes": [n.get("label", n.get("id", "")) for n in god_nodes[:10]],
+                "god_node_count": len(god_nodes),
+                "agent_performance": {
+                    name: {
+                        "accuracy": s.get("accuracy", 0),
+                        "sharpe": s.get("sharpe", 0),
+                        "rank": s.get("rank", "RECRUIT"),
+                    }
+                    for name, s in list(agent_performance.items())[:10]
+                } if agent_performance else {},
+                "learning_metrics": {
+                    "total_cycles": self.metrics.total_cycles,
+                    "signal_accuracy_count": len(self.metrics.signal_accuracy),
+                    "pattern_count": self.metrics.pattern_count,
+                },
+            }
+            logger.info(
+                f"Graphify: {len(god_nodes)} god nodes + "
+                f"{len(agent_performance)} agent scores loaded into context"
+            )
         except Exception as e:
             logger.error(f"Graphify refresh failed: {e}")
 
@@ -393,20 +430,54 @@ class ContinuousLearningLoop:
             self.metrics.total_cycles = self.cycle_count
             logger.info(f"Learning Cycle {self.cycle_count}")
             if self._is_market_hours():
-                self._task_signal_feedback(); self._task_agent_evolution()
-                self._task_pattern_recognition(); self._task_stock_prediction()
-                self._task_graphify_refresh(); sleep_time = 300
+                # ── Stream 1: Core signals + ML ──
+                self._task_signal_feedback()
+                self._task_pattern_recognition()
+                self._task_stock_prediction()
+
+                # ── Stream 2: Agent performance + learning → feeds graphify ──
+                self._task_agent_evolution()
+                self._task_graphify_refresh()
+
+                # (LLM review runs overnight only)
+                sleep_time = 300
+
             elif self._is_overnight():
-                self._task_signal_feedback(); self._task_model_retrain(); self._task_agent_evolution()
-                self._task_pattern_integration(); self._task_regime_calibration()
-                self._task_pattern_recognition(); self._task_stock_prediction()
-                self._task_autoresearch_check(); self._task_graphify_refresh()
-                self._task_llm_market_review(); sleep_time = 600
+                # ── Stream 1: Core signals + ML + retraining ──
+                self._task_signal_feedback()
+                self._task_model_retrain()
+                self._task_pattern_integration()
+                self._task_regime_calibration()
+                self._task_pattern_recognition()
+                self._task_stock_prediction()
+
+                # ── Stream 2: Agent performance + learning → feeds graphify ──
+                self._task_agent_evolution()
+                self._task_graphify_refresh()
+
+                # ── Stream 3: Autoresearch (independent) ──
+                self._task_autoresearch_check()
+
+                # ── Stream 4: LLM review (independent, uses all context) ──
+                self._task_llm_market_review()
+
+                sleep_time = 600
+
             else:
-                self._task_signal_feedback(); self._task_agent_evolution()
-                self._task_pattern_integration(); self._task_pattern_recognition()
-                self._task_stock_prediction(); self._task_autoresearch_check()
-                self._task_graphify_refresh(); sleep_time = 300
+                # ── Stream 1: Core signals + ML ──
+                self._task_signal_feedback()
+                self._task_pattern_integration()
+                self._task_pattern_recognition()
+                self._task_stock_prediction()
+
+                # ── Stream 2: Agent performance + learning → feeds graphify ──
+                self._task_agent_evolution()
+                self._task_graphify_refresh()
+
+                # ── Stream 3: Autoresearch (independent) ──
+                self._task_autoresearch_check()
+
+                sleep_time = 300
             self._save_state()
             if self.running:
                 for _ in range(sleep_time):
