@@ -82,6 +82,22 @@ def _hash_key(raw: str) -> str:
     return hashlib.sha256(raw.encode()).hexdigest()
 
 
+def _check_internal_token(request: Request) -> bool:
+    """Check if request has a valid internal proxy token from the API Vault.
+
+    The Express frontend injects X-Internal-Token on proxied requests.
+    This bypasses API key auth for same-host proxy traffic.
+    """
+    token = request.headers.get("X-Internal-Token")
+    if not token:
+        return False
+    try:
+        from engine.api.vault import get_vault
+        return get_vault().verify_internal_token(token)
+    except Exception:
+        return False
+
+
 def _extract_key(request: Request) -> Optional[str]:
     """Extract API key from X-API-Key header or Authorization: Bearer."""
     key = request.headers.get("X-API-Key")
@@ -160,6 +176,12 @@ class AuthMiddleware(BaseHTTPMiddleware):
 
         # Allow exempt paths
         if _is_exempt(path, method):
+            return await call_next(request)
+
+        # Allow internal proxy token (frontend → backend same-host traffic)
+        if _check_internal_token(request):
+            request.state.api_key_id = 0
+            request.state.api_key_name = "internal-proxy"
             return await call_next(request)
 
         # Bootstrap: allow creating first API key when DB has no keys

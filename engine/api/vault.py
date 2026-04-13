@@ -1,95 +1,244 @@
-"""API Vault — Metadron Platform
+"""Metadron Capital — API Vault.
 
-Only 3 authorized external APIs.  All keys loaded from environment.
-No other API keys should exist anywhere in the platform.
+Centralized secure storage for all external API keys. Sits on top of the
+entire architecture. Keys are persisted to data/vault/api_vault.json and
+deployed to engines via os.environ injection on startup.
 
 Authorized APIs:
-    1. OpenBB / FMP   — Market data
-    2. Alpaca         — Trade execution
-    3. Xiaomi Mimo V2 Pro — Brain Power (LLM / intelligence)
+    1. Alpaca         — Trade execution (live + paper)
+    2. FMP            — Market data via OpenBB
+    3. Zep            — MiroFish agent simulation (knowledge graph)
+    4. Xiaomi Mimo V2 — Brain Power LLM orchestrator
+    5. OpenBB Token   — OpenBB SDK platform access
+    6. Internal Token  — Frontend → Backend proxy auth (auto-generated)
+
+Frontend auth:
+    The Express frontend proxies /api/engine/* to FastAPI. Instead of
+    exposing API keys in client JavaScript, the frontend injects
+    METADRON_INTERNAL_TOKEN as X-Internal-Token header. The backend
+    trusts this token for same-host proxy traffic, eliminating the
+    need for user-facing API keys in the browser.
 """
 
-import os
+import json
 import logging
-from dataclasses import dataclass
+import os
+import secrets
+from datetime import datetime, timezone
+from pathlib import Path
+from typing import Optional
 
 logger = logging.getLogger("metadron.vault")
 
+_VAULT_DIR = Path(os.environ.get("METADRON_VAULT_DIR", "data/vault"))
+_VAULT_DIR.mkdir(parents=True, exist_ok=True)
+_VAULT_FILE = _VAULT_DIR / "api_vault.json"
 
-@dataclass
+# ── Known API key slots ──────────────────────────────────────
+
+VAULT_SLOTS = {
+    "ALPACA_API_KEY": {
+        "label": "Alpaca API Key",
+        "target": "Alpaca Broker (live + paper trading)",
+        "required": True,
+        "category": "execution",
+    },
+    "ALPACA_SECRET_KEY": {
+        "label": "Alpaca Secret Key",
+        "target": "Alpaca Broker (authentication)",
+        "required": True,
+        "category": "execution",
+    },
+    "ALPACA_PAPER_TRADE": {
+        "label": "Alpaca Paper Trade Mode",
+        "target": "Alpaca Broker (True=paper, False=live)",
+        "required": True,
+        "category": "execution",
+        "is_boolean": True,
+    },
+    "FMP_API_KEY": {
+        "label": "FMP (Financial Modeling Prep) API Key",
+        "target": "OpenBB data layer (market data, fundamentals, news)",
+        "required": True,
+        "category": "data",
+    },
+    "OPENBB_TOKEN": {
+        "label": "OpenBB Platform Token",
+        "target": "OpenBB SDK (34+ data providers)",
+        "required": False,
+        "category": "data",
+    },
+    "ZEP_API_KEY": {
+        "label": "Zep API Key",
+        "target": "MiroFish agent simulation (knowledge graph)",
+        "required": False,
+        "category": "intelligence",
+    },
+    "XIAOMI_MIMO_API_KEY": {
+        "label": "Xiaomi Mimo V2 Pro API Key",
+        "target": "Brain Power LLM orchestrator (ensemble synthesis)",
+        "required": False,
+        "category": "intelligence",
+    },
+    "METADRON_INTERNAL_TOKEN": {
+        "label": "Internal Proxy Token (auto-generated)",
+        "target": "Frontend → Backend proxy authentication",
+        "required": True,
+        "category": "system",
+        "auto_generate": True,
+    },
+}
+
+
 class APIVault:
-    """Immutable container for the 3 authorized API credentials."""
+    """Centralized API key storage and deployment.
 
-    # OpenBB / FMP — Market Data
-    fmp_api_key: str
-
-    # Alpaca — Trade Execution
-    alpaca_api_key: str
-    alpaca_secret_key: str
-    alpaca_base_url: str
-
-    # Xiaomi Mimo V2 Pro — Brain Power
-    xiaomi_mimo_api_key: str
-
-
-def load_vault() -> APIVault:
-    """Load and validate all authorized API credentials from environment.
-
-    Warns (but does NOT crash) if a key is missing so the platform can
-    still start in degraded mode.
+    Keys are persisted to data/vault/api_vault.json and injected into
+    os.environ so all engines can read them via standard env var access.
+    The VAULT tab in the frontend manages keys via REST API.
     """
-    fmp_key = os.environ.get("FMP_API_KEY", "")
-    alpaca_key = os.environ.get("ALPACA_API_KEY", "")
-    alpaca_secret = os.environ.get("ALPACA_SECRET_KEY", "")
-    alpaca_url = os.environ.get(
-        "ALPACA_BASE_URL", "https://paper-api.alpaca.markets"
-    )
-    xiaomi_key = os.environ.get("XIAOMI_MIMO_API_KEY", "")
 
-    # --- Validation (warn, never crash) ---
-    if not fmp_key:
-        logger.warning(
-            "FMP_API_KEY not set — OpenBB market-data calls will be limited"
-        )
-    else:
-        logger.info("FMP_API_KEY loaded — OpenBB / FMP data source ready")
+    def __init__(self):
+        self._keys: dict = {}
+        self._load()
+        self._ensure_internal_token()
+        self._deploy_to_env()
 
-    if not alpaca_key or not alpaca_secret:
-        logger.warning(
-            "ALPACA_API_KEY / ALPACA_SECRET_KEY not set — "
-            "trade execution unavailable (paper broker will be used)"
-        )
-    else:
-        logger.info(
-            "Alpaca credentials loaded — execution via %s", alpaca_url
-        )
+    def _load(self):
+        """Load vault from disk, bootstrapping from env if no file exists."""
+        if _VAULT_FILE.exists():
+            try:
+                self._keys = json.loads(_VAULT_FILE.read_text(encoding="utf-8"))
+                logger.info("API Vault loaded: %d keys", len(self._keys))
+            except Exception as e:
+                logger.warning("Vault load failed: %s", e)
+                self._keys = {}
+        else:
+            # Bootstrap from environment variables on first run
+            for slot in VAULT_SLOTS:
+                val = os.environ.get(slot, "")
+                if val:
+                    self._keys[slot] = val
+            if self._keys:
+                self._save()
+                logger.info("Vault bootstrapped from environment: %d keys", len(self._keys))
 
-    if not xiaomi_key:
-        logger.warning(
-            "XIAOMI_MIMO_API_KEY not set — Brain Power in stub mode "
-            "(platform functional, LLM responses are placeholders)"
-        )
-    else:
-        logger.info("XIAOMI_MIMO_API_KEY loaded — Brain Power ready")
+    def _save(self):
+        """Persist vault to disk."""
+        try:
+            _VAULT_FILE.write_text(
+                json.dumps(self._keys, indent=2, default=str), encoding="utf-8",
+            )
+        except Exception as e:
+            logger.error("Vault save failed: %s", e)
 
-    return APIVault(
-        fmp_api_key=fmp_key,
-        alpaca_api_key=alpaca_key,
-        alpaca_secret_key=alpaca_secret,
-        alpaca_base_url=alpaca_url,
-        xiaomi_mimo_api_key=xiaomi_key,
-    )
+    def _ensure_internal_token(self):
+        """Auto-generate METADRON_INTERNAL_TOKEN if not set."""
+        if not self._keys.get("METADRON_INTERNAL_TOKEN"):
+            self._keys["METADRON_INTERNAL_TOKEN"] = secrets.token_urlsafe(48)
+            self._save()
+            logger.info("Internal proxy token auto-generated")
+
+    def _deploy_to_env(self):
+        """Inject all vault keys into os.environ for engine consumption."""
+        deployed = 0
+        for key, value in self._keys.items():
+            if value:
+                os.environ[key] = str(value)
+                deployed += 1
+        logger.info("Vault deployed %d keys to environment", deployed)
+
+    # ── Public API ────────────────────────────────────────────
+
+    def set_key(self, slot: str, value: str) -> dict:
+        """Set or update a key in the vault. Deploys immediately to env."""
+        if slot not in VAULT_SLOTS:
+            return {"error": f"Unknown slot: {slot}. Valid: {list(VAULT_SLOTS.keys())}"}
+        self._keys[slot] = value
+        os.environ[slot] = str(value)
+        self._save()
+        logger.info("Vault key set: %s → %s", slot, VAULT_SLOTS[slot]["target"])
+        return {"slot": slot, "status": "set", "target": VAULT_SLOTS[slot]["target"]}
+
+    def remove_key(self, slot: str) -> dict:
+        """Remove a key from the vault."""
+        if slot in self._keys:
+            del self._keys[slot]
+            os.environ.pop(slot, None)
+            self._save()
+            return {"slot": slot, "status": "removed"}
+        return {"slot": slot, "status": "not_found"}
+
+    def get_status(self) -> dict:
+        """Return vault status. Values are masked — never exposed in full."""
+        slots = {}
+        for slot, meta in VAULT_SLOTS.items():
+            val = self._keys.get(slot, "")
+            slots[slot] = {
+                **meta,
+                "configured": bool(val),
+                "masked": (
+                    f"{val[:4]}...{val[-4:]}" if val and len(val) > 8
+                    else ("***" if val else "")
+                ),
+            }
+        return {
+            "total_slots": len(VAULT_SLOTS),
+            "configured": sum(1 for s in VAULT_SLOTS if self._keys.get(s)),
+            "slots": slots,
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+        }
+
+    def get_internal_token(self) -> str:
+        """Return the internal proxy token for frontend auth."""
+        return self._keys.get("METADRON_INTERNAL_TOKEN", "")
+
+    def verify_internal_token(self, token: str) -> bool:
+        """Verify a token matches the internal proxy token."""
+        expected = self._keys.get("METADRON_INTERNAL_TOKEN", "")
+        if not expected:
+            return False
+        return secrets.compare_digest(token, expected)
+
+    # ── Legacy compatibility ──────────────────────────────────
+
+    @property
+    def fmp_api_key(self) -> str:
+        return self._keys.get("FMP_API_KEY", "")
+
+    @property
+    def alpaca_api_key(self) -> str:
+        return self._keys.get("ALPACA_API_KEY", "")
+
+    @property
+    def alpaca_secret_key(self) -> str:
+        return self._keys.get("ALPACA_SECRET_KEY", "")
+
+    @property
+    def alpaca_base_url(self) -> str:
+        paper = self._keys.get("ALPACA_PAPER_TRADE", "True")
+        if str(paper).lower() in ("true", "1", "yes"):
+            return "https://paper-api.alpaca.markets"
+        return "https://api.alpaca.markets"
+
+    @property
+    def xiaomi_mimo_api_key(self) -> str:
+        return self._keys.get("XIAOMI_MIMO_API_KEY", "")
 
 
-# ---------------------------------------------------------------------------
-# Singleton — import once, use everywhere
-# ---------------------------------------------------------------------------
-_vault: APIVault | None = None
+# ── Singleton ────────────────────────────────────────────────
+
+_vault: Optional[APIVault] = None
 
 
 def get_vault() -> APIVault:
-    """Return the singleton vault, creating it on first call."""
+    """Return the singleton vault, creating on first call."""
     global _vault
     if _vault is None:
-        _vault = load_vault()
+        _vault = APIVault()
     return _vault
+
+
+def load_vault() -> APIVault:
+    """Legacy alias for get_vault()."""
+    return get_vault()

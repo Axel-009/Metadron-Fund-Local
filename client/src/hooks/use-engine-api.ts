@@ -3,12 +3,25 @@ import { useQuery, UseQueryResult } from "@tanstack/react-query";
 const ENGINE_BASE = "/api/engine";
 
 /**
- * Fetch from the engine API bridge.
+ * Internal proxy token — injected by Express server from API Vault.
+ * Falls back to env var or empty (for local dev without auth).
+ */
+const INTERNAL_TOKEN =
+  (typeof window !== "undefined" && (window as any).__METADRON_INTERNAL_TOKEN__) ||
+  import.meta.env?.VITE_INTERNAL_TOKEN ||
+  "";
+
+/**
+ * Fetch from the engine API bridge with internal token auth.
  * Returns null on error (no mock fallback — errors surface in TECH tab).
  */
 async function engineFetch<T>(path: string): Promise<T | null> {
   try {
-    const res = await fetch(`${ENGINE_BASE}${path}`);
+    const headers: Record<string, string> = {};
+    if (INTERNAL_TOKEN) {
+      headers["X-Internal-Token"] = INTERNAL_TOKEN;
+    }
+    const res = await fetch(`${ENGINE_BASE}${path}`, { headers });
     if (!res.ok) return null;
     const data = await res.json();
     if (data.error) {
