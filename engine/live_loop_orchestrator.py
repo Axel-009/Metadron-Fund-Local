@@ -2343,36 +2343,81 @@ class LiveLoopOrchestrator:
             except Exception as exc:
                 pr.data["broker_recon_error"] = str(exc)
 
-        # ── Profit-taking: 20% aggregate P&L → liquidate overlays ──
+        # ── Profit-taking: 3-layer P&L check → liquidate overlays ──
+        # Layer 1: Alpaca P&L > 20% → sell options, re-run
+        # Layer 2: Futures/Rithmic P&L > 20% → sell futures, re-run
+        # Layer 3: Aggregate P&L > 20% → sell ALL overlays, re-run
         alloc = self._get("allocation_engine")
+        exec_engine = self._get("execution_engine")
         if alloc and hasattr(alloc, "check_profit_take") and nav > 0:
             try:
-                profit_check = alloc.check_profit_take(nav, self._initial_nav)
+                # Extract per-product-class P&L from brokers
+                alpaca_pnl = 0.0
+                equities_pnl = 0.0
+                options_pnl = 0.0
+                futures_pnl = 0.0
+
+                if exec_engine:
+                    broker = getattr(exec_engine, "broker", None)
+                    if broker:
+                        # Alpaca combined P&L (equities + options)
+                        if hasattr(broker, "state"):
+                            alpaca_pnl = getattr(broker.state, "total_pnl", 0.0)
+                        # Split equities vs options if broker tracks them
+                        if hasattr(broker, "get_equity_pnl"):
+                            equities_pnl = broker.get_equity_pnl()
+                        elif hasattr(broker, "state") and hasattr(broker.state, "positions"):
+                            for _, pos in broker.state.positions.items():
+                                equities_pnl += getattr(pos, "unrealized_pnl", 0.0) + getattr(pos, "realized_pnl", 0.0)
+                        if hasattr(broker, "get_options_pnl"):
+                            options_pnl = broker.get_options_pnl()
+
+                    # Futures P&L from paper broker (until Rithmic connected)
+                    paper = getattr(exec_engine, "_paper_broker", None) or getattr(exec_engine, "paper_broker", None)
+                    if paper and hasattr(paper, "state"):
+                        # Paper broker tracks futures positions
+                        for _, pos in getattr(paper.state, "positions", {}).items():
+                            if getattr(pos, "sector", "") == "FUTURES" or getattr(pos, "ticker", "") in ("ES", "NQ", "YM", "RTY", "VX", "ZN", "ZB", "MES", "MNQ"):
+                                futures_pnl += getattr(pos, "unrealized_pnl", 0.0) + getattr(pos, "realized_pnl", 0.0)
+
+                profit_check = alloc.check_profit_take(
+                    nav=nav,
+                    initial_nav=self._initial_nav,
+                    alpaca_pnl=alpaca_pnl,
+                    futures_pnl=futures_pnl,
+                    equities_pnl=equities_pnl,
+                    options_pnl=options_pnl,
+                )
+
+                # Always report P&L breakdown
+                pr.data["pnl_breakdown"] = profit_check.get("pnl_breakdown", {})
+
                 if profit_check.get("triggered"):
                     pr.data["profit_take_triggered"] = True
-                    pr.data["profit_take_pnl_pct"] = profit_check["pnl_pct"]
-                    pr.data["profit_take_overlays"] = profit_check["liquidate_overlays"]
-                    # Queue overlay liquidation trades
-                    exec_engine = self._get("execution_engine")
+                    pr.data["profit_take_layer"] = profit_check["trigger_layer"]
+                    pr.data["profit_take_action"] = profit_check["action"]
+                    pr.data["profit_take_liquidate"] = profit_check["liquidate"]
+
+                    # Queue overlay liquidation trades via L7
                     if exec_engine and hasattr(exec_engine, "l7_submit"):
                         regime = "TRENDING"
                         if self._last_macro_snapshot and hasattr(self._last_macro_snapshot, "regime"):
                             regime = str(getattr(self._last_macro_snapshot, "regime", "TRENDING"))
-                        for bucket in profit_check.get("liquidate_overlays", []):
-                            # Submit close-all for each overlay bucket
+                        for bucket in profit_check.get("liquidate", []):
                             exec_engine.l7_submit(
                                 ticker="ALL", side="SELL", quantity=0,
-                                signal_type="PROFIT_TAKE_LIQUIDATE",
+                                signal_type=profit_check["action"],
                                 regime=regime,
                                 product_type=bucket,
                             )
-                        logger.critical(
-                            "[LiveLoop] PROFIT TAKE: P&L %.1f%% — overlay liquidation queued, "
-                            "next scan cycle will re-enter fresh positions",
-                            profit_check["pnl_pct"] * 100,
-                        )
-                else:
-                    pr.data["profit_take_pnl_pct"] = profit_check.get("pnl_pct", 0)
+                    logger.critical(
+                        "[LiveLoop] PROFIT TAKE [%s]: total=%.1f%% equities=$%.0f options=$%.0f futures=$%.0f "
+                        "— liquidating %s, next scan re-enters fresh",
+                        profit_check["trigger_layer"],
+                        profit_check["pnl_breakdown"]["total_pct"] * 100,
+                        equities_pnl, options_pnl, futures_pnl,
+                        profit_check["liquidate"],
+                    )
             except Exception as exc:
                 pr.data["profit_take_error"] = str(exc)
 

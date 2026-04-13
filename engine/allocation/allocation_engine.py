@@ -890,69 +890,130 @@ class AllocationEngine:
                 liquidate.append(ticker)
         return liquidate
 
-    # ── Profit-taking: 20% aggregate P&L → liquidate overlays ────
+    # ── Profit-taking: 3-layer P&L check → liquidate overlays ────
 
-    def check_profit_take(self, nav: float, initial_nav: float) -> dict:
-        """Check if aggregate portfolio P&L has crossed profit-take threshold.
+    def check_profit_take(
+        self,
+        nav: float,
+        initial_nav: float,
+        alpaca_pnl: float = 0.0,
+        futures_pnl: float = 0.0,
+        equities_pnl: float = 0.0,
+        options_pnl: float = 0.0,
+    ) -> dict:
+        """3-layer profit-take check with per-product-class breakdown.
 
-        When portfolio gains exceed 20% (configurable), liquidate ALL overlay
-        positions (options + futures) immediately to realize gains. Equity
-        core positions are retained. The next scan cycle re-enters fresh.
+        Layer 1 (Alpaca-specific): If Alpaca broker P&L > 20% →
+            liquidate OPTIONS only, re-run. Alpaca handles equities + options.
+        Layer 2 (Futures-specific): If futures/Rithmic P&L > 20% →
+            liquidate FUTURES only, re-run. Futures on paper broker (Rithmic later).
+        Layer 3 (Aggregate): If total P&L > 20% →
+            liquidate ALL overlays (options + futures), re-run.
 
-        This is NOT momentum-specific — it's capital preservation. Lock in
-        gains before mean reversion erodes them, then re-deploy on the
-        next universe scan with fresh signals.
+        Equity core positions are always retained. Only overlays liquidated.
 
         Parameters
         ----------
         nav : float
-            Current portfolio NAV
+            Current total portfolio NAV
         initial_nav : float
             Starting NAV (beginning of day or initial capital)
+        alpaca_pnl : float
+            P&L from Alpaca broker (equities + options combined)
+        futures_pnl : float
+            P&L from paper broker / Rithmic (futures only)
+        equities_pnl : float
+            P&L from equity positions only (for reporting)
+        options_pnl : float
+            P&L from options positions only (for reporting)
 
         Returns
         -------
         dict with:
-            triggered: bool — True if profit-take threshold crossed
-            pnl_pct: float — current aggregate P&L %
-            liquidate_overlays: list — tickers/contracts to liquidate
-            action: str — "PROFIT_TAKE" or "HOLD"
+            pnl_breakdown: {total, equities, options, futures, total_pct}
+            triggered: bool
+            trigger_layer: str — "alpaca", "futures", "aggregate", or "none"
+            liquidate: list of bucket names to liquidate
+            action: str — "PROFIT_TAKE_OPTIONS", "PROFIT_TAKE_FUTURES",
+                         "PROFIT_TAKE_ALL_OVERLAYS", or "HOLD"
         """
         if initial_nav <= 0:
-            return {"triggered": False, "pnl_pct": 0, "liquidate_overlays": [], "action": "HOLD"}
+            return {
+                "pnl_breakdown": {"total": 0, "equities": 0, "options": 0, "futures": 0, "total_pct": 0},
+                "triggered": False, "trigger_layer": "none", "liquidate": [], "action": "HOLD",
+            }
 
-        pnl_pct = (nav - initial_nav) / initial_nav
+        total_pnl = nav - initial_nav
+        total_pct = total_pnl / initial_nav
         threshold = self.rules.profit_take_threshold
 
-        if pnl_pct < threshold:
-            return {"triggered": False, "pnl_pct": round(pnl_pct, 4), "liquidate_overlays": [], "action": "HOLD"}
-
-        # Threshold crossed — identify overlay positions for liquidation
-        overlay_buckets = {
-            BucketType.OPTIONS_IG, BucketType.OPTIONS_HY,
-            BucketType.OPTIONS_DISTRESSED, BucketType.FUTURES_BETA,
+        # P&L breakdown (always reported)
+        breakdown = {
+            "total": round(total_pnl, 2),
+            "total_pct": round(total_pct, 4),
+            "equities": round(equities_pnl, 2),
+            "options": round(options_pnl, 2),
+            "futures": round(futures_pnl, 2),
+            "alpaca_combined": round(alpaca_pnl, 2),
         }
 
-        # If configured to liquidate overlays only, return overlay buckets
-        # If not, return all positions (full liquidation)
-        if self.rules.profit_take_overlays_only:
-            liquidate = list(overlay_buckets)
-        else:
-            liquidate = list(BucketType)
-
-        logger.critical(
-            "[AllocationEngine] PROFIT TAKE TRIGGERED: P&L %.1f%% >= threshold %.0f%% "
-            "— liquidating overlays (%d buckets). Gains locked. Next scan re-enters fresh.",
-            pnl_pct * 100, threshold * 100, len(liquidate),
-        )
-
-        return {
-            "triggered": True,
-            "pnl_pct": round(pnl_pct, 4),
+        result = {
+            "pnl_breakdown": breakdown,
+            "triggered": False,
+            "trigger_layer": "none",
+            "liquidate": [],
+            "action": "HOLD",
             "threshold": threshold,
-            "liquidate_overlays": [b.value for b in liquidate] if isinstance(next(iter(liquidate), None), BucketType) else liquidate,
-            "action": "PROFIT_TAKE",
         }
+
+        options_buckets = [
+            BucketType.OPTIONS_IG.value,
+            BucketType.OPTIONS_HY.value,
+            BucketType.OPTIONS_DISTRESSED.value,
+        ]
+        futures_buckets = [BucketType.FUTURES_BETA.value]
+        all_overlay_buckets = options_buckets + futures_buckets
+
+        # ── Layer 3 (checked first — aggregate overrides individual) ──
+        if total_pct >= threshold:
+            result["triggered"] = True
+            result["trigger_layer"] = "aggregate"
+            result["liquidate"] = all_overlay_buckets
+            result["action"] = "PROFIT_TAKE_ALL_OVERLAYS"
+            logger.critical(
+                "[AllocationEngine] PROFIT TAKE — AGGREGATE: total P&L %.1f%% >= %.0f%% "
+                "— liquidating ALL overlays (options + futures). Re-run on next scan.",
+                total_pct * 100, threshold * 100,
+            )
+            return result
+
+        # ── Layer 1 (Alpaca: equities + options) ──
+        if initial_nav > 0 and alpaca_pnl / initial_nav >= threshold:
+            result["triggered"] = True
+            result["trigger_layer"] = "alpaca"
+            result["liquidate"] = options_buckets
+            result["action"] = "PROFIT_TAKE_OPTIONS"
+            logger.critical(
+                "[AllocationEngine] PROFIT TAKE — ALPACA: Alpaca P&L $%.0f (%.1f%%) >= %.0f%% "
+                "— liquidating OPTIONS. Equities retained. Re-run on next scan.",
+                alpaca_pnl, (alpaca_pnl / initial_nav) * 100, threshold * 100,
+            )
+            return result
+
+        # ── Layer 2 (Futures: paper broker / Rithmic) ──
+        if initial_nav > 0 and futures_pnl / initial_nav >= threshold:
+            result["triggered"] = True
+            result["trigger_layer"] = "futures"
+            result["liquidate"] = futures_buckets
+            result["action"] = "PROFIT_TAKE_FUTURES"
+            logger.critical(
+                "[AllocationEngine] PROFIT TAKE — FUTURES: Futures P&L $%.0f (%.1f%%) >= %.0f%% "
+                "— liquidating FUTURES. Options + equities retained. Re-run on next scan.",
+                futures_pnl, (futures_pnl / initial_nav) * 100, threshold * 100,
+            )
+            return result
+
+        return result
 
     def classify_opportunity(self, sig: "ScanSignal") -> str:
         """Classify a ScanSignal into its allocation bucket.
