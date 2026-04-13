@@ -1064,7 +1064,7 @@ class LiveLoopOrchestrator:
                 pr.data["scan_error"] = str(exc)
                 logger.warning("[LiveLoop] FullUniverseScan error: %s", exc)
 
-        # Alpha Optimizer — enhanced pipeline (XGBoost + CAPM + Quality) with fallback
+        # Alpha Optimizer — both pipelines run in parallel, results merged
         alpha = self._get("alpha_optimizer")
         if alpha:
             try:
@@ -1075,20 +1075,39 @@ class LiveLoopOrchestrator:
                     tickers = [s.ticker for s in universe.get_all()[:100]]
 
                 if tickers:
-                    # Try enhanced pipeline first (XGBoost, CAPM, QualityRanker, WalkForward)
-                    alpha_out = None
+                    # Run BOTH pipelines and merge signals
+                    standard_out = None
+                    enhanced_out = None
+
+                    # Standard pipeline (XGBoost + CAPM + Quality + SLSQP)
+                    if hasattr(alpha, "optimize"):
+                        try:
+                            standard_out = alpha.optimize(tickers)
+                            pr.data["alpha_standard_signals"] = len(getattr(standard_out, "signals", []))
+                        except Exception as std_exc:
+                            logger.warning("Standard alpha pipeline error: %s", std_exc)
+
+                    # Enhanced pipeline (WalkForward + FactorLibrary + sector MVO)
                     if hasattr(alpha, "run_enhanced_pipeline"):
                         try:
-                            alpha_out = alpha.run_enhanced_pipeline(tickers)
-                            pr.data["alpha_pipeline"] = "enhanced"
+                            enhanced_out = alpha.run_enhanced_pipeline(tickers)
+                            pr.data["alpha_enhanced_signals"] = len(getattr(enhanced_out, "signals", []))
                         except Exception as enh_exc:
-                            logger.info("Enhanced pipeline unavailable, falling back: %s", enh_exc)
+                            logger.info("Enhanced alpha pipeline error: %s", enh_exc)
 
-                    # Fallback to standard optimize (XGBoost primary + LinearRegression fallback)
-                    if alpha_out is None or not getattr(alpha_out, "signals", []):
-                        if hasattr(alpha, "optimize"):
-                            alpha_out = alpha.optimize(tickers)
-                            pr.data["alpha_pipeline"] = "standard"
+                    # Merge: enhanced output takes priority for weights/metrics,
+                    # standard signals fill gaps for tickers enhanced missed
+                    alpha_out = enhanced_out or standard_out
+                    if alpha_out and standard_out and enhanced_out:
+                        # Blend: merge any signals from standard that enhanced missed
+                        enhanced_tickers = {s.ticker for s in getattr(enhanced_out, "signals", [])}
+                        for sig in getattr(standard_out, "signals", []):
+                            if sig.ticker not in enhanced_tickers:
+                                enhanced_out.signals.append(sig)
+                        alpha_out = enhanced_out
+                        pr.data["alpha_pipeline"] = "dual"
+                    elif alpha_out:
+                        pr.data["alpha_pipeline"] = "enhanced" if enhanced_out else "standard"
 
                     if alpha_out:
                         self._last_alpha_output = alpha_out
