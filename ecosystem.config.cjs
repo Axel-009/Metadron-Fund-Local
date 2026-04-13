@@ -53,15 +53,28 @@ module.exports = {
       merge_logs: true, restart_delay: 3000, max_restarts: 10, min_uptime: '5s',
     },
     // MIROFISH REMOVED — engine/simulation/ is the canonical simulation layer (updated version)
-    // QWEN 2.5-7B MODEL SERVER
+    // QWEN 2.5-7B MODEL SERVER (port 8004)
     {
       name: 'qwen-model-server', script: 'python3',
-      args: ['web_demo.py', '--checkpoint-path', process.env.QWEN_MODEL_PATH || 'Qwen/Qwen2.5-Omni-7B', '--server-port', '7860', '--server-name', '0.0.0.0'].join(' '),
-      cwd: path.join(ROOT, 'Qwen 2.5-7b'), interpreter: 'none',
-      env: { PYTHONUNBUFFERED: '1', CUDA_VISIBLE_DEVICES: process.env.QWEN_GPU_DEVICES || '0', QWEN_SERVER_PORT: '7860' },
+      args: '-m uvicorn engine.bridges.qwen_model_server:create_app --factory --host 0.0.0.0 --port 8004 --log-level info',
+      cwd: ROOT, interpreter: 'none',
+      env: { PYTHONUNBUFFERED: '1', CUDA_VISIBLE_DEVICES: '0', QWEN_PORT: '8004',
+        QWEN_MODEL_PATH: process.env.QWEN_MODEL_PATH || 'Qwen/Qwen2.5-7B-Instruct' },
       instances: 1, autorestart: true, watch: false, max_memory_restart: '16G',
       error_file: path.join(ROOT, 'logs/pm2/qwen-model-server-error.log'),
       out_file: path.join(ROOT, 'logs/pm2/qwen-model-server-out.log'),
+      merge_logs: true, restart_delay: 10000, max_restarts: 5, min_uptime: '30s', kill_timeout: 30000,
+    },
+    // LLAMA 3.1-8B MODEL SERVER (port 8005) — fast router/classifier
+    {
+      name: 'llama-model-server', script: 'python3',
+      args: '-m uvicorn engine.bridges.llama_model_server:create_app --factory --host 0.0.0.0 --port 8005 --log-level info',
+      cwd: ROOT, interpreter: 'none',
+      env: { PYTHONUNBUFFERED: '1', CUDA_VISIBLE_DEVICES: '0', LLAMA_PORT: '8005',
+        LLAMA_MODEL_PATH: process.env.LLAMA_MODEL_PATH || 'meta-llama/Llama-3.1-8B-Instruct' },
+      instances: 1, autorestart: true, watch: false, max_memory_restart: '8G',
+      error_file: path.join(ROOT, 'logs/pm2/llama-model-server-error.log'),
+      out_file: path.join(ROOT, 'logs/pm2/llama-model-server-out.log'),
       merge_logs: true, restart_delay: 10000, max_restarts: 5, min_uptime: '30s', kill_timeout: 30000,
     },
     // NEWS ENGINE — Removed: Python NewsEngine (engine/signals/news_engine.py) handles
@@ -113,7 +126,7 @@ module.exports = {
       cwd: ROOT, interpreter: 'none',
       env: { PYTHONUNBUFFERED: '1', LLM_BRIDGE_PORT: '8002',
         QWEN_MODEL_PATH: process.env.QWEN_MODEL_PATH || 'Qwen/Qwen2.5-Omni-7B',
-        AIRLLM_MODEL_PATH: process.env.AIRLLM_MODEL_PATH || 'meta-llama/Llama-3.1-70B',
+        AIRLLM_MODEL_PATH: process.env.AIRLLM_MODEL_PATH || 'meta-llama/Llama-3.1-8B-Instruct',
         XIAOMI_MIMO_API_KEY: process.env.XIAOMI_MIMO_API_KEY || '' },
       instances: 1, autorestart: true, watch: false, max_memory_restart: '8G',
       error_file: path.join(ROOT, 'logs/pm2/llm-bridge-error.log'),

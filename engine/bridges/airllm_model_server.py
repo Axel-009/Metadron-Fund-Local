@@ -68,7 +68,7 @@ class AirLLMModelManager:
     def __init__(self):
         self.model = None
         self.tokenizer = None
-        self.model_id: str = os.environ.get("AIRLLM_MODEL_PATH", "meta-llama/Llama-3.1-70B")
+        self.model_id: str = os.environ.get("AIRLLM_MODEL_PATH", "meta-llama/Llama-3.1-8B-Instruct")
         self.loaded: bool = False
         self.load_time_s: float = 0.0
         self.request_count: int = 0

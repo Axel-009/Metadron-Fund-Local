@@ -240,7 +240,7 @@ def main():
     """Run the Qwen model server as a PM2-managed service."""
     import uvicorn
 
-    port = int(os.environ.get("QWEN_PORT", "7860"))
+    port = int(os.environ.get("QWEN_PORT", "8004"))
     host = os.environ.get("QWEN_HOST", "0.0.0.0")
 
     def handle_signal(signum, frame):

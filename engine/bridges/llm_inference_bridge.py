@@ -7,7 +7,7 @@ that receives outputs from all other models and synthesizes, corrects,
 or navigates the final decision/output.
 
 Architecture:
-    [Air-LLM 70B]  ──────┐
+    [Llama 3.1-8B]  ─────┐  (Ollama, port 11434, fast router)
     [Qwen 2.5-7B]  ──────┤──► [Brain Power / Xiaomi Mimo] ──► Final Output
     [AI-Newton]    ──────┤       (synthesize / correct / navigate)
     [AlphaOptimizer]─────┤
@@ -124,10 +124,17 @@ class LLMInferenceBridge:
                           "narrative", "orchestration", "synthesis"],
         )
         self.backends["airllm"] = LLMBackend(
-            name="Air-LLM (Llama-3.1-70B)",
+            name="Llama 3.1-8B (Air-LLM)",
             backend_type="airllm",
-            model_id=os.environ.get("AIRLLM_MODEL_PATH", "meta-llama/Llama-3.1-70B"),
+            model_id=os.environ.get("AIRLLM_MODEL_PATH", "meta-llama/Llama-3.1-8B-Instruct"),
             capabilities=["text", "reasoning", "code", "analysis"],
+        )
+        # Ollama Llama 3.1-8B — fast router/classifier on port 11434
+        self.backends["llama"] = LLMBackend(
+            name="Llama 3.1-8B-Instruct",
+            backend_type="llama",
+            model_id=os.environ.get("LLAMA_MODEL_PATH", "meta-llama/Llama-3.1-8B-Instruct"),
+            capabilities=["text", "reasoning", "classification", "routing"],
         )
         self.backends["qwen"] = LLMBackend(
             name="Qwen 2.5-7B-Instruct",
@@ -269,6 +276,45 @@ class LLMInferenceBridge:
                     metrics["model_inference_counter"].labels(model_name="qwen_2_5_7b", status="error").inc()
 
             return {"text": "", "error": str(e), "backend": "qwen"}
+
+    async def _run_llama(self, prompt: str, max_tokens: int, temperature: float) -> dict:
+        """Run Llama 3.1-8B via local FastAPI server (port 8005).
+
+        Same architecture as Air-LLM (8003) and Qwen (8004) — dedicated PM2
+        service on the GEX44 intelligence layer.
+        """
+        llama_url = os.environ.get("LLAMA_URL", "http://localhost:8005")
+        start_time = time.time()
+        try:
+            import httpx
+            async with httpx.AsyncClient(timeout=60) as client:
+                response = await client.post(
+                    f"{llama_url}/generate",
+                    json={
+                        "prompt": prompt,
+                        "max_tokens": max_tokens,
+                        "temperature": temperature,
+                    },
+                )
+                if response.status_code == 200:
+                    data = response.json()
+                    latency = time.time() - start_time
+                    self.backends["llama"].request_count += 1
+                    return {
+                        "text": data.get("text", ""),
+                        "backend": "llama",
+                        "model": data.get("model", "llama3.1:8b"),
+                        "latency_ms": round(latency * 1000, 1),
+                        "tokens_generated": data.get("tokens_generated", 0),
+                    }
+                else:
+                    self.backends["llama"].error_count += 1
+                    return {"text": "", "error": f"Llama HTTP {response.status_code}", "backend": "llama"}
+        except Exception as e:
+            latency = time.time() - start_time
+            self.backends["llama"].error_count += 1
+            logger.debug(f"Llama inference error: {e}")
+            return {"text": "", "error": str(e), "backend": "llama"}
 
     async def _orchestrate_brain_power(
         self,

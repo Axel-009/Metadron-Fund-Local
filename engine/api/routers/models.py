@@ -30,9 +30,9 @@ MODEL_REGISTRY = [
         "is_orchestrator": True,
     },
     {
-        "name": "Air-LLM (Llama-3.1-70B)",
+        "name": "Air-LLM (Llama-3.1-8B)",
         "key": "air_llm",
-        "port": "8002 (in-process)",
+        "port": "8003",
         "module": "engine.bridges.airllm_model_server",
         "class_name": "AirLLMModelManager",
     },
