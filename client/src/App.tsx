@@ -40,6 +40,7 @@ import ChatTab from "@/pages/chat-tab";
 import GraphifyPage from "@/pages/graphify";
 import VaultPage from "@/pages/vault";
 import SecurityPage from "@/pages/security";
+import OpenJarvisPage from "@/pages/open-jarvis";
 
 // ═══════════ TAB GROUPS (7 categories) ═══════════
 export const TAB_GROUPS = [
@@ -70,6 +71,7 @@ export const TAB_GROUPS = [
     { path: "/chat", label: "CHAT" },
     { path: "/tech", label: "TECH" },
     { path: "/graphify", label: "GRAPHIFY" },
+    { path: "/jarvis", label: "OPEN JARVIS" },
   ]},
   { group: "ANALYSIS", tabs: [
     { path: "/strategy", label: "STRAT" },
@@ -480,6 +482,7 @@ function AppRouter() {
       <Route path="/graphify" component={GraphifyPage} />
       <Route path="/vault" component={VaultPage} />
       <Route path="/security" component={SecurityPage} />
+      <Route path="/jarvis" component={OpenJarvisPage} />
       <Route component={NotFound} />
     </Switch>
   );
