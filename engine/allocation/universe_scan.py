@@ -298,7 +298,7 @@ class FullUniverseScan:
         self._run_slates: list[AllocationSlate] = []
 
     async def run_universe(self, universe_name: str, run_number: int) -> tuple[ScanRunStatus, AllocationSlate]:
-        """Execute a single 150s universe scan."""
+        """Execute a single 150s universe scan with MiroMomentum agent sim."""
         run = ScanRunStatus(
             universe=universe_name,
             description=UNIVERSES.get(universe_name, ""),
@@ -311,12 +311,21 @@ class FullUniverseScan:
         signals: list[ScanSignal] = []
         start = time.time()
 
+        # Initialize MiroMomentumEngine for this run
+        miro_engine = None
+        try:
+            from engine.signals.social_prediction_engine import MiroMomentumEngine
+            miro_engine = MiroMomentumEngine(n_simulations=50, simulation_horizon=15)
+        except Exception:
+            pass
+
         # Emit scan start event
         signal_bus.emit({
             "type": "scan_start",
             "universe": universe_name,
             "run_number": run_number,
             "ticker_count": len(tickers),
+            "miro_momentum_active": miro_engine is not None,
             "timestamp": datetime.now(timezone.utc).isoformat(),
         })
 
@@ -333,18 +342,34 @@ class FullUniverseScan:
             )
 
             if i % max(1, len(tickers) // 15) == 0:
-                import random
                 instrument_types = [InstrumentType.EQUITY.value]
                 if universe_name == "ETF_FI":
                     instrument_types = [InstrumentType.ETF.value, InstrumentType.FIXED_INCOME.value]
 
+                # Use MiroMomentumEngine for real signals when available
+                sig_type = "HOLD"
+                confidence = 0.5
+                alpha_score = 0.0
+                regime_ctx = "RANGE"
+
+                if miro_engine is not None:
+                    try:
+                        miro_sig = miro_engine.get_signal(ticker)
+                        sig_type = miro_sig.miro_momentum_signal or "HOLD"
+                        confidence = round(miro_sig.consensus_strength, 2) if miro_sig.consensus_strength > 0 else 0.5
+                        alpha_score = round(miro_sig.momentum, 4)
+                        regime_map = {"trending": "BULL", "mean_reverting": "RANGE", "random_walk": "TRANSITION"}
+                        regime_ctx = regime_map.get(miro_sig.regime, "RANGE")
+                    except Exception:
+                        pass  # Fall through to defaults
+
                 signal = ScanSignal(
                     ticker=ticker,
-                    signal_type=random.choice(["BUY", "SELL", "RV_LONG", "HOLD"]),
-                    instrument_type=random.choice(instrument_types),
-                    confidence=round(random.uniform(0.3, 0.95), 2),
-                    alpha_score=round(random.uniform(-0.02, 0.08), 4),
-                    regime_context=random.choice(["BULL", "BEAR", "TRANSITION", "RANGE"]),
+                    signal_type=sig_type,
+                    instrument_type=instrument_types[0],
+                    confidence=confidence,
+                    alpha_score=alpha_score,
+                    regime_context=regime_ctx,
                     universe=universe_name,
                     timestamp=datetime.now(timezone.utc).isoformat(),
                 )

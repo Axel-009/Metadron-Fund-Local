@@ -184,9 +184,9 @@ except ImportError:
     PatternDiscoveryEngine = None
 
 try:
-    from .signals.social_prediction_engine import SocialPredictionEngine
+    from .signals.social_prediction_engine import MiroMomentumEngine
 except ImportError:
-    SocialPredictionEngine = None
+    MiroMomentumEngine = None
 
 try:
     from .signals.distressed_asset_engine import DistressedAssetEngine
@@ -547,7 +547,7 @@ class LiveLoopOrchestrator:
             ("stat_arb_engine", lambda: StatArbEngine() if StatArbEngine else None),
             ("fixed_income_engine", lambda: FixedIncomeEngine() if FixedIncomeEngine else None),
             ("pattern_discovery", lambda: PatternDiscoveryEngine() if PatternDiscoveryEngine else None),
-            ("social_prediction", lambda: SocialPredictionEngine() if SocialPredictionEngine else None),
+            ("miro_momentum", lambda: MiroMomentumEngine() if MiroMomentumEngine else None),
             ("distressed_assets", lambda: DistressedAssetEngine() if DistressedAssetEngine else None),
             ("cvr_engine", lambda: CVREngine() if CVREngine else None),
             ("event_driven", lambda: EventDrivenEngine() if EventDrivenEngine else None),
@@ -989,7 +989,7 @@ class LiveLoopOrchestrator:
             - AlphaOptimizer.optimize()
             - PatternDiscoveryEngine.discover() — symbolic regression patterns
             - Feed MLVoteEnsemble Tiers 6-10:
-                T6: SocialPredictionEngine → set_social_snapshot()
+                T6: MiroMomentumEngine → set_social_snapshot()
                 T7: DistressedAssetEngine → set_distress_signals()
                 T8: EventDrivenEngine → set_event_signals()
                 T9: CVREngine → set_cvr_signals()
@@ -1125,18 +1125,25 @@ class LiveLoopOrchestrator:
                 pr.data["pattern_discovery_error"] = str(exc)
                 logger.warning("PatternDiscovery error: %s", exc)
 
-        # Tier 6: Social Prediction Engine → ensemble.set_social_snapshot()
-        social = self._get("social_prediction")
-        if social and ensemble:
+        # Tier 6: MiroMomentumEngine → ensemble.set_social_snapshot()
+        miro = self._get("miro_momentum")
+        if miro and ensemble:
             try:
-                snapshots = social.analyze()
+                # Run agent sim on top alpha tickers
+                alpha_tickers = []
+                if self._last_alpha_output:
+                    alpha_tickers = [
+                        getattr(s, "ticker", "") for s in getattr(self._last_alpha_output, "signals", [])[:20]
+                        if getattr(s, "ticker", "")
+                    ]
+                snapshots = miro.analyze(tickers=alpha_tickers) if alpha_tickers else {}
                 if snapshots and hasattr(ensemble, "set_social_snapshot"):
                     ensemble.set_social_snapshot(snapshots)
-                    pr.data["social_snapshots"] = len(snapshots)
+                    pr.data["miro_momentum_signals"] = len(snapshots)
                     items += 1
             except Exception as exc:
-                pr.data["social_error"] = str(exc)
-                logger.warning("SocialPrediction error: %s", exc)
+                pr.data["miro_momentum_error"] = str(exc)
+                logger.warning("MiroMomentumEngine error: %s", exc)
 
         # Tier 7: Distressed Asset Engine → ensemble.set_distress_signals()
         distressed = self._get("distressed_assets")
