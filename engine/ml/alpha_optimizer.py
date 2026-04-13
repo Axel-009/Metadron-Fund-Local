@@ -1287,36 +1287,44 @@ class AlphaOptimizer:
         X_train_scaled = scaler.fit_transform(X_train)
         X_test_scaled = scaler.transform(X_test)
 
-        # Primary: XGBoost | Fallback: LinearRegression
-        model = None
-        model_name = "LinearRegression"
+        # Run BOTH models in parallel, blend predictions
+        lr_model = LinearRegression()
+        lr_model.fit(X_train_scaled, y_train)
+        lr_preds = pd.Series(lr_model.predict(X_test_scaled), index=X_test.index)
+
+        xgb_preds = None
         try:
-            model = XGBRegressor(
+            xgb_model = XGBRegressor(
                 n_estimators=100, max_depth=3, learning_rate=0.05,
                 subsample=0.8, colsample_bytree=0.8,
                 verbosity=0, random_state=42,
             )
-            model.fit(X_train_scaled, y_train)
-            model_name = "XGBoost"
+            xgb_model.fit(X_train_scaled, y_train)
+            xgb_preds = pd.Series(xgb_model.predict(X_test_scaled), index=X_test.index)
         except Exception:
-            model = LinearRegression()
-            model.fit(X_train_scaled, y_train)
-            model_name = "LinearRegression"
+            pass
 
-        alpha_preds = pd.Series(model.predict(X_test_scaled), index=X_test.index)
+        # Blend: 60% XGBoost + 40% LinearRegression (or 100% LR if XGB unavailable)
+        if xgb_preds is not None:
+            alpha_preds = 0.60 * xgb_preds + 0.40 * lr_preds
+            models_used = "XGBoost+LinearRegression"
+        else:
+            alpha_preds = lr_preds
+            models_used = "LinearRegression"
+
         output.alpha_predictions = alpha_preds
 
-        # Track feature importance
-        if hasattr(model, "feature_importances_"):
-            imp = dict(zip(X.columns, model.feature_importances_))
+        # Track feature importance from both models
+        if xgb_preds is not None and hasattr(xgb_model, "feature_importances_"):
+            imp = dict(zip(X.columns, xgb_model.feature_importances_))
             self.importance_tracker.record(imp)
-        elif hasattr(model, "coef_"):
-            imp = dict(zip(X.columns, np.abs(model.coef_)))
-            self.importance_tracker.record(imp)
+        if hasattr(lr_model, "coef_"):
+            lr_imp = dict(zip(X.columns, np.abs(lr_model.coef_)))
+            self.importance_tracker.record(lr_imp)
 
         logger.info(
-            "AlphaOptimizer: model=%s features=%d train=%d test=%d",
-            model_name, len(X.columns), len(X_train), len(X_test),
+            "AlphaOptimizer: models=%s features=%d train=%d test=%d",
+            models_used, len(X.columns), len(X_train), len(X_test),
         )
 
         # CAPM alpha extraction (Jensen's alpha per asset)
