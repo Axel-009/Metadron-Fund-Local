@@ -151,6 +151,17 @@ module.exports = {
       out_file: path.join(ROOT, 'logs/pm2/graphify-out.log'),
       merge_logs: true, kill_timeout: 300000,  // 5 min timeout for graph generation
     },
+    // OVERNIGHT BACKTEST — Walk-forward + QSTrader strategy comparison → LearningLoop + LLM review
+    {
+      name: 'overnight-backtest', script: 'python3', args: 'run_overnight_backtest.py',
+      cwd: ROOT, interpreter: 'none',
+      env: { PYTHONUNBUFFERED: '1', LLM_BRIDGE_URL: 'http://localhost:8002' },
+      cron_restart: '0 20 * * 1-5',   // Run at 8pm ET on weekdays
+      autorestart: false, watch: false, max_memory_restart: '4G',
+      error_file: path.join(ROOT, 'logs/pm2/overnight-backtest-error.log'),
+      out_file: path.join(ROOT, 'logs/pm2/overnight-backtest-out.log'),
+      merge_logs: true, kill_timeout: 600000,  // 10 min timeout
+    },
     // AUTORESEARCH — Overnight autonomous model training (karpathy framework)
     {
       name: 'autoresearch-overnight', script: 'python3',

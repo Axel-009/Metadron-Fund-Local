@@ -184,6 +184,16 @@ except ImportError:
     NewsEngine = None
 
 try:
+    from .ml.pattern_recognition import PatternRecognitionEngine
+except ImportError:
+    PatternRecognitionEngine = None
+
+try:
+    from .ml.bridges.stock_prediction_bridge import StockPredictionBridge
+except ImportError:
+    StockPredictionBridge = None
+
+try:
     from .signals.pattern_discovery_engine import PatternDiscoveryEngine
 except ImportError:
     PatternDiscoveryEngine = None
@@ -553,6 +563,8 @@ class LiveLoopOrchestrator:
             ("stat_arb_engine", lambda: StatArbEngine() if StatArbEngine else None),
             ("fixed_income_engine", lambda: FixedIncomeEngine() if FixedIncomeEngine else None),
             ("news_engine", lambda: NewsEngine() if NewsEngine else None),
+            ("pattern_recognition", lambda: PatternRecognitionEngine() if PatternRecognitionEngine else None),
+            ("stock_prediction", lambda: StockPredictionBridge() if StockPredictionBridge else None),
             ("pattern_discovery", lambda: PatternDiscoveryEngine() if PatternDiscoveryEngine else None),
             ("miro_momentum", lambda: MiroMomentumEngine() if MiroMomentumEngine else None),
             ("distressed_assets", lambda: DistressedAssetEngine() if DistressedAssetEngine else None),
@@ -1203,6 +1215,50 @@ class LiveLoopOrchestrator:
                 pr.data["pattern_discovery_error"] = str(exc)
                 logger.warning("PatternDiscovery error: %s", exc)
 
+        # Pattern Recognition — candlestick, chart patterns, anomalies
+        pat_rec = self._get("pattern_recognition")
+        if pat_rec and self._last_alpha_output:
+            try:
+                alpha_tickers = [
+                    getattr(s, "ticker", "") for s in getattr(self._last_alpha_output, "signals", [])[:20]
+                    if getattr(s, "ticker", "")
+                ]
+                if alpha_tickers and hasattr(pat_rec, "analyze"):
+                    pr_results = pat_rec.analyze(alpha_tickers)
+                    pr.data["pattern_recognition_signals"] = len(pr_results) if pr_results else 0
+                    items += 1
+                elif alpha_tickers and hasattr(pat_rec, "detect_patterns"):
+                    pr_results = pat_rec.detect_patterns(alpha_tickers)
+                    pr.data["pattern_recognition_signals"] = len(pr_results) if pr_results else 0
+                    items += 1
+            except Exception as exc:
+                pr.data["pattern_recognition_error"] = str(exc)
+                logger.warning("PatternRecognition error: %s", exc)
+
+        # Stock Prediction Bridge — neural net + ensemble predictions for Tier-1
+        stock_pred = self._get("stock_prediction")
+        if stock_pred and ensemble and self._last_alpha_output:
+            try:
+                alpha_tickers = [
+                    getattr(s, "ticker", "") for s in getattr(self._last_alpha_output, "signals", [])[:20]
+                    if getattr(s, "ticker", "")
+                ]
+                pred_signals = {}
+                for ticker in alpha_tickers:
+                    try:
+                        if hasattr(stock_pred, "predict"):
+                            pred = stock_pred.predict(ticker)
+                            if pred:
+                                pred_signals[ticker] = pred
+                    except Exception:
+                        pass
+                if pred_signals:
+                    pr.data["stock_predictions"] = len(pred_signals)
+                    items += 1
+            except Exception as exc:
+                pr.data["stock_prediction_error"] = str(exc)
+                logger.warning("StockPrediction error: %s", exc)
+
         # Tier 6: MiroMomentumEngine → ensemble.set_social_snapshot()
         miro = self._get("miro_momentum")
         if miro and ensemble:
@@ -1731,6 +1787,68 @@ class LiveLoopOrchestrator:
             except Exception as exc:
                 pr.errors.append(f"{trade.get('ticker', '?')}: {exc}")
                 logger.warning("Execution failed for %s: %s", trade.get("ticker"), exc)
+
+        # ── Direct L7 execution for high-conviction signal engines ──────
+        # News+MiroMomentum, EventDriven, and CVR can submit trades directly
+        # to L7 without going through DecisionMatrix, when conviction is high.
+        if exec_engine and hasattr(exec_engine, "l7_submit"):
+            # News+MiroMomentum direct trades (combined_score > 0.3 or < -0.3)
+            if self._last_news_miro_output:
+                for ticker, sig in self._last_news_miro_output.items():
+                    try:
+                        score = sig.get("combined_score", 0)
+                        if abs(score) >= 0.3:
+                            side = "BUY" if score > 0 else "SELL"
+                            conf = sig.get("miro_confidence", 0.5)
+                            qty = max(1, int(conf * 50))
+                            exec_engine.l7_submit(
+                                ticker=ticker, side=side, quantity=qty,
+                                signal_type="NEWS_MIRO_DIRECT",
+                                regime=regime,
+                            )
+                            executed += 1
+                            pr.data.setdefault("direct_news_miro", []).append(ticker)
+                    except Exception:
+                        pass
+
+            # EventDriven direct trades (high-confidence event positions)
+            events = self._get("event_driven")
+            if events and hasattr(events, "get_active_positions"):
+                try:
+                    positions = events.get_active_positions() if callable(getattr(events, "get_active_positions", None)) else []
+                    for pos in positions[:5]:
+                        ticker = getattr(pos, "ticker", "")
+                        conf = getattr(pos, "confidence", 0)
+                        if ticker and conf >= 0.7:
+                            signal_dir = getattr(pos, "signal", "HOLD")
+                            if signal_dir in ("LONG", "BUY"):
+                                exec_engine.l7_submit(ticker=ticker, side="BUY", quantity=max(1, int(conf * 30)), signal_type="EVENT_DIRECT", regime=regime)
+                                executed += 1
+                            elif signal_dir in ("SHORT", "SELL"):
+                                exec_engine.l7_submit(ticker=ticker, side="SELL", quantity=max(1, int(conf * 30)), signal_type="EVENT_DIRECT", regime=regime)
+                                executed += 1
+                            pr.data.setdefault("direct_event", []).append(ticker)
+                except Exception:
+                    pass
+
+            # CVR direct trades (strong buy/sell valuations)
+            cvr = self._get("cvr_engine")
+            if cvr and hasattr(cvr, "get_active_instruments"):
+                try:
+                    instruments = cvr.get_active_instruments() if callable(getattr(cvr, "get_active_instruments", None)) else []
+                    for inst in instruments[:3]:
+                        ticker = getattr(inst, "ticker", "")
+                        signal = getattr(inst, "signal", "HOLD")
+                        if ticker and signal in ("STRONG_BUY", "BUY"):
+                            exec_engine.l7_submit(ticker=ticker, side="BUY", quantity=10, signal_type="CVR_DIRECT", regime=regime)
+                            executed += 1
+                            pr.data.setdefault("direct_cvr", []).append(ticker)
+                        elif ticker and signal in ("SELL", "AVOID"):
+                            exec_engine.l7_submit(ticker=ticker, side="SELL", quantity=10, signal_type="CVR_DIRECT", regime=regime)
+                            executed += 1
+                            pr.data.setdefault("direct_cvr", []).append(ticker)
+                except Exception:
+                    pass
 
         # L7 heartbeat (every iteration)
         if exec_engine and hasattr(exec_engine, "l7_heartbeat"):

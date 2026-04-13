@@ -76,6 +76,9 @@ class ContinuousLearningLoop:
         except Exception as e:
             logger.info(f"GraphifyBridge unavailable: {e}")
 
+        self._last_pattern_recognition = {}
+        self._last_stock_predictions = {}
+
     def _is_market_hours(self): now = datetime.now(); return 9 <= now.hour < 16 and now.weekday() < 5
     def _is_overnight(self): now = datetime.now(); return now.hour >= 20 or now.hour < 6
 
@@ -86,6 +89,8 @@ class ContinuousLearningLoop:
             "regime": self._last_regime,
             "patterns": self._last_patterns,
             "agent_scores": self._last_agent_scores,
+            "pattern_recognition": self._last_pattern_recognition,
+            "stock_predictions": self._last_stock_predictions,
         }
 
     def _task_signal_feedback(self):
@@ -185,6 +190,70 @@ class ContinuousLearningLoop:
             else:
                 self._last_regime = {"status": "calibration_complete", "timestamp": datetime.now(timezone.utc).isoformat()}
         except Exception as e: logger.error(f"Regime calibration failed: {e}")
+
+    def _task_pattern_recognition(self):
+        """Run pattern recognition and feed results into ML context for LLM ensemble."""
+        logger.info("Running pattern recognition integration...")
+        try:
+            from engine.ml.pattern_recognition import PatternRecognitionEngine
+            pr = PatternRecognitionEngine()
+            # Analyze top tickers from recent signals
+            trade_log = DATA_PATH / "trades" / "recent.json"
+            tickers = ["SPY", "QQQ", "IWM", "NVDA", "AAPL"]
+            if trade_log.exists():
+                with open(trade_log) as f:
+                    trades = json.load(f)
+                    tickers = list(set(t.get("ticker", "") for t in trades[:20] if t.get("ticker")))[:10] or tickers
+            if hasattr(pr, "analyze"):
+                results = pr.analyze(tickers)
+                self._last_pattern_recognition = {"tickers_analyzed": len(tickers), "signals": len(results) if results else 0}
+            elif hasattr(pr, "detect_patterns"):
+                results = pr.detect_patterns(tickers)
+                self._last_pattern_recognition = {"tickers_analyzed": len(tickers), "signals": len(results) if results else 0}
+            logger.info(f"PatternRecognition: {len(tickers)} tickers analyzed")
+        except Exception as e:
+            logger.warning(f"Pattern recognition task failed: {e}")
+
+    def _task_stock_prediction(self):
+        """Run stock prediction models and feed results into ML context for LLM ensemble."""
+        logger.info("Running stock prediction integration...")
+        try:
+            from engine.ml.bridges.stock_prediction_bridge import StockPredictionBridge
+            bridge = StockPredictionBridge()
+            tickers = ["SPY", "QQQ", "NVDA", "AAPL", "MSFT"]
+            predictions = {}
+            for ticker in tickers:
+                try:
+                    pred = bridge.predict(ticker)
+                    if pred:
+                        predictions[ticker] = pred
+                except Exception:
+                    pass
+            self._last_stock_predictions = predictions
+            logger.info(f"StockPrediction: {len(predictions)} predictions generated")
+
+            # POST to ensemble for Brain Power review
+            if predictions:
+                try:
+                    import httpx
+                    bridge_url = os.environ.get("LLM_BRIDGE_URL", "http://localhost:8002")
+                    payload = {
+                        "prompt": (
+                            f"Stock prediction update: {len(predictions)} tickers. "
+                            "Review predictions and identify high-conviction opportunities:\n"
+                            + json.dumps(predictions, indent=2, default=str)
+                        ),
+                        "task_type": "stock_prediction_review",
+                        "max_tokens": 512,
+                        "ml_context": self._get_ml_context(),
+                    }
+                    r = httpx.post(f"{bridge_url}/ensemble", json=payload, timeout=60)
+                    if r.status_code == 200:
+                        logger.info("Stock prediction ensemble review completed")
+                except Exception as e:
+                    logger.warning(f"Stock prediction ensemble review unavailable: {e}")
+        except Exception as e:
+            logger.warning(f"Stock prediction task failed: {e}")
 
     def _task_autoresearch_check(self):
         """Check autoresearch experiment status and feed discoveries into ML context."""
@@ -325,15 +394,18 @@ class ContinuousLearningLoop:
             logger.info(f"Learning Cycle {self.cycle_count}")
             if self._is_market_hours():
                 self._task_signal_feedback(); self._task_agent_evolution()
+                self._task_pattern_recognition(); self._task_stock_prediction()
                 self._task_graphify_refresh(); sleep_time = 300
             elif self._is_overnight():
                 self._task_signal_feedback(); self._task_model_retrain(); self._task_agent_evolution()
                 self._task_pattern_integration(); self._task_regime_calibration()
+                self._task_pattern_recognition(); self._task_stock_prediction()
                 self._task_autoresearch_check(); self._task_graphify_refresh()
                 self._task_llm_market_review(); sleep_time = 600
             else:
                 self._task_signal_feedback(); self._task_agent_evolution()
-                self._task_pattern_integration(); self._task_autoresearch_check()
+                self._task_pattern_integration(); self._task_pattern_recognition()
+                self._task_stock_prediction(); self._task_autoresearch_check()
                 self._task_graphify_refresh(); sleep_time = 300
             self._save_state()
             if self.running:
