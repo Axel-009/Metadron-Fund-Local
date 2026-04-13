@@ -48,6 +48,7 @@ from engine.api.routers import (
     graphify,
     vault,
     security,
+    jarvis,
 )
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [API] %(message)s")
@@ -156,6 +157,7 @@ app.include_router(models.router, prefix="/api/models", tags=["Models"])
 app.include_router(graphify.router, prefix="/api/engine/graphify", tags=["Graphify"])
 app.include_router(vault.router, prefix="/api/engine/vault", tags=["Vault"])
 app.include_router(security.router, prefix="/api/engine/security", tags=["Security"])
+app.include_router(jarvis.router, prefix="/api/engine/jarvis", tags=["Jarvis"])
 if _allocation_available:
     app.include_router(allocation.router, prefix="/api/allocation", tags=["Allocation"])
 
