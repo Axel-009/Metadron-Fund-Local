@@ -177,6 +177,31 @@ def build_features(returns: pd.DataFrame, prices: pd.DataFrame) -> pd.DataFrame:
     # Volume of returns (cross-sectional dispersion over time)
     features["cross_disp_5d"] = returns.rolling(5, min_periods=1).std().std(axis=1)
 
+    # --- Architecture DNA features (credit_spread_proxy, rv_zscore, capm_residual) ---
+
+    # Credit spread proxy: HY-IG spread approximation from return dispersion
+    # High dispersion + negative mean → widening spreads (risk-off)
+    # Low dispersion + positive mean → tightening spreads (risk-on)
+    disp = returns.std(axis=1)
+    mean_r = returns.mean(axis=1)
+    features["credit_spread_proxy"] = disp - mean_r.abs()
+
+    # Realized volatility Z-score: current RV vs rolling mean/std
+    rv_20 = returns.rolling(20).std().mean(axis=1) * np.sqrt(252)
+    rv_mean = rv_20.rolling(60, min_periods=20).mean()
+    rv_std = rv_20.rolling(60, min_periods=20).std().replace(0, np.nan)
+    features["rv_zscore"] = (rv_20 - rv_mean) / rv_std
+
+    # CAPM residual: market-adjusted excess return (alpha residual)
+    # Uses equal-weighted portfolio return as market proxy
+    mkt_ret = returns.mean(axis=1)
+    mkt_excess = mkt_ret - mkt_ret.rolling(60, min_periods=20).mean()
+    beta_est = (
+        returns.rolling(60, min_periods=20).cov(mkt_ret).mean(axis=1)
+        / mkt_ret.rolling(60, min_periods=20).var().replace(0, np.nan)
+    )
+    features["capm_residual"] = mkt_ret - beta_est * mkt_excess
+
     features = features.replace([np.inf, -np.inf], np.nan).ffill().fillna(0)
     return features
 
@@ -1262,15 +1287,64 @@ class AlphaOptimizer:
         X_train_scaled = scaler.fit_transform(X_train)
         X_test_scaled = scaler.transform(X_test)
 
-        model = LinearRegression()
-        model.fit(X_train_scaled, y_train)
+        # Primary: XGBoost | Fallback: LinearRegression
+        model = None
+        model_name = "LinearRegression"
+        try:
+            model = XGBRegressor(
+                n_estimators=100, max_depth=3, learning_rate=0.05,
+                subsample=0.8, colsample_bytree=0.8,
+                verbosity=0, random_state=42,
+            )
+            model.fit(X_train_scaled, y_train)
+            model_name = "XGBoost"
+        except Exception:
+            model = LinearRegression()
+            model.fit(X_train_scaled, y_train)
+            model_name = "LinearRegression"
+
         alpha_preds = pd.Series(model.predict(X_test_scaled), index=X_test.index)
         output.alpha_predictions = alpha_preds
 
-        # Track feature importance from the linear model
-        if hasattr(model, "coef_"):
+        # Track feature importance
+        if hasattr(model, "feature_importances_"):
+            imp = dict(zip(X.columns, model.feature_importances_))
+            self.importance_tracker.record(imp)
+        elif hasattr(model, "coef_"):
             imp = dict(zip(X.columns, np.abs(model.coef_)))
             self.importance_tracker.record(imp)
+
+        logger.info(
+            "AlphaOptimizer: model=%s features=%d train=%d test=%d",
+            model_name, len(X.columns), len(X_train), len(X_test),
+        )
+
+        # CAPM alpha extraction (Jensen's alpha per asset)
+        capm_alphas = {}
+        try:
+            mkt_returns = returns.mean(axis=1)
+            for t in tickers:
+                t_ret = returns[t].loc[X_test.index[0]:]
+                mkt_r = mkt_returns.loc[X_test.index[0]:]
+                if len(t_ret) > 20 and len(mkt_r) > 20:
+                    alpha_ann, beta, _ = self.capm_extractor.compute_jensens_alpha(t_ret, mkt_r)
+                    capm_alphas[t] = alpha_ann
+        except Exception:
+            pass
+
+        # Quality ranking overlay
+        quality_scores = {}
+        try:
+            test_returns_df = returns.loc[X_test.index[0]:][tickers]
+            if len(test_returns_df) > 20:
+                quality_df = self.quality_ranker.rank_assets(test_returns_df)
+                if quality_df is not None and hasattr(quality_df, "iterrows"):
+                    for _, row in quality_df.iterrows():
+                        t = row.get("ticker", "")
+                        if t:
+                            quality_scores[t] = row.get("composite_score", 0.5)
+        except Exception:
+            pass
 
         # 4. EWMA covariance
         test_returns = returns.loc[X_test.index[0]:][tickers]
@@ -1278,8 +1352,14 @@ class AlphaOptimizer:
             return output
         latest_cov = ewma_cov(test_returns)
 
-        # 5. Expected returns with alpha headstart
-        expected_returns = test_returns[tickers].mean().values + alpha_preds.iloc[-1] + self.alpha_headstart
+        # 5. Expected returns with alpha headstart + CAPM alpha overlay
+        base_expected = test_returns[tickers].mean().values + alpha_preds.iloc[-1] + self.alpha_headstart
+        # Blend in CAPM alpha (20% weight) if available
+        if capm_alphas:
+            capm_overlay = np.array([capm_alphas.get(t, 0.0) / 252 for t in tickers])
+            expected_returns = base_expected + 0.20 * capm_overlay
+        else:
+            expected_returns = base_expected
         expected_returns = np.asarray(expected_returns, dtype=float)
 
         # 6. Optimize
@@ -1297,7 +1377,7 @@ class AlphaOptimizer:
         max_dd = float(dd.min())
         rebal_cost = float(np.sum(np.abs(optimal_weights - current_weights)) * self.transaction_cost)
 
-        # 8. Build signals
+        # 8. Build signals with CAPM + quality overlay
         signals = []
         for i, t in enumerate(tickers):
             t_ret = test_returns[t]
@@ -1306,10 +1386,17 @@ class AlphaOptimizer:
             t_vol = float(t_ret.std() * np.sqrt(252))
             t_sharpe = (float(t_ret.mean() * 252) / t_vol) if t_vol > 0 else 0.0
 
+            # Use quality score to upgrade/downgrade quality tier if available
+            q_score = quality_scores.get(t, None)
+            if q_score is not None and q_score > 0.7:
+                q_tier = classify_quality(max(t_sharpe, 1.5), max(mom_3m, 0.10))
+            else:
+                q_tier = classify_quality(t_sharpe, mom_3m)
+
             sig = AlphaSignal(
                 ticker=t,
                 alpha_pred=float(expected_returns[i]),
-                quality_tier=classify_quality(t_sharpe, mom_3m),
+                quality_tier=q_tier,
                 sharpe_estimate=t_sharpe,
                 momentum_3m=mom_3m,
                 momentum_1m=mom_1m,

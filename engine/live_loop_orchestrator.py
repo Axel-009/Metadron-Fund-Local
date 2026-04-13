@@ -1064,7 +1064,7 @@ class LiveLoopOrchestrator:
                 pr.data["scan_error"] = str(exc)
                 logger.warning("[LiveLoop] FullUniverseScan error: %s", exc)
 
-        # Alpha Optimizer
+        # Alpha Optimizer — enhanced pipeline (XGBoost + CAPM + Quality) with fallback
         alpha = self._get("alpha_optimizer")
         if alpha:
             try:
@@ -1074,12 +1074,28 @@ class LiveLoopOrchestrator:
                 if universe and hasattr(universe, "get_all"):
                     tickers = [s.ticker for s in universe.get_all()[:100]]
 
-                if tickers and hasattr(alpha, "optimize"):
-                    alpha_out = alpha.optimize(tickers)
-                    self._last_alpha_output = alpha_out
-                    pr.data["alpha_signals"] = len(getattr(alpha_out, "signals", []))
-                    pr.data["alpha_expected_return"] = getattr(alpha_out, "expected_return", 0.0)
-                    items += pr.data["alpha_signals"]
+                if tickers:
+                    # Try enhanced pipeline first (XGBoost, CAPM, QualityRanker, WalkForward)
+                    alpha_out = None
+                    if hasattr(alpha, "run_enhanced_pipeline"):
+                        try:
+                            alpha_out = alpha.run_enhanced_pipeline(tickers)
+                            pr.data["alpha_pipeline"] = "enhanced"
+                        except Exception as enh_exc:
+                            logger.info("Enhanced pipeline unavailable, falling back: %s", enh_exc)
+
+                    # Fallback to standard optimize (XGBoost primary + LinearRegression fallback)
+                    if alpha_out is None or not getattr(alpha_out, "signals", []):
+                        if hasattr(alpha, "optimize"):
+                            alpha_out = alpha.optimize(tickers)
+                            pr.data["alpha_pipeline"] = "standard"
+
+                    if alpha_out:
+                        self._last_alpha_output = alpha_out
+                        pr.data["alpha_signals"] = len(getattr(alpha_out, "signals", []))
+                        pr.data["alpha_expected_return"] = getattr(alpha_out, "expected_annual_return", 0.0)
+                        pr.data["alpha_sharpe"] = getattr(alpha_out, "sharpe_ratio", 0.0)
+                        items += pr.data["alpha_signals"]
                 elif tickers and hasattr(alpha, "run"):
                     alpha_out = alpha.run(tickers)
                     self._last_alpha_output = alpha_out
