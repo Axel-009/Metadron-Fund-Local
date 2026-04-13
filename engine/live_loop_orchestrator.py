@@ -2343,6 +2343,39 @@ class LiveLoopOrchestrator:
             except Exception as exc:
                 pr.data["broker_recon_error"] = str(exc)
 
+        # ── Profit-taking: 20% aggregate P&L → liquidate overlays ──
+        alloc = self._get("allocation_engine")
+        if alloc and hasattr(alloc, "check_profit_take") and nav > 0:
+            try:
+                profit_check = alloc.check_profit_take(nav, self._initial_nav)
+                if profit_check.get("triggered"):
+                    pr.data["profit_take_triggered"] = True
+                    pr.data["profit_take_pnl_pct"] = profit_check["pnl_pct"]
+                    pr.data["profit_take_overlays"] = profit_check["liquidate_overlays"]
+                    # Queue overlay liquidation trades
+                    exec_engine = self._get("execution_engine")
+                    if exec_engine and hasattr(exec_engine, "l7_submit"):
+                        regime = "TRENDING"
+                        if self._last_macro_snapshot and hasattr(self._last_macro_snapshot, "regime"):
+                            regime = str(getattr(self._last_macro_snapshot, "regime", "TRENDING"))
+                        for bucket in profit_check.get("liquidate_overlays", []):
+                            # Submit close-all for each overlay bucket
+                            exec_engine.l7_submit(
+                                ticker="ALL", side="SELL", quantity=0,
+                                signal_type="PROFIT_TAKE_LIQUIDATE",
+                                regime=regime,
+                                product_type=bucket,
+                            )
+                        logger.critical(
+                            "[LiveLoop] PROFIT TAKE: P&L %.1f%% — overlay liquidation queued, "
+                            "next scan cycle will re-enter fresh positions",
+                            profit_check["pnl_pct"] * 100,
+                        )
+                else:
+                    pr.data["profit_take_pnl_pct"] = profit_check.get("pnl_pct", 0)
+            except Exception as exc:
+                pr.data["profit_take_error"] = str(exc)
+
         # ── Security: token meter status for monitoring ──
         meter = self._get("token_meter")
         if meter:

@@ -125,6 +125,9 @@ class AllocationRules:
     drip_rule: bool = True                  # Reinvest TLTW distributions
     alpha_primary_goal: bool = True
     cube_kill_switch_override: bool = True  # Honor MetadronCube kill-switch
+    # ── Profit-taking rule ────────────────────────────────────────
+    profit_take_threshold: float = 0.20     # 20% aggregate P&L → liquidate overlays, lock gains
+    profit_take_overlays_only: bool = True  # Only liquidate options + futures (not equity core)
     timestamp: str = ""
 
     def __post_init__(self):
@@ -886,6 +889,70 @@ class AllocationEngine:
                 )
                 liquidate.append(ticker)
         return liquidate
+
+    # ── Profit-taking: 20% aggregate P&L → liquidate overlays ────
+
+    def check_profit_take(self, nav: float, initial_nav: float) -> dict:
+        """Check if aggregate portfolio P&L has crossed profit-take threshold.
+
+        When portfolio gains exceed 20% (configurable), liquidate ALL overlay
+        positions (options + futures) immediately to realize gains. Equity
+        core positions are retained. The next scan cycle re-enters fresh.
+
+        This is NOT momentum-specific — it's capital preservation. Lock in
+        gains before mean reversion erodes them, then re-deploy on the
+        next universe scan with fresh signals.
+
+        Parameters
+        ----------
+        nav : float
+            Current portfolio NAV
+        initial_nav : float
+            Starting NAV (beginning of day or initial capital)
+
+        Returns
+        -------
+        dict with:
+            triggered: bool — True if profit-take threshold crossed
+            pnl_pct: float — current aggregate P&L %
+            liquidate_overlays: list — tickers/contracts to liquidate
+            action: str — "PROFIT_TAKE" or "HOLD"
+        """
+        if initial_nav <= 0:
+            return {"triggered": False, "pnl_pct": 0, "liquidate_overlays": [], "action": "HOLD"}
+
+        pnl_pct = (nav - initial_nav) / initial_nav
+        threshold = self.rules.profit_take_threshold
+
+        if pnl_pct < threshold:
+            return {"triggered": False, "pnl_pct": round(pnl_pct, 4), "liquidate_overlays": [], "action": "HOLD"}
+
+        # Threshold crossed — identify overlay positions for liquidation
+        overlay_buckets = {
+            BucketType.OPTIONS_IG, BucketType.OPTIONS_HY,
+            BucketType.OPTIONS_DISTRESSED, BucketType.FUTURES_BETA,
+        }
+
+        # If configured to liquidate overlays only, return overlay buckets
+        # If not, return all positions (full liquidation)
+        if self.rules.profit_take_overlays_only:
+            liquidate = list(overlay_buckets)
+        else:
+            liquidate = list(BucketType)
+
+        logger.critical(
+            "[AllocationEngine] PROFIT TAKE TRIGGERED: P&L %.1f%% >= threshold %.0f%% "
+            "— liquidating overlays (%d buckets). Gains locked. Next scan re-enters fresh.",
+            pnl_pct * 100, threshold * 100, len(liquidate),
+        )
+
+        return {
+            "triggered": True,
+            "pnl_pct": round(pnl_pct, 4),
+            "threshold": threshold,
+            "liquidate_overlays": [b.value for b in liquidate] if isinstance(next(iter(liquidate), None), BucketType) else liquidate,
+            "action": "PROFIT_TAKE",
+        }
 
     def classify_opportunity(self, sig: "ScanSignal") -> str:
         """Classify a ScanSignal into its allocation bucket.
