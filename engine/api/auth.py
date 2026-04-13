@@ -178,6 +178,22 @@ class AuthMiddleware(BaseHTTPMiddleware):
         if _is_exempt(path, method):
             return await call_next(request)
 
+        # Perimeter circuit breaker — lockdown blocks external requests
+        try:
+            from engine.security.integrity import get_security
+            sec = get_security()
+            if sec and sec.circuit_breaker.is_locked:
+                if path not in EXEMPT_PATHS:
+                    return JSONResponse(
+                        status_code=503,
+                        content={"detail": "System in lockdown mode — try again later"},
+                    )
+            # Record request for rate detection
+            if sec:
+                sec.circuit_breaker.record_request()
+        except Exception:
+            pass
+
         # Allow internal proxy token (frontend → backend same-host traffic)
         if _check_internal_token(request):
             request.state.api_key_id = 0

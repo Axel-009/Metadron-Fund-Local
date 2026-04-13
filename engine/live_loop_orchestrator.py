@@ -234,6 +234,14 @@ except ImportError:
     ResearchBotManager = None
 
 try:
+    from .security.integrity import get_security, SecurityManager
+    from .security.token_meter import get_meter
+except ImportError:
+    get_security = None
+    SecurityManager = None
+    get_meter = None
+
+try:
     from intelligence_platform.plugins.gsd_paul_plugin import GSDPlugin, PaulPlugin
 except ImportError:
     try:
@@ -574,6 +582,9 @@ class LiveLoopOrchestrator:
             ("graphify", lambda: GraphifyBridge() if GraphifyBridge else None),
             ("autoresearch", lambda: AutoresearchBridge() if AutoresearchBridge else None),
             ("research_bots", lambda: ResearchBotManager() if ResearchBotManager else None),
+            # Security subsystems
+            ("security", lambda: get_security() if get_security else None),
+            ("token_meter", lambda: get_meter() if get_meter else None),
         ]
 
         for name, factory in component_factories:
@@ -2778,11 +2789,49 @@ class LiveLoopOrchestrator:
         phase_fn: Callable[[], PhaseResult],
         heartbeat_result: HeartbeatResult,
     ):
-        """Execute a phase with error handling, timing, and recording."""
+        """Execute a phase with error handling, timing, security chain signing, and recording."""
         self._current_phase = phase.value
+
+        # ── Security: verify phase chain before execution ──
+        security = self._get("security")
+        if security and hasattr(security, "phase_chain"):
+            if not security.phase_chain.verify_chain(phase.value):
+                logger.critical("PHASE CHAIN BROKEN — blocking %s (exits still active)", phase.value)
+                heartbeat_result.errors.append(f"{phase.value}: PHASE_CHAIN_BROKEN")
+                heartbeat_result.phases[phase.value] = PhaseResult(
+                    phase=phase.value, success=False, error="Phase chain integrity failure",
+                    timestamp=datetime.now().isoformat(),
+                )
+                self._current_phase = ""
+                return
+
+            # Check if system is healthy for trade-entry phases
+            if phase in (LoopPhase.DECISION, LoopPhase.EXECUTION):
+                if not security.is_system_healthy():
+                    logger.warning("Security unhealthy — blocking %s (exits active)", phase.value)
+                    heartbeat_result.errors.append(f"{phase.value}: SECURITY_UNHEALTHY")
+                    self._current_phase = ""
+                    return
+
         try:
             pr = phase_fn()
             heartbeat_result.phases[phase.value] = pr
+
+            # ── Security: sign phase output for chain ──
+            if security and hasattr(security, "phase_chain"):
+                security.phase_chain.sign_phase(phase.value, pr.data if pr else {})
+
+            # ── Security: record to transaction ledger (for trade phases) ──
+            if security and phase in (LoopPhase.DECISION, LoopPhase.EXECUTION):
+                security.ledger.record(
+                    event_type=f"phase_{phase.value.lower()}",
+                    data={"items": pr.items_processed, "duration_ms": pr.duration_ms,
+                          "success": pr.success, "data_keys": list(pr.data.keys()) if pr.data else []},
+                )
+
+            # ── Security: record heartbeat for this service ──
+            if security and hasattr(security, "heartbeat"):
+                security.heartbeat.record_heartbeat("live-loop")
 
             # Accumulate into heartbeat totals
             if phase == LoopPhase.SIGNALS:
