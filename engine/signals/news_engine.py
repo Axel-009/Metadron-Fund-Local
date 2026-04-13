@@ -83,7 +83,7 @@ class NewsFilterBridge:
     (Reuters, Bloomberg, WSJ, SEC, Seeking Alpha, etc.).
     Articles arrive pre-mapped to company tickers.
 
-    Source: /News engine/ folder (npm package: realtime-newsapi)
+    Source: /news-engine/ folder (npm package: realtime-newsapi)
     """
 
     NEWSFILTER_URL = "https://api.newsfilter.io"
