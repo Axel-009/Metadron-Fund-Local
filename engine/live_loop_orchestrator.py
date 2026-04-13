@@ -179,6 +179,11 @@ except ImportError:
     FixedIncomeEngine = None
 
 try:
+    from .signals.news_engine import NewsEngine
+except ImportError:
+    NewsEngine = None
+
+try:
     from .signals.pattern_discovery_engine import PatternDiscoveryEngine
 except ImportError:
     PatternDiscoveryEngine = None
@@ -489,6 +494,7 @@ class LiveLoopOrchestrator:
         self._last_scan_slate: Any = None          # latest AllocationSlate from FullUniverseScan
         self._last_contagion_output: Any = None    # ContagionEngine scenarios
         self._last_fi_output: Any = None           # FixedIncomeEngine summary
+        self._last_news_miro_output: Any = None    # News+MiroMomentum enriched signals
         self._scan_task: Any = None                # background asyncio task for run_full_cycle
 
         # Initialize components
@@ -546,6 +552,7 @@ class LiveLoopOrchestrator:
             ("contagion_engine", lambda: ContagionEngine() if ContagionEngine else None),
             ("stat_arb_engine", lambda: StatArbEngine() if StatArbEngine else None),
             ("fixed_income_engine", lambda: FixedIncomeEngine() if FixedIncomeEngine else None),
+            ("news_engine", lambda: NewsEngine() if NewsEngine else None),
             ("pattern_discovery", lambda: PatternDiscoveryEngine() if PatternDiscoveryEngine else None),
             ("miro_momentum", lambda: MiroMomentumEngine() if MiroMomentumEngine else None),
             ("distressed_assets", lambda: DistressedAssetEngine() if DistressedAssetEngine else None),
@@ -826,6 +833,7 @@ class LiveLoopOrchestrator:
             - ContagionEngine.run_all_scenarios()
             - StatArbEngine.scan_pairs()
             - FixedIncomeEngine.get_summary()
+            - NewsEngine.run_miro_on_news_tickers() → EventDriven + CVR
         """
         pr = PhaseResult(phase=LoopPhase.SIGNALS.value, timestamp=datetime.now().isoformat())
         t0 = time.monotonic()
@@ -966,6 +974,41 @@ class LiveLoopOrchestrator:
             except Exception as exc:
                 pr.data["fixed_income_error"] = str(exc)
                 logger.warning("FixedIncomeEngine error: %s", exc)
+
+        # News + MiroMomentum branch — runs separately, feeds EventDriven + CVR directly
+        news = self._get("news_engine")
+        if news:
+            try:
+                # Run MiroMomentum on news-flagged tickers
+                enriched = news.run_miro_on_news_tickers()
+                if enriched:
+                    pr.data["news_miro_tickers"] = len(enriched)
+                    pr.data["news_miro_buys"] = sum(1 for v in enriched.values() if v["signal"] == "BUY")
+                    pr.data["news_miro_sells"] = sum(1 for v in enriched.values() if v["signal"] == "SELL")
+                    self._last_news_miro_output = enriched
+
+                    # Feed directly to EventDrivenEngine
+                    events = self._get("event_driven")
+                    if events and hasattr(events, "_news_engine"):
+                        events._news_engine = news  # Share warmed singleton
+                        events._news_miro_signals = enriched
+                        pr.data["news_to_event_driven"] = True
+
+                    # Feed directly to CVREngine
+                    cvr = self._get("cvr_engine")
+                    if cvr and hasattr(cvr, "_news_engine"):
+                        cvr._news_engine = news  # Share warmed singleton
+                        cvr._news_miro_signals = enriched
+                        pr.data["news_to_cvr"] = True
+
+                    signals_count += 1
+                else:
+                    # Still refresh the feed even if no tickers flagged
+                    news.refresh()
+                    pr.data["news_feed_refreshed"] = True
+            except Exception as exc:
+                pr.data["news_miro_error"] = str(exc)
+                logger.warning("News+MiroMomentum error: %s", exc)
 
         # Store signals for change detection
         new_signals = {

@@ -71,3 +71,4 @@ markdown>=3.6
 weasyprint>=62.0
 graphifyy>=0.3.0
 sse-starlette>=1.6.5
+python-socketio[client]>=5.11.0

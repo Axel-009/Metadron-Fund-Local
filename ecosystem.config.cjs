@@ -64,16 +64,9 @@ module.exports = {
       out_file: path.join(ROOT, 'logs/pm2/qwen-model-server-out.log'),
       merge_logs: true, restart_delay: 10000, max_restarts: 5, min_uptime: '30s', kill_timeout: 30000,
     },
-    // NEWS ENGINE (port 5002)
-    {
-      name: 'news-engine', script: 'index.js',
-      cwd: path.join(ROOT, 'News engine'), interpreter: 'node',
-      env: { NODE_ENV: 'development', PORT: '5002' }, env_production: { NODE_ENV: 'production', PORT: '5002' },
-      instances: 1, autorestart: true, watch: false, max_memory_restart: '512M',
-      error_file: path.join(ROOT, 'logs/pm2/news-engine-error.log'),
-      out_file: path.join(ROOT, 'logs/pm2/news-engine-out.log'),
-      merge_logs: true, restart_delay: 5000, max_restarts: 10,
-    },
+    // NEWS ENGINE — Removed: Python NewsEngine (engine/signals/news_engine.py) handles
+    // newsfilter.io WebSocket + FMP fallback in-process. Node.js index.js is redundant.
+    // News feeds into live loop Phase 2 → MiroMomentum → EventDriven + CVR directly.
     // LIVE TRADING LOOP
     {
       name: 'live-loop', script: 'python3',

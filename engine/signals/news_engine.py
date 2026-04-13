@@ -485,6 +485,84 @@ class NewsEngine:
             for i in items[:limit]
         ]
 
+    # ── MiroMomentum news-triggered simulation ─────────────────
+
+    def run_miro_on_news_tickers(self) -> dict:
+        """Run MiroMomentumEngine on tickers flagged by recent news.
+
+        Extracts unique tickers from the live feed, runs agent-based
+        market simulation on each, and returns enriched signals that
+        combine news sentiment with MiroMomentum direction/confidence.
+
+        Returns dict mapping ticker → {news_sentiment, miro_signal, combined_score}.
+        This flows directly into EventDrivenEngine and CVREngine.
+        """
+        self.refresh()
+
+        # Collect unique tickers from recent news
+        news_tickers = set()
+        ticker_sentiment = {}
+        for item in list(self._feed)[:50]:
+            for t in item.tickers:
+                news_tickers.add(t)
+                # Track aggregate sentiment per ticker
+                if t not in ticker_sentiment:
+                    ticker_sentiment[t] = {"scores": [], "headlines": 0}
+                ticker_sentiment[t]["scores"].append(item.sentiment_score)
+                ticker_sentiment[t]["headlines"] += 1
+
+        if not news_tickers:
+            return {}
+
+        # Run MiroMomentumEngine on news-flagged tickers
+        miro_signals = {}
+        try:
+            from engine.signals.social_prediction_engine import MiroMomentumEngine
+            miro = MiroMomentumEngine(n_simulations=50, simulation_horizon=15)
+            miro_results = miro.analyze(tickers=list(news_tickers))
+            miro_signals = miro_results
+        except Exception as e:
+            logger.warning("MiroMomentum news branch unavailable: %s", e)
+
+        # Combine news sentiment + MiroMomentum into enriched signals
+        enriched = {}
+        for ticker in news_tickers:
+            sent = ticker_sentiment.get(ticker, {})
+            scores = sent.get("scores", [])
+            avg_sentiment = sum(scores) / len(scores) if scores else 0.0
+
+            miro_sig = miro_signals.get(ticker)
+            miro_direction = "HOLD"
+            miro_confidence = 0.5
+            miro_momentum = 0.0
+            if miro_sig:
+                miro_direction = miro_sig.miro_momentum_signal
+                miro_confidence = miro_sig.consensus_strength
+                miro_momentum = miro_sig.momentum
+
+            # Combined score: 40% news sentiment + 60% MiroMomentum
+            combined = 0.40 * avg_sentiment + 0.60 * (miro_momentum * 10)  # scale momentum
+
+            enriched[ticker] = {
+                "ticker": ticker,
+                "news_sentiment": round(avg_sentiment, 3),
+                "news_headlines": sent.get("headlines", 0),
+                "miro_direction": miro_direction,
+                "miro_confidence": round(miro_confidence, 3),
+                "miro_momentum": round(miro_momentum, 4),
+                "combined_score": round(combined, 3),
+                "signal": "BUY" if combined > 0.1 else ("SELL" if combined < -0.1 else "HOLD"),
+            }
+
+        logger.info(
+            "News+MiroMomentum: %d tickers analyzed, %d BUY, %d SELL, %d HOLD",
+            len(enriched),
+            sum(1 for v in enriched.values() if v["signal"] == "BUY"),
+            sum(1 for v in enriched.values() if v["signal"] == "SELL"),
+            sum(1 for v in enriched.values() if v["signal"] == "HOLD"),
+        )
+        return enriched
+
     def get_sentiment_summary(self) -> dict:
         """Aggregate sentiment across all recent news."""
         if not self._feed:
