@@ -77,6 +77,17 @@ module.exports = {
       out_file: path.join(ROOT, 'logs/pm2/llama-model-server-out.log'),
       merge_logs: true, restart_delay: 10000, max_restarts: 5, min_uptime: '30s', kill_timeout: 30000,
     },
+    // OPEN JARVIS SERVICE — Voice + Text assistant backed by Llama 3.1-8B (port 8006)
+    {
+      name: 'jarvis-service', script: 'python3',
+      args: '-m uvicorn engine.bridges.jarvis_bridge:create_app --factory --host 0.0.0.0 --port 8006 --log-level info',
+      cwd: ROOT, interpreter: 'none',
+      env: { PYTHONUNBUFFERED: '1', JARVIS_PORT: '8006', LLAMA_PORT: '8005', ENGINE_API_PORT: '8001' },
+      instances: 1, autorestart: true, watch: false, max_memory_restart: '4G',
+      error_file: path.join(ROOT, 'logs/pm2/jarvis-service-error.log'),
+      out_file: path.join(ROOT, 'logs/pm2/jarvis-service-out.log'),
+      merge_logs: true, restart_delay: 5000, max_restarts: 10, min_uptime: '10s',
+    },
     // NEWS ENGINE — Removed: Python NewsEngine (engine/signals/news_engine.py) handles
     // newsfilter.io WebSocket + FMP fallback in-process. Node.js index.js is redundant.
     // News feeds into live loop Phase 2 → MiroMomentum → EventDriven + CVR directly.
