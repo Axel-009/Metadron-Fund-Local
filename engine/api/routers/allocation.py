@@ -354,10 +354,11 @@ def _fallback_slate() -> dict:
     return {
         "positions": [],
         "bucket_utilization": {
-            "ig_equity": 0.0, "hy_distressed": 0.0,
-            "div_cashflow_etf": 0.0, "fi_macro": 0.0,
-            "event_driven_cvr": 0.0, "options_notional": 0.0,
-            "margin_real_capital": 0.0, "money_market": 0.0,
+            "ig_equity": 0.0, "hy_equity": 0.0,
+            "distressed_equity": 0.0, "tltw_cashflow": 0.0,
+            "fi_macro": 0.0, "event_driven_cvr": 0.0,
+            "options_notional": 0.0,
+            "margin": 0.0, "money_market": 0.0,
         },
         "kill_switch_triggered": False,
         "beta_corridor": "NEUTRAL",

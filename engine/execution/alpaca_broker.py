@@ -87,8 +87,25 @@ _ALPACA_SIDE_MAP = {}
 # Metadron OrderType → Alpaca OrderType
 _TYPE_TO_ALPACA = {}
 
-# Alpaca order status → Metadron OrderStatus
-_ALPACA_STATUS_MAP = {}
+# Alpaca order status string → Metadron OrderStatus (no SDK dependency)
+_ALPACA_STATUS_MAP = {
+    "new": OrderStatus.PENDING,
+    "partially_filled": OrderStatus.PENDING,
+    "filled": OrderStatus.FILLED,
+    "done_for_day": OrderStatus.CANCELLED,
+    "canceled": OrderStatus.CANCELLED,
+    "expired": OrderStatus.CANCELLED,
+    "replaced": OrderStatus.PENDING,
+    "pending_cancel": OrderStatus.PENDING,
+    "pending_replace": OrderStatus.PENDING,
+    "accepted": OrderStatus.PENDING,
+    "pending_new": OrderStatus.PENDING,
+    "accepted_for_bidding": OrderStatus.PENDING,
+    "stopped": OrderStatus.CANCELLED,
+    "rejected": OrderStatus.REJECTED,
+    "suspended": OrderStatus.CANCELLED,
+    "calculated": OrderStatus.PENDING,
+}
 
 if _ALPACA_AVAILABLE:
     _SIDE_TO_ALPACA = {
@@ -104,24 +121,6 @@ if _ALPACA_AVAILABLE:
     _TYPE_TO_ALPACA = {
         OrderType.MARKET: AlpacaOrderType.MARKET,
         OrderType.LIMIT: AlpacaOrderType.LIMIT,
-    }
-    _ALPACA_STATUS_MAP = {
-        "new": OrderStatus.PENDING,
-        "partially_filled": OrderStatus.PENDING,
-        "filled": OrderStatus.FILLED,
-        "done_for_day": OrderStatus.CANCELLED,
-        "canceled": OrderStatus.CANCELLED,
-        "expired": OrderStatus.CANCELLED,
-        "replaced": OrderStatus.PENDING,
-        "pending_cancel": OrderStatus.PENDING,
-        "pending_replace": OrderStatus.PENDING,
-        "accepted": OrderStatus.PENDING,
-        "pending_new": OrderStatus.PENDING,
-        "accepted_for_bidding": OrderStatus.PENDING,
-        "stopped": OrderStatus.CANCELLED,
-        "rejected": OrderStatus.REJECTED,
-        "suspended": OrderStatus.CANCELLED,
-        "calculated": OrderStatus.PENDING,
     }
 
 
