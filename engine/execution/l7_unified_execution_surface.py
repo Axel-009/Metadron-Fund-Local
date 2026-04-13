@@ -1243,6 +1243,57 @@ class L7UnifiedExecutionSurface:
         └── SlippageModel (pre-trade cost estimation)
     """
 
+    # ── Thinking Tab output format reference (structure only, not values) ──
+    # This defines the gold standard format for how scan results appear in the
+    # Thinking Tab before trades are posted to the broker. The L7 surface and
+    # FullUniverseScan emit events matching this structure. After all 4 runs
+    # complete and trades finalize, the Thinking Tab resets for the next cycle.
+    # Transactions are then logged in the Transaction Log with execution time.
+    THINKING_FORMAT = {
+        "run_scorecard": {
+            "_description": "One per universe run (SP500, SP400, SP600, ETF_FI)",
+            "run": int,
+            "universe": str,
+            "scanned": int,
+            "buy": int,
+            "sell": int,
+            "avg_alpha": float,
+            "regime": str,
+            "deployed": float,
+            "positions": int,
+        },
+        "position_entry": {
+            "_description": "One per position within a bucket, ranked by alpha",
+            "rank": int,
+            "ticker": str,
+            "shares": int,
+            "price": float,
+            "dollar": float,
+            "pct_nav": float,
+            "alpha": float,
+            "sharpe": float,
+            "regime": str,
+        },
+        "bucket_subtotal": {
+            "_description": "Per bucket per run — shows deployed vs target",
+            "bucket": str,
+            "target_usd": float,
+            "deployed_usd": float,
+            "utilization_pct": float,
+        },
+        "derivatives_overlay": {
+            "_description": "After all 4 runs — options + futures from margin budget",
+            "options": [{"ticker": str, "type": str, "notional": float}],
+            "futures": [{"contract": str, "direction": str, "lots": int, "notional": float, "margin": float}],
+        },
+        "bucket_utilization_summary": {
+            "_description": "Final summary after all runs — target vs deployed vs util%",
+            "buckets": [{"bucket": str, "target": float, "deployed": float, "util_pct": float}],
+            "total_deployed": float,
+            "total_pct_nav": float,
+        },
+    }
+
     def __init__(
         self,
         initial_cash: float = 1_000.0,
