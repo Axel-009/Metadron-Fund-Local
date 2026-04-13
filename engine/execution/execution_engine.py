@@ -2092,8 +2092,8 @@ class ExecutionEngine:
             category = credit.get("category", "")
             egan = credit.get("egan_tier", "")
 
-            # Distressed (F tier or HY_DISTRESSED)
-            if egan in ("E", "F") or category == "HY_DISTRESSED":
+            # Distressed (F tier or DISTRESSED_EQUITY)
+            if egan in ("E", "F") or category == "DISTRESSED_EQUITY":
                 return distressed_budget
             # HY equity
             if category == "HY" or egan in ("C", "D"):

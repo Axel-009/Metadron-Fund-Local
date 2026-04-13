@@ -1,18 +1,17 @@
 """
 Metadron Capital — Qwen 2.5-7B Standalone Model Server
 
-Provides a dedicated FastAPI service for Qwen 2.5-7B-Instruct inference on port 7860.
+Provides a dedicated FastAPI service for Qwen 2.5-7B-Instruct inference on port 8004.
 Uses standard HuggingFace transformers (AutoModelForCausalLM + AutoTokenizer).
 
-Runs on cuda:1 (second 4090) — Air-LLM uses cuda:0.
+Runs on cuda:0 (GEX44 single GPU).
 
 The LLM Inference Bridge imports QwenModelManager in-process for
-parallel ensemble execution. This standalone server is also available
-for PM2 backward compatibility on port 7860.
+parallel ensemble execution.
 
 Usage:
     python3 -m uvicorn engine.bridges.qwen_model_server:create_app \
-        --factory --host 0.0.0.0 --port 7860 --log-level info
+        --factory --host 0.0.0.0 --port 8004 --log-level info
 """
 
 import os

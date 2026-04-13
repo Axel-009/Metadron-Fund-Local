@@ -39,7 +39,7 @@ MODEL_REGISTRY = [
     {
         "name": "Qwen 2.5-7B",
         "key": "qwen_2_5_7b",
-        "port": "7860",
+        "port": "8004",
         "module": "engine.bridges.qwen_model_server",
         "class_name": "QwenModelManager",
     },

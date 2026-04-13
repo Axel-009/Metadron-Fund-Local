@@ -93,12 +93,14 @@ def _get_scanner():
 
 class RulesUpdateRequest(BaseModel):
     max_drawdown_kill_switch: Optional[float] = None
-    single_name_ig_pct: Optional[float] = None
-    single_name_hy_distressed_pct: Optional[float] = None
-    div_cashflow_etf_pct: Optional[float] = None
+    ig_equity_pct: Optional[float] = None
+    hy_equity_pct: Optional[float] = None
+    distressed_equity_pct: Optional[float] = None
+    tltw_cashflow_pct: Optional[float] = None
     fi_macro_pct: Optional[float] = None
     event_driven_cvr_pct: Optional[float] = None
     options_notional_pct: Optional[float] = None
+    margin_pct: Optional[float] = None
     money_market_pct: Optional[float] = None
     drip_rule: Optional[bool] = None
 
@@ -254,7 +256,7 @@ async def get_collateral_status():
         "margin_bucket": {
             "real_capital_deployed_pct": round(total_real_capital, 4),
             "real_capital_deployed_usd": round(total_real_capital * engine.nav, 2),
-            "real_capital_range": list(rules.margin_real_capital_range),
+            "real_capital_range": [rules.margin_pct, rules.margin_pct + rules.ig_reduction_on_margin_breach],
             "notional_exposure_pct": round(options_total + margin_real, 4),
             "notional_exposure_usd": round((options_total + margin_real) * engine.nav, 2),
         },
@@ -304,18 +306,18 @@ def _fallback_rules() -> dict:
     if isinstance(rules, dict):
         return {
             "max_drawdown_kill_switch": 0.20,
-            "single_name_ig_pct": 0.30,
-            "single_name_hy_distressed_pct": 0.20,
-            "div_cashflow_etf_pct": 0.15,
+            "ig_equity_pct": 0.40,
+            "hy_equity_pct": 0.10,
+            "distressed_equity_pct": 0.10,
+            "tltw_cashflow_pct": 0.15,
             "fi_macro_pct": 0.05,
-            "event_driven_cvr_pct": 0.05,
+            "event_driven_cvr_pct": 0.10,
             "options_notional_pct": 0.25,
             "options_ig_pct": 0.10,
             "options_hy_pct": 0.10,
             "options_distressed_pct": 0.05,
-            "margin_real_capital_range_low": 0.05,
-            "margin_real_capital_range_high": 0.15,
-            "money_market_pct": 0.05,
+            "margin_pct": 0.08,
+            "money_market_pct": 0.02,
             "drip_rule": True,
             "alpha_primary_goal": True,
             "timestamp": datetime.now(timezone.utc).isoformat(),
@@ -327,8 +329,8 @@ def _fallback_status() -> dict:
     return {
         "rules": _fallback_rules(),
         "bucket_utilization": {
-            "IG_EQUITY": 0.0, "HY_DISTRESSED": 0.0,
-            "DIV_CASHFLOW_ETF": 0.0, "FI_MACRO": 0.0,
+            "IG_EQUITY": 0.0, "HY_EQUITY": 0.0,
+            "TLTW_CASHFLOW": 0.0, "FI_MACRO": 0.0,
             "EVENT_DRIVEN_CVR": 0.0, "OPTIONS_IG": 0.0,
             "OPTIONS_HY": 0.0, "OPTIONS_DISTRESSED": 0.0,
             "MONEY_MARKET": 0.0, "MARGIN": 0.0,

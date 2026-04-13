@@ -49,6 +49,10 @@ from engine.api.routers import (
     vault,
     security,
 )
+
+logging.basicConfig(level=logging.INFO, format="%(asctime)s [API] %(message)s")
+logger = logging.getLogger("metadron-api")
+
 try:
     from engine.api.routers import allocation
     _allocation_available = True
@@ -56,9 +60,6 @@ except Exception as _alloc_err:
     _allocation_available = False
     logger.warning("Allocation router unavailable: %s", _alloc_err)
 from engine.bridges.prometheus_metrics import create_metrics_router
-
-logging.basicConfig(level=logging.INFO, format="%(asctime)s [API] %(message)s")
-logger = logging.getLogger("metadron-api")
 
 # Install centralized error handler — captures all engine errors for TECH tab
 try:

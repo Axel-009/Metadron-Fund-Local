@@ -183,7 +183,7 @@ class LLMInferenceBridge:
             self.backends["qwen"].available = True
             logger.info("Qwen backend: AVAILABLE (cuda:1, lazy-load)")
             if metrics and "model_online" in metrics:
-                metrics["model_online"].labels(model_name="qwen_2_5_7b", port="7860").set(1)
+                metrics["model_online"].labels(model_name="qwen_2_5_7b", port="8004").set(1)
         else:
             logger.warning("Qwen backend: import failed")
 
@@ -253,7 +253,7 @@ class LLMInferenceBridge:
             # Prometheus instrumentation
             if metrics:
                 if "model_online" in metrics:
-                    metrics["model_online"].labels(model_name="qwen_2_5_7b", port="7860").set(1)
+                    metrics["model_online"].labels(model_name="qwen_2_5_7b", port="8004").set(1)
                 if "model_inference_latency" in metrics:
                     metrics["model_inference_latency"].labels(model_name="qwen_2_5_7b").observe(latency)
                 if "model_inference_counter" in metrics:
@@ -269,7 +269,7 @@ class LLMInferenceBridge:
             # Prometheus instrumentation
             if metrics:
                 if "model_online" in metrics:
-                    metrics["model_online"].labels(model_name="qwen_2_5_7b", port="7860").set(0)
+                    metrics["model_online"].labels(model_name="qwen_2_5_7b", port="8004").set(0)
                 if "model_inference_latency" in metrics:
                     metrics["model_inference_latency"].labels(model_name="qwen_2_5_7b").observe(latency)
                 if "model_inference_counter" in metrics:

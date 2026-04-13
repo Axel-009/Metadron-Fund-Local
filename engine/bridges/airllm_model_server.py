@@ -2,8 +2,8 @@
 Metadron Capital — Air-LLM Standalone Model Server
 
 Provides a dedicated FastAPI service for Air-LLM inference on port 8003.
-Loads meta-llama/Llama-3.1-70B (or configurable model) using the Air-LLM
-layer-by-layer inference engine for efficient 70B+ models on limited VRAM.
+Loads meta-llama/Llama-3.1-8B-Instruct (or configurable model) using the
+Air-LLM inference engine. Model path configurable via AIRLLM_MODEL_PATH.
 
 PM2 manages this as a persistent service. The LLM Inference Bridge can
 also load Air-LLM in-process, but this standalone server avoids
