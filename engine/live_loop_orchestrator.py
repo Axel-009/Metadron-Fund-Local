@@ -2311,6 +2311,49 @@ class LiveLoopOrchestrator:
             except Exception as exc:
                 pr.data["analytics_error"] = str(exc)
 
+        # ── Security: Broker integrity reconciliation ──
+        security = self._get("security")
+        if security and exec_engine and hasattr(security, "broker_lock"):
+            try:
+                broker = getattr(exec_engine, "broker", None)
+                if broker and hasattr(broker, "state") and hasattr(broker.state, "positions"):
+                    paper_positions = {}
+                    for t, pos in broker.state.positions.items():
+                        paper_positions[t] = {
+                            "quantity": getattr(pos, "quantity", 0),
+                            "market_value": getattr(pos, "market_value", 0),
+                        }
+                    # Alpaca positions (if live broker available)
+                    alpaca_positions = {}
+                    if hasattr(exec_engine, "_alpaca_broker") and exec_engine._alpaca_broker:
+                        ab = exec_engine._alpaca_broker
+                        if hasattr(ab, "state") and hasattr(ab.state, "positions"):
+                            for t, pos in ab.state.positions.items():
+                                alpaca_positions[t] = {
+                                    "quantity": getattr(pos, "quantity", 0),
+                                    "market_value": getattr(pos, "market_value", 0),
+                                }
+                    if paper_positions or alpaca_positions:
+                        recon = security.broker_lock.reconcile(paper_positions, alpaca_positions)
+                        pr.data["broker_recon_clean"] = recon.get("clean", True)
+                        pr.data["broker_recon_discrepancies"] = len(recon.get("discrepancies", []))
+                        if not recon.get("clean"):
+                            pr.data["broker_frozen"] = True
+                        items += 1
+            except Exception as exc:
+                pr.data["broker_recon_error"] = str(exc)
+
+        # ── Security: token meter status for monitoring ──
+        meter = self._get("token_meter")
+        if meter:
+            try:
+                token_status = meter.get_status()
+                pr.data["token_daily_used"] = token_status.get("daily_used", 0)
+                pr.data["token_daily_pct"] = token_status.get("daily_pct", 0)
+                pr.data["token_lockdown"] = token_status.get("lockdown_active", False)
+            except Exception:
+                pass
+
         pr.items_processed = items
         pr.duration_ms = (time.monotonic() - t0) * 1000
         pr.success = True

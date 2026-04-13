@@ -47,6 +47,7 @@ from engine.api.routers import (
     models,
     graphify,
     vault,
+    security,
 )
 try:
     from engine.api.routers import allocation
@@ -153,6 +154,7 @@ app.include_router(api_keys.router, prefix="/api/engine/api-keys", tags=["ApiKey
 app.include_router(models.router, prefix="/api/models", tags=["Models"])
 app.include_router(graphify.router, prefix="/api/engine/graphify", tags=["Graphify"])
 app.include_router(vault.router, prefix="/api/engine/vault", tags=["Vault"])
+app.include_router(security.router, prefix="/api/engine/security", tags=["Security"])
 if _allocation_available:
     app.include_router(allocation.router, prefix="/api/allocation", tags=["Allocation"])
 

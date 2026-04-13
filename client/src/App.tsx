@@ -39,11 +39,13 @@ import CollateralTab from "@/pages/collateral-tab";
 import ChatTab from "@/pages/chat-tab";
 import GraphifyPage from "@/pages/graphify";
 import VaultPage from "@/pages/vault";
+import SecurityPage from "@/pages/security";
 
 // ═══════════ TAB GROUPS (7 categories) ═══════════
 export const TAB_GROUPS = [
   { group: "CORE", tabs: [
     { path: "/vault", label: "VAULT" },
+    { path: "/security", label: "SECURITY" },
     { path: "/live", label: "LIVE" },
     { path: "/market-wrap", label: "WRAP" },
     { path: "/openbb", label: "OPENBB" },
@@ -465,6 +467,7 @@ function AppRouter() {
       <Route path="/chat" component={ChatTab} />
       <Route path="/graphify" component={GraphifyPage} />
       <Route path="/vault" component={VaultPage} />
+      <Route path="/security" component={SecurityPage} />
       <Route component={NotFound} />
     </Switch>
   );

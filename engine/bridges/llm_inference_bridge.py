@@ -534,6 +534,23 @@ class LLMInferenceBridge:
         if metrics and "ensemble_synthesis_latency" in metrics:
             metrics["ensemble_synthesis_latency"].observe((time.time() - start_time))
 
+        # ── Token metering: record per-model usage ──
+        try:
+            from engine.security.token_meter import get_meter
+            meter = get_meter()
+            prompt_tokens = len(prompt) // 4  # estimate
+            for backend_name, result in model_outputs.items():
+                out_tokens = len(result.get("text", "")) // 4
+                meter.record(
+                    model=backend_name,
+                    tokens_in=prompt_tokens,
+                    tokens_out=out_tokens,
+                    latency_ms=result.get("latency_ms", latency_ms),
+                    caller=task_type,
+                )
+        except Exception:
+            pass
+
         return {
             "text": final.get("text", ""),
             "orchestrator": final.get("orchestrator", "unknown"),
