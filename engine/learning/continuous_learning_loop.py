@@ -55,10 +55,26 @@ class ContinuousLearningLoop:
 
     def _init_engines(self):
         self.engines = {}
+        self._autoresearch = None
+        self._graphify = None
         sys.path.insert(0, str(PLATFORM_ROOT))
         for name, (mod, cls) in {"alpha_optimizer": ("engine.ml.alpha_optimizer", "AlphaOptimizer"), "metadron_cube": ("engine.signals.metadron_cube", "MetadronCube"), "universe_classifier": ("engine.ml.universe_classifier", "UniverseClassifier")}.items():
             try: module = __import__(mod, fromlist=[cls]); self.engines[name] = getattr(module, cls); logger.info(f"Loaded {name}")
             except: self.engines[name] = None
+        # AutoresearchBridge — tracks training experiments
+        try:
+            from engine.research.autoresearch_bridge import AutoresearchBridge
+            self._autoresearch = AutoresearchBridge()
+            logger.info(f"AutoresearchBridge loaded (available={self._autoresearch.is_available()})")
+        except Exception as e:
+            logger.info(f"AutoresearchBridge unavailable: {e}")
+        # GraphifyBridge — codebase knowledge graph
+        try:
+            from engine.agents.graphify_bridge import GraphifyBridge
+            self._graphify = GraphifyBridge()
+            logger.info(f"GraphifyBridge loaded (available={self._graphify.is_available()})")
+        except Exception as e:
+            logger.info(f"GraphifyBridge unavailable: {e}")
 
     def _is_market_hours(self): now = datetime.now(); return 9 <= now.hour < 16 and now.weekday() < 5
     def _is_overnight(self): now = datetime.now(); return now.hour >= 20 or now.hour < 6
@@ -170,6 +186,77 @@ class ContinuousLearningLoop:
                 self._last_regime = {"status": "calibration_complete", "timestamp": datetime.now(timezone.utc).isoformat()}
         except Exception as e: logger.error(f"Regime calibration failed: {e}")
 
+    def _task_autoresearch_check(self):
+        """Check autoresearch experiment status and feed discoveries into ML context."""
+        if not self._autoresearch:
+            return
+        logger.info("Running autoresearch status check...")
+        try:
+            status = self._autoresearch.get_status()
+            if not status.get("available"):
+                return
+            results = self._autoresearch.read_results()
+            if results:
+                best_bpb = status.get("best_val_bpb")
+                experiment_count = status.get("experiment_count", 0)
+                logger.info(
+                    f"Autoresearch: {experiment_count} experiments, best_val_bpb={best_bpb}"
+                )
+                # Feed discoveries into ML context for ensemble calls
+                self._last_patterns["autoresearch"] = {
+                    "experiment_count": experiment_count,
+                    "best_val_bpb": best_bpb,
+                    "last_experiment": status.get("last_experiment"),
+                    "recent_results": results[-5:],  # last 5 experiments
+                }
+                # POST discoveries to ensemble for Brain Power analysis
+                try:
+                    import httpx
+                    bridge_url = os.environ.get("LLM_BRIDGE_URL", "http://localhost:8002")
+                    payload = {
+                        "prompt": (
+                            f"Autoresearch update: {experiment_count} experiments completed. "
+                            f"Best val_bpb={best_bpb}. Review recent results and identify "
+                            "any architecture improvements worth integrating into alpha models:\n"
+                            + json.dumps(results[-3:], indent=2, default=str)
+                        ),
+                        "task_type": "autoresearch_review",
+                        "max_tokens": 512,
+                        "ml_context": self._get_ml_context(),
+                    }
+                    r = httpx.post(f"{bridge_url}/ensemble", json=payload, timeout=60)
+                    if r.status_code == 200:
+                        review = r.json()
+                        # Save autoresearch review
+                        ar_path = DATA_PATH / "autoresearch"
+                        ar_path.mkdir(parents=True, exist_ok=True)
+                        with open(ar_path / f"review_{datetime.now().strftime('%Y%m%d_%H%M')}.json", "w") as f:
+                            json.dump(review, f, indent=2)
+                        logger.info(f"Autoresearch ensemble review saved")
+                except Exception as e:
+                    logger.warning(f"Autoresearch ensemble review unavailable: {e}")
+        except Exception as e:
+            logger.error(f"Autoresearch check failed: {e}")
+
+    def _task_graphify_refresh(self):
+        """Refresh graphify knowledge graph status and feed god-nodes into ML context."""
+        if not self._graphify:
+            return
+        logger.info("Running graphify knowledge graph check...")
+        try:
+            if not self._graphify.is_available():
+                logger.info("Graphify graph not generated — skipping")
+                return
+            god_nodes = self._graphify.get_god_nodes()
+            if god_nodes:
+                self._last_patterns["graphify"] = {
+                    "god_nodes": god_nodes[:10],
+                    "node_count": len(god_nodes),
+                }
+                logger.info(f"Graphify: {len(god_nodes)} god nodes loaded into ML context")
+        except Exception as e:
+            logger.error(f"Graphify refresh failed: {e}")
+
     def _task_llm_market_review(self):
         """Run LLM market review via the parallel ensemble endpoint.
 
@@ -237,12 +324,17 @@ class ContinuousLearningLoop:
             self.metrics.total_cycles = self.cycle_count
             logger.info(f"Learning Cycle {self.cycle_count}")
             if self._is_market_hours():
-                self._task_signal_feedback(); self._task_agent_evolution(); sleep_time = 300
+                self._task_signal_feedback(); self._task_agent_evolution()
+                self._task_graphify_refresh(); sleep_time = 300
             elif self._is_overnight():
                 self._task_signal_feedback(); self._task_model_retrain(); self._task_agent_evolution()
-                self._task_pattern_integration(); self._task_regime_calibration(); self._task_llm_market_review(); sleep_time = 600
+                self._task_pattern_integration(); self._task_regime_calibration()
+                self._task_autoresearch_check(); self._task_graphify_refresh()
+                self._task_llm_market_review(); sleep_time = 600
             else:
-                self._task_signal_feedback(); self._task_agent_evolution(); self._task_pattern_integration(); sleep_time = 300
+                self._task_signal_feedback(); self._task_agent_evolution()
+                self._task_pattern_integration(); self._task_autoresearch_check()
+                self._task_graphify_refresh(); sleep_time = 300
             self._save_state()
             if self.running:
                 for _ in range(sleep_time):

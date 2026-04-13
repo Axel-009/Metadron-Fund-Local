@@ -204,6 +204,21 @@ except ImportError:
     EventDrivenEngine = None
 
 try:
+    from .agents.graphify_bridge import GraphifyBridge
+except ImportError:
+    GraphifyBridge = None
+
+try:
+    from .research.autoresearch_bridge import AutoresearchBridge
+except ImportError:
+    AutoresearchBridge = None
+
+try:
+    from .agents.research_bots import ResearchBotManager
+except ImportError:
+    ResearchBotManager = None
+
+try:
     from intelligence_platform.plugins.gsd_paul_plugin import GSDPlugin, PaulPlugin
 except ImportError:
     try:
@@ -536,6 +551,10 @@ class LiveLoopOrchestrator:
             ("distressed_assets", lambda: DistressedAssetEngine() if DistressedAssetEngine else None),
             ("cvr_engine", lambda: CVREngine() if CVREngine else None),
             ("event_driven", lambda: EventDrivenEngine() if EventDrivenEngine else None),
+            # Knowledge graph + research
+            ("graphify", lambda: GraphifyBridge() if GraphifyBridge else None),
+            ("autoresearch", lambda: AutoresearchBridge() if AutoresearchBridge else None),
+            ("research_bots", lambda: ResearchBotManager() if ResearchBotManager else None),
         ]
 
         for name, factory in component_factories:
@@ -1801,6 +1820,49 @@ class LiveLoopOrchestrator:
             except Exception as exc:
                 pr.data["gsd_workflow_error"] = str(exc)
                 logger.debug("GSD Workflow Bridge error: %s", exc)
+
+        # Graphify knowledge graph — refresh god nodes for agent context
+        graphify = self._get("graphify")
+        if graphify:
+            try:
+                if graphify.is_available():
+                    god_nodes = graphify.get_god_nodes()
+                    pr.data["graphify_nodes"] = len(god_nodes) if god_nodes else 0
+                    items += 1
+                else:
+                    pr.data["graphify_status"] = "graph_not_generated"
+            except Exception as exc:
+                pr.data["graphify_error"] = str(exc)
+
+        # Autoresearch — check experiment status and feed into patterns
+        autoresearch = self._get("autoresearch")
+        if autoresearch:
+            try:
+                status = autoresearch.get_status()
+                pr.data["autoresearch_available"] = status.get("available", False)
+                pr.data["autoresearch_experiments"] = status.get("experiment_count", 0)
+                if status.get("has_results"):
+                    pr.data["autoresearch_best_bpb"] = status.get("best_val_bpb")
+                    items += 1
+            except Exception as exc:
+                pr.data["autoresearch_error"] = str(exc)
+
+        # Research bots — LLM-powered sector analysis (5-min cadence, only during market hours)
+        research = self._get("research_bots")
+        if research and hasattr(research, "run_llm_sector_analysis"):
+            try:
+                # Run LLM analysis for top-performing sectors only (limit API calls)
+                leaderboard = research.get_leaderboard() if hasattr(research, "get_leaderboard") else []
+                top_sectors = [sec for sec, _ in leaderboard[:3]] if leaderboard else []
+                for sec in top_sectors:
+                    try:
+                        research.run_llm_sector_analysis(sec)
+                    except Exception:
+                        pass
+                pr.data["research_llm_sectors"] = len(top_sectors)
+                items += 1
+            except Exception as exc:
+                pr.data["research_llm_error"] = str(exc)
 
         pr.items_processed = items
         pr.duration_ms = (time.monotonic() - t0) * 1000

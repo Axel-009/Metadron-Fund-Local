@@ -146,6 +146,18 @@ module.exports = {
       out_file: path.join(ROOT, 'logs/pm2/learning-loop-out.log'),
       merge_logs: true, restart_delay: 10000, max_restarts: 10, min_uptime: '30s',
     },
+    // AUTORESEARCH — Overnight autonomous model training (karpathy framework)
+    {
+      name: 'autoresearch-overnight', script: 'python3',
+      args: 'engine/research/autoresearch/train.py',
+      cwd: ROOT, interpreter: 'none',
+      env: { PYTHONUNBUFFERED: '1', TIME_BUDGET: '300', CUDA_VISIBLE_DEVICES: '1' },
+      cron_restart: '0 21 * * 1-5',   // Run at 9pm ET on weekdays (overnight)
+      autorestart: false, watch: false, max_memory_restart: '8G',
+      error_file: path.join(ROOT, 'logs/pm2/autoresearch-error.log'),
+      out_file: path.join(ROOT, 'logs/pm2/autoresearch-out.log'),
+      merge_logs: true, kill_timeout: 600000,  // 10 min timeout for training
+    },
     // METADRON CUBE — 24/7 Regime Detection (FIX: now points to service wrapper)
     {
       name: 'metadron-cube', script: 'python3', args: 'engine/bridges/metadron_cube_service.py',

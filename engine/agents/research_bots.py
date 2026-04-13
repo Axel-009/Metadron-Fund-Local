@@ -991,3 +991,67 @@ class ResearchBotManager:
                             setattr(bot.learning, key, val)
         except Exception as e:
             logger.warning(f"Failed to load bot state: {e}")
+
+    # ── LLM-powered sector analysis ──────────────────────────────
+
+    def run_llm_sector_analysis(self, sector: str = "") -> dict:
+        """Run LLM inference bridge analysis for a sector or all sectors.
+
+        Sends the sector's top signals, performance, and market data to the
+        ensemble endpoint so Brain Power can generate strategic recommendations.
+
+        Returns dict with sector → LLM analysis mapping.
+        """
+        import os
+        results = {}
+        sectors = [sector] if sector else list(self.bots.keys())
+
+        try:
+            import httpx
+        except ImportError:
+            logger.warning("httpx not installed — LLM sector analysis skipped")
+            return results
+
+        bridge_url = os.environ.get("LLM_BRIDGE_URL", "http://localhost:8002")
+
+        for sec in sectors:
+            bot = self.bots.get(sec)
+            if not bot or not bot.is_active:
+                continue
+            try:
+                signals = bot.get_active_signals()
+                perf = bot.performance
+                signal_summary = [
+                    {"ticker": s.ticker, "direction": s.direction, "confidence": s.confidence,
+                     "alpha_estimate": s.alpha_estimate, "quality_tier": s.quality_tier}
+                    for s in signals[:10]
+                ]
+
+                payload = {
+                    "prompt": (
+                        f"Analyze {sec} sector for investment opportunities. "
+                        f"Bot rank: {perf.rank}, accuracy: {perf.accuracy:.1%}, "
+                        f"Sharpe: {perf.sharpe:.2f}. Top signals:\n"
+                        + json.dumps(signal_summary, indent=2, default=str)
+                        + "\nProvide: key thesis, top 3 picks, risks, and conviction level."
+                    ),
+                    "task_type": "sector_research",
+                    "max_tokens": 512,
+                    "ml_context": {
+                        "sector": sec,
+                        "bot_rank": perf.rank,
+                        "accuracy": perf.accuracy,
+                        "sharpe": perf.sharpe,
+                        "active_signals": len(signals),
+                    },
+                }
+
+                r = httpx.post(f"{bridge_url}/ensemble", json=payload, timeout=60)
+                if r.status_code == 200:
+                    results[sec] = r.json()
+                    logger.info(f"LLM sector analysis for {sec}: orchestrator={results[sec].get('orchestrator', 'unknown')}")
+            except Exception as e:
+                logger.warning(f"LLM sector analysis for {sec} failed: {e}")
+                results[sec] = {"error": str(e)}
+
+        return results
