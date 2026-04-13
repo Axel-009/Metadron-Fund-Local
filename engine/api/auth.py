@@ -30,11 +30,24 @@ _RATE_LIMIT = int(os.getenv("METADRON_RATE_LIMIT", "100"))  # requests per minut
 _rate_store: dict[str, list[float]] = defaultdict(list)
 
 
+_STALE_THRESHOLD = 72 * 3600  # 72 hours — delete keys inactive longer than this
+_last_eviction: float = 0.0
+
+
 def _check_rate_limit(key_hash: str) -> bool:
     """Return True if the request is within rate limits, False if exceeded."""
+    global _last_eviction
     now = time.time()
     window_start = now - 60.0
-    # Prune old entries
+
+    # Evict keys inactive for 72+ hours (runs at most once per hour)
+    if now - _last_eviction > 3600:
+        stale = [k for k, ts in _rate_store.items() if not ts or ts[-1] < now - _STALE_THRESHOLD]
+        for k in stale:
+            del _rate_store[k]
+        _last_eviction = now
+
+    # Prune old entries for this key
     timestamps = _rate_store[key_hash]
     _rate_store[key_hash] = [ts for ts in timestamps if ts > window_start]
     if len(_rate_store[key_hash]) >= _RATE_LIMIT:
