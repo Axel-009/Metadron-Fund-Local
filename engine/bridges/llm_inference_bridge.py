@@ -577,10 +577,15 @@ def create_app():
         version="3.0.0",
     )
 
+    # CORS restricted to platform services — set LLM_BRIDGE_CORS_ORIGINS to your public IP at deploy
+    _cors_origins = os.environ.get(
+        "LLM_BRIDGE_CORS_ORIGINS",
+        "http://localhost:5000,http://localhost:8001,http://127.0.0.1:5000,http://127.0.0.1:8001",
+    ).split(",")
     app.add_middleware(
         CORSMiddleware,
-        allow_origins=["*"],
-        allow_methods=["*"],
+        allow_origins=_cors_origins,
+        allow_methods=["GET", "POST"],
         allow_headers=["*"],
     )
 

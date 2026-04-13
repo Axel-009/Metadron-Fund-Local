@@ -191,10 +191,15 @@ def create_app():
         version="1.0.0",
     )
 
+    # CORS restricted to LLM bridge + engine API — set AIRLLM_CORS_ORIGINS to your public IP at deploy
+    _cors_origins = os.environ.get(
+        "AIRLLM_CORS_ORIGINS",
+        "http://localhost:8002,http://localhost:8001,http://127.0.0.1:8002,http://127.0.0.1:8001",
+    ).split(",")
     app.add_middleware(
         CORSMiddleware,
-        allow_origins=["*"],
-        allow_methods=["*"],
+        allow_origins=_cors_origins,
+        allow_methods=["GET", "POST"],
         allow_headers=["*"],
     )
 
