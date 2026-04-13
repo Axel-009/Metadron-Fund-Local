@@ -72,3 +72,10 @@ weasyprint>=62.0
 graphifyy>=0.3.0
 sse-starlette>=1.6.5
 python-socketio[client]>=5.11.0
+
+# ---------------------------------------------------------------------------
+# OPEN JARVIS — Voice + text assistant (STT: faster-whisper, TTS: kokoro/piper)
+# Install openjarvis[speech] to enable full voice pipeline
+# ---------------------------------------------------------------------------
+openjarvis>=0.1.1
+# openjarvis[speech]>=0.1.1  # Uncomment to enable faster-whisper + kokoro TTS
