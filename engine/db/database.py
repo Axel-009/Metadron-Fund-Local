@@ -26,7 +26,7 @@ _PROJECT_ROOT = Path(__file__).resolve().parents[2]  # …/Metadron-Capital
 _DATA_DIR = _PROJECT_ROOT / "data"
 _DATA_DIR.mkdir(parents=True, exist_ok=True)
 
-DATABASE_URL = os.getenv(
+_DB_URL = os.getenv(
     "METADRON_DATABASE_URL",
     f"sqlite:///{_DATA_DIR / 'metadron.db'}",
 )
@@ -36,12 +36,12 @@ DATABASE_URL = os.getenv(
 # ---------------------------------------------------------------------------
 try:
     engine = create_engine(
-        DATABASE_URL,
-        connect_args={"check_same_thread": False} if "sqlite" in DATABASE_URL else {},
+        _DB_URL,
+        connect_args={"check_same_thread": False} if "sqlite" in _DB_URL else {},
         pool_pre_ping=True,
     )
     SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
-    logger.info("Database engine created: %s", DATABASE_URL)
+    logger.info("Database engine created: %s", _DB_URL)
 except Exception as exc:
     logger.error("Failed to create database engine: %s", exc)
     engine = None
