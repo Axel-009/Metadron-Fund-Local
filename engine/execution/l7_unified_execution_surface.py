@@ -1249,9 +1249,14 @@ class L7UnifiedExecutionSurface:
     # FullUniverseScan emit events matching this structure. After all 4 runs
     # complete and trades finalize, the Thinking Tab resets for the next cycle.
     # Transactions are then logged in the Transaction Log with execution time.
+    #
+    # IMPORTANT: All 4 runs (SP500, SP400, SP600, ETF_FI) display the SAME
+    # full detailed format — every run shows the complete per-bucket table
+    # with rank, ticker, shares, price, dollar, %NAV, alpha, sharpe, regime.
+    # No run is abbreviated. Each run is equally comprehensive.
     THINKING_FORMAT = {
         "run_scorecard": {
-            "_description": "One per universe run (SP500, SP400, SP600, ETF_FI)",
+            "_description": "One per universe run — ALL 4 runs use identical format",
             "run": int,
             "universe": str,
             "scanned": int,
