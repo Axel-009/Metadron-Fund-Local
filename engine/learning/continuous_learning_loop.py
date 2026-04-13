@@ -310,12 +310,16 @@ class ContinuousLearningLoop:
             logger.error(f"Autoresearch check failed: {e}")
 
     def _task_graphify_refresh(self):
-        """Refresh graphify knowledge graph — separate from autoresearch.
+        """Refresh graphify knowledge graph — fed by autoresearch + agent learning.
 
-        Loads god-nodes + agent performance into its own ML context field.
-        Agent learning and performance data feeds graphify so the knowledge
-        graph reflects which architectural nodes are most active and which
-        agents are performing best against them.
+        Receives outputs from both autoresearch experiments and agent
+        performance/learning. These two combined streams feed graphify
+        so the knowledge graph reflects which architectural nodes are
+        most active, which agents perform best, and which autoresearch
+        experiments are improving model quality.
+
+        The same autoresearch + agent data also feeds LLM review directly
+        (parallel path, not through graphify).
         """
         if not self._graphify:
             return
@@ -338,6 +342,14 @@ class ContinuousLearningLoop:
             except Exception:
                 pass
 
+            # Pull autoresearch status for graphify context
+            autoresearch_status = {}
+            if self._autoresearch:
+                try:
+                    autoresearch_status = self._autoresearch.get_status()
+                except Exception:
+                    pass
+
             self._last_graphify = {
                 "available": True,
                 "god_nodes": [n.get("label", n.get("id", "")) for n in god_nodes[:10]],
@@ -350,6 +362,11 @@ class ContinuousLearningLoop:
                     }
                     for name, s in list(agent_performance.items())[:10]
                 } if agent_performance else {},
+                "autoresearch": {
+                    "experiment_count": autoresearch_status.get("experiment_count", 0),
+                    "best_val_bpb": autoresearch_status.get("best_val_bpb"),
+                    "last_experiment": autoresearch_status.get("last_experiment"),
+                } if autoresearch_status.get("available") else {},
                 "learning_metrics": {
                     "total_cycles": self.metrics.total_cycles,
                     "signal_accuracy_count": len(self.metrics.signal_accuracy),
@@ -358,7 +375,9 @@ class ContinuousLearningLoop:
             }
             logger.info(
                 f"Graphify: {len(god_nodes)} god nodes + "
-                f"{len(agent_performance)} agent scores loaded into context"
+                f"{len(agent_performance)} agent scores + "
+                f"autoresearch({autoresearch_status.get('experiment_count', 0)} experiments) "
+                f"loaded into context"
             )
         except Exception as e:
             logger.error(f"Graphify refresh failed: {e}")
@@ -435,7 +454,8 @@ class ContinuousLearningLoop:
                 self._task_pattern_recognition()
                 self._task_stock_prediction()
 
-                # ── Stream 2: Agent performance + learning → feeds graphify ──
+                # ── Stream 2: Autoresearch + Agent learning → feeds graphify ──
+                self._task_autoresearch_check()
                 self._task_agent_evolution()
                 self._task_graphify_refresh()
 
@@ -451,14 +471,12 @@ class ContinuousLearningLoop:
                 self._task_pattern_recognition()
                 self._task_stock_prediction()
 
-                # ── Stream 2: Agent performance + learning → feeds graphify ──
+                # ── Stream 2: Autoresearch + Agent learning → feeds graphify ──
+                self._task_autoresearch_check()
                 self._task_agent_evolution()
                 self._task_graphify_refresh()
 
-                # ── Stream 3: Autoresearch (independent) ──
-                self._task_autoresearch_check()
-
-                # ── Stream 4: LLM review (independent, uses all context) ──
+                # ── Stream 3: LLM review (fed by autoresearch + agents directly, NOT through graphify) ──
                 self._task_llm_market_review()
 
                 sleep_time = 600
@@ -470,12 +488,10 @@ class ContinuousLearningLoop:
                 self._task_pattern_recognition()
                 self._task_stock_prediction()
 
-                # ── Stream 2: Agent performance + learning → feeds graphify ──
+                # ── Stream 2: Autoresearch + Agent learning → feeds graphify ──
+                self._task_autoresearch_check()
                 self._task_agent_evolution()
                 self._task_graphify_refresh()
-
-                # ── Stream 3: Autoresearch (independent) ──
-                self._task_autoresearch_check()
 
                 sleep_time = 300
             self._save_state()
