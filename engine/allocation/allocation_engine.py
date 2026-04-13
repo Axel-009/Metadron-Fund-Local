@@ -32,16 +32,20 @@ def _get_prom_alloc():
 
 
 class BucketType(str, Enum):
-    IG_EQUITY = "IG_EQUITY"
-    HY_DISTRESSED = "HY_DISTRESSED"
-    DIV_CASHFLOW_ETF = "DIV_CASHFLOW_ETF"
-    FI_MACRO = "FI_MACRO"
-    EVENT_DRIVEN_CVR = "EVENT_DRIVEN_CVR"
-    OPTIONS_IG = "OPTIONS_IG"
+    IG_EQUITY = "IG_EQUITY"                # 40% — investment grade single name
+    HY_EQUITY = "HY_EQUITY"                # 10% — high yield equities
+    DISTRESSED_EQUITY = "DISTRESSED_EQUITY" # 10% — fallen angels, recovery plays
+    TLTW_CASHFLOW = "TLTW_CASHFLOW"        # 15% — TLTW / monthly cash payout ETF (DRIP)
+    FI_MACRO = "FI_MACRO"                  # 5%  — fixed income + macro signals
+    EVENT_DRIVEN_CVR = "EVENT_DRIVEN_CVR"  # 10% — event-driven + contingent value rights
+    # Equity subtotal: 90%
+    OPTIONS_IG = "OPTIONS_IG"              # Options overlay (notional, funded by margin)
     OPTIONS_HY = "OPTIONS_HY"
     OPTIONS_DISTRESSED = "OPTIONS_DISTRESSED"
-    MONEY_MARKET = "MONEY_MARKET"
-    MARGIN = "MARGIN"
+    FUTURES_BETA = "FUTURES_BETA"          # Futures beta corridor (ES/NQ, funded by margin)
+    # Levered overlay: 25% options notional + beta corridor futures
+    MARGIN = "MARGIN"                      # 8% — initial margin for options + futures
+    MONEY_MARKET = "MONEY_MARKET"          # 2% — dry powder (HARD FLOOR)
 
 
 class BetaCorridorLevel(str, Enum):
@@ -69,20 +73,50 @@ class InstrumentType(str, Enum):
 
 @dataclass
 class AllocationRules:
+    """Allocation rules aligned with Architecture DNA.
+
+    Capital structure (100% of NAV):
+        Equity positions (90%):
+            IG Equities:       40%  — investment grade single name
+            HY Equities:       10%  — high yield equities (BB-B rated)
+            Distressed Equity: 10%  — fallen angels, recovery plays
+            TLTW/Cashflow ETF: 15%  — monthly payout vehicle (DRIP reinvest)
+            FI/Macro:           5%  — fixed income + macro signals
+            Event/CVR:         10%  — event-driven + contingent value rights
+        Margin (8%):
+            Covers 25% options notional + beta corridor futures (ES/NQ)
+        Money Market (2%):
+            Hard floor dry powder — NEVER breached
+
+    Leverage overlay (funded by margin):
+        Options: 25% notional exposure (IG + HY + Distressed)
+        Futures: Beta corridor positions (EMini or equiv)
+
+    Hard rule: If margin required > 8%, reduce IG by 5% (IG → 35%).
+    """
     max_drawdown_kill_switch: float = 0.20
-    single_name_ig_pct: float = 0.30
-    single_name_hy_distressed_pct: float = 0.20
-    div_cashflow_etf_pct: float = 0.15
-    fi_macro_pct: float = 0.05
-    event_driven_cvr_pct: float = 0.05
-    options_notional_pct: float = 0.25
-    options_ig_pct: float = 0.10
-    options_hy_pct: float = 0.10
-    options_distressed_pct: float = 0.05
-    margin_real_capital_range: tuple = (0.05, 0.15)
-    money_market_pct: float = 0.05
-    drip_rule: bool = True
+    # ── Equity sleeves (90% total) ────────────────────────────────
+    ig_equity_pct: float = 0.40             # 40% — IG single name equities
+    hy_equity_pct: float = 0.10             # 10% — HY equities (separate from distressed)
+    distressed_equity_pct: float = 0.10     # 10% — fallen angels, recovery plays
+    tltw_cashflow_pct: float = 0.15         # 15% — TLTW or cash payout ETF (DRIP)
+    fi_macro_pct: float = 0.05              # 5%  — fixed income + macro signals
+    event_driven_cvr_pct: float = 0.10      # 10% — event-driven + CVR
+    # ── Levered overlay (funded by margin) ────────────────────────
+    options_notional_pct: float = 0.25      # 25% notional exposure (always maintained)
+    options_ig_pct: float = 0.10            #   10% IG options
+    options_hy_pct: float = 0.10            #   10% HY options
+    options_distressed_pct: float = 0.05    #    5% distressed options
+    futures_beta_pct: float = 0.15          # Beta corridor futures (notional, regime-dependent)
+    # ── Margin + dry powder ───────────────────────────────────────
+    margin_pct: float = 0.08               # 8% — IM for options + futures
+    margin_breach_threshold: float = 0.08  # If margin > 8%, reduce IG by 5%
+    ig_reduction_on_margin_breach: float = 0.05  # IG drops 40% → 35%
+    money_market_pct: float = 0.02          # 2% — HARD FLOOR dry powder
+    # ── Behavioral rules ──────────────────────────────────────────
+    drip_rule: bool = True                  # Reinvest TLTW distributions
     alpha_primary_goal: bool = True
+    cube_kill_switch_override: bool = True  # Honor MetadronCube kill-switch
     timestamp: str = ""
 
     def __post_init__(self):
@@ -92,20 +126,24 @@ class AllocationRules:
     def to_dict(self) -> dict:
         return {
             "max_drawdown_kill_switch": self.max_drawdown_kill_switch,
-            "single_name_ig_pct": self.single_name_ig_pct,
-            "single_name_hy_distressed_pct": self.single_name_hy_distressed_pct,
-            "div_cashflow_etf_pct": self.div_cashflow_etf_pct,
+            "ig_equity_pct": self.ig_equity_pct,
+            "hy_equity_pct": self.hy_equity_pct,
+            "distressed_equity_pct": self.distressed_equity_pct,
+            "tltw_cashflow_pct": self.tltw_cashflow_pct,
             "fi_macro_pct": self.fi_macro_pct,
             "event_driven_cvr_pct": self.event_driven_cvr_pct,
             "options_notional_pct": self.options_notional_pct,
             "options_ig_pct": self.options_ig_pct,
             "options_hy_pct": self.options_hy_pct,
             "options_distressed_pct": self.options_distressed_pct,
-            "margin_real_capital_range_low": self.margin_real_capital_range[0],
-            "margin_real_capital_range_high": self.margin_real_capital_range[1],
+            "futures_beta_pct": self.futures_beta_pct,
+            "margin_pct": self.margin_pct,
+            "margin_breach_threshold": self.margin_breach_threshold,
+            "ig_reduction_on_margin_breach": self.ig_reduction_on_margin_breach,
             "money_market_pct": self.money_market_pct,
             "drip_rule": self.drip_rule,
             "alpha_primary_goal": self.alpha_primary_goal,
+            "cube_kill_switch_override": self.cube_kill_switch_override,
             "timestamp": self.timestamp,
         }
 
@@ -167,14 +205,22 @@ class PositionAllocation:
 @dataclass
 class AllocationSlate:
     positions: list = field(default_factory=list)
+    # Equity sleeves (90%)
     total_ig_equity: float = 0.0
-    total_hy_distressed: float = 0.0
-    total_etf: float = 0.0
+    total_hy_equity: float = 0.0
+    total_distressed_equity: float = 0.0
+    total_tltw_cashflow: float = 0.0
     total_fi_macro: float = 0.0
     total_event_cvr: float = 0.0
+    # Levered overlay
     total_options_notional: float = 0.0
-    total_margin_real: float = 0.0
+    total_futures_beta: float = 0.0
+    # Margin + dry powder
+    total_margin: float = 0.0
     total_money_market: float = 0.0
+    # State
+    margin_breach: bool = False             # True if margin > 8% threshold
+    ig_reduced: bool = False                # True if IG was reduced due to margin breach
     kill_switch_triggered: bool = False
     beta_corridor: str = "NEUTRAL"
     leverage_multiplier: float = 1.0
@@ -187,14 +233,18 @@ class AllocationSlate:
             "positions": [p.to_dict() if hasattr(p, "to_dict") else p for p in self.positions],
             "bucket_utilization": {
                 "ig_equity": round(self.total_ig_equity, 4),
-                "hy_distressed": round(self.total_hy_distressed, 4),
-                "div_cashflow_etf": round(self.total_etf, 4),
+                "hy_equity": round(self.total_hy_equity, 4),
+                "distressed_equity": round(self.total_distressed_equity, 4),
+                "tltw_cashflow": round(self.total_tltw_cashflow, 4),
                 "fi_macro": round(self.total_fi_macro, 4),
                 "event_driven_cvr": round(self.total_event_cvr, 4),
                 "options_notional": round(self.total_options_notional, 4),
-                "margin_real_capital": round(self.total_margin_real, 4),
+                "futures_beta": round(self.total_futures_beta, 4),
+                "margin": round(self.total_margin, 4),
                 "money_market": round(self.total_money_market, 4),
             },
+            "margin_breach": self.margin_breach,
+            "ig_reduced": self.ig_reduced,
             "kill_switch_triggered": self.kill_switch_triggered,
             "beta_corridor": self.beta_corridor,
             "leverage_multiplier": self.leverage_multiplier,
@@ -324,19 +374,23 @@ class AllocationEngine:
         )
         self._beta_corridor: BetaCorridorLevel = BetaCorridorLevel.NEUTRAL
         self._leverage_multiplier: float = 1.0
+        self._margin_breached: bool = False     # True when margin > threshold
+        self._cube_kill_switch: bool = False     # True when MetadronCube kill-switch active
 
         # Per-bucket utilization accumulators (fraction of total capital)
         self._utilization: dict[str, float] = {
             BucketType.IG_EQUITY: 0.0,
-            BucketType.HY_DISTRESSED: 0.0,
-            BucketType.DIV_CASHFLOW_ETF: 0.0,
+            BucketType.HY_EQUITY: 0.0,
+            BucketType.DISTRESSED_EQUITY: 0.0,
+            BucketType.TLTW_CASHFLOW: 0.0,
             BucketType.FI_MACRO: 0.0,
             BucketType.EVENT_DRIVEN_CVR: 0.0,
             BucketType.OPTIONS_IG: 0.0,
             BucketType.OPTIONS_HY: 0.0,
             BucketType.OPTIONS_DISTRESSED: 0.0,
-            BucketType.MONEY_MARKET: 0.0,
+            BucketType.FUTURES_BETA: 0.0,
             BucketType.MARGIN: 0.0,
+            BucketType.MONEY_MARKET: 0.0,
         }
 
     # ── bucket utilization ────────────────────────────────────────
@@ -413,22 +467,23 @@ class AllocationEngine:
             self.rules.max_drawdown_kill_switch * 100,
         )
         logger.info(
-            "[AllocationEngine]   Beta corridor: %s  |  Leverage multiplier: %.2fx",
+            "[AllocationEngine]   Beta corridor: %s  |  Leverage multiplier: %.2fx  |  Cube kill-switch: %s",
             self._beta_corridor.value,
             self._leverage_multiplier,
+            self._cube_kill_switch,
         )
         logger.info(
             "[AllocationEngine]   Bucket caps (pct of NAV):"
-            "  IG=%.0f%%  HY/Dist=%.0f%%  ETF=%.0f%%  FI=%.0f%%"
-            "  CVR=%.0f%%  Opts=%.0f%%  Margin=%.0f–%.0f%%  MM=%.0f%%",
-            self.rules.single_name_ig_pct * 100,
-            self.rules.single_name_hy_distressed_pct * 100,
-            self.rules.div_cashflow_etf_pct * 100,
+            "  IG=%.0f%%  HY=%.0f%%  Dist=%.0f%%  TLTW=%.0f%%"
+            "  FI=%.0f%%  CVR=%.0f%%  Opts=%.0f%%  Margin=%.0f%%  MM=%.0f%%",
+            self.rules.ig_equity_pct * 100,
+            self.rules.hy_equity_pct * 100,
+            self.rules.distressed_equity_pct * 100,
+            self.rules.tltw_cashflow_pct * 100,
             self.rules.fi_macro_pct * 100,
             self.rules.event_driven_cvr_pct * 100,
             self.rules.options_notional_pct * 100,
-            self.rules.margin_real_capital_range[0] * 100,
-            self.rules.margin_real_capital_range[1] * 100,
+            self.rules.margin_pct * 100,
             self.rules.money_market_pct * 100,
         )
         logger.info(
@@ -438,13 +493,21 @@ class AllocationEngine:
             len(signals),
         )
 
-        # Kill switch check
+        # Kill switch check — portfolio-level 20% drawdown
         if self.kill_switch.check(drawdown):
             logger.critical(
-                "[AllocationEngine]   KILL SWITCH ACTIVE — drawdown %.2f%% >= threshold %.0f%% "
-                "— ALL equity trades BLOCKED this cycle",
+                "[AllocationEngine]   PORTFOLIO KILL SWITCH ACTIVE — drawdown %.2f%% >= threshold %.0f%% "
+                "— LIQUIDATE ALL POSITIONS. Operator reset required.",
                 drawdown * 100,
                 self.rules.max_drawdown_kill_switch * 100,
+            )
+            return self.validate_against_kill_switch(slate, total_capital)
+
+        # MetadronCube kill-switch override (HY OAS +35bp & VIX flat & breadth <50%)
+        if self._cube_kill_switch and self.rules.cube_kill_switch_override:
+            logger.critical(
+                "[AllocationEngine]   CUBE KILL SWITCH ACTIVE "
+                "— HY OAS / VIX / breadth matrix triggered — ALL equity trades BLOCKED"
             )
             return self.validate_against_kill_switch(slate, total_capital)
 
@@ -484,19 +547,49 @@ class AllocationEngine:
                 alloc.alpha_score,
             )
 
-        # Populate slate totals from utilization
-        slate.total_ig_equity = self._utilization[BucketType.IG_EQUITY]
-        slate.total_hy_distressed = self._utilization[BucketType.HY_DISTRESSED]
-        slate.total_etf = self._utilization[BucketType.DIV_CASHFLOW_ETF]
-        slate.total_fi_macro = self._utilization[BucketType.FI_MACRO]
-        slate.total_event_cvr = self._utilization[BucketType.EVENT_DRIVEN_CVR]
-        slate.total_options_notional = (
+        # ── Margin breach check ───────────────────────────────────
+        # If margin required for options + futures > threshold, reduce IG by 5%
+        options_margin = (
             self._utilization[BucketType.OPTIONS_IG]
             + self._utilization[BucketType.OPTIONS_HY]
             + self._utilization[BucketType.OPTIONS_DISTRESSED]
         )
-        slate.total_margin_real = self._utilization[BucketType.MARGIN]
+        futures_margin = self._utilization[BucketType.FUTURES_BETA]
+        estimated_margin = (options_margin + futures_margin) * 0.35  # ~35% of notional as IM
+        if estimated_margin > self.rules.margin_breach_threshold:
+            self._margin_breached = True
+            logger.warning(
+                "[AllocationEngine]   MARGIN BREACH: estimated IM=%.2f%% > threshold=%.0f%% "
+                "— reducing IG cap by %.0f%% (%.0f%% → %.0f%%)",
+                estimated_margin * 100,
+                self.rules.margin_breach_threshold * 100,
+                self.rules.ig_reduction_on_margin_breach * 100,
+                self.rules.ig_equity_pct * 100,
+                (self.rules.ig_equity_pct - self.rules.ig_reduction_on_margin_breach) * 100,
+            )
+        else:
+            self._margin_breached = False
+
+        # ── Money market hard floor enforcement ──────────────────
+        # 2% money market is NEVER breached — always reserve this
+        self._utilization[BucketType.MONEY_MARKET] = max(
+            self._utilization[BucketType.MONEY_MARKET],
+            self.rules.money_market_pct,
+        )
+
+        # Populate slate totals from utilization
+        slate.total_ig_equity = self._utilization[BucketType.IG_EQUITY]
+        slate.total_hy_equity = self._utilization[BucketType.HY_EQUITY]
+        slate.total_distressed_equity = self._utilization[BucketType.DISTRESSED_EQUITY]
+        slate.total_tltw_cashflow = self._utilization[BucketType.TLTW_CASHFLOW]
+        slate.total_fi_macro = self._utilization[BucketType.FI_MACRO]
+        slate.total_event_cvr = self._utilization[BucketType.EVENT_DRIVEN_CVR]
+        slate.total_options_notional = options_margin
+        slate.total_futures_beta = futures_margin
+        slate.total_margin = estimated_margin
         slate.total_money_market = self._utilization[BucketType.MONEY_MARKET]
+        slate.margin_breach = self._margin_breached
+        slate.ig_reduced = self._margin_breached
         slate.phase = CyclePhase.EXECUTING.value
         slate.timestamp = datetime.now(timezone.utc).isoformat()
 
@@ -513,23 +606,26 @@ class AllocationEngine:
         )
         logger.info(
             "[AllocationEngine]   Bucket utilization after cycle:"
-            "  IG=%.1f%%  HY=%.1f%%  ETF=%.1f%%  FI=%.1f%%"
-            "  CVR=%.1f%%  Opts=%.1f%%  Margin=%.1f%%  MM=%.1f%%",
+            "  IG=%.1f%%  HY=%.1f%%  Dist=%.1f%%  TLTW=%.1f%%"
+            "  FI=%.1f%%  CVR=%.1f%%  Opts=%.1f%%  Futures=%.1f%%  Margin=%.1f%%  MM=%.1f%%",
             slate.total_ig_equity * 100,
-            slate.total_hy_distressed * 100,
-            slate.total_etf * 100,
+            slate.total_hy_equity * 100,
+            slate.total_distressed_equity * 100,
+            slate.total_tltw_cashflow * 100,
             slate.total_fi_macro * 100,
             slate.total_event_cvr * 100,
             slate.total_options_notional * 100,
-            slate.total_margin_real * 100,
+            slate.total_futures_beta * 100,
+            slate.total_margin * 100,
             slate.total_money_market * 100,
         )
         total_deployed = sum(p.position_size for p in slate.positions)
         total_dollars = sum(p.dollar_amount for p in slate.positions)
         logger.info(
-            "[AllocationEngine]   Total deployed: %.2f%% of NAV = $%.0f",
+            "[AllocationEngine]   Total deployed: %.2f%% of NAV = $%.0f  |  Margin breach: %s",
             total_deployed * 100,
             total_dollars,
+            self._margin_breached,
         )
         logger.info(
             "[AllocationEngine] ────────────────────────────────────────────────────────",
@@ -565,29 +661,77 @@ class AllocationEngine:
 
     def _infer_bucket(self, sig: ScanSignal) -> str:
         itype = sig.instrument_type.upper() if sig.instrument_type else ""
-        if itype == InstrumentType.OPTION:
-            return BucketType.OPTIONS_IG
-        if itype == InstrumentType.ETF:
-            return BucketType.DIV_CASHFLOW_ETF
-        if itype == InstrumentType.FIXED_INCOME:
-            return BucketType.FI_MACRO
+        signal_type = (sig.signal_type or "").upper()
         regime = (sig.regime_context or "").upper()
-        if "DISTRESSED" in regime or "HY" in regime:
-            return BucketType.HY_DISTRESSED
+        ticker = (sig.ticker or "").upper()
+
+        # Options overlay — route by credit quality context
+        if itype == InstrumentType.OPTION:
+            if "DISTRESSED" in regime or "DISTRESSED" in signal_type:
+                return BucketType.OPTIONS_DISTRESSED
+            if "HY" in regime or "HY" in signal_type:
+                return BucketType.OPTIONS_HY
+            return BucketType.OPTIONS_IG
+
+        # Futures — beta corridor instruments
+        if itype == InstrumentType.FUTURE or itype == InstrumentType.DERIVATIVE:
+            return BucketType.FUTURES_BETA
+
+        # TLTW / cash payout ETF
+        if ticker in ("TLTW", "JEPI", "JEPQ", "DIVO", "XYLD", "QYLD", "RYLD"):
+            return BucketType.TLTW_CASHFLOW
+
+        # Fixed income
+        if itype == InstrumentType.FIXED_INCOME:
+            if "CVR" in signal_type or "EVENT" in signal_type:
+                return BucketType.EVENT_DRIVEN_CVR
+            return BucketType.FI_MACRO
+
+        # ETFs — route to TLTW cashflow or FI depending on type
+        if itype == InstrumentType.ETF:
+            # Income ETFs go to TLTW cashflow bucket
+            if ticker in ("TLT", "IEF", "SHY", "AGG", "BND", "MBB", "VMBS", "TIPS", "MUB"):
+                return BucketType.FI_MACRO
+            if ticker in ("GLD", "SLV", "USO", "UNG", "DBA", "DBC", "COPX", "WEAT", "CORN"):
+                return BucketType.TLTW_CASHFLOW
+            return BucketType.TLTW_CASHFLOW
+
+        # Event-driven / CVR signals
+        if "CVR" in signal_type or "EVENT" in signal_type or "MERGER" in signal_type:
+            return BucketType.EVENT_DRIVEN_CVR
+
+        # Distressed equity
+        if "DISTRESSED" in regime or "FALLEN_ANGEL" in signal_type:
+            return BucketType.DISTRESSED_EQUITY
+
+        # High yield equity
+        if "HY" in regime:
+            return BucketType.HY_EQUITY
+
+        # Default: investment grade equity
         return BucketType.IG_EQUITY
 
     def _bucket_cap(self, bucket: str) -> Optional[float]:
+        # If margin breach active, IG cap reduced by ig_reduction_on_margin_breach
+        ig_cap = self.rules.ig_equity_pct
+        if self._margin_breached:
+            ig_cap = self.rules.ig_equity_pct - self.rules.ig_reduction_on_margin_breach
+
         caps = {
-            BucketType.IG_EQUITY: self.rules.single_name_ig_pct,
-            BucketType.HY_DISTRESSED: self.rules.single_name_hy_distressed_pct,
-            BucketType.DIV_CASHFLOW_ETF: self.rules.div_cashflow_etf_pct,
+            BucketType.IG_EQUITY: ig_cap,
+            BucketType.HY_EQUITY: self.rules.hy_equity_pct,
+            BucketType.DISTRESSED_EQUITY: self.rules.distressed_equity_pct,
+            BucketType.TLTW_CASHFLOW: self.rules.tltw_cashflow_pct,
             BucketType.FI_MACRO: self.rules.fi_macro_pct,
             BucketType.EVENT_DRIVEN_CVR: self.rules.event_driven_cvr_pct,
             BucketType.OPTIONS_IG: self.rules.options_ig_pct,
             BucketType.OPTIONS_HY: self.rules.options_hy_pct,
             BucketType.OPTIONS_DISTRESSED: self.rules.options_distressed_pct,
+            BucketType.FUTURES_BETA: self.rules.futures_beta_pct,
+            BucketType.MARGIN: self.rules.margin_pct + (
+                self.rules.ig_reduction_on_margin_breach if self._margin_breached else 0.0
+            ),
             BucketType.MONEY_MARKET: self.rules.money_market_pct,
-            BucketType.MARGIN: self.rules.margin_real_capital_range[1],
         }
         return caps.get(bucket)
 
@@ -670,6 +814,69 @@ class AllocationEngine:
 
     # ── classify_opportunity ──────────────────────────────────────
 
+    # ── cube kill-switch integration ─────────────────────────────
+
+    def set_cube_kill_switch(self, active: bool) -> None:
+        """Set the MetadronCube kill-switch state.
+
+        When active (HY OAS +35bp & VIX flat/inverted & breadth <50%),
+        all equity trades are blocked until the cube clears the condition.
+        """
+        prev = self._cube_kill_switch
+        self._cube_kill_switch = active
+        if active and not prev:
+            logger.critical(
+                "[AllocationEngine] Cube kill-switch ACTIVATED — "
+                "HY OAS / VIX term / breadth matrix triggered"
+            )
+        elif not active and prev:
+            logger.info("[AllocationEngine] Cube kill-switch CLEARED")
+
+    # ── position-level drawdown exit ─────────────────────────────
+
+    def check_position_drawdown(
+        self, positions: list, cost_basis: dict, current_prices: dict,
+    ) -> list:
+        """Check individual position drawdowns and flag exits.
+
+        If any position is down >= max_drawdown_kill_switch (20%) from
+        cost basis, return it for liquidation.
+
+        Parameters
+        ----------
+        positions : list
+            Current open positions (ticker, qty, etc.)
+        cost_basis : dict
+            {ticker: avg_cost_per_share}
+        current_prices : dict
+            {ticker: current_price}
+
+        Returns
+        -------
+        list
+            Tickers that must be liquidated (position down >= 20%).
+        """
+        liquidate = []
+        threshold = self.rules.max_drawdown_kill_switch
+
+        for pos in positions:
+            ticker = pos.get("ticker") or getattr(pos, "ticker", "")
+            if not ticker:
+                continue
+            cost = cost_basis.get(ticker, 0.0)
+            price = current_prices.get(ticker, 0.0)
+            if cost <= 0 or price <= 0:
+                continue
+            drawdown = (cost - price) / cost
+            if drawdown >= threshold:
+                logger.warning(
+                    "[AllocationEngine] POSITION EXIT: %s down %.1f%% "
+                    "(cost=%.2f current=%.2f threshold=%.0f%%) — LIQUIDATE",
+                    ticker, drawdown * 100, cost, price, threshold * 100,
+                )
+                liquidate.append(ticker)
+        return liquidate
+
     def classify_opportunity(self, sig: "ScanSignal") -> str:
         """Classify a ScanSignal into its allocation bucket.
 
@@ -679,6 +886,7 @@ class AllocationEngine:
         itype = (sig.instrument_type or "").upper()
         signal_type = (sig.signal_type or "").upper()
         regime = (sig.regime_context or "").upper()
+        ticker = (sig.ticker or "").upper()
 
         if itype == InstrumentType.OPTION:
             if "HY" in regime or "DISTRESSED" in regime:
@@ -687,18 +895,20 @@ class AllocationEngine:
                 return BucketType.OPTIONS_HY
             return BucketType.OPTIONS_IG
         if itype in (InstrumentType.FUTURE, InstrumentType.DERIVATIVE):
-            return BucketType.MARGIN
+            return BucketType.FUTURES_BETA
+        if ticker in ("TLTW", "JEPI", "JEPQ", "DIVO", "XYLD", "QYLD", "RYLD"):
+            return BucketType.TLTW_CASHFLOW
         if itype == InstrumentType.FIXED_INCOME:
             if "CVR" in signal_type or "EVENT" in signal_type:
                 return BucketType.EVENT_DRIVEN_CVR
             return BucketType.FI_MACRO
         if itype == InstrumentType.ETF:
-            return BucketType.DIV_CASHFLOW_ETF
+            return BucketType.TLTW_CASHFLOW
         # Equity paths
         if "DISTRESSED" in regime or "DISTRESS" in signal_type:
-            return BucketType.HY_DISTRESSED
+            return BucketType.DISTRESSED_EQUITY
         if "HY" in regime or "HY" in signal_type:
-            return BucketType.HY_DISTRESSED
+            return BucketType.HY_EQUITY
         if "CVR" in signal_type or "EVENT" in signal_type:
             return BucketType.EVENT_DRIVEN_CVR
         return BucketType.IG_EQUITY
@@ -764,8 +974,9 @@ class AllocationEngine:
             timestamp=datetime.now(timezone.utc).isoformat(),
         )
         merged.total_ig_equity = self._utilization[BucketType.IG_EQUITY]
-        merged.total_hy_distressed = self._utilization[BucketType.HY_DISTRESSED]
-        merged.total_etf = self._utilization[BucketType.DIV_CASHFLOW_ETF]
+        merged.total_hy_equity = self._utilization[BucketType.HY_EQUITY]
+        merged.total_distressed_equity = self._utilization[BucketType.DISTRESSED_EQUITY]
+        merged.total_tltw_cashflow = self._utilization[BucketType.TLTW_CASHFLOW]
         merged.total_fi_macro = self._utilization[BucketType.FI_MACRO]
         merged.total_event_cvr = self._utilization[BucketType.EVENT_DRIVEN_CVR]
         merged.total_options_notional = (
@@ -773,7 +984,8 @@ class AllocationEngine:
             + self._utilization[BucketType.OPTIONS_HY]
             + self._utilization[BucketType.OPTIONS_DISTRESSED]
         )
-        merged.total_margin_real = self._utilization[BucketType.MARGIN]
+        merged.total_futures_beta = self._utilization[BucketType.FUTURES_BETA]
+        merged.total_margin = self._utilization[BucketType.MARGIN]
         merged.total_money_market = self._utilization[BucketType.MONEY_MARKET]
 
         total_input = sum(len(s.positions) for s in slates)

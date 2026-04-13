@@ -846,6 +846,14 @@ class LiveLoopOrchestrator:
                 pr.data["cube_regime"] = cube_out.regime.value if hasattr(cube_out, "regime") else str(cube_out)
                 pr.data["cube_target_beta"] = getattr(cube_out, "target_beta", 0.0)
                 signals_count += 1
+
+                # Forward cube kill-switch state to AllocationEngine
+                cube_kill = getattr(cube_out, "kill_switch_active", False)
+                alloc = self._get("allocation_engine")
+                if alloc and hasattr(alloc, "set_cube_kill_switch"):
+                    alloc.set_cube_kill_switch(cube_kill)
+                pr.data["cube_kill_switch"] = cube_kill
+
                 logger.info(
                     "Cube regime: %s  target_beta: %.3f",
                     pr.data["cube_regime"], pr.data["cube_target_beta"],
@@ -1838,6 +1846,44 @@ class LiveLoopOrchestrator:
         self._update_circuit_breaker(nav, daily_pnl)
         pr.data["risk_level"] = self._circuit_breaker.level.value
         pr.data["kill_switch"] = self._circuit_breaker.kill_switch_active
+
+        # Position-level drawdown exit check (20% per position)
+        alloc = self._get("allocation_engine")
+        if alloc and exec_engine and hasattr(alloc, "check_position_drawdown"):
+            try:
+                broker = getattr(exec_engine, "broker", None)
+                if broker and hasattr(broker, "positions"):
+                    positions = broker.positions if not callable(broker.positions) else broker.positions()
+                    if positions:
+                        cost_basis = {}
+                        current_prices = {}
+                        for pos in positions:
+                            t = pos.get("ticker") or getattr(pos, "ticker", "")
+                            if t:
+                                cost_basis[t] = pos.get("avg_cost") or getattr(pos, "avg_cost", 0.0)
+                                current_prices[t] = pos.get("current_price") or getattr(pos, "current_price", 0.0)
+                        if cost_basis and current_prices:
+                            exits = alloc.check_position_drawdown(positions, cost_basis, current_prices)
+                            if exits:
+                                pr.data["position_exits"] = exits
+                                logger.warning(
+                                    "[LiveLoop] Position-level 20%% drawdown EXIT: %s — queuing liquidation",
+                                    exits,
+                                )
+                                for ticker in exits:
+                                    self._approved_trades.append({
+                                        "ticker": ticker,
+                                        "signal": "POSITION_DRAWDOWN_EXIT",
+                                        "decision": {"source": "position_stop_loss", "action": "LIQUIDATE"},
+                                        "dollar_amount": 0,
+                                        "position_size": 0,
+                                        "bucket": "LIQUIDATION",
+                                        "instrument_type": "EQUITY",
+                                        "timestamp": datetime.now().isoformat(),
+                                    })
+            except Exception as exc:
+                pr.data["position_drawdown_error"] = str(exc)
+                logger.debug("Position drawdown check error: %s", exc)
 
         # Anomaly detection
         anomaly = self._get("anomaly_detector")
