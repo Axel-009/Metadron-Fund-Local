@@ -417,7 +417,14 @@ class FullUniverseScan:
         return run, slate
 
     async def run_full_cycle(self, cycle_number: int = 0) -> AllocationSlate:
-        """Execute a full scan cycle: 4 runs → aggregate → execute → risk check."""
+        """Execute a full scan cycle: 4 runs (async parallel) → aggregate → execute → risk check.
+
+        TIMING TELEMETRY: Tracks per-run duration + total cycle time.
+        Warns if total cycle exceeds 5-minute Phase 3 cadence.
+        """
+        import asyncio as _asyncio
+        cycle_start = time.time()
+
         self.cycle_count = cycle_number or self.cycle_count + 1
         self.current_status = ScanCycleStatus(
             cycle_number=self.cycle_count,
@@ -427,10 +434,10 @@ class FullUniverseScan:
         self._run_slates = []
 
         self.current_status.phase = CyclePhase.SCANNING.value
-        for i, universe in enumerate(UNIVERSE_ORDER):
-            self.current_status.current_run = i + 1
-            self.current_status.current_universe = universe
 
+        # Run 4 universes in parallel via asyncio.gather
+        async def _run_with_telemetry(i, universe):
+            run_start = time.time()
             signal_bus.emit({
                 "type": "phase_update",
                 "phase": CyclePhase.SCANNING.value,
@@ -439,8 +446,30 @@ class FullUniverseScan:
                 "cycle_number": self.cycle_count,
                 "timestamp": datetime.now(timezone.utc).isoformat(),
             })
-
             run_status, slate = await self.run_universe(universe, i + 1)
+            run_duration = time.time() - run_start
+            logger.info("[FullUniverseScan] Run %d (%s) completed in %.1fs",
+                        i + 1, universe, run_duration)
+            return run_status, slate, run_duration
+
+        try:
+            results = await _asyncio.gather(*[
+                _run_with_telemetry(i, universe)
+                for i, universe in enumerate(UNIVERSE_ORDER)
+            ])
+            for i, (run_status, slate, run_duration) in enumerate(results):
+                self.current_status.current_run = i + 1
+                self.current_status.current_universe = UNIVERSE_ORDER[i]
+                self.current_status.runs.append(run_status)
+                self.current_status.total_signals += run_status.signals_discovered
+                self._run_slates.append(slate)
+        except Exception as exc:
+            logger.warning("[FullUniverseScan] async gather failed, falling back to sequential: %s", exc)
+            # Sequential fallback
+            for i, universe in enumerate(UNIVERSE_ORDER):
+                self.current_status.current_run = i + 1
+                self.current_status.current_universe = universe
+                run_status, slate = await self.run_universe(universe, i + 1)
             self.current_status.runs.append(run_status)
             self.current_status.total_signals += run_status.signals_discovered
             self._run_slates.append(slate)
@@ -516,6 +545,25 @@ class FullUniverseScan:
                     prom["active_universe_size"].set(total_tickers)
         except Exception:
             pass
+
+        # Cycle-level timing telemetry
+        total_duration = time.time() - cycle_start
+        CADENCE_SECONDS = 300  # Phase 3 cadence is 5 minutes
+        if total_duration > CADENCE_SECONDS:
+            logger.warning(
+                "[FullUniverseScan] Cycle %d took %.1fs — EXCEEDS %ds cadence. "
+                "Consider progressive subset rotation.",
+                self.cycle_count, total_duration, CADENCE_SECONDS,
+            )
+        else:
+            logger.info(
+                "[FullUniverseScan] Cycle %d completed in %.1fs (within %ds cadence)",
+                self.cycle_count, total_duration, CADENCE_SECONDS,
+            )
+        try:
+            aggregated.cycle_duration_seconds = round(total_duration, 2)
+        except Exception:
+            pass  # AllocationSlate may not have this field — non-critical
 
         self._last_slate = aggregated
         self._running = False

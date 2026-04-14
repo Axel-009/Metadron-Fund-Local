@@ -316,8 +316,8 @@ class RiskGateManager:
         max_position_pct: float = 0.10,       # 10% max single position
         max_sector_pct: float = 0.30,          # 30% max sector concentration
         max_daily_loss_pct: float = 0.03,      # 3% max daily loss
-        max_gross_exposure: float = 2.5,       # 250% max gross exposure
-        max_net_exposure: float = 1.5,         # 150% max net exposure
+        max_gross_exposure: float = 1.5,       # 150% max gross exposure (reduced from 250% — flash crash protection)
+        max_net_exposure: float = 1.0,         # 100% max net exposure (reduced from 150%)
         max_trade_count_daily: int = 100,      # Max trades per day
         min_liquidity_adv: float = 100_000,    # Min average daily volume (dollars)
         max_drawdown_pct: float = 0.10,        # 10% max drawdown before halt

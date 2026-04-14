@@ -117,19 +117,20 @@ class DecisionGate:
 # KellySizer
 # ---------------------------------------------------------------------------
 class KellySizer:
-    """Kelly criterion position sizing with aggressive multiplier.
+    """Kelly criterion position sizing with half-Kelly multiplier.
 
     Standard Kelly: f* = (p * b - q) / b
         p = win probability
         b = win/loss ratio
         q = 1 - p
 
-    Aggressive Kelly multiplies by 1.5x for the alpha target.
-    Capped at MAX_SINGLE_POSITION_PCT of NAV.
+    Half-Kelly (0.5x) is industry standard for managing estimation error
+    in p and b parameters. Reduces max single-position exposure by 3x vs
+    aggressive 1.5x. Capped at MAX_SINGLE_POSITION_PCT of NAV.
     """
 
     def __init__(self, max_position_pct: float = MAX_SINGLE_POSITION_PCT,
-                 default_multiplier: float = 1.5):
+                 default_multiplier: float = 0.5):
         self.max_position_pct = max_position_pct
         self.default_multiplier = default_multiplier
         self._sizing_history: List[dict] = []

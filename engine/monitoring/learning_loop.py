@@ -503,30 +503,86 @@ class LearningLoop:
 
     # --- Apply learning to engines ------------------------------------------
 
+    # Damping parameters (prevent feedback loop oscillation)
+    MAX_WEIGHT_CHANGE_PER_CYCLE = 0.05       # Max 5% change per cycle
+    OSCILLATION_HISTORY_LEN = 10             # Track last 10 cycles
+    OSCILLATION_REVERSAL_THRESHOLD = 3       # 3+ reversals = freeze weight
+
     def apply_to_ensemble(self, ensemble) -> dict:
-        """Apply learned tier weights to MLVoteEnsemble.
+        """Apply learned tier weights to MLVoteEnsemble with damping + oscillation detection.
+
+        Damping: max 5% change per cycle to prevent runaway adjustments.
+        Oscillation detection: if a weight reverses direction 3+ times in
+        10 cycles, freeze it and alert (indicates unstable dynamics).
 
         Args:
             ensemble: MLVoteEnsemble instance
 
         Returns:
-            Dict of old → new weight changes.
+            Dict of old → new weight changes + frozen tiers.
         """
+        if not hasattr(self, "_weight_history"):
+            self._weight_history = {}  # {tier: [delta_1, delta_2, ...]}
+            self._frozen_tiers = set()
+
         new_weights = self.compute_tier_weight_adjustments()
         changes = {}
-        for tier, new_w in new_weights.items():
+        frozen_now = []
+
+        for tier, target_w in new_weights.items():
+            # Skip frozen tiers (oscillation detected)
+            if tier in self._frozen_tiers:
+                continue
+
             old_w = ensemble.TIER_WEIGHTS.get(tier, 1.0)
+            raw_delta = target_w - old_w
+
+            # Apply damping: cap change at MAX_WEIGHT_CHANGE_PER_CYCLE
+            if abs(raw_delta) > self.MAX_WEIGHT_CHANGE_PER_CYCLE:
+                capped_delta = self.MAX_WEIGHT_CHANGE_PER_CYCLE * (1 if raw_delta > 0 else -1)
+                new_w = old_w + capped_delta
+            else:
+                new_w = target_w
+
+            # Track in history for oscillation detection
+            hist = self._weight_history.setdefault(tier, [])
+            delta = new_w - old_w
+            hist.append(delta)
+            if len(hist) > self.OSCILLATION_HISTORY_LEN:
+                hist.pop(0)
+
+            # Count direction reversals in recent history
+            reversals = 0
+            for i in range(1, len(hist)):
+                if hist[i] * hist[i-1] < 0:  # sign flip
+                    reversals += 1
+
+            # Freeze if oscillating
+            if reversals >= self.OSCILLATION_REVERSAL_THRESHOLD:
+                self._frozen_tiers.add(tier)
+                frozen_now.append(tier)
+                logger.warning(
+                    "OSCILLATION DETECTED: tier %s frozen after %d reversals in %d cycles",
+                    tier, reversals, len(hist),
+                )
+                continue
+
+            # Apply change if meaningful
             if abs(new_w - old_w) > 0.01:
-                changes[tier] = {"old": old_w, "new": new_w}
+                changes[tier] = {"old": old_w, "new": new_w, "capped": abs(raw_delta) > self.MAX_WEIGHT_CHANGE_PER_CYCLE}
                 ensemble.TIER_WEIGHTS[tier] = new_w
 
         if changes:
             logger.info(
-                "Learning loop adjusted %d tier weights: %s",
+                "Learning loop adjusted %d tier weights (damped): %s",
                 len(changes),
-                {k: f"{v['old']:.2f}→{v['new']:.2f}" for k, v in changes.items()},
+                {k: f"{v['old']:.2f}→{v['new']:.2f}{' [capped]' if v.get('capped') else ''}"
+                 for k, v in changes.items()},
             )
-        return changes
+        if frozen_now:
+            logger.critical("Tiers frozen due to oscillation: %s", frozen_now)
+
+        return {"changes": changes, "frozen": list(self._frozen_tiers)}
 
     def get_engine_stats(self, engine: str) -> Optional[EngineAccuracy]:
         """Get accuracy stats for a specific engine."""
