@@ -29,8 +29,8 @@ Add to CLAUDE.md rule: "Always use Context7 when working with library APIs or co
 
 ## Mission
 
-**$1,000 → $100,000 in 100 days** (~4.6% daily compound return).
-Target 95%+ alpha. Compete with and outperform the Medallion fund.
+Target 95%+ alpha through aggressive multi-sleeve allocation with continuous
+ML walk-forward optimization. Compete with and outperform the Medallion fund.
 
 ## Investment Thesis
 

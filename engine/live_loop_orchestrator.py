@@ -1803,12 +1803,14 @@ class LiveLoopOrchestrator:
         # News+MiroMomentum, EventDriven, and CVR can submit trades directly
         # to L7 without going through DecisionMatrix, when conviction is high.
         if exec_engine and hasattr(exec_engine, "l7_submit"):
-            # News+MiroMomentum direct trades (combined_score > 0.3 or < -0.3)
+            # News+MiroMomentum direct trades (combined_score > 0.7 or < -0.7)
+            # Raised from 0.3 to 0.7 to match EVENT_DIRECT conviction threshold —
+            # prevents marginal sentiment from bypassing DecisionMatrix gates.
             if self._last_news_miro_output:
                 for ticker, sig in self._last_news_miro_output.items():
                     try:
                         score = sig.get("combined_score", 0)
-                        if abs(score) >= 0.3:
+                        if abs(score) >= 0.7:
                             side = "BUY" if score > 0 else "SELL"
                             conf = sig.get("miro_confidence", 0.5)
                             qty = max(1, int(conf * 50))
