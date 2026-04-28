@@ -1,10 +1,5 @@
 # METADRON CAPITAL — COMPLETE ARCHITECTURE DNA
 
-## Mission
-**$1,000 → $100,000 in 100 days** (~4.6% daily compound return)
-Target 95%+ alpha. Compete with and outperform the Medallion fund.
-Paper broker mode (OpenBB data). Beta managed within 7–12% corridor.
-
 ---
 
 ## MASTER SIGNAL PIPELINE (Execution Order)

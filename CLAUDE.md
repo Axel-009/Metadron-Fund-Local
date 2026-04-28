@@ -27,11 +27,6 @@ Add to CLAUDE.md rule: "Always use Context7 when working with library APIs or co
 >
 > "Continue building the Metadron Capital investment platform. The master repo is at `/home/user/Metadron-Capital` with a 6-layer architecture. The investment engine is in `engine/`. All 20 component repos are under `repos/`. Core platform code is in `core/`. Run `python3 -m pytest tests/ -v` to verify. Run `python3 run_open.py` to execute the full signal pipeline."
 
-## Mission
-
-Target 95%+ alpha through aggressive multi-sleeve allocation with continuous
-ML walk-forward optimization. Compete with and outperform the Medallion fund.
-
 ## Investment Thesis
 
 Beta managed within a 7–12% return corridor (S&P 500 historical earnings range).
