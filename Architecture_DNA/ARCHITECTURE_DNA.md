@@ -1118,7 +1118,6 @@ HOLD
 | MiroFish | L2+L6 | **Pattern Discovery** (CAMEL-AI dual sim: clustering, herding, contagion, divergence) + Social prediction |
 | exchange-core | L7 | **HFT Execution** — Ultra-low-latency order matching engine (Python/LMAX Disruptor ring buffer, 10M+ ops/sec concept) |
 | wondertrader | L7 | **HFT Execution** — CTA trend-following, micro-price engine, TWAP/VWAP routing, multi-timeframe analysis |
-| worldmonitor | L2 | **Global Event Monitoring** — 30+ categories (market, economic, conflict, supply-chain, trade, news) → EventDrivenEngine + MacroEngine feed via WorldMonitorBridge |
 | markov-model | L3 | **HMM Regime Detection** — hmmlearn GaussianHMM for data-driven regime classification → MetadronCube RegimeEngine via MarkovRegimeBridge |
 
 ---
@@ -1534,14 +1533,17 @@ Added to existing `/api/engine/macro` router:
 | Parameter | Default | Description |
 |-----------|---------|-------------|
 | max_drawdown_kill_switch | 0.20 | 20% drawdown → HALT |
-| single_name_ig_pct | 0.30 | IG equities (30%) |
-| single_name_hy_distressed_pct | 0.20 | HY/FA/Distressed (20%) |
-| div_cashflow_etf_pct | 0.15 | DIV/Cashflow ETFs (15%) |
+| ig_equity_pct | 0.40 | IG equities (40%) |
+| hy_equity_pct | 0.10 | HY equities (10%) |
+| distressed_equity_pct | 0.10 | Distressed equity (10%) |
+| tltw_cashflow_pct | 0.15 | DIV/Cashflow ETFs (15%) |
 | fi_macro_pct | 0.05 | FI + Macro RV (5%) |
-| event_driven_cvr_pct | 0.05 | Event-driven / CVR (5%) |
+| event_driven_cvr_pct | 0.10 | Event-driven / CVR (10%) |
 | options_notional_pct | 0.25 | Options notional (25%: IG 10%, HY 10%, Distressed 5%) |
-| margin_real_capital_range | (0.05, 0.15) | Margin real capital 5-15% |
-| money_market_pct | 0.05 | Cash / dry powder (5%) |
+| futures_beta_pct | 0.15 | Futures beta hedge (15%) |
+| margin_pct | 0.08 | Margin real capital (8%) |
+| money_market_pct | 0.02 | Cash / dry powder (2%) |
+| profit_take_threshold | 0.20 | 20% P&L → liquidate overlays |
 | drip_rule | True | ETF distributions must be reinvested |
 | alpha_primary_goal | True | Alpha extraction is the primary goal |
 

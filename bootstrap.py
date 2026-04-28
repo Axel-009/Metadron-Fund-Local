@@ -33,7 +33,6 @@ LAYER_MAP = {
         "CTA-code": "CTA/trend-following signals",
         "TradeTheEvent": "Event-driven ML (BERT news classification)",
         "wondertrader": "HFT quantitative trading (C++/Python)",
-        "worldmonitor": "Global real-time event monitoring (event + macro engine feed)",
     },
     "layer3_ml": {
         "QLIB": "Microsoft Qlib quantitative ML framework",

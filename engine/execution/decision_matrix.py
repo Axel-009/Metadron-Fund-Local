@@ -4,10 +4,7 @@ Sits between AlphaOptimizer and ExecutionEngine in the signal pipeline:
     UniverseEngine -> MacroEngine -> MetadronCube -> AlphaOptimizer
         -> **DecisionMatrix** -> ExecutionEngine
 
-Goal: $1,000 -> $100,000 in 100 days (~4.6% daily compound).
-Target 95%+ alpha.  Compete with the Medallion fund.
-
-Six approval gates (weighted):
+Target 95%+ alpha. Six approval gates (weighted):
     1. ALPHA_QUALITY    (25%)  Alpha signal strength (Sharpe, quality tier)
     2. REGIME_ALIGNMENT (20%)  Trade alignment with MetadronCube regime
     3. RISK_BUDGET      (20%)  VaR / leverage / drawdown headroom
@@ -41,8 +38,6 @@ logger = logging.getLogger(__name__)
 # Constants
 # ---------------------------------------------------------------------------
 DAILY_TARGET = 0.046                  # ~4.6% daily compound
-GOAL_MULTIPLE = 100.0                 # 1k -> 100k
-GOAL_DAYS = 100
 RISK_FREE_RATE = 0.04
 TRADING_DAYS = 252
 MAX_PORTFOLIO_VAR_PCT = 0.015         # 1.5% daily VaR limit
@@ -124,13 +119,11 @@ class KellySizer:
         b = win/loss ratio
         q = 1 - p
 
-    Half-Kelly (0.5x) is industry standard for managing estimation error
-    in p and b parameters. Reduces max single-position exposure by 3x vs
-    aggressive 1.5x. Capped at MAX_SINGLE_POSITION_PCT of NAV.
+    Capped at MAX_SINGLE_POSITION_PCT of NAV.
     """
 
     def __init__(self, max_position_pct: float = MAX_SINGLE_POSITION_PCT,
-                 default_multiplier: float = 0.5):
+                 default_multiplier: float = 1.5):
         self.max_position_pct = max_position_pct
         self.default_multiplier = default_multiplier
         self._sizing_history: List[dict] = []
@@ -1177,7 +1170,7 @@ class DecisionMatrix:
             f"  Regime        : {self.regime}",
             f"  NAV           : ${self.nav:,.2f}",
             f"  Daily Target  : {DAILY_TARGET:.1%}",
-            f"  Goal          : $1,000 -> $100,000 in {GOAL_DAYS} days",
+            f"  Target        : 95%+ alpha, {DAILY_TARGET:.1%} daily compound",
             f"  Min Composite : {self.min_composite:.2f}",
             f"  Current VaR   : {self._current_var:.4f}",
             f"  Leverage      : {self._current_leverage:.2f}x / {self.max_leverage:.1f}x",

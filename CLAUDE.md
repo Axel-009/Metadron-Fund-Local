@@ -72,7 +72,6 @@ L7 HFT/Execution quant-trading, wondertrader,           → 12 technical strateg
 | Prediction | MiroFish (666ghj) | Agent-based market microstructure → SocialPredictionEngine |
 | Reference | Quant-Developers-Resources | Quant research catalog (11 categories) |
 | Backend | Installation-Back-end-Files | ML backends: OpenBB SDK, CAMEL-AI/OASIS, PySR, QLIB, FinBERT, Air-LLM |
-| Monitoring | worldmonitor (koala73) | L2 — Global real-time event monitoring (30+ categories) → EventDrivenEngine + MacroEngine |
 | Regime ML | markov-model (hmmlearn) | L3 — Hidden Markov Models for data-driven regime detection → MetadronCube RegimeEngine |
 
 ### MacroEngine Cadence
@@ -141,7 +140,6 @@ Metadron-Capital/                        ← Master monorepo (Layer 0: Hub)
 │   │       ├── stock_prediction_bridge.py ← Stock prediction model bridge
 │   │       ├── deep_trading_features.py ← Deep trading feature engineering
 │   │       ├── kserve_adapter.py        ← KServe ML model serving adapter
-│   │       ├── worldmonitor_bridge.py  ← WorldMonitor global event feed → EventDrivenEngine + MacroEngine
 │   │       └── markov_regime_bridge.py ← hmmlearn HMM → MetadronCube RegimeEngine
 │   ├── portfolio/                       ← L4: Portfolio construction
 │   │   └── beta_corridor.py            ← Beta corridor 7–12% + vol-normalisation
