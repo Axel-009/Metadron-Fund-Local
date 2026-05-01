@@ -33,10 +33,13 @@ trade execution to learning feedback.
                 │ 1044 securities │ │ routing to       │ │ + FMP fallback  │
                 │ GICS 4-tier     │ │ engine layers    │ │ sentiment score │
                 │ 26 RV pairs     │ │                  │ │ urgency rating  │
-                └────────┬────────┘ └────────┬─────────┘ └───────┬─────────┘
-                         │                   │                   │
-                         └───────────┬───────┘                   │
-                                     │                           │
+                └────────┬────────┘ └────────┬─────────┘ └───┬───────┬─────┘
+                         │                   │               │       │
+                         └───────────┬───────┘               │       │
+                                     │                       │       │
+                              to Track A              to Track B     │
+                              (Cube → signals)        (News+Miro)   │
+                                     │                       │       │
 ═════════════════════════════════════╪═══════════════════════════╪═════════
  STAGE 2: LAYERS — Signal Processing (1-min cadence)            │
 ═════════════════════════════════════╪═══════════════════════════╪═════════
@@ -120,10 +123,10 @@ trade execution to learning feedback.
                                         (independent — feeds directly from
                                          NewsEngine in Stage 1, NOT from Cube)
 
-                ┌─────────────────┐
-                │   NewsEngine    │ ◄── from Stage 1 (newsfilter.io)
-                │ (Stage 1 data)  │
-                └────────┬────────┘
+                         │
+                         │ (from NewsEngine in Stage 1 — same instance,
+                         │  newsfilter.io + FMP fallback + sentiment +
+                         │  urgency rating — no duplicate engine)
                          │
           ┌──────────────▼──────────────────────────┐
           │     News+MiroMomentum Pipeline           │
