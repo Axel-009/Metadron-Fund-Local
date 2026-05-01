@@ -15,6 +15,12 @@ from typing import Optional
 import numpy as np
 
 try:
+    from engine.execution.options_engine import get_options_sizer, OptionsSizer
+except ImportError:
+    get_options_sizer = None
+    OptionsSizer = None
+
+try:
     from engine.utils.money import D, money, to_float, safe_div
 except ImportError:
     from decimal import Decimal as D  # type: ignore
@@ -197,9 +203,16 @@ class PositionAllocation:
     signal_type: str
     regime_context: str
     timestamp: str = ""
+    # Options sizing (populated by OptionsSizer: BS + MC + Kelly)
+    options_contracts: int = 0
+    options_bs_price: float = 0.0
+    options_mc_price: float = 0.0
+    options_kelly_fraction: float = 0.0
+    options_edge_bps: float = 0.0
+    options_delta: float = 0.0
 
     def to_dict(self) -> dict:
-        return {
+        d = {
             "ticker": self.ticker,
             "bucket": self.bucket,
             "instrument_type": self.instrument_type,
@@ -211,6 +224,14 @@ class PositionAllocation:
             "regime_context": self.regime_context,
             "timestamp": self.timestamp or datetime.now(timezone.utc).isoformat(),
         }
+        if self.options_contracts > 0:
+            d["options_contracts"] = self.options_contracts
+            d["options_bs_price"] = self.options_bs_price
+            d["options_mc_price"] = self.options_mc_price
+            d["options_kelly_fraction"] = self.options_kelly_fraction
+            d["options_edge_bps"] = self.options_edge_bps
+            d["options_delta"] = self.options_delta
+        return d
 
 
 @dataclass
@@ -648,7 +669,11 @@ class AllocationEngine:
     def _size_position(
         self, sig: ScanSignal, total_capital: float
     ) -> Optional[PositionAllocation]:
-        """Compute position size and dollar amount for a signal (Decimal precision)."""
+        """Compute position size and dollar amount for a signal (Decimal precision).
+
+        For options: uses OptionsSizer (Black-Scholes + Monte Carlo + Kelly)
+        to compute proper contract quantity instead of falling through to qty=1.
+        """
         bucket = sig.bucket or self._infer_bucket(sig)
         cap = self._bucket_cap(bucket)
         if cap is None or cap <= 0:
@@ -660,7 +685,12 @@ class AllocationEngine:
         base_size = min(d_conf * d_cap * d_lev, d_cap)
         dollar_amount = to_float(money(base_size * D(total_capital)))
 
-        return PositionAllocation(
+        # Options: BS + MC + Kelly sizing for proper contract quantity
+        options_sizing = None
+        if bucket in (BucketType.OPTIONS_IG, BucketType.OPTIONS_HY, BucketType.OPTIONS_DISTRESSED):
+            options_sizing = self._size_option_contracts(sig, dollar_amount, total_capital)
+
+        alloc = PositionAllocation(
             ticker=sig.ticker,
             bucket=bucket,
             instrument_type=sig.instrument_type,
@@ -671,6 +701,59 @@ class AllocationEngine:
             signal_type=sig.signal_type,
             regime_context=sig.regime_context,
         )
+
+        if options_sizing:
+            alloc.options_contracts = options_sizing.get("contracts", 1)
+            alloc.options_bs_price = options_sizing.get("bs_price", 0)
+            alloc.options_mc_price = options_sizing.get("mc_price", 0)
+            alloc.options_kelly_fraction = options_sizing.get("kelly_fraction", 0)
+            alloc.options_edge_bps = options_sizing.get("edge_bps", 0)
+            alloc.options_delta = options_sizing.get("delta", 0)
+            alloc.dollar_amount = options_sizing.get("total_cost", dollar_amount)
+
+        return alloc
+
+    def _size_option_contracts(
+        self, sig: ScanSignal, budget_dollars: float, nav: float,
+    ) -> Optional[dict]:
+        """Use OptionsSizer (BS + MC + Kelly) for proper option contract sizing."""
+        if get_options_sizer is None:
+            return None
+        try:
+            sizer = get_options_sizer()
+            spot = getattr(sig, "spot_price", 0) or getattr(sig, "price", 0) or 100.0
+            vol = getattr(sig, "implied_vol", 0) or getattr(sig, "volatility", 0) or 0.25
+            signal_type = (sig.signal_type or "").upper()
+
+            is_call = "PUT" not in signal_type
+            otm_pct = 0.05
+            expiry_days = 30
+
+            if "DISTRESSED" in signal_type or "FALLEN" in signal_type:
+                otm_pct = 0.10
+                expiry_days = 45
+            elif "HY" in signal_type:
+                otm_pct = 0.07
+
+            result = sizer.size_from_signal(
+                ticker=sig.ticker,
+                spot=spot,
+                vol=vol,
+                nav=nav,
+                budget_dollars=budget_dollars,
+                is_call=is_call,
+                otm_pct=otm_pct,
+                expiry_days=expiry_days,
+            )
+            logger.info(
+                "OptionsSizer: %s → %d contracts (BS=$%.2f, MC=$%.2f, Kelly=%.4f, edge=%.0fbps)",
+                sig.ticker, result["contracts"], result["bs_price"],
+                result["mc_price"], result["kelly_fraction"], result["edge_bps"],
+            )
+            return result
+        except Exception as e:
+            logger.warning("OptionsSizer failed for %s: %s — falling back to budget sizing", sig.ticker, e)
+            return None
 
     def _infer_bucket(self, sig: ScanSignal) -> str:
         itype = sig.instrument_type.upper() if sig.instrument_type else ""

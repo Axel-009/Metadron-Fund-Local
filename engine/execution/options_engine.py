@@ -1674,3 +1674,219 @@ def scan_option_chain(
     
     opportunities.sort(key=lambda x: abs(x.mispricing_pct or 0), reverse=True)
     return opportunities
+
+
+# ---------------------------------------------------------------------------
+# Options Sizer — BS + Monte Carlo + Kelly for contract quantity
+# ---------------------------------------------------------------------------
+
+class OptionsSizer:
+    """Compute option contract quantity using Black-Scholes, Monte Carlo, and Kelly.
+
+    Called by AllocationEngine before orders reach L7 execution surface.
+    Ensures option contract counts reflect proper risk/reward sizing
+    rather than falling through to qty=1.
+
+    Flow:
+        1. BS theoretical price → fair value per contract
+        2. Monte Carlo simulation → win probability and expected payoff
+        3. Kelly criterion → optimal fraction of capital to risk
+        4. Contract count = Kelly-sized dollar amount / (premium × 100)
+
+    The 100 multiplier accounts for standard US equity options (100 shares/contract).
+    """
+
+    CONTRACT_MULTIPLIER = 100
+    KELLY_MULTIPLIER = 1.5
+    MAX_CONTRACTS_PCT_NAV = 0.05
+    MIN_CONTRACTS = 1
+    MC_SIMS = 10_000
+    MC_STEPS = 63
+
+    def __init__(self):
+        self.bs = BlackScholesModel()
+
+    def size_option(
+        self,
+        spot: float,
+        strike: float,
+        expiry_days: int,
+        vol: float,
+        is_call: bool,
+        nav: float,
+        budget_dollars: float,
+        risk_free: float = 0.05,
+        market_price: Optional[float] = None,
+    ) -> dict:
+        """Compute optimal contract quantity for an option position.
+
+        Parameters
+        ----------
+        spot : float
+            Current underlying price.
+        strike : float
+            Option strike price.
+        expiry_days : int
+            Days to expiration.
+        vol : float
+            Annualized implied volatility.
+        is_call : bool
+            True for calls, False for puts.
+        nav : float
+            Portfolio net asset value.
+        budget_dollars : float
+            Dollar allocation from the allocation engine for this option bucket.
+        risk_free : float
+            Risk-free rate (annualized).
+        market_price : float, optional
+            Market price of the option (for mispricing edge calculation).
+
+        Returns
+        -------
+        dict with keys:
+            contracts, bs_price, mc_price, mc_std_error, mc_win_prob,
+            kelly_fraction, kelly_contracts, dollar_cost, edge_bps,
+            delta, gamma, theta, vega
+        """
+        T = max(expiry_days / 365.0, 0.001)
+
+        # 1. Black-Scholes theoretical price
+        if is_call:
+            bs_price = self.bs.call_price(spot, strike, T, risk_free, vol)
+        else:
+            bs_price = self.bs.put_price(spot, strike, T, risk_free, vol)
+        bs_price = max(bs_price, 0.01)
+
+        # 2. Monte Carlo simulation — win probability and expected payoff
+        mc_price, mc_std_error = monte_carlo_option_price(
+            S=spot, K=strike, T=T, sigma=vol,
+            is_call=is_call, r=risk_free,
+            n_sims=self.MC_SIMS, n_steps=self.MC_STEPS,
+        )
+
+        # Monte Carlo win probability: fraction of paths where option expires ITM
+        dt_mc = T / self.MC_STEPS
+        Z = np.random.standard_normal((self.MC_SIMS, self.MC_STEPS))
+        log_returns = (risk_free - 0.5 * vol**2) * dt_mc + vol * np.sqrt(dt_mc) * Z
+        S_T = spot * np.exp(np.cumsum(log_returns, axis=1)[:, -1])
+
+        if is_call:
+            itm_mask = S_T > strike
+            payoffs = np.maximum(S_T - strike, 0)
+        else:
+            itm_mask = S_T < strike
+            payoffs = np.maximum(strike - S_T, 0)
+
+        win_prob = float(np.mean(itm_mask))
+        avg_win_payoff = float(np.mean(payoffs[itm_mask])) if np.any(itm_mask) else 0.0
+
+        # 3. Kelly criterion — all values per-share (not per-contract)
+        # Win: average per-share profit when ITM (payoff minus premium paid)
+        # Loss: premium per share (max loss for long option)
+        avg_net_win = max(avg_win_payoff - bs_price, 0.0)
+        avg_loss = bs_price
+
+        if avg_net_win > 0 and avg_loss > 0 and win_prob > 0:
+            win_loss_ratio = avg_net_win / avg_loss
+            q = 1.0 - win_prob
+            kelly_f = max((win_prob * win_loss_ratio - q) / win_loss_ratio, 0.0)
+        else:
+            kelly_f = 0.0
+
+        # Scale Kelly by multiplier (aggressive but capped)
+        aggressive_kelly = kelly_f * self.KELLY_MULTIPLIER
+        aggressive_kelly = min(aggressive_kelly, self.MAX_CONTRACTS_PCT_NAV)
+
+        # 4. Compute contract count
+        # When Kelly detects edge: use Kelly-sized amount (capped by budget)
+        # When Kelly = 0 (no edge / fair-valued): deploy full budget allocation
+        # This ensures the allocation engine's dollar budget gets properly converted
+        # to contracts rather than falling through to qty=1
+        kelly_dollar_amount = aggressive_kelly * nav
+        cost_per_contract = bs_price * self.CONTRACT_MULTIPLIER
+
+        if kelly_f > 0 and kelly_dollar_amount > 0:
+            effective_budget = min(kelly_dollar_amount, budget_dollars)
+        else:
+            effective_budget = budget_dollars
+
+        if cost_per_contract > 0:
+            contracts = max(self.MIN_CONTRACTS, int(effective_budget / cost_per_contract))
+        else:
+            contracts = self.MIN_CONTRACTS
+
+        # Cap at max % of NAV
+        max_contracts_by_nav = max(1, int((self.MAX_CONTRACTS_PCT_NAV * nav) / max(cost_per_contract, 1)))
+        contracts = min(contracts, max_contracts_by_nav)
+
+        # Edge calculation (mispricing)
+        entry_price = market_price if market_price and market_price > 0 else bs_price
+        edge_bps = ((mc_price - entry_price) / entry_price * 10_000) if entry_price > 0 else 0.0
+
+        # Greeks for the sized position
+        delta = self.bs.delta(spot, strike, T, risk_free, vol, is_call) * contracts
+        gamma = self.bs.gamma(spot, strike, T, risk_free, vol) * contracts
+        theta = self.bs.theta(spot, strike, T, risk_free, vol, is_call) * contracts
+        vega = self.bs.vega(spot, strike, T, risk_free, vol) * contracts
+
+        return {
+            "contracts": contracts,
+            "bs_price": round(bs_price, 4),
+            "mc_price": round(mc_price, 4),
+            "mc_std_error": round(mc_std_error, 4),
+            "mc_win_prob": round(win_prob, 4),
+            "kelly_fraction": round(kelly_f, 6),
+            "kelly_aggressive": round(aggressive_kelly, 6),
+            "kelly_dollar_amount": round(kelly_dollar_amount, 2),
+            "effective_budget": round(effective_budget, 2),
+            "cost_per_contract": round(cost_per_contract, 2),
+            "total_cost": round(contracts * cost_per_contract, 2),
+            "edge_bps": round(edge_bps, 1),
+            "delta": round(delta, 4),
+            "gamma": round(gamma, 6),
+            "theta": round(theta, 4),
+            "vega": round(vega, 4),
+        }
+
+    def size_from_signal(
+        self,
+        ticker: str,
+        spot: float,
+        vol: float,
+        nav: float,
+        budget_dollars: float,
+        is_call: bool = True,
+        otm_pct: float = 0.05,
+        expiry_days: int = 30,
+        risk_free: float = 0.05,
+    ) -> dict:
+        """Convenience: size an OTM option from a signal without knowing the strike.
+
+        Computes strike as spot × (1 ± otm_pct) based on call/put.
+        """
+        if is_call:
+            strike = spot * (1 + otm_pct)
+        else:
+            strike = spot * (1 - otm_pct)
+
+        result = self.size_option(
+            spot=spot, strike=strike, expiry_days=expiry_days,
+            vol=vol, is_call=is_call, nav=nav,
+            budget_dollars=budget_dollars, risk_free=risk_free,
+        )
+        result["ticker"] = ticker
+        result["strike"] = round(strike, 2)
+        result["expiry_days"] = expiry_days
+        result["is_call"] = is_call
+        return result
+
+
+# Module-level singleton
+_options_sizer: Optional[OptionsSizer] = None
+
+
+def get_options_sizer() -> OptionsSizer:
+    global _options_sizer
+    if _options_sizer is None:
+        _options_sizer = OptionsSizer()
+    return _options_sizer
