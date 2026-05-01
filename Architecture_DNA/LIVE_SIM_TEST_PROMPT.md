@@ -117,13 +117,31 @@ executed on broker).
 - LearningLoop feedback, GSD/Paul plugins, agent scorecard — skip entirely
   (these run post-execution and are not needed to verify the trade flow)
 
-### Environment setup
+### Step 1: Install ALL dependencies
 
 ```bash
-pip install ib_insync openbb numpy pandas scikit-learn xgboost httpx
+pip install -r requirements.txt
 ```
 
-IBKR TWS or IB Gateway must be running:
+This installs every package the platform needs. If any package fails, install
+it individually. The critical ones are:
+```
+ib_insync          — IBKR broker connection (sole execution broker)
+openbb             — market data (34+ providers, sole data source)
+numpy pandas       — core data processing
+scikit-learn       — ML models (AlphaOptimizer, UniverseClassifier)
+xgboost            — gradient boosted models (alpha scoring, distress)
+scipy              — optimization (SLSQP mean-variance)
+hmmlearn           — Hidden Markov Models (RegimeEngine)
+httpx aiohttp      — async HTTP for data ingestion
+prometheus-client  — metrics export (registered but scraping not needed for test)
+python-dotenv      — environment variable loading
+rich               — terminal output formatting
+```
+
+### Step 2: Configure environment
+
+IBKR TWS or IB Gateway must be running on the machine:
 ```bash
 export IBKR_HOST=127.0.0.1
 export IBKR_PORT=7497          # 7497 = paper trading, 7496 = live
@@ -137,16 +155,131 @@ export OPENBB_TOKEN=your_token
 export FMP_API_KEY=your_fmp_key
 ```
 
-### Validation before first trade
+### Step 3: Validate wiring (MANDATORY before any trade)
 
-Run the wiring manifest validation:
 ```bash
 python3 -m engine.wiring_manifest
 ```
 
-All 42 components must import. All 10 routing rules must display. Verdict must
-be ALL CHECKS PASSED. If any component fails to import, install the missing
-dependency before proceeding.
+This validates all 42 components import correctly, all 58 wiring edges are
+valid, and all 10 routing rules are displayed. **Verdict must be ALL CHECKS
+PASSED.** If any component fails to import, fix the dependency before
+proceeding. Do NOT skip this step.
+
+### Step 4: Bootstrap ALL components
+
+Use the wiring manifest's bootstrap function to instantiate every component
+in the correct dependency order:
+
+```python
+from engine.wiring_manifest import bootstrap_full_system
+
+system = bootstrap_full_system(nav=100_000, ibkr_paper=True)
+```
+
+This instantiates all 42 components across 7 phases in the correct order:
+
+**Phase 1 DATA (5 components):**
+- `system.get("universe_engine")` — UniverseEngine: 4-run scan, ~1,600 securities
+- `system.get("data_quality_gate")` — DataQualityGate: stale/completeness/outlier checks
+- `system.get("data_ingestion")` — DataIngestionOrchestrator: multi-asset scheduler
+- `system.get("data_pool")` — UniversalDataPool: cross-asset dispatcher to engine layers
+- `system.get("news_engine")` — NewsEngine: newsfilter.io WebSocket + FMP fallback
+
+**Phase 2 SIGNALS — Track A (7 components, fed by MetadronCube):**
+- `system.get("fed_liquidity")` — FedLiquidityPlumbing: SOFR, reserves, TGA, ON-RRP, M2V
+- `system.get("macro_engine")` — MacroEngine: GMTF regime + sector ranking (7 sub-engines)
+- `system.get("metadron_cube")` — MetadronCube: C(t)=f(L,R,F), 10-layer tensor + KillSwitch
+- `system.get("security_analysis")` — SecurityAnalysisEngine: Graham-Dodd-Klarman
+- `system.get("contagion_engine")` — ContagionEngine: 21 nodes, 7 shock scenarios
+- `system.get("stat_arb_engine")` — StatArbEngine: Medallion mean-reversion + cointegration
+- `system.get("distressed_assets")` — DistressedAssetEngine: 5-model ensemble
+- `system.get("pattern_discovery")` — PatternDiscoveryEngine: MiroFish + AI-Newton
+- `system.get("adaptive_thresholds")` — AdaptiveThresholdCalibrator: rolling percentile
+
+**Phase 2 SIGNALS — Track B (3 components, fed by NewsEngine, independent):**
+- `system.get("social_prediction")` — MiroMomentumEngine: agent sim on news-flagged tickers
+- `system.get("event_driven")` — EventDrivenEngine: 12 categories, enriched by Track B
+- `system.get("cvr_engine")` — CVREngine: 5-model valuation, enriched by Track B
+
+**Phase 3 INTELLIGENCE (6 components):**
+- `system.get("alpha_optimizer")` — AlphaOptimizer: universe merge + dedup + cap enforce + dual scoring
+- `system.get("pattern_recognition")` — PatternRecognitionEngine: candlestick, chart, breakout
+- `system.get("universe_classifier")` — UniverseClassifier: XGBoost 4-model, tiers A-G
+- `system.get("deep_learning_engine")` — DeepLearningEngine: PPO agent, 50-feature state
+- `system.get("social_features")` — SocialFeatureBuilder: sentiment features for ML
+- `system.get("model_evaluator")` — ModelEvaluator: P/R/F1 evaluation
+
+**Phase 4 DECISION (5 components):**
+- `system.get("decision_matrix")` — DecisionMatrix: 4-gate quality filter (FUNDAMENTALS 40%, FLOW 20%, MACRO 20%, MOMENTUM 20%)
+- `system.get("allocation_engine")` — AllocationEngine: bucket sizing + KillSwitch monitor
+- `system.get("beta_corridor")` — BetaCorridor: 7-12% return corridor
+- `system.get("options_engine")` — OptionsEngine: Black-Scholes Greeks, vol surface
+- `system.get("options_sizer")` — OptionsSizer: BS + MC + Kelly, edge ≥ 200bps gate
+
+**Phase 5 EXECUTION (6 components):**
+- `system.get("wondertrader_engine")` — WonderTraderEngine: micro-price + CTA + TWAP/VWAP
+- `system.get("exchange_core_engine")` — ExchangeCoreEngine: order matching simulation
+- `system.get("ibkr_broker")` — IBKRBroker: sole broker, native TWAP/VWAP/Adaptive algos
+- `system.get("conviction_override")` — ConvictionOverride: 3-tier override system
+- `system.get("l7_execution_surface")` — L7UnifiedExecutionSurface: MANDATORY routing point
+- `system.get("tca_engine")` — TCAEngine: spread/impact/timing/commission decomposition
+
+**Phase 6 LEARNING (5 components — instantiated but not active during test):**
+- `system.get("learning_loop")` — LearningLoop: 7-channel feedback (records outcomes)
+- `system.get("agent_scorecard")` — FullAgentScorecard: agent ranking
+- `system.get("sector_bots")` — SectorBotManager: 11 GICS sector bots
+- `system.get("research_bots")` — ResearchBotManager: 11 research bots
+- `system.get("investor_personas")` — InvestorPersonaManager: 12 personas
+
+**Phase 7 MONITORING (3 components — instantiated but not active during test):**
+- `system.get("anomaly_detector")` — AnomalyDetector: statistical anomaly scanner
+- `system.get("portfolio_analytics")` — PortfolioAnalytics: scenario engine
+- `system.get("memory_monitor")` — MemoryMonitor: session tracking
+
+Every component must instantiate successfully. If IBKRBroker fails (ib_insync
+not installed or TWS not running), the system falls back to trade-log-only
+mode — orders are recorded but not sent to a broker.
+
+### Step 5: Run the pipeline
+
+After bootstrap, execute the pipeline stages in order:
+
+```python
+# Access key components via shortcuts
+l7 = system.l7          # L7UnifiedExecutionSurface
+cube = system.cube      # MetadronCube
+broker = system.broker  # IBKRBroker
+
+# Or run the full live loop orchestrator
+from engine.live_loop_orchestrator import LiveLoopOrchestrator
+llo = LiveLoopOrchestrator(initial_nav=100_000)
+
+# Execute each phase
+data_result = llo.run_data_phase()          # Stage 1: Scan
+signals_result = llo.run_signals_phase()    # Stage 2: Track A + Track B parallel
+intel_result = llo.run_intelligence_phase() # Stage 3: AlphaOptimizer + ML ensemble
+decision_result = llo.run_decision_phase()  # Stage 4: 4-gate filter + allocation
+exec_result = llo.run_execution_phase()     # Stage 4: L7 → IBKR
+```
+
+Each phase returns a PhaseResult with timing, signal counts, and error details.
+Check `signals_result.data["track_a"]` and `signals_result.data["track_b"]`
+for per-track telemetry.
+
+### Step 6: Verify trades reached IBKR
+
+Check the trade log for reconciliation:
+```python
+trade_log = l7.get_trade_log()
+recon = l7.get_recon_summary()
+print(f"Generated: {recon['total_generated']}")
+print(f"Executed on IBKR: {recon['executed_on_broker']}")
+print(f"Not executed: {recon['not_executed']}")
+```
+
+Check IBKR TWS/Gateway dashboard — orders should be visible if the broker
+connection was established.
 
 ### Expected output
 
