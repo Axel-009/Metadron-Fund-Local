@@ -1,0 +1,108 @@
+name: Metadron CI — Wiring Validation + Engine Tests
+
+on:
+  push:
+    branches: [main, "claude/*"]
+    paths:
+      - "engine/**"
+      - "tests/**"
+      - "requirements.txt"
+  pull_request:
+    branches: [main]
+    paths:
+      - "engine/**"
+      - "tests/**"
+
+jobs:
+  wiring-validation:
+    name: Wiring Manifest Validation
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: "pip"
+
+      - name: Install dependencies
+        run: |
+          pip install numpy pandas scikit-learn scipy xgboost httpx aiohttp
+          pip install prometheus-client python-dotenv rich PyYAML
+          pip install weasyprint markdown
+
+      - name: Validate wiring manifest (43 components, 59 edges, 10 rules)
+        run: |
+          python3 -m engine.wiring_manifest
+          echo ""
+          echo "=== Programmatic check ==="
+          python3 -c "
+          from engine.wiring_manifest import validate_wiring
+          r = validate_wiring()
+          assert r['failed'] == 0, f'{r[\"failed\"]} checks failed'
+          print(f'All {r[\"total_checks\"]} checks passed')
+          "
+
+  engine-tests:
+    name: Engine + Platform Tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: "pip"
+
+      - name: Install dependencies
+        run: |
+          pip install numpy pandas scikit-learn scipy xgboost httpx aiohttp
+          pip install prometheus-client python-dotenv rich PyYAML
+          pip install pytest
+
+      - name: Run engine tests (106 tests)
+        run: python3 -m pytest tests/test_engine.py tests/test_platform.py -v --tb=short
+
+  stale-ref-check:
+    name: Stale Reference Check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Check for stale Alpaca/Tradier refs in active code
+        run: |
+          count=$(grep -rn "Alpaca\|Tradier" engine/ --include="*.py" \
+            | grep -v __pycache__ \
+            | grep -v "alpaca_broker.py\|tradier_broker.py" \
+            | grep -v "import\|from.*broker\|AlpacaBroker\|TradierBroker" \
+            | grep -v "DEPRECATED" \
+            | wc -l)
+          echo "Stale Alpaca/Tradier refs: $count"
+          if [ "$count" -gt 0 ]; then
+            echo "::warning::Found $count stale broker references in active code"
+            grep -rn "Alpaca\|Tradier" engine/ --include="*.py" \
+              | grep -v __pycache__ \
+              | grep -v "alpaca_broker.py\|tradier_broker.py" \
+              | grep -v "import\|from.*broker\|AlpacaBroker\|TradierBroker" \
+              | grep -v "DEPRECATED"
+          fi
+
+      - name: Check for old gate names
+        run: |
+          count=$(grep -rn "ALPHA_QUALITY\|REGIME_ALIGNMENT\|RISK_BUDGET\|CONVICTION_SCORE\|MOMENTUM_CONFIRM\|LIQUIDITY_CHECK" \
+            engine/ --include="*.py" | grep -v __pycache__ | wc -l)
+          echo "Old gate name refs: $count"
+          if [ "$count" -gt 0 ]; then
+            echo "::error::Found $count old gate name references"
+            exit 1
+          fi
+
+      - name: Check NEWS_MIRO_DIRECT removed
+        run: |
+          count=$(grep -rn "NEWS_MIRO_DIRECT" engine/ --include="*.py" | grep -v __pycache__ | wc -l)
+          if [ "$count" -gt 0 ]; then
+            echo "::error::NEWS_MIRO_DIRECT still referenced ($count occurrences)"
+            exit 1
+          fi
