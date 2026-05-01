@@ -859,7 +859,7 @@ class TradeQualityAnalyzer:
         summary.avg_slippage_bps = (
             float(np.mean(slippages)) if slippages else 0.0
         )
-        summary.fill_rate = 1.0  # Paper broker always fills
+        summary.fill_rate = 1.0  # trade log always fills
         summary.signal_type_breakdown = signal_breakdown
         summary.best_trade = best_trade
         summary.worst_trade = worst_trade

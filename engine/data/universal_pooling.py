@@ -780,11 +780,11 @@ class UniversalDataPool:
         """Pool index futures proxies for beta management.
 
         Uses ETF proxies (SPY, QQQ, DIA, IWM) as futures stand-ins for the
-        paper broker environment. Real futures data is fetched when available.
+        trade log environment. Real futures data is fetched when available.
         """
         logger.info("Pooling futures (%d contracts)...", len(FUTURES_PROXIES))
         partition = self._partitions[AssetClass.FUTURES]
-        # Use ETF proxies for paper broker
+        # Use ETF proxies for trade log
         proxy_tickers = [proxy for _, proxy in FUTURES_PROXIES.values()]
         partition.tickers = list(FUTURES_PROXIES.keys())
         partition.metadata["futures_contracts"] = {k: v[0] for k, v in FUTURES_PROXIES.items()}

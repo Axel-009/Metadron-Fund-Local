@@ -1005,17 +1005,17 @@ class AllocationEngine:
         self,
         nav: float,
         initial_nav: float,
-        alpaca_pnl: float = 0.0,
+        ibkr_pnl: float = 0.0,
         futures_pnl: float = 0.0,
         equities_pnl: float = 0.0,
         options_pnl: float = 0.0,
     ) -> dict:
         """3-layer profit-take check with per-product-class breakdown.
 
-        Layer 1 (Alpaca-specific): If Alpaca broker P&L > 20% →
-            liquidate OPTIONS only, re-run. Alpaca handles equities + options.
+        Layer 1 (IBKR-specific): If IBKR broker P&L > 20% →
+            liquidate OPTIONS only, re-run. IBKR handles equities + options.
         Layer 2 (Futures-specific): If futures/Rithmic P&L > 20% →
-            liquidate FUTURES only, re-run. Futures on paper broker (Rithmic later).
+            liquidate FUTURES only, re-run. Futures on trade log (Rithmic later).
         Layer 3 (Aggregate): If total P&L > 20% →
             liquidate ALL overlays (options + futures), re-run.
 
@@ -1027,10 +1027,10 @@ class AllocationEngine:
             Current total portfolio NAV
         initial_nav : float
             Starting NAV (beginning of day or initial capital)
-        alpaca_pnl : float
-            P&L from Alpaca broker (equities + options combined)
+        ibkr_pnl : float
+            P&L from IBKR broker (equities + options combined)
         futures_pnl : float
-            P&L from paper broker / Rithmic (futures only)
+            P&L from trade log / Rithmic (futures only)
         equities_pnl : float
             P&L from equity positions only (for reporting)
         options_pnl : float
@@ -1041,7 +1041,7 @@ class AllocationEngine:
         dict with:
             pnl_breakdown: {total, equities, options, futures, total_pct}
             triggered: bool
-            trigger_layer: str — "alpaca", "futures", "aggregate", or "none"
+            trigger_layer: str — "ibkr", "futures", "aggregate", or "none"
             liquidate: list of bucket names to liquidate
             action: str — "PROFIT_TAKE_OPTIONS", "PROFIT_TAKE_FUTURES",
                          "PROFIT_TAKE_ALL_OVERLAYS", or "HOLD"
@@ -1063,7 +1063,7 @@ class AllocationEngine:
             "equities": round(equities_pnl, 2),
             "options": round(options_pnl, 2),
             "futures": round(futures_pnl, 2),
-            "alpaca_combined": round(alpaca_pnl, 2),
+            "ibkr_combined": round(ibkr_pnl, 2),
         }
 
         result = {
@@ -1096,20 +1096,20 @@ class AllocationEngine:
             )
             return result
 
-        # ── Layer 1 (Alpaca: equities + options) ──
-        if initial_nav > 0 and alpaca_pnl / initial_nav >= threshold:
+        # ── Layer 1 (IBKRBroker: equities + options) ──
+        if initial_nav > 0 and ibkr_pnl / initial_nav >= threshold:
             result["triggered"] = True
-            result["trigger_layer"] = "alpaca"
+            result["trigger_layer"] = "ibkr"
             result["liquidate"] = options_buckets
             result["action"] = "PROFIT_TAKE_OPTIONS"
             logger.critical(
-                "[AllocationEngine] PROFIT TAKE — ALPACA: Alpaca P&L $%.0f (%.1f%%) >= %.0f%% "
+                "[AllocationEngine] PROFIT TAKE — IBKR: IBKR P&L $%.0f (%.1f%%) >= %.0f%% "
                 "— liquidating OPTIONS. Equities retained. Re-run on next scan.",
-                alpaca_pnl, (alpaca_pnl / initial_nav) * 100, threshold * 100,
+                ibkr_pnl, (ibkr_pnl / initial_nav) * 100, threshold * 100,
             )
             return result
 
-        # ── Layer 2 (Futures: paper broker / Rithmic) ──
+        # ── Layer 2 (Futures: trade log / Rithmic) ──
         if initial_nav > 0 and futures_pnl / initial_nav >= threshold:
             result["triggered"] = True
             result["trigger_layer"] = "futures"

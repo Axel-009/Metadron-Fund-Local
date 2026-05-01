@@ -5,7 +5,7 @@ entire architecture. Keys are persisted to data/vault/api_vault.json and
 deployed to engines via os.environ injection on startup.
 
 Authorized APIs:
-    1. Alpaca         — Trade execution (live + paper)
+    1. IBKR           — Trade execution (live + paper via TWS/Gateway)
     2. FMP            — Market data via OpenBB
     3. Zep            — MiroFish agent simulation (knowledge graph)
     4. Xiaomi Mimo V2 — Brain Power LLM orchestrator
@@ -37,21 +37,21 @@ _VAULT_FILE = _VAULT_DIR / "api_vault.json"
 # ── Known API key slots ──────────────────────────────────────
 
 VAULT_SLOTS = {
-    "ALPACA_API_KEY": {
-        "label": "Alpaca API Key",
-        "target": "Alpaca Broker (live + paper trading)",
+    "IBKR_API_KEY": {
+        "label": "IBKR API Key",
+        "target": "IBKR Broker (live + paper trading)",
         "required": True,
         "category": "execution",
     },
-    "ALPACA_SECRET_KEY": {
-        "label": "Alpaca Secret Key",
-        "target": "Alpaca Broker (authentication)",
+    "IBKR_SECRET_KEY": {
+        "label": "IBKR Port",
+        "target": "IBKR Broker (TWS/Gateway connection)",
         "required": True,
         "category": "execution",
     },
-    "ALPACA_PAPER_TRADE": {
-        "label": "Alpaca Paper Trade Mode",
-        "target": "Alpaca Broker (True=paper, False=live)",
+    "IBKR_PAPER_TRADE": {
+        "label": "IBKR Paper Trade Mode",
+        "target": "IBKR Broker (True=paper, False=live)",
         "required": True,
         "category": "execution",
         "is_boolean": True,
@@ -207,19 +207,19 @@ class APIVault:
         return self._keys.get("FMP_API_KEY", "")
 
     @property
-    def alpaca_api_key(self) -> str:
-        return self._keys.get("ALPACA_API_KEY", "")
+    def ibkr_api_key(self) -> str:
+        return self._keys.get("IBKR_API_KEY", "")
 
     @property
-    def alpaca_secret_key(self) -> str:
-        return self._keys.get("ALPACA_SECRET_KEY", "")
+    def ibkr_secret_key(self) -> str:
+        return self._keys.get("IBKR_SECRET_KEY", "")
 
     @property
-    def alpaca_base_url(self) -> str:
-        paper = self._keys.get("ALPACA_PAPER_TRADE", "True")
+    def ibkr_base_url(self) -> str:
+        paper = self._keys.get("IBKR_PAPER_TRADE", "True")
         if str(paper).lower() in ("true", "1", "yes"):
-            return "https://paper-api.alpaca.markets"
-        return "https://api.alpaca.markets"
+            return "https://paper-api.ibkr.markets"
+        return "https://api.ibkr.markets"
 
     @property
     def xiaomi_mimo_api_key(self) -> str:

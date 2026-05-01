@@ -58,7 +58,7 @@ class BetaAction:
     """Rebalance action from the beta engine."""
     action: str = "HOLD"      # BUY / SELL / HOLD
     quantity: int = 0
-    instrument: str = "SPY"   # Paper broker uses SPY as proxy
+    instrument: str = "SPY"   # trade log uses SPY as proxy
     target_beta: float = 0.0
     current_beta: float = 0.0
     reason: str = ""
@@ -281,7 +281,7 @@ class CorridorAnalytics:
 # ---- Beta Corridor Engine -------------------------------------------------
 class BetaCorridor:
     """Manages portfolio beta within the 7-12% return corridor.
-    Paper broker mode: uses SPY as the beta instrument proxy."""
+    trade log mode: uses SPY as the beta instrument proxy."""
 
     def __init__(self, nav: float = 1_000_000, alpha: float = ALPHA,
                  r_low: float = R_LOW, r_high: float = R_HIGH,
@@ -388,7 +388,7 @@ class BetaCorridor:
 
     def compute_rebalance(self, state: BetaState, instrument_price: float = 500.0,
                           contract_multiplier: float = 1.0) -> BetaAction:
-        """Translate target beta into paper broker action (SPY proxy)."""
+        """Translate target beta into trade log action (SPY proxy)."""
         action = BetaAction()
         action.target_beta = state.target_beta
         action.current_beta = self.current_beta

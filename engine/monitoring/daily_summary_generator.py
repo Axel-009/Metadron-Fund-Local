@@ -2,7 +2,7 @@
 
 Produces a one-page daily performance report covering:
 - Performance analytics (P&L, returns, Sharpe, win rate)
-- NAV (Alpaca + Paper, delta)
+- NAV (IBKR + Paper, delta)
 - Pricing (benchmarks, top holdings)
 - Risk (VaR, CVaR, drawdown, beta, sector concentration)
 - Outlook (regime, ML consensus, macro indicators)
@@ -79,11 +79,11 @@ class DailySummaryGenerator:
         return perf
 
     def _get_nav(self) -> dict:
-        """NAV from Alpaca and Paper brokers."""
+        """NAV from IBKRBroker and trade logs."""
         nav = {
             "portfolio_nav": 0.0,
             "paper_nav": 0.0,
-            "alpaca_nav": 0.0,
+            "ibkr_nav": 0.0,
             "nav_delta": 0.0,
             "cash": 0.0,
         }
@@ -101,13 +101,13 @@ class DailySummaryGenerator:
             ab = AlpacaBroker(initial_cash=0, paper=True)
             acct = ab.get_account() if hasattr(ab, "get_account") else {}
             if isinstance(acct, dict):
-                nav["alpaca_nav"] = float(acct.get("equity", 0))
+                nav["ibkr_nav"] = float(acct.get("equity", 0))
                 nav["cash"] = float(acct.get("cash", 0))
         except Exception as e:
-            logger.debug(f"Alpaca NAV unavailable: {e}")
+            logger.debug(f"IBKR NAV unavailable: {e}")
 
-        nav["portfolio_nav"] = nav["alpaca_nav"] or nav["paper_nav"]
-        nav["nav_delta"] = nav["alpaca_nav"] - nav["paper_nav"] if nav["alpaca_nav"] and nav["paper_nav"] else 0
+        nav["portfolio_nav"] = nav["ibkr_nav"] or nav["paper_nav"]
+        nav["nav_delta"] = nav["ibkr_nav"] - nav["paper_nav"] if nav["ibkr_nav"] and nav["paper_nav"] else 0
         return nav
 
     def _get_pricing(self) -> dict:
@@ -256,7 +256,7 @@ th {{ background: #161b22; color: #00d4aa; }}
 <tr><th>Account</th><th>Value</th></tr>
 <tr><td>Portfolio NAV</td><td>${nav['portfolio_nav']:,.2f}</td></tr>
 <tr><td>Paper NAV</td><td>${nav['paper_nav']:,.2f}</td></tr>
-<tr><td>Alpaca NAV</td><td>${nav['alpaca_nav']:,.2f}</td></tr>
+<tr><td>IBKR NAV</td><td>${nav['ibkr_nav']:,.2f}</td></tr>
 <tr><td>Delta</td><td class="{'positive' if nav['nav_delta'] >= 0 else 'negative'}">${nav['nav_delta']:,.2f}</td></tr>
 </table>
 

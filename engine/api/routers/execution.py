@@ -54,33 +54,33 @@ async def pipeline_status():
 
 @router.get("/reconciliation")
 async def reconciliation():
-    """Position reconciliation: Alpaca vs Paper broker.
+    """Position reconciliation: IBKRBroker vs trade log.
 
-    Compares all positions between Alpaca (live) and Paper (engine).
-    Only expected difference = futures (no Alpaca futures broker).
+    Compares all positions between IBKR (live) and Paper (engine).
+    Only expected difference = futures (no IBKR futures broker).
     Feeds RECON tab + daily recon log.
     """
     try:
         FUTURES_PREFIXES = ("ES", "NQ", "YM", "CL", "GC", "ZB", "ZN", "6E", "RTY", "VX")
 
-        # Paper broker positions
+        # trade log positions
         from engine.execution.paper_broker import PaperBroker
         paper = PaperBroker()
         paper_pos = paper.get_all_positions()
         paper_nav = paper.compute_nav()
 
-        # Alpaca broker positions
-        alpaca_pos = {}
-        alpaca_nav = 0
+        # IBKRBroker positions
+        broker_pos = {}
+        ibkr_nav = 0
         try:
             from engine.execution.alpaca_broker import AlpacaBroker
             alpaca = AlpacaBroker(initial_cash=0, paper=True)
-            alpaca_pos = alpaca.get_positions()
-            alpaca_nav = alpaca.compute_nav()
+            broker_pos = ibkr.get_positions()
+            ibkr_nav = ibkr.compute_nav()
         except Exception:
             pass
 
-        all_tickers = set(list(paper_pos.keys()) + list(alpaca_pos.keys()))
+        all_tickers = set(list(paper_pos.keys()) + list(broker_pos.keys()))
         positions = []
         matched = 0
         mismatched = 0
@@ -88,7 +88,7 @@ async def reconciliation():
         for ticker in sorted(all_tickers):
             is_futures = any(ticker.startswith(p) for p in FUTURES_PREFIXES)
             in_paper = ticker in paper_pos
-            in_alpaca = ticker in alpaca_pos
+            in_ibkr = ticker in broker_pos
 
             p_qty = 0
             a_qty = 0
@@ -104,8 +104,8 @@ async def reconciliation():
                 p_avg = getattr(p, "avg_cost", 0) if hasattr(p, "avg_cost") else (p.get("avg_cost", 0) if isinstance(p, dict) else 0)
                 p_pnl = getattr(p, "unrealized_pnl", 0) if hasattr(p, "unrealized_pnl") else (p.get("unrealized_pnl", 0) if isinstance(p, dict) else 0)
                 sector = getattr(p, "sector", "") if hasattr(p, "sector") else (p.get("sector", "") if isinstance(p, dict) else "")
-            if in_alpaca:
-                a = alpaca_pos[ticker]
+            if in_ibkr:
+                a = broker_pos[ticker]
                 a_qty = a.get("quantity", getattr(a, "quantity", 0)) if isinstance(a, dict) else getattr(a, "quantity", 0)
                 a_avg = a.get("avg_cost", a.get("avg_entry_price", 0)) if isinstance(a, dict) else getattr(a, "avg_cost", getattr(a, "avg_entry_price", 0))
                 a_pnl = a.get("unrealized_pnl", 0) if isinstance(a, dict) else getattr(a, "unrealized_pnl", 0)
@@ -113,38 +113,38 @@ async def reconciliation():
                     sector = a.get("sector", "") if isinstance(a, dict) else getattr(a, "sector", "")
 
             qty_match = None
-            if in_paper and in_alpaca:
+            if in_paper and in_ibkr:
                 qty_match = p_qty == a_qty
 
-            if in_paper and in_alpaca and p_qty == a_qty:
+            if in_paper and in_ibkr and p_qty == a_qty:
                 status = "MATCHED"
                 matched += 1
             elif is_futures:
                 status = "EXPECTED_DIFF"
-            elif in_paper and not in_alpaca:
+            elif in_paper and not in_ibkr:
                 status = "PAPER_ONLY"
                 mismatched += 1
-            elif in_alpaca and not in_paper:
-                status = "ALPACA_ONLY"
+            elif in_ibkr and not in_paper:
+                status = "IBKR_ONLY"
                 mismatched += 1
             else:
                 status = "MISMATCH"
                 mismatched += 1
 
-            price_diff = round(a_avg - p_avg, 2) if (in_paper and in_alpaca) else None
-            pnl_diff = round(a_pnl - p_pnl, 2) if (in_paper and in_alpaca) else None
+            price_diff = round(a_avg - p_avg, 2) if (in_paper and in_ibkr) else None
+            pnl_diff = round(a_pnl - p_pnl, 2) if (in_paper and in_ibkr) else None
 
             positions.append({
                 "ticker": ticker,
                 "sector": sector or "",
                 "paperQty": p_qty if in_paper else None,
-                "alpacaQty": a_qty if in_alpaca else None,
+                "ibkrQty": a_qty if in_ibkr else None,
                 "qtyMatch": qty_match,
                 "paperAvgPrice": round(p_avg, 2) if in_paper else None,
-                "alpacaAvgPrice": round(a_avg, 2) if in_alpaca else None,
+                "ibkrAvgPrice": round(a_avg, 2) if in_ibkr else None,
                 "priceDiff": price_diff,
                 "paperPnl": round(p_pnl, 2) if in_paper else None,
-                "alpacaPnl": round(a_pnl, 2) if in_alpaca else None,
+                "ibkrPnl": round(a_pnl, 2) if in_ibkr else None,
                 "pnlDiff": pnl_diff,
                 "delta": p_qty - a_qty,
                 "isFutures": is_futures,
@@ -158,8 +158,8 @@ async def reconciliation():
                 "matched": matched,
                 "mismatched": mismatched,
                 "paperNav": round(paper_nav, 2),
-                "alpacaNav": round(alpaca_nav, 2),
-                "navDelta": round(paper_nav - alpaca_nav, 2),
+                "ibkrNav": round(ibkr_nav, 2),
+                "navDelta": round(paper_nav - ibkr_nav, 2),
             },
             "timestamp": datetime.utcnow().isoformat(),
         }
@@ -568,7 +568,7 @@ async def nav_history():
         history = []
         nav = current_nav
         for day in sorted(daily_pnl.keys(), reverse=True)[:30]:
-            history.append({"date": day, "paper": round(nav, 2), "alpaca": round(nav * 0.998, 2)})
+            history.append({"date": day, "paper": round(nav, 2), "ibkr": round(nav * 0.998, 2)})
             nav -= daily_pnl[day]
 
         history.reverse()
@@ -584,7 +584,7 @@ async def market_data(ticker: str = Query(..., description="Ticker symbol")):
 
     Returns quote (bid/ask/last/spread), recent OHLCV, and synthesized
     depth from MicroPriceEngine. For real L2 depth, a paid Polygon or
-    Alpaca market data subscription is required.
+    IBKR market data subscription is required.
 
     BROKER SWAP NOTE: Quote data comes from OpenBB (get_quote), not the broker.
     Depth is synthesized from OHLCV via MicroPriceEngine. To get real L2 depth
@@ -767,7 +767,7 @@ async def l7_blotter(limit: int = Query(100, ge=1, le=500)):
     """Live trade blotter from L7 execution surface.
 
     Returns filled orders from L7's _filled_orders deque, which captures
-    all orders routed through the unified execution surface (Alpaca + paper mirror).
+    all orders routed through the unified execution surface (IBKR + paper mirror).
 
     BROKER SWAP NOTE: L7 routes through whatever broker is configured.
     The blotter reflects fills from the active broker. When switching to IBKR,

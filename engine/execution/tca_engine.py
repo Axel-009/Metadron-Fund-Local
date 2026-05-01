@@ -14,7 +14,7 @@ Data flow:
   broker.get_trade_history() → TCAEngine.rebuild() → decompose costs →
   aggregate by venue / algo / sector / day → serve to frontend via API
 
-Falls back to Alpaca broker price data — zero static/mock data.
+Falls back to IBKR broker price data — zero static/mock data.
 """
 
 import logging
@@ -157,7 +157,7 @@ SECTOR_MAP = {
 # ─── Market Impact Model ─────────────────────────────────────────
 
 IMPACT_COEFFICIENT = 0.10
-EQUITY_COMMISSION_PER_SHARE = 0.0  # Alpaca: $0
+EQUITY_COMMISSION_PER_SHARE = 0.0  # IBKRBroker: $0
 FUTURE_COMMISSION_PER_CONTRACT = 1.50
 
 

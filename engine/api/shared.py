@@ -7,9 +7,9 @@ per router module.
 
 BROKER SWAP NOTE:
     To change the active broker, set METADRON_BROKER_TYPE env var:
-        "alpaca"  — AlpacaBroker (default, requires ALPACA_API_KEY)
+        "ibkr"  — IBKRBroker (default, requires IBKR_API_KEY)
         "paper"   — PaperBroker (simulation only)
-        "tradier" — TradierBroker (requires TRADIER_API_KEY, not yet wired in ExecutionEngine)
+        "ibkr"  — IBKRBroker (requires IBKR_API_KEY, not yet wired in ExecutionEngine)
         "ibkr"    — IBKRBroker (future — implement broker_protocol.BrokerProtocol)
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -32,17 +32,17 @@ from here:
 HOW BROKER TYPE IS SELECTED
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-1. Read METADRON_BROKER_TYPE from environment (default: "alpaca").
+1. Read METADRON_BROKER_TYPE from environment (default: "ibkr").
 2. Pass as broker_type to ExecutionEngine.__init__().
-3. ExecutionEngine selects AlpacaBroker or PaperBroker based on that value.
-4. TradierBroker / IBKRBroker are not yet wired in ExecutionEngine — see
+3. ExecutionEngine selects IBKRBroker based on that value.
+4. IBKRBroker is wired as sole broker via L7UnifiedExecutionSurface — see
    engine/execution/broker_protocol.py BROKER SWAP NOTES for wiring steps.
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 FALLBACK BEHAVIOUR
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-If ExecutionEngine() raises (e.g. missing ALPACA_API_KEY), this module falls
+If ExecutionEngine() raises (e.g. missing IBKR_API_KEY), this module falls
 back to a bare PaperBroker() and logs a WARNING.  This mirrors the behaviour
 of the old portfolio.py and risk.py _get_broker() functions so the dashboard
 remains usable in dev / CI environments without broker credentials.
@@ -102,14 +102,14 @@ _decision: Optional["_DecisionMatrix"] = None
 def _broker_type() -> str:
     """Read active broker type from environment.
 
-    Returns one of: "alpaca" (default), "paper", "tradier", "ibkr".
+    Returns one of: "ibkr" (default), "paper".
 
     AI NOTE:
         METADRON_BROKER_TYPE is checked on every first-call to _get_engine().
         Changing it after the singleton is created has no effect until the
         process restarts (or _reset_singletons() is called — dev only).
     """
-    return os.getenv("METADRON_BROKER_TYPE", "alpaca").lower().strip()
+    return os.getenv("METADRON_BROKER_TYPE", "ibkr").lower().strip()
 
 
 def _strict_mode() -> bool:
@@ -126,7 +126,7 @@ def get_engine() -> "_ExecutionEngine":
     AI NOTE — What is ExecutionEngine?
     ────────────────────────────────────
     ExecutionEngine is the main trading pipeline orchestrator.  It owns:
-        - self.broker      : the active broker (AlpacaBroker or PaperBroker)
+        - self.broker      : the active broker (IBKRBroker)
         - self.l7          : L7UnifiedExecutionSurface (HFT arm)
         - self.macro       : MacroEngine (regime detection)
         - self.cube        : MetadronCube (signal generation)
@@ -142,7 +142,7 @@ def get_engine() -> "_ExecutionEngine":
         — it calls self.broker.place_order() regardless of implementation.
 
     FALLBACK:
-        If ExecutionEngine() raises (e.g. missing Alpaca credentials) and
+        If ExecutionEngine() raises (e.g. missing IBKR credentials) and
         METADRON_BROKER_STRICT is not set, a minimal PaperBroker is wrapped
         in a FallbackEngine stub so callers always receive a valid object.
         This prevents 500 errors on all execution/portfolio/risk endpoints.
@@ -171,7 +171,7 @@ def get_engine() -> "_ExecutionEngine":
             logger.warning(
                 "Shared singleton: ExecutionEngine init failed (%s) — "
                 "falling back to bare PaperBroker.  "
-                "Set ALPACA_API_KEY / ALPACA_SECRET_KEY to use AlpacaBroker.",
+                "Set IBKR_HOST / IBKR_PORT to connect. Default: 127.0.0.1:7497 (paper).",
                 exc,
             )
             from engine.execution.execution_engine import ExecutionEngine
@@ -189,7 +189,7 @@ def get_broker() -> "BrokerProtocol":
     AI NOTE — What is the broker?
     ──────────────────────────────
     The broker is the lowest-level order-execution object.  It is always one
-    of: PaperBroker, AlpacaBroker, or TradierBroker (future: IBKRBroker).
+    IBKRBroker is the sole execution broker.
     All three satisfy BrokerProtocol.
 
     You can confirm at runtime:
@@ -198,7 +198,7 @@ def get_broker() -> "BrokerProtocol":
 
     BROKER SWAP EFFECT:
         The returned broker changes based on METADRON_BROKER_TYPE:
-            "alpaca"  → AlpacaBroker (connects to Alpaca brokerage API)
+            "alpaca"  → AlpacaBroker (connects to IBKR brokerage API)
             "paper"   → PaperBroker  (fully simulated, no external calls)
             "tradier" → TradierBroker (not yet wired — falls back to paper)
             "ibkr"    → IBKRBroker  (future implementation)
@@ -250,7 +250,7 @@ def get_l7() -> Optional["_L7"]:
         This is a known architectural issue — ideally L7 should receive
         the broker from the shared singleton rather than creating its own.
         Until that refactor is done, L7's broker and ExecutionEngine's broker
-        are separate instances pointing to the same Alpaca account.
+        are separate instances pointing to the same IBKR account.
 
     BUG NOTE (from audit):
         /execution/l7/status returns {} because the router checks for

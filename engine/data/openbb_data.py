@@ -54,12 +54,12 @@ if _fmp_key and _fmp_key != "PASTE_KEY_HERE" and _obb is not None:
     except Exception as e:
         logger.warning(f"FMP credential setup failed: {e}")
 elif not _fmp_key:
-    logger.info("FMP_API_KEY not set — using Alpaca prices only")
+    logger.info("FMP_API_KEY not set — using IBKR prices only")
 
 # ---------------------------------------------------------------------------
-# Data source mode — Alpaca real-time during market hours, OpenBB EOD after
+# Data source mode — IBKRBroker real-time during market hours, OpenBB EOD after
 # ---------------------------------------------------------------------------
-_DATA_SOURCE_MODE = "openbb"  # "auto" | "alpaca" | "openbb" — OpenBB/FMP primary, Alpaca broker only
+_DATA_SOURCE_MODE = "openbb"  # "auto" | "ibkr" | "openbb" — OpenBB/FMP primary, IBKR for real-time
 
 def _is_market_hours() -> bool:
     """Check if US market is currently open (09:30-16:00 ET, Mon-Fri)."""
@@ -79,8 +79,8 @@ def _is_market_hours() -> bool:
 
 def get_active_data_source() -> str:
     """Return the currently active data source label for dashboard display."""
-    if _use_alpaca_for_prices():
-        return "LIVE:Alpaca"
+    if _use_ibkr_for_prices():
+        return "LIVE:IBKR"
     return "EOD:OpenBB/FMP"
 
 
@@ -88,21 +88,21 @@ def set_data_source_mode(mode: str):
     """Switch data source mode. Called by dashboard or config.
 
     Args:
-        mode: "auto" (market-hours aware), "alpaca" (force real-time), "openbb" (force historical)
+        mode: "auto" (market-hours aware), "ibkr" (force real-time), "openbb" (force historical)
     """
     global _DATA_SOURCE_MODE
-    if mode in ("auto", "alpaca", "openbb"):
+    if mode in ("auto", "ibkr", "openbb"):
         _DATA_SOURCE_MODE = mode
         logger.info("Data source mode set to: %s (active: %s)", mode, get_active_data_source())
     else:
-        logger.warning("Invalid data source mode: %s (must be auto/alpaca/openbb)", mode)
+        logger.warning("Invalid data source mode: %s (must be auto/ibkr/openbb)", mode)
 
 
 # ---------------------------------------------------------------------------
-# Alpaca Data API — direct client for real-time equity prices during market hours
+# IBKRBroker Data API — direct client for real-time equity prices during market hours
 # ---------------------------------------------------------------------------
-_alpaca_data_client = None
-_ALPACA_DATA_AVAILABLE = False
+_ibkr_data_client = None
+_IBKR_DATA_AVAILABLE = False
 
 try:
     import os
@@ -115,32 +115,32 @@ try:
     except ImportError:
         pass
 
-    _alpaca_key = os.environ.get("ALPACA_API_KEY", "")
-    _alpaca_secret = os.environ.get("ALPACA_SECRET_KEY", "")
-    if _alpaca_key and _alpaca_secret:
+    _ibkr_key = os.environ.get("IBKR_API_KEY", "")
+    _ibkr_secret = os.environ.get("IBKR_SECRET_KEY", "")
+    if _ibkr_key and _ibkr_secret:
         from alpaca.data.historical.stock import StockHistoricalDataClient
         from alpaca.data.requests import StockBarsRequest, StockLatestTradeRequest
         from alpaca.data.timeframe import TimeFrame
-        _alpaca_data_client = StockHistoricalDataClient(_alpaca_key, _alpaca_secret)
-        _ALPACA_DATA_AVAILABLE = True
-        logger.info("Alpaca Data API available — real-time equity prices during market hours")
+        _ibkr_data_client = StockHistoricalDataClient(_ibkr_key, _ibkr_secret)
+        _IBKR_DATA_AVAILABLE = True
+        logger.info("IBKR Data API available — real-time equity prices during market hours")
 except ImportError:
-    logger.debug("alpaca-py not installed — Alpaca data path disabled")
+    logger.debug("ib_insync not installed — IBKR data path disabled")
 except Exception as e:
-    logger.debug("Alpaca data client init failed: %s", e)
+    logger.debug("IBKR data client init failed: %s", e)
 
 
-def _fetch_alpaca_bars(tickers: list[str], start: str, end: Optional[str],
+def _fetch_ibkr_bars(tickers: list[str], start: str, end: Optional[str],
                        interval: str) -> pd.DataFrame:
-    """Fetch OHLCV bars directly from Alpaca Data API.
+    """Fetch OHLCV bars directly from IBKRBroker Data API.
 
     Returns DataFrame in the same format as OpenBB for seamless substitution.
     """
-    if not _ALPACA_DATA_AVAILABLE or not _alpaca_data_client:
+    if not _IBKR_DATA_AVAILABLE or not _ibkr_data_client:
         return pd.DataFrame()
 
     try:
-        # Map interval string to Alpaca TimeFrame
+        # Map interval string to IBKRBroker TimeFrame
         tf_map = {
             "1d": TimeFrame.Day, "1D": TimeFrame.Day,
             "1h": TimeFrame.Hour, "1H": TimeFrame.Hour,
@@ -154,13 +154,13 @@ def _fetch_alpaca_bars(tickers: list[str], start: str, end: Optional[str],
             end=pd.Timestamp(end).to_pydatetime() if end else None,
             timeframe=timeframe,
         )
-        bars = _alpaca_data_client.get_stock_bars(request)
+        bars = _ibkr_data_client.get_stock_bars(request)
         df = bars.df if hasattr(bars, "df") else pd.DataFrame()
         if df.empty:
             return pd.DataFrame()
 
-        # Normalize Alpaca output to match OpenBB schema
-        # Alpaca returns MultiIndex (symbol, timestamp) with columns: open, high, low, close, volume, ...
+        # Normalize IBKRBroker output to match OpenBB schema
+        # IBKRBroker returns MultiIndex (symbol, timestamp) with columns: open, high, low, close, volume, ...
         if isinstance(df.index, pd.MultiIndex):
             # Multi-ticker: pivot to flat format per ticker
             frames = {}
@@ -199,28 +199,28 @@ def _fetch_alpaca_bars(tickers: list[str], start: str, end: Optional[str],
             return df
 
     except Exception as e:
-        logger.warning("Alpaca bars fetch failed: %s", e)
+        logger.warning("IBKR bars fetch failed: %s", e)
         return pd.DataFrame()
 
 
-def _use_alpaca_for_prices() -> bool:
-    """Check if we should route equity prices through Alpaca.
+def _use_ibkr_for_prices() -> bool:
+    """Check if we should route equity prices through IBKRBroker.
 
-    Alpaca replaces polygon during market hours for real-time data.
+    IBKR replaces polygon during market hours for real-time data.
     After hours / backtesting falls back to OpenBB/FMP (default).
 
     Mode behavior:
-      "auto":    Alpaca during market hours, FMP after hours
-      "alpaca":  Force Alpaca always (even after hours)
+      "auto":    IBKR during market hours, FMP after hours
+      "ibkr":  Force IBKR always (even after hours)
       "openbb":  Force FMP always (backtesting mode)
     """
-    if not _ALPACA_DATA_AVAILABLE:
+    if not _IBKR_DATA_AVAILABLE:
         return False
     if _DATA_SOURCE_MODE == "openbb":
         return False
-    if _DATA_SOURCE_MODE == "alpaca":
+    if _DATA_SOURCE_MODE == "ibkr":
         return True
-    # auto: Alpaca during market hours only
+    # auto: IBKRBroker during market hours only
     return _is_market_hours()
 
 
@@ -283,7 +283,7 @@ def get_prices(
     """Fetch OHLCV price data.
 
     Routing (when provider=None):
-      Market hours:  Alpaca real-time → fallback OpenBB/FMP
+      Market hours:  IBKR real-time → fallback OpenBB/FMP
       After hours:   OpenBB/FMP (default)
       mode="openbb": OpenBB/FMP only (for backtesting)
 
@@ -297,20 +297,20 @@ def get_prices(
     if end is None:
         end = datetime.now().strftime("%Y-%m-%d")
 
-    # --- Alpaca path (market hours — replaces polygon for real-time) ---
-    if provider is None and _use_alpaca_for_prices():
-        # Split tickers: Alpaca handles equities/ETFs but NOT index symbols (^VIX, ^TNX, etc.)
+    # --- IBKRBroker path (market hours — replaces polygon for real-time) ---
+    if provider is None and _use_ibkr_for_prices():
+        # Split tickers: IBKRBroker handles equities/ETFs but NOT index symbols (^VIX, ^TNX, etc.)
         equity_tickers = [t for t in tickers if not t.startswith("^")]
         index_tickers = [t for t in tickers if t.startswith("^")]
 
-        # Fetch equities via Alpaca
+        # Fetch equities via IBKRBroker
         equity_df = pd.DataFrame()
         if equity_tickers:
-            equity_df = _fetch_alpaca_bars(equity_tickers, start, end, interval)
+            equity_df = _fetch_ibkr_bars(equity_tickers, start, end, interval)
 
         # Index symbols fall through to OpenBB/FMP
         if equity_df.empty and not index_tickers:
-            logger.debug("Alpaca bars empty for %s — falling back to OpenBB/FMP", tickers[:3])
+            logger.debug("IBKR bars empty for %s — falling back to OpenBB/FMP", tickers[:3])
         elif not equity_df.empty:
             return equity_df
 
@@ -1029,8 +1029,8 @@ def get_data_source_status() -> dict:
     """Return status of all data source backends."""
     status = {
         "openbb_available": _openbb_available,
-        "alpaca_data_available": _ALPACA_DATA_AVAILABLE,
-        "primary_equity_source": "alpaca" if _use_alpaca_for_prices() else DEFAULT_EQUITY_PROVIDER,
+        "ibkr_data_available": _IBKR_DATA_AVAILABLE,
+        "primary_equity_source": "ibkr" if _use_ibkr_for_prices() else DEFAULT_EQUITY_PROVIDER,
         "active_data_source": get_active_data_source(),
         "data_source_mode": _DATA_SOURCE_MODE,
         "equity_fallback_provider": DEFAULT_EQUITY_PROVIDER,

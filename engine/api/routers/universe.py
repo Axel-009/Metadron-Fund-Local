@@ -246,7 +246,7 @@ async def openbb_fundamentals(ticker: str = Query(...)):
 
 @router.get("/openbb/quotes")
 async def openbb_quotes(tickers: str = Query(..., description="Comma-separated tickers")):
-    """Bulk quotes via OpenBB/FMP, falling back to Alpaca broker prices."""
+    """Bulk quotes via OpenBB/FMP, falling back to IBKRBroker prices."""
     try:
         ticker_list = [t.strip().upper() for t in tickers.split(",") if t.strip()]
         if not ticker_list:
@@ -273,7 +273,7 @@ async def openbb_quotes(tickers: str = Query(..., description="Comma-separated t
                         "source": "openbb",
                     })
 
-        # Fallback to Alpaca for any missing tickers
+        # Fallback to IBKRBroker for any missing tickers
         missing = [t for t in ticker_list if t not in found]
         if missing:
             try:
@@ -299,7 +299,7 @@ async def openbb_quotes(tickers: str = Query(..., description="Comma-separated t
                                         "change_pct": round((price - prev) / prev * 100, 2) if prev else 0,
                                         "volume": 0,
                                         "market_cap": 0,
-                                        "source": "alpaca" if "alpaca" in str(type(df)).lower() else "fmp",
+                                        "source": "ibkr" if "ibkr" in str(type(df)).lower() else "fmp",
                                     })
                                     found.add(t)
                             except Exception:
@@ -324,7 +324,7 @@ async def openbb_quotes(tickers: str = Query(..., description="Comma-separated t
             except Exception as e:
                 logger.debug(f"Bulk quote fallback failed: {e}")
 
-        return {"quotes": results, "source": "openbb+alpaca", "timestamp": datetime.utcnow().isoformat()}
+        return {"quotes": results, "source": "openbb+ibkr", "timestamp": datetime.utcnow().isoformat()}
     except Exception as e:
         logger.error(f"universe/openbb/quotes error: {e}")
         return {"quotes": [], "error": str(e)}

@@ -4,7 +4,7 @@ Circuit Breaker, Heartbeat Integrity.
 Six-layer defense against adversarial degradation:
 
 1. PhaseChain — HMAC-signed output chain between phases (break = halt)
-2. BrokerIntegrityLock — Paper vs Alpaca reconciliation every cycle
+2. BrokerIntegrityLock — Paper vs IBKR reconciliation every cycle
 3. TransactionLedger — Append-only HMAC-signed trade log (tamper-evident)
 4. CircuitBreaker — Perimeter lockdown (API locked, engine running, exits only)
 5. HeartbeatIntegrity — Signed PM2 service heartbeats (missing = freeze new entries)
@@ -106,9 +106,9 @@ class PhaseChain:
 # ═══════════════════════════════════════════════════════════════
 
 class BrokerIntegrityLock:
-    """Paper vs Alpaca reconciliation. Discrepancy > threshold = freeze new entries.
+    """Paper vs IBKRBroker reconciliation. Discrepancy > threshold = freeze new entries.
 
-    Futures note: Paper broker handles futures (ES, NQ, VX). Alpaca handles
+    Futures note: trade log handles futures (ES, NQ, VX). IBKR handles
     equities + options only. Futures recon verifies paper internal consistency
     (positions vs trades vs P&L must add up). When Rithmic is wired,
     futures recon will check paper vs Rithmic.
@@ -121,18 +121,18 @@ class BrokerIntegrityLock:
         self._discrepancies: list = []
         self._last_recon: Optional[str] = None
 
-    def reconcile(self, paper_positions: dict, alpaca_positions: dict) -> dict:
-        """Compare paper vs Alpaca positions. Returns recon result."""
+    def reconcile(self, paper_positions: dict, broker_positions: dict) -> dict:
+        """Compare paper vs IBKRBroker positions. Returns recon result."""
         self._discrepancies.clear()
-        all_tickers = set(list(paper_positions.keys()) + list(alpaca_positions.keys()))
+        all_tickers = set(list(paper_positions.keys()) + list(broker_positions.keys()))
 
         for ticker in all_tickers:
             paper = paper_positions.get(ticker, {})
-            alpaca = alpaca_positions.get(ticker, {})
+            ibkr = broker_positions.get(ticker, {})
             p_qty = paper.get("quantity", 0)
-            a_qty = alpaca.get("quantity", 0)
+            a_qty = ibkr.get("quantity", 0)
             p_value = paper.get("market_value", 0)
-            a_value = alpaca.get("market_value", 0)
+            a_value = ibkr.get("market_value", 0)
 
             qty_diff = abs(p_qty - a_qty)
             val_diff = abs(p_value - a_value)
@@ -140,15 +140,15 @@ class BrokerIntegrityLock:
             if qty_diff > self.tolerance_shares or val_diff > self.tolerance_dollars:
                 self._discrepancies.append({
                     "ticker": ticker,
-                    "paper_qty": p_qty, "alpaca_qty": a_qty, "qty_diff": qty_diff,
-                    "paper_value": p_value, "alpaca_value": a_value, "value_diff": round(val_diff, 2),
+                    "paper_qty": p_qty, "ibkr_qty": a_qty, "qty_diff": qty_diff,
+                    "paper_value": p_value, "ibkr_value": a_value, "value_diff": round(val_diff, 2),
                     "timestamp": datetime.now(timezone.utc).isoformat(),
                 })
 
         if self._discrepancies:
             self._frozen = True
             logger.critical(
-                "BROKER INTEGRITY FREEZE: %d discrepancies detected (paper vs Alpaca)",
+                "BROKER INTEGRITY FREEZE: %d discrepancies detected (paper vs IBKR)",
                 len(self._discrepancies),
             )
 

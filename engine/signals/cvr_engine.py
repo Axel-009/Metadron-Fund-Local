@@ -16,7 +16,7 @@ Instrument types:
 Dynamic CVR discovery:
     - Scans SEC 8-K filings for merger/acquisition events
     - Scans company news for CVR-creating catalysts
-    - Updates underlying prices from live data (Alpaca/FMP)
+    - Updates underlying prices from live data (IBKR/FMP)
     - Refreshes milestone probabilities from news sentiment
 
 Adjustments:

@@ -468,17 +468,17 @@ def _create_metrics(registry: "CollectorRegistry"):
     )
     metrics["recon_nav_delta"] = Gauge(
         "metadron_recon_nav_delta",
-        "NAV delta between Paper and Alpaca brokers",
+        "NAV delta between Paper and IBKR brokers",
         registry=registry,
     )
     metrics["recon_paper_nav"] = Gauge(
         "metadron_recon_paper_nav",
-        "Paper broker NAV",
+        "trade log NAV",
         registry=registry,
     )
-    metrics["recon_alpaca_nav"] = Gauge(
-        "metadron_recon_alpaca_nav",
-        "Alpaca broker NAV",
+    metrics["recon_ibkr_nav"] = Gauge(
+        "metadron_recon_ibkr_nav",
+        "IBKR broker NAV",
         registry=registry,
     )
     metrics["recon_total_positions"] = Gauge(
@@ -1149,27 +1149,27 @@ def _collect_live_metrics(metrics: dict):
         metrics["recon_paper_nav"].set(paper_nav)
         metrics["recon_total_positions"].set(len(paper_pos))
 
-        alpaca_nav = 0
-        alpaca_pos = {}
+        ibkr_nav = 0
+        broker_pos = {}
         try:
             from engine.execution.alpaca_broker import AlpacaBroker
             ab = AlpacaBroker(initial_cash=0, paper=True)
-            alpaca_pos = ab.get_positions()
-            alpaca_nav = ab.compute_nav()
+            broker_pos = ab.get_positions()
+            ibkr_nav = ab.compute_nav()
         except Exception:
             pass
-        metrics["recon_alpaca_nav"].set(alpaca_nav)
-        metrics["recon_nav_delta"].set(paper_nav - alpaca_nav)
+        metrics["recon_ibkr_nav"].set(ibkr_nav)
+        metrics["recon_nav_delta"].set(paper_nav - ibkr_nav)
 
-        all_t = set(list(paper_pos.keys()) + list(alpaca_pos.keys()))
+        all_t = set(list(paper_pos.keys()) + list(broker_pos.keys()))
         m_count = 0
         mm_count = 0
         for t in all_t:
             in_p = t in paper_pos
-            in_a = t in alpaca_pos
+            in_a = t in broker_pos
             if in_p and in_a:
                 pq = getattr(paper_pos[t], "quantity", 0) if hasattr(paper_pos[t], "quantity") else 0
-                aq = alpaca_pos[t].get("quantity", 0) if isinstance(alpaca_pos[t], dict) else getattr(alpaca_pos[t], "quantity", 0)
+                aq = broker_pos[t].get("quantity", 0) if isinstance(broker_pos[t], dict) else getattr(broker_pos[t], "quantity", 0)
                 if pq == aq:
                     m_count += 1
                 else:

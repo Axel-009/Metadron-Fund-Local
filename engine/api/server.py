@@ -207,23 +207,23 @@ async def health_providers():
         overall = "critical"
     results["fmp"] = fmp_status
 
-    # ── Alpaca (trading — optional if paper-only) ─────────────────────
-    alpaca_key = os.environ.get("ALPACA_API_KEY", "")
-    alpaca_secret = os.environ.get("ALPACA_SECRET_KEY", "")
-    alpaca_status = {"configured": bool(alpaca_key and alpaca_secret), "live": False, "error": None}
-    if alpaca_key and alpaca_secret:
+    # ── IBKRBroker (trading — optional if paper-only) ─────────────────────
+    ibkr_key = os.environ.get("IBKR_API_KEY", "")
+    ibkr_secret = os.environ.get("IBKR_SECRET_KEY", "")
+    ibkr_status = {"configured": bool(ibkr_key and ibkr_secret), "live": False, "error": None}
+    if ibkr_key and ibkr_secret:
         try:
             from alpaca.trading.client import TradingClient
-            client = TradingClient(alpaca_key, alpaca_secret, paper=True)
+            client = TradingClient(ibkr_key, ibkr_secret, paper=True)
             acct = client.get_account()
-            alpaca_status["live"] = bool(acct)
+            ibkr_status["live"] = bool(acct)
         except ImportError:
-            alpaca_status["error"] = "alpaca-py not installed"
+            ibkr_status["error"] = "ib_insync not installed"
         except Exception as e:
-            alpaca_status["error"] = str(e)
+            ibkr_status["error"] = str(e)
     else:
-        alpaca_status["error"] = "ALPACA_API_KEY or ALPACA_SECRET_KEY not set"
-    results["alpaca"] = alpaca_status
+        ibkr_status["error"] = "IBKR_API_KEY or IBKR_SECRET_KEY not set"
+    results["ibkr"] = ibkr_status
 
     # ── Anthropic (LLM — optional) ────────────────────────────────────
     anthropic_key = os.environ.get("ANTHROPIC_API_KEY", "")

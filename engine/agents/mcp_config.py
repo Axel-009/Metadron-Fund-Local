@@ -31,9 +31,9 @@ MCP_PLUGINS: dict = {
             "claude mcp add --scope user context7 -- "
             "npx -y @upstash/context7-mcp"
         ),
-        "description": "Version-specific library docs for AI agents (Alpaca, FastAPI, React, etc.)",
+        "description": "Version-specific library docs for AI agents (IBKR, FastAPI, React, etc.)",
         "use_cases": [
-            "Alpaca trading API reference",
+            "IBKR trading API reference",
             "FastAPI endpoint documentation",
             "Pandas/NumPy function signatures",
             "React/TypeScript component APIs",

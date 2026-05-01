@@ -4,7 +4,7 @@ Runs after market close (16:00 ET) to generate:
 1. Daily transaction log (TX) — all trades executed during the session
 2. Machine learning log — model predictions vs outcomes
 3. Learning loop snapshot — signal accuracy, tier weight adjustments
-4. Reconciliation log — Alpaca vs Paper broker position comparison
+4. Reconciliation log — IBKR vs trade log broker position comparison
 5. Error/alert log — all engine errors during the session
 
 These files feed the ARCHIVE tab and provide audit trail for the system.
@@ -34,7 +34,7 @@ def _ensure_dirs():
 def generate_tx_log() -> Path:
     """Generate daily transaction log from broker trade history.
 
-    Source: ExecutionEngine → PaperBroker/AlpacaBroker.get_trades()
+    Source: ExecutionEngine → IBKRBroker.get_trades()
     Output: logs/transactions/TX_{YYYYMMDD}.json
     """
     _ensure_dirs()
@@ -75,10 +75,10 @@ def generate_tx_log() -> Path:
 
 
 def generate_recon_log() -> Path:
-    """Generate reconciliation log comparing Alpaca vs Paper broker.
+    """Generate reconciliation log comparing IBKRBroker vs trade log.
 
     The only expected difference should be futures positions (no futures broker
-    on Alpaca). All equity/ETF/options positions should match.
+    on IBKR). All equity/ETF/options positions should match.
 
     Source: AlpacaBroker.get_positions() vs PaperBroker.get_positions()
     Output: logs/reconciliation/RECON_{YYYYMMDD}.json
@@ -88,37 +88,37 @@ def generate_recon_log() -> Path:
     output = LOGS_DIR / "reconciliation" / f"RECON_{date_str}.json"
 
     try:
-        # Get Paper broker positions
+        # Get trade log positions
         from engine.execution.paper_broker import PaperBroker
         paper = PaperBroker()
         paper_positions = paper.get_all_positions()
 
-        # Get Alpaca positions
-        alpaca_positions = {}
+        # Get IBKRBroker positions
+        broker_positions = {}
         try:
             from engine.execution.alpaca_broker import AlpacaBroker
             alpaca = AlpacaBroker(initial_cash=0, paper=True)
-            alpaca_positions = alpaca.get_positions()
+            broker_positions = ibkr.get_positions()
         except Exception as e:
-            logger.warning(f"Alpaca broker unavailable for recon: {e}")
+            logger.warning(f"IBKR broker unavailable for recon: {e}")
 
         # Compare positions
-        all_tickers = set(list(paper_positions.keys()) + list(alpaca_positions.keys()))
+        all_tickers = set(list(paper_positions.keys()) + list(broker_positions.keys()))
         FUTURES_PREFIXES = ("ES", "NQ", "YM", "CL", "GC", "ZB", "ZN", "6E", "RTY", "VX")
 
         matches = []
         mismatches = []
         paper_only = []
-        alpaca_only = []
+        ibkr_only = []
 
         for ticker in sorted(all_tickers):
             is_futures = any(ticker.startswith(p) for p in FUTURES_PREFIXES)
             in_paper = ticker in paper_positions
-            in_alpaca = ticker in alpaca_positions
+            in_ibkr = ticker in broker_positions
 
-            if in_paper and in_alpaca:
+            if in_paper and in_ibkr:
                 p = paper_positions[ticker]
-                a = alpaca_positions[ticker]
+                a = broker_positions[ticker]
                 p_qty = getattr(p, "quantity", 0) if hasattr(p, "quantity") else p.get("quantity", 0)
                 a_qty = a.get("quantity", getattr(a, "quantity", 0)) if isinstance(a, dict) else getattr(a, "quantity", 0)
 
@@ -128,12 +128,12 @@ def generate_recon_log() -> Path:
                     mismatches.append({
                         "ticker": ticker,
                         "paper_qty": p_qty,
-                        "alpaca_qty": a_qty,
+                        "ibkr_qty": a_qty,
                         "delta": p_qty - a_qty,
                         "is_futures": is_futures,
                         "status": "EXPECTED_DIFF" if is_futures else "MISMATCH",
                     })
-            elif in_paper and not in_alpaca:
+            elif in_paper and not in_ibkr:
                 p = paper_positions[ticker]
                 p_qty = getattr(p, "quantity", 0) if hasattr(p, "quantity") else p.get("quantity", 0)
                 paper_only.append({
@@ -141,16 +141,16 @@ def generate_recon_log() -> Path:
                     "is_futures": is_futures,
                     "status": "EXPECTED_PAPER_ONLY" if is_futures else "PAPER_ONLY",
                 })
-            elif in_alpaca and not in_paper:
-                a = alpaca_positions[ticker]
+            elif in_ibkr and not in_paper:
+                a = broker_positions[ticker]
                 a_qty = a.get("quantity", getattr(a, "quantity", 0)) if isinstance(a, dict) else getattr(a, "quantity", 0)
-                alpaca_only.append({"ticker": ticker, "qty": a_qty, "status": "ALPACA_ONLY"})
+                ibkr_only.append({"ticker": ticker, "qty": a_qty, "status": "IBKR_ONLY"})
 
         # NAV comparison
         paper_nav = paper.compute_nav()
-        alpaca_nav = 0
+        ibkr_nav = 0
         try:
-            alpaca_nav = alpaca.compute_nav()
+            ibkr_nav = ibkr.compute_nav()
         except Exception:
             pass
 
@@ -159,18 +159,18 @@ def generate_recon_log() -> Path:
             "matches": matches,
             "mismatches": mismatches,
             "paper_only": paper_only,
-            "alpaca_only": alpaca_only,
+            "ibkr_only": ibkr_only,
             "summary": {
                 "total_positions": len(all_tickers),
                 "matched": len(matches),
                 "mismatched": len(mismatches),
                 "paper_only": len(paper_only),
-                "alpaca_only": len(alpaca_only),
+                "ibkr_only": len(ibkr_only),
                 "futures_expected_diffs": sum(1 for m in mismatches if m.get("is_futures")) + sum(1 for p in paper_only if p.get("is_futures")),
                 "paper_nav": paper_nav,
-                "alpaca_nav": alpaca_nav,
-                "nav_delta": paper_nav - alpaca_nav,
-                "nav_delta_pct": ((paper_nav - alpaca_nav) / max(alpaca_nav, 1)) * 100 if alpaca_nav else 0,
+                "ibkr_nav": ibkr_nav,
+                "nav_delta": paper_nav - ibkr_nav,
+                "nav_delta_pct": ((paper_nav - ibkr_nav) / max(ibkr_nav, 1)) * 100 if ibkr_nav else 0,
             },
             "generated_at": datetime.now().isoformat(),
         }

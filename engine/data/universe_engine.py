@@ -277,7 +277,7 @@ class AssetClass(str, Enum):
 
 
 # Map SecurityType → AssetClass for pipeline routing
-# Stocks, sector/index/factor/thematic ETFs are tradeable via Alpaca.
+# Stocks, sector/index/factor/thematic ETFs are tradeable via IBKRBroker.
 # Fixed income, commodity, and volatility ETFs are tradeable as ETFs on
 # Serve primarily as macro signals — we allow execution of
 # sector/index/factor/thematic ETFs only.

@@ -1,13 +1,13 @@
 # BROKER SWAP NOTE: This router accesses broker via get_broker() which
-# tries ExecutionEngine (default: AlpacaBroker) and falls back to PaperBroker.
+# tries ExecutionEngine (default: IBKRBroker) and falls back to PaperBroker.
 # Trade records are dict-shaped (from broker.get_trade_history()).
-# When adding IBKR/Tradier: ensure get_trade_history() returns list[dict]
+# When adding IBKR/IBKRBroker (legacy): ensure get_trade_history() returns list[dict]
 # with keys: ticker, side, quantity, fill_price, fill_timestamp, signal_type,
 # order_type, status, reason, stop_loss, take_profit, spread_bps, impact_bps
 
 """
 Portfolio router — LIVE, ALLOC, TXLOG tabs
-Wraps: PaperBroker, AlpacaBroker, AlphaOptimizer, BetaCorridor
+Wraps: IBKRBroker, AlphaOptimizer, BetaCorridor
 """
 from fastapi import APIRouter, Query
 from datetime import datetime
@@ -88,7 +88,7 @@ async def portfolio_trades(limit: int = Query(50, ge=1, le=500)):
         trades = broker.get_trade_history()[-limit:]
         result = []
         for t in trades:
-            # Trade records are dicts from both PaperBroker and AlpacaBroker
+            # Trade records are dicts from both PaperBroker and IBKRBroker
             ts = t.get("fill_timestamp", "")
             if hasattr(ts, "isoformat"):
                 ts = ts.isoformat()
@@ -291,7 +291,7 @@ async def portfolio_pnl_series():
     try:
         broker = get_broker()
 
-        # Try Alpaca portfolio history first (real brokerage PnL)
+        # Try IBKRBroker portfolio history first (real brokerage PnL)
         if hasattr(broker, "get_portfolio_history"):
             try:
                 hist = broker.get_portfolio_history(period="1D", timeframe="15Min")
@@ -327,7 +327,7 @@ async def portfolio_pnl_series():
         buckets: dict[str, float] = defaultdict(float)
         cumulative = 0
         for t in reversed(trades):
-            # Trade records are dicts from both PaperBroker and AlpacaBroker
+            # Trade records are dicts from both PaperBroker and IBKRBroker
             ts = t.get("fill_timestamp", None)
             if not ts:
                 continue
@@ -354,20 +354,20 @@ async def portfolio_pnl_series():
         return {"series": [], "error": str(e)}
 
 
-# ─── TXLOG: Alpaca orders fallback ────────────────────────────
+# ─── TXLOG: IBKRBroker orders fallback ────────────────────────────
 
 @router.get("/orders")
 async def portfolio_orders(limit: int = Query(100, ge=1, le=500)):
-    """Fetch broker orders (Alpaca API primary, trade_history fallback).
+    """Fetch broker orders (IBKRBroker API primary, trade_history fallback).
 
     Returns unified order/fill records for the TXLOG tab.
-    Alpaca's get_orders() gives richer data (status, filled_qty, type).
+    IBKR's get_orders() gives richer data (status, filled_qty, type).
     PaperBroker falls back to get_trade_history().
     """
     try:
         broker = get_broker()
 
-        # --- Primary: Alpaca get_orders() ---
+        # --- Primary: IBKRBroker get_orders() ---
         if hasattr(broker, "get_orders") and callable(broker.get_orders):
             try:
                 raw = broker.get_orders()
@@ -395,9 +395,9 @@ async def portfolio_orders(limit: int = Query(100, ge=1, le=500)):
                             "filled_at": str(o.get("filled_at", "")),
                             "signal_type": o.get("signal_type", "BROKER"),
                         })
-                    return {"orders": orders, "source": "alpaca", "timestamp": datetime.utcnow().isoformat()}
+                    return {"orders": orders, "source": "ibkr", "timestamp": datetime.utcnow().isoformat()}
             except Exception as oe:
-                logger.warning(f"portfolio/orders: Alpaca get_orders failed, falling back: {oe}")
+                logger.warning(f"portfolio/orders: IBKR get_orders failed, falling back: {oe}")
 
         # --- Fallback: trade history ---
         trades = broker.get_trade_history()[-limit:]

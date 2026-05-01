@@ -261,7 +261,7 @@ class _PlaceholderInvestor:
 class InvestorReportGenerator:
     """Generates a monthly investor letter as an ASCII string.
 
-    Attempts to pull live NAV from AlpacaBroker and performance metrics
+    Attempts to pull live NAV from IBKRBroker and performance metrics
     from RiskMetricsEngine; falls back to deterministic monthly placeholders
     when those engines are unavailable.
 
@@ -460,8 +460,8 @@ class InvestorReportGenerator:
         out.append(f"  Avg Fill Quality            : {ph.fill_quality_bps:+.2f} bps vs VWAP")
         out.append(f"  Avg Holding Period          : {ph.avg_holding_days:.1f} days")
         out.append(f"  Algo Execution Share        : 100%  (fully automated)")
-        out.append(f"  Prime Broker                : Alpaca Markets")
-        out.append(f"  Custodian                   : Alpaca Securities LLC")
+        out.append(f"  Prime Broker                : IBKR Markets")
+        out.append(f"  Custodian                   : IBKR Securities LLC")
         return "\n".join(out)
 
     def _section_nav_history(self) -> str:

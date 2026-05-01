@@ -5,10 +5,10 @@ Wraps: QuantStrategyExecutor (12 HFT strategies → L7 execution pipeline),
        PatternRecognitionEngine (candlestick, regime, conviction signals),
        PatternDiscoveryEngine (mirofish + newton law patterns),
        Backtester (momentum, mean-reversion, RV backtests),
-       UniverseEngine / OpenBB / Alpaca (live price data)
+       UniverseEngine / OpenBB / IBKR (live price data)
 
 Data flow:
-    OpenBB/Alpaca OHLCV → PatternRecognition scan → QuantStrategyExecutor (12 HFT strategies)
+    OpenBB/IBKR OHLCV → PatternRecognition scan → QuantStrategyExecutor (12 HFT strategies)
         → Consensus signal → L7UnifiedExecutionSurface (Stage 6.5)
     Learning: outcomes feed back through PaulOrchestrator → GSD gradient tracking
 """
@@ -70,10 +70,10 @@ def _get_backtester():
 
 
 # ---------------------------------------------------------------------------
-# Helper: fetch OHLCV from OpenBB with Alpaca fallback
+# Helper: fetch OHLCV from OpenBB with IBKRBroker fallback
 # ---------------------------------------------------------------------------
 def _fetch_ohlcv(ticker: str, days: int = 120):
-    """Fetch OHLCV data, OpenBB primary, Alpaca fallback. No static data."""
+    """Fetch OHLCV data, OpenBB primary, IBKRBroker fallback. No static data."""
     import pandas as pd
 
     end = datetime.utcnow().strftime("%Y-%m-%d")
@@ -97,14 +97,14 @@ def _fetch_ohlcv(ticker: str, days: int = 120):
     except Exception as e:
         logger.warning(f"OpenBB fetch for {ticker}: {e}")
 
-    # Alpaca fallback
+    # IBKRBroker fallback
     try:
         from engine.data.alpaca_data import get_bars
         df = get_bars(ticker, start=start, end=end)
         if df is not None and not df.empty:
             return df
     except Exception as e:
-        logger.warning(f"Alpaca fetch for {ticker}: {e}")
+        logger.warning(f"IBKR fetch for {ticker}: {e}")
 
     return pd.DataFrame()
 
@@ -129,7 +129,7 @@ def _infer_sector(ticker: str) -> str:
 
 @router.get("/universe")
 async def quant_universe():
-    """Tradeable ticker universe with live prices from OpenBB/Alpaca.
+    """Tradeable ticker universe with live prices from OpenBB/IBKRBroker.
 
     Returns tickers with sector, current price, and daily change.
     No hardcoded price data — all from live sources.
@@ -183,13 +183,13 @@ async def quant_universe():
                     entry["change_pct"] = round(((latest - prev) / prev) * 100, 2) if prev else 0.0
                     entry["source"] = "openbb"
             except Exception:
-                # Alpaca fallback
+                # IBKRBroker fallback
                 try:
                     from engine.data.alpaca_data import get_latest_price
                     p = get_latest_price(ticker)
                     if p and p > 0:
                         entry["price"] = round(p, 2)
-                        entry["source"] = "alpaca"
+                        entry["source"] = "ibkr"
                 except Exception:
                     pass
 

@@ -3,7 +3,7 @@ Risk router — RISK tab
 Wraps: BetaCorridor, DecisionMatrix, OptionsEngine
 """
 # BROKER SWAP NOTE: This router accesses broker via get_broker() which
-# tries ExecutionEngine (AlpacaBroker) with PaperBroker fallback.
+# tries ExecutionEngine (IBKRBroker) with PaperBroker fallback.
 # Risk metrics use broker._perf_tracker for daily returns (Sharpe, Sortino, etc.)
 # Risk alerts use BetaCorridor + OptionsEngine (broker-independent).
 # When adding IBKR: ensure _perf_tracker is populated with daily NAV snapshots.

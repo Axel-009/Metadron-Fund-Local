@@ -1,7 +1,7 @@
 """
 BrokerProtocol — Formal typing.Protocol for all Metadron broker implementations.
 
-Defines the shared interface that PaperBroker, AlpacaBroker, and TradierBroker
+Defines the shared interface that IBKRBroker implements
 all implement by convention. This Protocol makes that contract explicit and
 runtime-checkable via isinstance().
 
@@ -9,7 +9,7 @@ runtime-checkable via isinstance().
 BROKER SWAP NOTES — READ BEFORE ADDING A NEW BROKER
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-All brokers (PaperBroker, AlpacaBroker, TradierBroker) share a single interface
+IBKRBroker implements the shared broker interface
 by convention.  BrokerProtocol formalises that contract so:
   (a) type checkers (mypy, pyright) catch mismatches at dev-time, and
   (b) runtime guards like `assert isinstance(broker, BrokerProtocol)` work.
@@ -18,7 +18,7 @@ HOW TO ADD IBKR (or any other new broker):
 ────────────────────────────────────────────
 STEP 1 — Import shared dataclasses from paper_broker.py
     The paper_broker module is the canonical source of all shared data types.
-    AlpacaBroker already does this pattern — copy it:
+    IBKRBroker implements this pattern:
 
         from engine.execution.paper_broker import (
             Order, OrderSide, OrderType, OrderStatus, SignalType,
@@ -54,7 +54,7 @@ STEP 2 — Implement all Protocol methods
 
 STEP 3 — Wire the broker into ExecutionEngine and L7
     Open engine/execution/execution_engine.py and add a branch in
-    ExecutionEngine.__init__() alongside the existing "alpaca" / "paper" paths:
+    ExecutionEngine.__init__() alongside the existing "ibkr" / "paper" paths:
 
         elif broker_type == "ibkr":
             from engine.execution.ibkr_broker import IBKRBroker
@@ -66,7 +66,7 @@ STEP 3 — Wire the broker into ExecutionEngine and L7
     failure, so wrap in try/except following the existing pattern there).
 
     Environment variable convention — add to .env / README:
-        METADRON_BROKER_TYPE=ibkr      # or alpaca / paper / tradier
+        METADRON_BROKER_TYPE=ibkr
 
     The shared singleton module (engine/api/shared.py) already reads
     METADRON_BROKER_TYPE and forwards it to ExecutionEngine().
@@ -93,26 +93,26 @@ STEP 5 — Update the shared.py BROKER SWAP NOTE
     broker type so other developers know it exists.
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-TRADIER BROKER STATUS
+IBKR BROKER STATUS
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-TradierBroker is already fully implemented at:
+Legacy TradierBroker reference:
     engine/execution/tradier_broker.py
 
 It satisfies BrokerProtocol (same method surface as PaperBroker /
-AlpacaBroker).  However, it is NOT yet wired into ExecutionEngine or
+IBKRBroker is the sole broker wired into L7UnifiedExecutionSurface.
 L7UnifiedExecutionSurface — there is no broker_type="ibkr" path in either
 class's __init__().
 
 To activate TradierBroker, follow Step 3 above with:
 
-    elif broker_type == "tradier":
+    elif broker_type == "ibkr":
         from engine.execution.tradier_broker import TradierBroker
         self.broker = TradierBroker(initial_cash=initial_nav or 1_000_000.0)
 
 And set:
-    METADRON_BROKER_TYPE=tradier
-    TRADIER_API_KEY=<your-key>
+    METADRON_BROKER_TYPE=ibkr
+    IBKR_API_KEY=<your-key>
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 SINGLETON / IMPORT NOTE
@@ -150,7 +150,7 @@ if TYPE_CHECKING:
 
 @runtime_checkable
 class BrokerProtocol(Protocol):
-    """Structural interface shared by PaperBroker, AlpacaBroker, and TradierBroker.
+    """Structural interface shared by PaperBroker, IBKRBroker, and IBKRBroker (legacy).
 
     Any object that implements all methods and attributes below satisfies the
     Protocol automatically — no explicit inheritance required.  Because the
@@ -201,7 +201,7 @@ class BrokerProtocol(Protocol):
     paper: bool
     """True when the broker is running in simulation mode (no real
     orders sent to an exchange).  AlpacaBroker exposes this as
-    ``self.paper = os.getenv("ALPACA_PAPER_TRADE", "True") == "true"``.
+    ``self.paper = os.getenv("IBKR_PAPER_TRADE", "True") == "true"``.
     Used by get_broker_status() and the shared API singleton to label
     the active environment in dashboard headers."""
 
@@ -386,7 +386,7 @@ class BrokerProtocol(Protocol):
         """Reconcile local portfolio state against the exchange.
 
         PaperBroker does an internal position consistency check.
-        AlpacaBroker compares local state against live Alpaca account data.
+        AlpacaBroker compares local state against live IBKR account data.
         Returns a dict with keys: status, discrepancies, resolved_at.
 
         AI NOTE:

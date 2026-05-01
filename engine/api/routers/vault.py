@@ -105,11 +105,11 @@ async def vault_test_key(payload: VaultKeySet):
                 r = await client.get(f"https://financialmodelingprep.com/api/v3/quote/AAPL?apikey={value}")
                 result["status"] = "valid" if r.status_code == 200 else f"error ({r.status_code})"
 
-        elif slot in ("ALPACA_API_KEY", "ALPACA_SECRET_KEY"):
+        elif slot in ("IBKR_API_KEY", "IBKR_SECRET_KEY"):
             import httpx
             headers = {"APCA-API-KEY-ID": value, "APCA-API-SECRET-KEY": payload.value}
             async with httpx.AsyncClient(timeout=10) as client:
-                r = await client.get("https://paper-api.alpaca.markets/v2/account", headers=headers)
+                r = await client.get("https://paper-api.ibkr.markets/v2/account", headers=headers)
                 result["status"] = "valid" if r.status_code == 200 else f"error ({r.status_code})"
 
         elif slot == "XIAOMI_MIMO_API_KEY":

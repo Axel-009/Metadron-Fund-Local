@@ -1,7 +1,7 @@
 """
 ETF router — Tab 17 ETF Dashboard
 Live ETF holdings, sector heatmap, flows, movers, and category breakdown.
-Sources: Alpaca broker positions + OpenBB price data + UniverseEngine ETF definitions.
+Sources: IBKR broker positions + OpenBB price data + UniverseEngine ETF definitions.
 """
 from fastapi import APIRouter, Query
 from datetime import datetime, timedelta
@@ -95,7 +95,7 @@ def _get_all_etf_tickers():
 async def etf_holdings():
     """
     ETF holdings from broker positions, enriched with category info.
-    Falls back to Alpaca price data for tracked ETFs with no open position.
+    Falls back to IBKR price data for tracked ETFs with no open position.
     """
     try:
         broker = _get_broker()

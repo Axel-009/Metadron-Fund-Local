@@ -462,7 +462,7 @@ class LiveLoopOrchestrator:
     def __init__(
         self,
         initial_nav: float = 1_000_000.0,
-        broker_type: str = "alpaca",
+        broker_type: str = "ibkr",
         heartbeat_interval: float = _HEARTBEAT_INTERVAL,
         enable_risk_gates: bool = True,
         enable_persistence: bool = True,
@@ -2350,18 +2350,18 @@ class LiveLoopOrchestrator:
                             "quantity": getattr(pos, "quantity", 0),
                             "market_value": getattr(pos, "market_value", 0),
                         }
-                    # Alpaca positions (if live broker available)
-                    alpaca_positions = {}
-                    if hasattr(exec_engine, "_alpaca_broker") and exec_engine._alpaca_broker:
-                        ab = exec_engine._alpaca_broker
+                    # IBKRBroker positions (if live broker available)
+                    broker_positions = {}
+                    if hasattr(exec_engine, "_ibkr_broker") and exec_engine._ibkr_broker:
+                        ab = exec_engine._ibkr_broker
                         if hasattr(ab, "state") and hasattr(ab.state, "positions"):
                             for t, pos in ab.state.positions.items():
-                                alpaca_positions[t] = {
+                                broker_positions[t] = {
                                     "quantity": getattr(pos, "quantity", 0),
                                     "market_value": getattr(pos, "market_value", 0),
                                 }
-                    if paper_positions or alpaca_positions:
-                        recon = security.broker_lock.reconcile(paper_positions, alpaca_positions)
+                    if paper_positions or broker_positions:
+                        recon = security.broker_lock.reconcile(paper_positions, broker_positions)
                         pr.data["broker_recon_clean"] = recon.get("clean", True)
                         pr.data["broker_recon_discrepancies"] = len(recon.get("discrepancies", []))
                         if not recon.get("clean"):
@@ -2371,7 +2371,7 @@ class LiveLoopOrchestrator:
                 pr.data["broker_recon_error"] = str(exc)
 
         # ── Profit-taking: 3-layer P&L check → liquidate overlays ──
-        # Layer 1: Alpaca P&L > 20% → sell options, re-run
+        # Layer 1: IBKRBroker P&L > 20% → sell options, re-run
         # Layer 2: Futures/Rithmic P&L > 20% → sell futures, re-run
         # Layer 3: Aggregate P&L > 20% → sell ALL overlays, re-run
         alloc = self._get("allocation_engine")
@@ -2379,7 +2379,7 @@ class LiveLoopOrchestrator:
         if alloc and hasattr(alloc, "check_profit_take") and nav > 0:
             try:
                 # Extract per-product-class P&L from brokers
-                alpaca_pnl = 0.0
+                ibkr_pnl = 0.0
                 equities_pnl = 0.0
                 options_pnl = 0.0
                 futures_pnl = 0.0
@@ -2387,9 +2387,9 @@ class LiveLoopOrchestrator:
                 if exec_engine:
                     broker = getattr(exec_engine, "broker", None)
                     if broker:
-                        # Alpaca combined P&L (equities + options)
+                        # IBKRBroker combined P&L (equities + options)
                         if hasattr(broker, "state"):
-                            alpaca_pnl = getattr(broker.state, "total_pnl", 0.0)
+                            ibkr_pnl = getattr(broker.state, "total_pnl", 0.0)
                         # Split equities vs options if broker tracks them
                         if hasattr(broker, "get_equity_pnl"):
                             equities_pnl = broker.get_equity_pnl()
@@ -2399,10 +2399,10 @@ class LiveLoopOrchestrator:
                         if hasattr(broker, "get_options_pnl"):
                             options_pnl = broker.get_options_pnl()
 
-                    # Futures P&L from paper broker (until Rithmic connected)
+                    # Futures P&L from trade log (until Rithmic connected)
                     paper = getattr(exec_engine, "_paper_broker", None) or getattr(exec_engine, "paper_broker", None)
                     if paper and hasattr(paper, "state"):
-                        # Paper broker tracks futures positions
+                        # trade log tracks futures positions
                         for _, pos in getattr(paper.state, "positions", {}).items():
                             if getattr(pos, "sector", "") == "FUTURES" or getattr(pos, "ticker", "") in ("ES", "NQ", "YM", "RTY", "VX", "ZN", "ZB", "MES", "MNQ"):
                                 futures_pnl += getattr(pos, "unrealized_pnl", 0.0) + getattr(pos, "realized_pnl", 0.0)
@@ -2410,7 +2410,7 @@ class LiveLoopOrchestrator:
                 profit_check = alloc.check_profit_take(
                     nav=nav,
                     initial_nav=self._initial_nav,
-                    alpaca_pnl=alpaca_pnl,
+                    ibkr_pnl=ibkr_pnl,
                     futures_pnl=futures_pnl,
                     equities_pnl=equities_pnl,
                     options_pnl=options_pnl,

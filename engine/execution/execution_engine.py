@@ -1137,7 +1137,7 @@ class ExecutionEngine:
                 logger.warning("IBKRBroker init failed: %s — falling back to trade log mode", e)
                 self.broker = PaperBroker(initial_cash=initial_nav or 100_000.0)
                 self._broker_alert = "NOTICE: IBKR unavailable — trade log mode (no live execution)"
-        elif broker_type == "alpaca":
+        elif broker_type == "ibkr":
             if AlpacaBroker is not None:
                 try:
                     self.broker = AlpacaBroker(initial_cash=initial_nav or 100_000.0)
@@ -1242,7 +1242,7 @@ class ExecutionEngine:
             try:
                 self.l7 = L7UnifiedExecutionSurface(
                     initial_cash=initial_nav,
-                    alpaca_paper=True,
+                    ibkr_paper=True,
                 )
                 logger.info("L7 Unified Execution Surface initialized")
             except Exception as e:
@@ -1869,7 +1869,7 @@ class ExecutionEngine:
                 if spot <= 0:
                     continue
                 
-                # Get options chain from Alpaca
+                # Get options chain from IBKRBroker
                 try:
                     req = GetOptionContractsRequest(
                         underlying_symbols=[ticker],

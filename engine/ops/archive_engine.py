@@ -46,9 +46,9 @@ class ArchiveEngine:
     # ─── Collectors ───────────────────────────────────────────
 
     def _collect_broker_trades(self) -> dict:
-        """Collect merged trade log from Paper + Alpaca brokers."""
+        """Collect merged trade log from Paper + IBKRBrokers."""
         trades = []
-        # Paper broker
+        # trade log
         try:
             from engine.execution.paper_broker import PaperBroker
             pb = PaperBroker()
@@ -58,24 +58,24 @@ class ArchiveEngine:
                 rec["source"] = "paper"
                 trades.append(rec)
         except Exception as e:
-            logger.warning(f"Paper broker trade collection failed: {e}")
+            logger.warning(f"trade log trade collection failed: {e}")
 
-        # Alpaca broker
+        # IBKRBroker
         try:
             from engine.execution.alpaca_broker import AlpacaBroker
             ab = AlpacaBroker(initial_cash=0, paper=True)
-            alpaca_trades = ab.get_order_history() if hasattr(ab, "get_order_history") else []
-            for t in alpaca_trades:
+            ibkr_trades = ab.get_order_history() if hasattr(ab, "get_order_history") else []
+            for t in ibkr_trades:
                 rec = dict(t) if isinstance(t, dict) else {}
-                rec["source"] = "alpaca"
+                rec["source"] = "ibkr"
                 trades.append(rec)
         except Exception as e:
-            logger.debug(f"Alpaca broker trade collection skipped: {e}")
+            logger.debug(f"IBKR broker trade collection skipped: {e}")
 
         return {
             "total_trades": len(trades),
             "paper_count": sum(1 for t in trades if t.get("source") == "paper"),
-            "alpaca_count": sum(1 for t in trades if t.get("source") == "alpaca"),
+            "ibkr_count": sum(1 for t in trades if t.get("source") == "ibkr"),
             "trades": trades,
             "collected_at": datetime.now().isoformat(),
         }

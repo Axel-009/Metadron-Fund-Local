@@ -10,7 +10,7 @@ Handles the predictive/options allocation layer:
   - Paper options portfolio with aggregate Greeks and P&L attribution
   - Predictive signals derived from options data
 
-Paper broker mode only — no live execution.
+trade log mode only — no live execution.
 
 All math is pure numpy (no scipy). Normal CDF is implemented via an
 Abramowitz-and-Stegun rational approximation of the error function.
