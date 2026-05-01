@@ -49,7 +49,8 @@
 ## LAYER 1: DATA INGESTION — UniverseEngine + OpenBB Data
 
 ### UniverseEngine (`engine/data/universe_engine.py`)
-- **150+ securities** across GICS 4-tier hierarchy
+- **4-run scan**: SP500(~500) + SP400(~400) + SP600(~600) + ETF/FI(~70) = ~1,600 securities
+- **GICS 4-tier hierarchy**
 - **11 GICS Sector ETFs**: XLE, XLB, XLI, XLY, XLP, XLV, XLF, XLK, XLC, XLU, XLRE
 - **26 Relative Value pairs** (e.g., XLK/XLE, XLF/XLU, XLY/XLP)
 - **GSIB basket**: JPM, GS, MS, BAC, C, WFC + 5 international banks
