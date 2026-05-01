@@ -476,19 +476,20 @@ Rm > R_HIGH → β = BETA_MAX (full throttle)
 Raw target → EMA(α=0.3) → Anti-whipsaw(2% threshold) → Rate limiter(±0.25/cycle) → Kalman filter
 
 ### DecisionMatrix (`engine/execution/decision_matrix.py`)
-**Purpose**: 6-gate trade approval + Kelly sizing + ABU beta management
+**Purpose**: 4-gate cross-asset quality filter + Kelly sizing + ABU beta management.
+Integrated into AlphaOptimizer pipeline — every trade passes through all 4 gates.
+All gates are asset-agnostic (equities, options, futures, ETFs treated uniformly).
 
-#### 6 Approval Gates (weighted)
-| Gate | Weight | Threshold | Function |
-|------|--------|-----------|----------|
-| ALPHA_QUALITY | 25% | 0.50 | Alpha signal strength, quality tier |
-| REGIME_ALIGNMENT | 20% | 0.45 | Alignment with MetadronCube regime |
-| RISK_BUDGET | 20% | 0.40 | VaR / leverage / drawdown headroom |
-| CONVICTION_SCORE | 15% | 0.50 | ML ensemble vote + agent consensus |
-| MOMENTUM_CONFIRM | 10% | 0.35 | RSI, MACD, breakout confirmation |
-| LIQUIDITY_CHECK | 10% | 0.30 | ADV / spread / executable size |
+#### 4 Approval Gates (binary pass/fail)
+| Gate | Weight | Threshold | Function | ML Tiers |
+|------|--------|-----------|----------|----------|
+| FUNDAMENTALS | 40% | 0.45 | Quality, ROIC, FCF, Graham-Dodd, credit, earnings + regime quality modifier | T1, T5, T7, T9, T10 |
+| FLOW_HEADLINES | 20% | 0.35 | ETF flow, news sentiment, sector rotation | T6, T8 |
+| MACRO_REGIME | 20% | 0.40 | Direction alignment (TRENDING/RANGE/STRESS/CRASH × long/short), VaR headroom, drawdown | T3, T4 |
+| MOMENTUM | 20% | 0.35 | RSI, MACD, breakout, cross-asset momentum | T1, T2 |
 
 **MIN_COMPOSITE_SCORE = 0.55** (must pass to approve trade)
+**FUNDAMENTALS is the critical gate** — must pass independently regardless of composite
 
 #### Regime Alignment
 | Regime | Long Modifier | Short Modifier |

@@ -174,7 +174,7 @@ _reg("model_evaluator",
 _reg("decision_matrix",
      "engine.execution.decision_matrix", "DecisionMatrix",
      4, "DECISION", deps=("alpha_optimizer", "metadron_cube", "macro_engine"),
-     desc="6-gate trade approval + Kelly sizing + ABU beta")
+     desc="4-gate cross-asset quality filter (FUNDAMENTALS 40%, FLOW 20%, MACRO 20%, MOMENTUM 20%) + Kelly sizing")
 _reg("allocation_engine",
      "engine.allocation.allocation_engine", "AllocationEngine",
      4, "DECISION", deps=("metadron_cube", "decision_matrix"),

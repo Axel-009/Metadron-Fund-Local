@@ -484,7 +484,13 @@ class DecisionMatrix:
     # -- Gate evaluators (4-gate cross-asset, asset-agnostic) ----------------
 
     def _score_fundamentals(self, proposal: dict) -> DecisionGate:
-        """Gate 1 (40%): Fundamentals — quality, ROIC, FCF, Graham-Dodd grade, credit."""
+        """Gate 1 (40%): Fundamentals — quality, ROIC, FCF, credit, earnings.
+
+        Regime context: adjusts quality bar (higher in CRASH, lower in TRENDING).
+
+        MLVoteEnsemble tiers feeding this gate:
+            T1 Neural Net, T5 Quality, T7 Distressed, T9 CVR, T10 CreditQuality
+        """
         cfg = GATE_CONFIGS["FUNDAMENTALS"]
         gate = DecisionGate(
             gate_name="FUNDAMENTALS",
@@ -498,33 +504,42 @@ class DecisionMatrix:
         edge_bps = proposal.get("edge_bps", 0.0)
         credit_quality = proposal.get("credit_quality_score", 0.0)
 
-        # Sharpe component (0-1 mapped from -1 to 3)
         sharpe_score = np.clip((sharpe + 1.0) / 4.0, 0.0, 1.0)
-
-        # Quality tier component
         tier_score = QUALITY_TIER_SCORES.get(quality_tier, 0.05)
-
-        # Alpha signal magnitude (normalise to 0-1)
         alpha_score = np.clip(abs(alpha_signal) / 0.10, 0.0, 1.0)
-
-        # Edge component (higher edge = better)
         edge_score = np.clip(edge_bps / 50.0, 0.0, 1.0)
-
-        # Credit quality component (0-1 score)
         credit_score = np.clip(credit_quality, 0.0, 1.0)
 
-        # Weighted blend (15% credit quality, rebalanced from original)
-        gate.score = (0.30 * sharpe_score + 0.20 * tier_score +
-                      0.20 * alpha_score + 0.15 * credit_score +
-                      0.15 * edge_score)
+        # MLVoteEnsemble tiers: T1 Neural, T5 Quality, T7 Distressed, T9 CVR, T10 Credit
+        tier_votes = proposal.get("ml_tier_votes", {})
+        t1 = np.clip((tier_votes.get("T1_neural", 0) + 1) / 2.0, 0, 1)
+        t5 = np.clip((tier_votes.get("T5_quality", 0) + 1) / 2.0, 0, 1)
+        t7 = np.clip((tier_votes.get("T7_distressed", 0) + 1) / 2.0, 0, 1)
+        t9 = np.clip((tier_votes.get("T9_cvr", 0) + 1) / 2.0, 0, 1)
+        t10 = np.clip((tier_votes.get("T10_credit", 0) + 1) / 2.0, 0, 1)
+        ensemble_score = (t1 * 0.20 + t5 * 0.30 + t7 * 0.15 + t9 * 0.15 + t10 * 0.20)
+
+        # Regime quality modifier: stricter in STRESS/CRASH
+        regime_mod = {"TRENDING": 1.0, "RANGE": 0.95, "STRESS": 0.80, "CRASH": 0.60}
+        quality_mod = regime_mod.get(self.regime, 0.9)
+
+        raw_score = (0.20 * sharpe_score + 0.15 * tier_score +
+                     0.15 * alpha_score + 0.10 * credit_score +
+                     0.10 * edge_score + 0.30 * ensemble_score)
+        gate.score = raw_score * quality_mod
+
         gate.details = (f"Sharpe={sharpe:.2f} Tier={quality_tier} "
-                        f"Alpha={alpha_signal:.4f} Edge={edge_bps:.1f}bps "
-                        f"Credit={credit_quality:.2f}")
+                        f"Alpha={alpha_signal:.4f} Credit={credit_quality:.2f} "
+                        f"Ensemble={ensemble_score:.2f} RegimeMod={quality_mod}")
         gate.evaluate()
         return gate
 
     def _score_flow_headlines(self, proposal: dict) -> DecisionGate:
-        """Gate 2 (20%): Flow/Headlines — ETF flow + news sentiment + sector rotation."""
+        """Gate 2 (20%): Flow/Headlines — ETF flow, news sentiment, sector rotation.
+
+        MLVoteEnsemble tiers feeding this gate:
+            T6 MiroMomentum (News+AgentSim), T8 EventDriven
+        """
         cfg = GATE_CONFIGS["FLOW_HEADLINES"]
         gate = DecisionGate(
             gate_name="FLOW_HEADLINES",
@@ -532,26 +547,33 @@ class DecisionMatrix:
             pass_threshold=cfg["threshold"],
         )
 
-        side = proposal.get("side", "long").lower()
-        regime_scores = REGIME_ALIGNMENT_MAP.get(self.regime, {"long": 0.5, "short": 0.5})
-        base_score = regime_scores.get(side, 0.5)
+        # News sentiment from Track B
+        news_sentiment = proposal.get("news_sentiment", 0.5)
+        etf_flow = proposal.get("etf_flow_score", 0.5)
+        sector_rotation = proposal.get("sector_rotation_score", 0.5)
 
-        # Regime confidence boost
-        regime_confidence = proposal.get("regime_confidence", 0.5)
-        cube_score = proposal.get("cube_score", 0.5)
+        # MLVoteEnsemble tiers: T6 MiroMomentum, T8 EventDriven
+        tier_votes = proposal.get("ml_tier_votes", {})
+        t6 = np.clip((tier_votes.get("T6_miro", 0) + 1) / 2.0, 0, 1)
+        t8 = np.clip((tier_votes.get("T8_event", 0) + 1) / 2.0, 0, 1)
+        ensemble_score = t6 * 0.60 + t8 * 0.40
 
-        # Blend: base alignment + regime confidence + cube output
-        gate.score = (0.50 * base_score +
-                      0.25 * regime_confidence +
-                      0.25 * cube_score)
-        gate.details = (f"Regime={self.regime} Side={side} "
-                        f"Alignment={base_score:.2f} "
-                        f"Confidence={regime_confidence:.2f}")
+        gate.score = (0.30 * news_sentiment + 0.20 * etf_flow +
+                      0.15 * sector_rotation + 0.35 * ensemble_score)
+        gate.details = (f"News={news_sentiment:.2f} ETF_flow={etf_flow:.2f} "
+                        f"Sector={sector_rotation:.2f} T6+T8={ensemble_score:.2f}")
         gate.evaluate()
         return gate
 
     def _score_macro_regime(self, proposal: dict) -> DecisionGate:
-        """Gate 3 (20%): Macro/Regime — MetadronCube regime alignment + risk state."""
+        """Gate 3 (20%): Macro/Regime — direction alignment + risk state.
+
+        Regime context: determines if trade direction (long/short) fits the
+        current macro environment.
+
+        MLVoteEnsemble tiers feeding this gate:
+            T3 Volatility Regime, T4 Monte Carlo
+        """
         cfg = GATE_CONFIGS["MACRO_REGIME"]
         gate = DecisionGate(
             gate_name="MACRO_REGIME",
@@ -559,71 +581,46 @@ class DecisionMatrix:
             pass_threshold=cfg["threshold"],
         )
 
+        side = proposal.get("side", "long").lower()
+        regime_scores = REGIME_ALIGNMENT_MAP.get(self.regime, {"long": 0.5, "short": 0.5})
+        direction_score = regime_scores.get(side, 0.5)
+
         position_pct = proposal.get("position_pct", 0.05)
         position_vol = proposal.get("volatility", 0.20)
 
-        # Incremental VaR estimate (95% 1-day)
-        daily_vol = position_vol / np.sqrt(TRADING_DAYS)
-        inc_var = position_pct * daily_vol * 1.645  # 95% z-score
-        total_var = self._current_var + inc_var
-
         # VaR headroom
-        var_headroom = MAX_PORTFOLIO_VAR_PCT - total_var
-        var_score = np.clip(var_headroom / MAX_PORTFOLIO_VAR_PCT, 0.0, 1.0)
-
-        # Leverage check
-        new_leverage = self._current_leverage + position_pct
-        lev_headroom = self.max_leverage - new_leverage
-        lev_score = np.clip(lev_headroom / self.max_leverage, 0.0, 1.0)
+        daily_vol = position_vol / np.sqrt(TRADING_DAYS)
+        inc_var = position_pct * daily_vol * 1.645
+        total_var = self._current_var + inc_var
+        var_score = np.clip((MAX_PORTFOLIO_VAR_PCT - total_var) / MAX_PORTFOLIO_VAR_PCT, 0.0, 1.0)
 
         # Drawdown check
         dd_score = 1.0
         if self._current_drawdown > 0.10:
             dd_score = max(0.0, 1.0 - (self._current_drawdown - 0.10) / 0.15)
 
-        gate.score = 0.40 * var_score + 0.35 * lev_score + 0.25 * dd_score
-        gate.details = (f"VaR={total_var:.4f}/{MAX_PORTFOLIO_VAR_PCT:.4f} "
-                        f"Lev={new_leverage:.2f}/{self.max_leverage:.1f} "
-                        f"DD={self._current_drawdown:.2%}")
-        gate.evaluate()
-        return gate
+        # MLVoteEnsemble tiers: T3 VolRegime, T4 MonteCarlo
+        tier_votes = proposal.get("ml_tier_votes", {})
+        t3 = np.clip((tier_votes.get("T3_vol_regime", 0) + 1) / 2.0, 0, 1)
+        t4 = np.clip((tier_votes.get("T4_monte_carlo", 0) + 1) / 2.0, 0, 1)
+        ensemble_score = t3 * 0.50 + t4 * 0.50
 
-    def _score_conviction(self, proposal: dict) -> DecisionGate:
-        """Gate 4: ML ensemble vote + agent consensus."""
-        cfg = GATE_CONFIGS["CONVICTION_SCORE"]
-        gate = DecisionGate(
-            gate_name="CONVICTION_SCORE",
-            weight=cfg["weight"],
-            pass_threshold=cfg["threshold"],
-        )
-
-        # ML ensemble votes (-5 to +5 from 5 tiers)
-        ml_vote = proposal.get("ml_vote", 0)
-        ml_score = np.clip((ml_vote + 5) / 10.0, 0.0, 1.0)
-
-        # Agent consensus (0-1)
-        agent_consensus = proposal.get("agent_consensus", 0.5)
-
-        # Conviction tier from conviction_override
-        conviction_tier = proposal.get("conviction_tier", "NONE")
-        tier_scores = {
-            "MAXIMUM": 1.0, "AGGRESSIVE": 0.85,
-            "CONTROLLED": 0.70, "NONE": 0.40,
-        }
-        tier_score = tier_scores.get(conviction_tier, 0.40)
-
-        # Sector bot recommendation
-        bot_score = proposal.get("sector_bot_score", 0.5)
-
-        gate.score = (0.30 * ml_score + 0.25 * agent_consensus +
-                      0.25 * tier_score + 0.20 * bot_score)
-        gate.details = (f"ML_vote={ml_vote:+d} Agents={agent_consensus:.2f} "
-                        f"Tier={conviction_tier} Bot={bot_score:.2f}")
+        gate.score = (0.30 * direction_score + 0.20 * var_score +
+                      0.15 * dd_score + 0.35 * ensemble_score)
+        gate.details = (f"Regime={self.regime} Dir={side}={direction_score:.2f} "
+                        f"VaR={total_var:.4f} DD={self._current_drawdown:.2%} "
+                        f"T3+T4={ensemble_score:.2f}")
         gate.evaluate()
         return gate
 
     def _score_momentum_cross_asset(self, proposal: dict) -> DecisionGate:
-        """Gate 4 (20%): Momentum — RSI, MACD, breakout, cross-asset momentum."""
+        """Gate 4 (20%): Momentum — RSI, MACD, breakout, cross-asset momentum.
+
+        Asset-agnostic: applies to equities, options, futures, ETFs uniformly.
+
+        MLVoteEnsemble tiers feeding this gate:
+            T1 Neural Net (price direction), T2 Momentum/Mean-Reversion
+        """
         cfg = GATE_CONFIGS["MOMENTUM"]
         gate = DecisionGate(
             gate_name="MOMENTUM",
@@ -633,206 +630,48 @@ class DecisionMatrix:
 
         side = proposal.get("side", "long").lower()
         rsi = proposal.get("rsi", 50.0)
-        macd_signal = proposal.get("macd_signal", 0.0)  # positive = bullish
+        macd_signal = proposal.get("macd_signal", 0.0)
         breakout = proposal.get("breakout", False)
         momentum_5d = proposal.get("momentum_5d", 0.0)
-        momentum_20d = proposal.get("momentum_20d", 0.0)
 
-        # RSI score (depends on side)
+        # RSI score (direction-aware)
         if side == "long":
-            # For longs: RSI 40-70 is good, below 30 = oversold (opportunity)
             if rsi < 30:
-                rsi_score = 0.85  # Oversold bounce opportunity
+                rsi_score = 0.85
             elif 40 <= rsi <= 70:
                 rsi_score = 0.90
             elif rsi > 80:
-                rsi_score = 0.10  # Overbought, avoid
+                rsi_score = 0.10
             else:
                 rsi_score = 0.50
         else:
-            # For shorts: RSI 60-80 is good (overbought target)
             if rsi > 70:
                 rsi_score = 0.90
             elif 50 <= rsi <= 70:
                 rsi_score = 0.60
             elif rsi < 30:
-                rsi_score = 0.10  # Already oversold, don't short
+                rsi_score = 0.10
             else:
                 rsi_score = 0.40
 
-        # MACD score (normalise to 0-1)
         macd_raw = macd_signal if side == "long" else -macd_signal
         macd_score = np.clip((macd_raw + 1.0) / 2.0, 0.0, 1.0)
-
-        # Breakout bonus
         breakout_score = 0.90 if breakout else 0.40
-
-        # Momentum direction
         mom = momentum_5d if side == "long" else -momentum_5d
         mom_score = np.clip((mom + 0.05) / 0.10, 0.0, 1.0)
 
-        gate.score = (0.30 * rsi_score + 0.25 * macd_score +
-                      0.25 * breakout_score + 0.20 * mom_score)
+        # MLVoteEnsemble tiers: T1 Neural (direction), T2 Momentum
+        tier_votes = proposal.get("ml_tier_votes", {})
+        t1 = np.clip((tier_votes.get("T1_neural", 0) + 1) / 2.0, 0, 1)
+        t2 = np.clip((tier_votes.get("T2_momentum", 0) + 1) / 2.0, 0, 1)
+        ensemble_score = t1 * 0.40 + t2 * 0.60
+
+        gate.score = (0.20 * rsi_score + 0.15 * macd_score +
+                      0.15 * breakout_score + 0.15 * mom_score +
+                      0.35 * ensemble_score)
         gate.details = (f"RSI={rsi:.1f} MACD={macd_signal:+.3f} "
                         f"Breakout={'Y' if breakout else 'N'} "
-                        f"Mom5d={momentum_5d:+.2%}")
-        gate.evaluate()
-        return gate
-
-    def _score_liquidity(self, proposal: dict) -> DecisionGate:
-        """Gate 6: ADV check, spread check, executable size."""
-        cfg = GATE_CONFIGS["LIQUIDITY_CHECK"]
-        gate = DecisionGate(
-            gate_name="LIQUIDITY_CHECK",
-            weight=cfg["weight"],
-            pass_threshold=cfg["threshold"],
-        )
-
-        adv = proposal.get("adv", 1_000_000)     # Average daily volume ($)
-        spread_bps = proposal.get("spread_bps", 5.0)
-        trade_size = proposal.get("trade_size_dollars", 0.0)
-
-        # ADV participation ratio (want < 1%)
-        if adv > 0:
-            participation = trade_size / adv
-        else:
-            participation = 1.0
-        adv_score = np.clip(1.0 - participation / ADV_MIN_RATIO, 0.0, 1.0)
-
-        # Spread check (want < 30 bps)
-        spread_score = np.clip(1.0 - spread_bps / SPREAD_MAX_BPS, 0.0, 1.0)
-
-        # Market cap liquidity proxy
-        mkt_cap = proposal.get("market_cap", 1e9)
-        cap_score = np.clip(np.log10(max(mkt_cap, 1e6)) / 12.0, 0.0, 1.0)
-
-        gate.score = 0.40 * adv_score + 0.35 * spread_score + 0.25 * cap_score
-        gate.details = (f"ADV=${adv:,.0f} Spread={spread_bps:.1f}bps "
-                        f"Participation={participation:.4%} "
-                        f"MktCap=${mkt_cap:,.0f}")
-        gate.evaluate()
-        return gate
-
-    def _score_mc_risk(self, proposal: dict) -> DecisionGate:
-        """Gate 7: Monte Carlo VaR/CVaR check.
-
-        Validates that the portfolio's MC-estimated VaR95 is within bounds
-        and that the probability of profit is acceptable. Pulls data from
-        MonteCarloRiskEngine or proposal overrides.
-        """
-        cfg = GATE_CONFIGS["MC_RISK"]
-        gate = DecisionGate(
-            gate_name="MC_RISK",
-            weight=cfg["weight"],
-            pass_threshold=cfg["threshold"],
-        )
-
-        # MC metrics from proposal or live engine
-        mc_var95 = proposal.get("mc_var95", None)
-        mc_prob_profit = proposal.get("mc_prob_profit", None)
-        mc_cvar95 = proposal.get("mc_cvar95", None)
-
-        # Try to pull live MC data if not in proposal
-        if mc_var95 is None:
-            try:
-                from engine.ml.bridges.monte_carlo_bridge import MonteCarloBridge
-                mc = MonteCarloBridge()
-                if hasattr(mc, "compute_portfolio_risk"):
-                    risk = mc.compute_portfolio_risk()
-                    mc_var95 = risk.get("var_95", 0)
-                    mc_prob_profit = risk.get("prob_profit", 50)
-                    mc_cvar95 = risk.get("cvar_95", 0)
-            except Exception:
-                pass
-
-        # Defaults if still unavailable
-        if mc_var95 is None:
-            mc_var95 = 0.02
-        if mc_prob_profit is None:
-            mc_prob_profit = 55.0
-        if mc_cvar95 is None:
-            mc_cvar95 = mc_var95 * 1.3
-
-        # VaR score: how much headroom vs max
-        var_abs = abs(mc_var95)
-        var_score = np.clip(1.0 - var_abs / MC_VAR95_MAX, 0.0, 1.0)
-
-        # Profit probability score
-        prob_score = np.clip(mc_prob_profit / 100.0, 0.0, 1.0)
-
-        # CVaR tail risk (penalize heavy tails)
-        cvar_ratio = abs(mc_cvar95) / max(abs(mc_var95), 0.001) if mc_var95 != 0 else 1.0
-        tail_score = np.clip(1.0 - (cvar_ratio - 1.0) / 2.0, 0.0, 1.0)
-
-        gate.score = 0.40 * var_score + 0.35 * prob_score + 0.25 * tail_score
-        gate.details = (f"VaR95={mc_var95:.4f}/{MC_VAR95_MAX:.4f} "
-                        f"P(profit)={mc_prob_profit:.1f}% "
-                        f"CVaR/VaR={cvar_ratio:.2f}")
-        gate.evaluate()
-        return gate
-
-    def _score_regime_probability(self, proposal: dict) -> DecisionGate:
-        """Gate 8: Regime probability gate.
-
-        Factors in bull/bear regime probabilities from MarkovRegimeBridge.
-        For long trades: higher bull prob = higher score.
-        For short trades: higher bear prob = higher score.
-        """
-        cfg = GATE_CONFIGS["REGIME_PROBABILITY"]
-        gate = DecisionGate(
-            gate_name="REGIME_PROBABILITY",
-            weight=cfg["weight"],
-            pass_threshold=cfg["threshold"],
-        )
-
-        side = proposal.get("side", "long").lower()
-
-        # Regime probabilities from proposal or live engine
-        bull_prob = proposal.get("regime_bull_prob", None)
-        bear_prob = proposal.get("regime_bear_prob", None)
-
-        # Try to pull from MarkovRegimeBridge
-        if bull_prob is None:
-            try:
-                from engine.ml.bridges.markov_regime_bridge import MarkovRegimeBridge
-                mrb = MarkovRegimeBridge()
-                if hasattr(mrb, "get_regime_probabilities"):
-                    probs = mrb.get_regime_probabilities()
-                    bull_prob = probs.get("BULL", probs.get("bull", 0.33))
-                    bear_prob = probs.get("BEAR", probs.get("bear", 0.22))
-            except Exception:
-                pass
-
-        # Normalize to 0-1 if given as percentages
-        if bull_prob is not None and bull_prob > 1:
-            bull_prob = bull_prob / 100.0
-        if bear_prob is not None and bear_prob > 1:
-            bear_prob = bear_prob / 100.0
-
-        # Defaults
-        if bull_prob is None:
-            bull_prob = 0.33
-        if bear_prob is None:
-            bear_prob = 0.22
-
-        transition_prob = max(0, 1.0 - bull_prob - bear_prob)
-
-        if side == "long":
-            # Favor bull regimes for longs
-            directional_score = bull_prob * 1.0 + transition_prob * 0.4 + bear_prob * 0.1
-        else:
-            # Favor bear regimes for shorts
-            directional_score = bear_prob * 1.0 + transition_prob * 0.4 + bull_prob * 0.1
-
-        # Confidence in regime determination (entropy-based)
-        probs_arr = [bull_prob, bear_prob, transition_prob]
-        entropy = -sum(p * np.log(max(p, 1e-10)) for p in probs_arr)
-        max_entropy = -3 * (1/3) * np.log(1/3)  # max for 3 states
-        confidence = 1.0 - (entropy / max_entropy)
-
-        gate.score = 0.65 * directional_score + 0.35 * confidence
-        gate.details = (f"P(Bull)={bull_prob:.2f} P(Bear)={bear_prob:.2f} "
-                        f"Side={side} Conf={confidence:.2f}")
+                        f"Mom5d={momentum_5d:+.2%} T1+T2={ensemble_score:.2f}")
         gate.evaluate()
         return gate
 

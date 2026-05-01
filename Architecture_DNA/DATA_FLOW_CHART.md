@@ -225,21 +225,37 @@ trade execution to learning feedback.
 ═══════════════════════════╪══════════════════════════════════════════════
                         │
           ┌─────────────▼─────────────────────────────────────┐
-          │    DECISION: Two paths (both route to L7)         │
+          │    DECISION (single path — no bypass)             │
           │                                                    │
-          │  PATH A: FullUniverseEngine Scan Slate              │
-          │    (already deduped, cap-enforced from Stage 3)    │
+          │  FullUniverseEngine Scan Slate (from Stage 3)     │
+          │    → DecisionMatrix 4-gate quality filter          │
+          │      (cross-asset, asset-agnostic, pass/fail)     │
+          │                                                    │
+          │    ┌──────────────────────────────────────────┐    │
+          │    │ G1 FUNDAMENTALS  40%  ── quality, ROIC,  │    │
+          │    │    FCF, Graham-Dodd, credit, earnings    │    │
+          │    │    ML tiers: T1,T5,T7,T9,T10             │    │
+          │    │    + regime quality modifier              │    │
+          │    │                                           │    │
+          │    │ G2 FLOW_HEADLINES 20% ── ETF flow, news, │    │
+          │    │    sector rotation                        │    │
+          │    │    ML tiers: T6 (MiroMomentum), T8 (Event)│   │
+          │    │                                           │    │
+          │    │ G3 MACRO_REGIME  20%  ── direction align, │    │
+          │    │    VaR headroom, drawdown check           │    │
+          │    │    ML tiers: T3 (VolRegime), T4 (MC)     │    │
+          │    │                                           │    │
+          │    │ G4 MOMENTUM      20%  ── RSI, MACD,      │    │
+          │    │    breakout, cross-asset momentum         │    │
+          │    │    ML tiers: T1 (Neural), T2 (Momentum)  │    │
+          │    │                                           │    │
+          │    │ composite ≥ 0.55 → APPROVED               │    │
+          │    │ FUNDAMENTALS must pass (critical gate)    │    │
+          │    └──────────────────────────────────────────┘    │
+          │                                                    │
+          │    → KellySizer (1.5x multiplier)                  │
           │    → AllocationEngine.apply_rules()                │
           │    → BetaCorridor (7-12% return corridor)          │
-          │                                                    │
-          │  PATH B: DecisionMatrix (6-gate)                   │
-          │    G1 Flow/Headlines   20%  ──┐                    │
-          │    G2 Macro/Beta       25%  ──┤                    │
-          │    G3 Fundamentals     30%  ──┼→ composite ≥ 0.55  │
-          │    G4 Momentum/Tech    25%  ──┤     to approve     │
-          │    G5 Quality tier          ──┤                    │
-          │    G6 Ensemble (10-tier)    ──┘                    │
-          │    → KellySizer (1.5x multiplier)                  │
           │                                                    │
           │  DIRECT ROUTES (high conviction, still via L7):    │
           │    EVENT_DIRECT      (conviction ≥ 0.7)            │
