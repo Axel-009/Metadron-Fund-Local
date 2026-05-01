@@ -32,7 +32,7 @@ from ..portfolio.beta_corridor import (
     R_LOW, R_HIGH, ALPHA as CORRIDOR_ALPHA, VOL_STANDARD,
 )
 
-logger = logging.getLogger(__name__)
+logger = logging.getLogger("metadron.decision.decision_matrix")
 
 # ---------------------------------------------------------------------------
 # Constants

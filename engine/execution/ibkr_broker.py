@@ -46,7 +46,7 @@ from .paper_broker import (
     DailyTargetManager, LiveDashboardState, RiskProfile,
 )
 
-logger = logging.getLogger(__name__)
+logger = logging.getLogger("metadron.execution.ibkr")
 
 # ---------------------------------------------------------------------------
 # ib_insync imports (lazy-safe)

@@ -22,7 +22,7 @@ from typing import Optional, Dict, List, Tuple
 from collections import deque
 from enum import Enum
 
-logger = logging.getLogger(__name__)
+logger = logging.getLogger("metadron.signals.fed_liquidity")
 
 # ---------------------------------------------------------------------------
 # Guarded imports

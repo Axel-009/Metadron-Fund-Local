@@ -45,7 +45,7 @@ from pathlib import Path
 from dataclasses import dataclass, field
 from typing import Dict, List, Optional, Tuple
 
-logger = logging.getLogger(__name__)
+logger = logging.getLogger("metadron.signals.distressed")
 
 # ---------------------------------------------------------------------------
 # Intelligence Platform distress sub-repo integrations

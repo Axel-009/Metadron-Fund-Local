@@ -24,10 +24,13 @@ Usage:
     risk   = ce.get_portfolio_contagion_risk([{"ticker": "XLF", "weight": 0.3}])
 """
 
+import logging
 import numpy as np
 from enum import Enum
 from dataclasses import dataclass, field
 from typing import Dict, List, Optional, Tuple
+
+logger = logging.getLogger("metadron.signals.contagion")
 
 
 # ---------------------------------------------------------------------------

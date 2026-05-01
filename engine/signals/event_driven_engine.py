@@ -34,7 +34,7 @@ from dataclasses import dataclass, field
 from typing import Dict, List, Optional, Tuple
 from datetime import datetime, timedelta
 
-logger = logging.getLogger(__name__)
+logger = logging.getLogger("metadron.signals.event_driven")
 
 # Data layer imports (guarded)
 try:

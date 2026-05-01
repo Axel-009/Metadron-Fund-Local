@@ -41,7 +41,7 @@ from enum import Enum
 from dataclasses import dataclass, field
 from typing import Dict, List, Optional, Tuple
 
-logger = logging.getLogger(__name__)
+logger = logging.getLogger("metadron.signals.cvr")
 
 # Data layer imports (guarded)
 try:

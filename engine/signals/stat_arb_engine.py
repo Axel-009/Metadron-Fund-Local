@@ -25,7 +25,7 @@ from datetime import datetime
 from enum import Enum
 from typing import Optional
 
-logger = logging.getLogger(__name__)
+logger = logging.getLogger("metadron.signals.stat_arb")
 
 # ═══════════════════════════════════════════════════════════════════════════
 # Import RV pairs from universe engine — graceful fallback

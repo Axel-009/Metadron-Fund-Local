@@ -129,7 +129,7 @@ try:
 except ImportError:
     L7UnifiedExecutionSurface = None  # type: ignore[assignment,misc]
 
-logger = logging.getLogger(__name__)
+logger = logging.getLogger("metadron.execution.engine")
 
 
 # ---------------------------------------------------------------------------

@@ -22,6 +22,7 @@ GMTF Enhancement modules:
     FedReserveIntegration — Fed balance sheet, net liquidity, liquidity impulse
 """
 
+import logging
 import numpy as np
 import pandas as pd
 from enum import Enum
@@ -29,6 +30,8 @@ from dataclasses import dataclass, field
 from typing import Optional, List
 
 from ..data.openbb_data import get_adj_close, get_macro_data, get_returns
+
+logger = logging.getLogger("metadron.signals.macro_engine")
 
 # ---------------------------------------------------------------------------
 # Intelligence Platform: ML-Macro-Market integration

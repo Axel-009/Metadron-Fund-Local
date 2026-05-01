@@ -96,7 +96,7 @@ try:
 except ImportError:
     BetaCorridor = None  # type: ignore[assignment,misc]
 
-logger = logging.getLogger(__name__)
+logger = logging.getLogger("metadron.execution.l7")
 
 
 # ---------------------------------------------------------------------------

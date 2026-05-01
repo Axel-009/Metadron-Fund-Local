@@ -33,7 +33,7 @@ try:
 except ImportError:
     np = None  # type: ignore[assignment]
 
-logger = logging.getLogger(__name__)
+logger = logging.getLogger("metadron.scan.ingestion")
 
 # ---------------------------------------------------------------------------
 # Graceful imports from engine.data.openbb_data

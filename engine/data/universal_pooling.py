@@ -112,7 +112,7 @@ try:
 except ImportError:
     BetaCorridor = None
 
-logger = logging.getLogger(__name__)
+logger = logging.getLogger("metadron.scan.data_pool")
 
 
 # =============================================================================

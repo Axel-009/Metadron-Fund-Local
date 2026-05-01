@@ -43,7 +43,7 @@ from collections import deque
 
 from .macro_engine import MacroSnapshot, CubeRegime, MarketRegime
 
-logger = logging.getLogger(__name__)
+logger = logging.getLogger("metadron.signals.cube")
 
 # ---------------------------------------------------------------------------
 # Regime parameters

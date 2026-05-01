@@ -12,7 +12,10 @@ Formulas and methodology are documented inline for auditability.
 
 from __future__ import annotations
 
+import logging
 import datetime as dt
+
+logger = logging.getLogger("metadron.intelligence.pattern_recognition")
 from dataclasses import dataclass, field
 from enum import Enum
 from typing import Dict, List, Optional, Tuple

@@ -4,12 +4,15 @@ Alpha extracted through IG/Fallen Angel names or RV mispricing.
 Uses OpenBB for market data (paper broker mode).
 """
 
+import logging
 import numpy as np
 import pandas as pd
 from dataclasses import dataclass
 from typing import Optional
 from datetime import datetime
 from enum import Enum
+
+logger = logging.getLogger("metadron.decision.beta_corridor")
 
 from ..data.openbb_data import get_market_stats, get_adj_close
 

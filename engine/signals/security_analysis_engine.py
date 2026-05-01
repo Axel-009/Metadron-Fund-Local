@@ -49,7 +49,7 @@ from typing import Optional
 from enum import Enum
 from datetime import datetime
 
-logger = logging.getLogger(__name__)
+logger = logging.getLogger("metadron.signals.security_analysis")
 
 # --- agent_skills integration -------------------------------------------------
 try:

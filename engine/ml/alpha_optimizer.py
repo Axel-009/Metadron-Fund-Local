@@ -23,8 +23,11 @@ Extended components:
     - FeatureImportanceTracker: Feature importance tracking over time
 """
 
+import logging
 import warnings
 from collections import deque
+
+logger = logging.getLogger("metadron.intelligence.alpha_optimizer")
 from dataclasses import dataclass, field
 from typing import Optional, Dict, List, Tuple
 

@@ -19,7 +19,7 @@ from dataclasses import dataclass, field
 from typing import Optional, List, Dict
 from datetime import datetime
 
-logger = logging.getLogger(__name__)
+logger = logging.getLogger("metadron.signals.miro_momentum")
 
 # Import agent sim engine (the actual simulation)
 try:

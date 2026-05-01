@@ -60,7 +60,7 @@ except ImportError:
         STRESS = "STRESS"
         CRASH = "CRASH"
 
-logger = logging.getLogger(__name__)
+logger = logging.getLogger("metadron.execution.options")
 
 # ===================================================================
 #  Mathematical primitives (no scipy)

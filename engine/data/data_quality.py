@@ -16,7 +16,7 @@ import logging
 from datetime import datetime, timedelta, timezone
 from typing import Optional
 
-logger = logging.getLogger("metadron.data_quality")
+logger = logging.getLogger("metadron.scan.data_quality")
 
 
 class DataQualityGate:

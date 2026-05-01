@@ -26,7 +26,7 @@ import numpy as np
 from dataclasses import dataclass, field
 from typing import Optional, Dict, List, Tuple
 
-logger = logging.getLogger(__name__)
+logger = logging.getLogger("metadron.execution.wondertrader")
 
 # ---------------------------------------------------------------------------
 # wtpy — WonderTrader native Python API (optional, falls back to pure-numpy)

@@ -56,7 +56,7 @@ try:
 except ImportError:
     HAS_XGB = False
 
-logger = logging.getLogger(__name__)
+logger = logging.getLogger("metadron.intelligence.universe_classifier")
 
 # ---------------------------------------------------------------------------
 # Quality Tier Enum

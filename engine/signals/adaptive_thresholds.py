@@ -18,7 +18,7 @@ import logging
 from collections import deque
 from typing import Optional
 
-logger = logging.getLogger("metadron.adaptive_thresholds")
+logger = logging.getLogger("metadron.signals.adaptive_thresholds")
 
 
 class AdaptiveThresholdCalibrator:

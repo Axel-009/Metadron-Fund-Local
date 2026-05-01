@@ -258,7 +258,7 @@ except ImportError:
     except ImportError:
         GSDWorkflowBridge = None
 
-logger = logging.getLogger(__name__)
+logger = logging.getLogger("metadron.orchestrator")
 
 
 # ---------------------------------------------------------------------------

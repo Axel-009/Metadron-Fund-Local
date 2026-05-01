@@ -30,7 +30,7 @@ from typing import Optional
 import numpy as np
 import pandas as pd
 
-logger = logging.getLogger(__name__)
+logger = logging.getLogger("metadron.signals.pattern_discovery")
 
 # Locate backend installation
 _BACKEND_PATH = Path(__file__).parent.parent.parent.parent / "Installation-Back-end-Files"

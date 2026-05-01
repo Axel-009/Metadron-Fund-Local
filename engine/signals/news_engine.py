@@ -28,7 +28,7 @@ from dataclasses import dataclass, field
 from typing import Optional, List
 from collections import deque
 
-logger = logging.getLogger(__name__)
+logger = logging.getLogger("metadron.scan.news_engine")
 
 # ─── Sentiment keywords ────────────────────────────────────
 

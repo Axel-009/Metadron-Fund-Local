@@ -47,7 +47,7 @@ from .cross_asset_universe import (
     get_industry_group_for_ticker,
 )
 
-logger = logging.getLogger(__name__)
+logger = logging.getLogger("metadron.scan.universe_engine")
 
 # ═══════════════════════════════════════════════════════════════════════════
 # GICS Taxonomy — 11 sectors

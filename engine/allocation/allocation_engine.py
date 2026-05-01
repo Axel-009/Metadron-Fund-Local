@@ -28,7 +28,7 @@ except ImportError:
     def to_float(v): return float(v)  # type: ignore
     def safe_div(n, d, default=0): return n / d if d != 0 else default  # type: ignore
 
-logger = logging.getLogger("metadron.allocation")
+logger = logging.getLogger("metadron.decision.allocation")
 
 # ─── Prometheus instrumentation ──────────────────────────────────
 _prom_alloc = None
