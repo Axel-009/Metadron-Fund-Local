@@ -20,7 +20,7 @@
 │     (L3/3.95)         (L2/4)            (L3)              (L4)            │
 │                                           │                               │
 │                                           ▼                               │
-│  DecisionMatrix ─→ L7UnifiedExecutionSurface ─→ AlpacaBroker + PaperLog │
+│  DecisionMatrix ─→ L7UnifiedExecutionSurface ─→ IBKRBroker + TradeLog  │
 │      (L5)                    (L7)                    (L7)                │
 │                                │                                         │
 │                   ┌────────────┼────────────┐                           │
@@ -60,12 +60,12 @@
 
 ```
 MARKET HOURS (09:30-16:00 ET):
-  Price Data:      Alpaca real-time (StockLatestTradeRequest, ~100-500ms latency)
+  Price Data:      IBKR real-time (via ib_insync reqMktData, ~100-500ms latency)
   Quote Cache:     5-second TTL per ticker
-  Fallback:        OpenBB if Alpaca quote unavailable
+  Fallback:        OpenBB if IBKR quote unavailable
   OHLCV/History:   OpenBB (signals, quant strategies, alpha optimizer)
   FRED/Macro:      OpenBB (openbb-fred provider)
-  Execution:       Alpaca bracket orders (entry + stop + take-profit)
+  Execution:       IBKR native algo orders (TWAP/VWAP/Adaptive/Market)
 
 AFTER HOURS / OVERNIGHT:
   All Data:        OpenBB (34+ providers) — backtesting, model retraining
@@ -74,7 +74,7 @@ AFTER HOURS / OVERNIGHT:
 
 DATA SOURCE INDICATOR:
   The live dashboard and frontend must display the active data source:
-    [LIVE] Alpaca real-time  — during market hours
+    [LIVE] IBKR real-time    — during market hours
     [EOD]  OpenBB historical — after hours / backtesting
   This should be interchangeable on command via the dashboard or config.
 ```
@@ -82,10 +82,8 @@ DATA SOURCE INDICATOR:
 ### OpenBB Data (`engine/data/openbb_data.py`, re-exported via `yahoo_data.py`)
 - **Unified data layer**: All data via OpenBB (34+ providers) — single API surface
 - **Provider hierarchy**: Configurable per-function (default varies: fmp, polygon, tiingo, fred)
-- **Alpaca as OpenBB provider**: OpenBB supports `openbb-alpaca` provider package for
-  real-time equity data. When installed, pass `provider="alpaca"` to get_prices/get_adj_close
-  to route through Alpaca's data API instead of Tiingo/FMP. This unifies both data paths
-  through the same OpenBB interface while getting Alpaca-speed latency.
+- **IBKR as data source**: During market hours, price data comes from IBKR via ib_insync
+  `reqMktData()` with 5-second quote cache. Historical data and FRED/macro always via OpenBB.
 - `get_adj_close(tickers, start, end)` → Adjusted close prices
 - `get_returns(tickers, start, end)` → Daily log returns
 - `get_prices(tickers, start)` → Full OHLCV data
@@ -607,12 +605,13 @@ MES_hedge_beta = target_beta - sleeve_beta
 
 ### L7UnifiedExecutionSurface (`engine/execution/l7_unified_execution_surface.py`)
 
-Fuses WonderTrader (micro-price + CTA + routing), ExchangeCore (order matching),
-AlpacaBroker (primary) / TradierBroker (legacy) / PaperBroker (log), and OptionsEngine (derivatives) into one
-continuous execution arm.
+Fuses WonderTrader (micro-price + CTA + TWAP/VWAP routing), ExchangeCore (order matching),
+IBKRBroker (sole execution broker with native algo orders), and OptionsEngine (derivatives)
+into one continuous execution arm.
 
-**ALL tradeable products route through Alpaca as primary execution broker (Tradier as legacy).**
-Paper broker log is ALWAYS maintained in parallel for ML learning / backtesting.
+**ALL tradeable products route through IBKR as the sole execution broker.**
+**ALL orders MUST enter through L7UnifiedExecutionSurface.submit_order() — never direct broker calls.**
+Trade log records every generated order for reconciliation (generated vs executed).
 Fixed income, FX, and liquidity instruments are for research only — never executed.
 
 #### Architecture
@@ -621,15 +620,16 @@ Fixed income, FX, and liquidity instruments are for research only — never exec
 L7UnifiedExecutionSurface
 ├── Continuous intraday loop (1-min heartbeat from live_loop_orchestrator)
 ├── Multi-product router (equities, options, futures)
-│   ├── Equity → WonderTrader micro-price → ExchangeCore → Alpaca
-│   ├── Options → OptionsEngine Greeks → vol-adjusted → Alpaca
-│   └── Futures → Beta corridor hedge → Alpaca
+│   ├── Equity → WonderTrader micro-price → ExchangeCore → IBKR (TWAP/VWAP)
+│   ├── Options → OptionsSizer (BS+MC+Kelly edge gate) → IBKR
+│   └── Futures → Beta corridor hedge → IBKR
 ├── Unified order book (all products, all horizons)
-├── Dual broker: Alpaca (primary) + PaperBroker (log)
+├── IBKRBroker (sole execution) + trade log (reconciliation)
 ├── L7RiskEngine (10 gates, per-execution update)
 ├── TransactionCostAnalyzer (per-trade decomposition)
 ├── ExecutionLearningLoop (pattern identification)
-└── SlippageModel (pre-trade cost estimation)
+├── SlippageModel (pre-trade cost estimation)
+└── Prometheus metrics (17 gauges/counters/histograms)
 ```
 
 #### 10-Step Execution Flow
@@ -639,11 +639,20 @@ L7UnifiedExecutionSurface
 3. **Learning loop suggestion** — optimal routing from pattern library
 4. **Pre-trade risk gates** — 10 gates must all pass
 5. **Slippage estimation** — sqrt market impact model
-6. **Product-specific path** — micro-price, Greeks, beta corridor
-7. **Tradier execution** — primary broker (fallback: paper)
-8. **Post-trade risk update** — risk state refreshed
+6. **Product-specific path** — micro-price, OptionsSizer, beta corridor
+7. **IBKR execution** — TWAP (>$50K), VWAP, Adaptive, or Market algo
+8. **Post-trade risk update** — risk state refreshed + Prometheus metrics
 9. **TCA analysis** — spread, impact, timing, commission decomposition
-10. **Learning loop recording** — EWMA pattern update
+10. **Learning loop recording** — EWMA pattern update + trade log for recon
+
+#### Algo Routing (IBKR Native)
+
+| Routing | Trigger | IBKR Algo |
+|---------|---------|-----------|
+| TWAP | Notional >$50K or SMART routing | `algoStrategy="Twap"` — server-side time-weighted splitting |
+| VWAP | Explicit VWAP routing | `algoStrategy="Vwap"` — volume-weighted participation (max 25%) |
+| Adaptive | Medium urgency | `algoStrategy="Adaptive"` — IBKR selects optimal strategy |
+| Market | HIGH/CRITICAL urgency | Direct market/limit order |
 
 #### Risk Gates (10)
 
@@ -667,7 +676,58 @@ L7UnifiedExecutionSurface
 | Spread | Half bid-ask spread (calibrated per product) |
 | Market Impact | sqrt(participation) × volatility × coefficient |
 | Timing | Arrival-to-fill price drift |
-| Commission | Tradier schedule ($0 equity, $0.35/option, ~$1.50/future) |
+| Commission | IBKR tiered ($0.005/share equity, $0.65/option, $1.25/future) |
+
+#### Options Sizing (Edge-Gated)
+
+Options ONLY proceed when mispricing is detected:
+```
+OptionsSizer (engine/execution/options_engine.py)
+├── Step 1: Black-Scholes theoretical price
+├── Step 2: Monte Carlo simulation (10K paths) → win prob + expected payoff
+├── Step 3: Fair value = avg(BS, MC) vs market price → edge in bps
+├── Step 4: Edge < 200bps → REJECTED (no allocation)
+├── Step 5: Kelly criterion sizes based on detected edge
+├── Step 6: Minimum 5 contracts — no token 1-2 positions
+└── Output: contracts, greeks, kelly_fraction, edge_bps
+```
+No market price available → REJECTED.
+No mispricing detected → REJECTED.
+Budget insufficient for 5 contracts → REJECTED.
+
+#### Prometheus Metrics (17)
+
+| Metric | Type | Description |
+|--------|------|-------------|
+| `l7_orders_total` | Counter | Total orders by product/side/algo |
+| `l7_orders_filled` | Counter | Filled orders by product/algo |
+| `l7_orders_rejected` | Counter | Rejected orders by reason |
+| `l7_fill_latency_seconds` | Histogram | Fill latency distribution |
+| `l7_slippage_bps` | Summary | Realized slippage by product |
+| `l7_nav_usd` | Gauge | Current NAV |
+| `l7_gross_leverage` | Gauge | Gross leverage ratio |
+| `l7_net_leverage` | Gauge | Net leverage ratio |
+| `l7_position_count` | Gauge | Active positions |
+| `l7_daily_pnl_usd` | Gauge | Daily P&L |
+| `l7_risk_level` | Gauge | 0=NORMAL, 1=ELEVATED, 2=HIGH, 3=CRITICAL |
+| `l7_kill_switch_active` | Gauge | Kill switch status (0/1) |
+| `l7_twap_orders` | Counter | TWAP algo orders |
+| `l7_vwap_orders` | Counter | VWAP algo orders |
+| `l7_ibkr_connected` | Gauge | IBKR connection status (0/1) |
+| `l7_tca_total_cost_bps` | Summary | TCA total cost per trade |
+| `l7_tca_is_usd` | Summary | Implementation shortfall USD |
+
+#### Trade Log (Reconciliation)
+
+Every order the platform generates is recorded in `logs/l7_execution/trade_log/`:
+```
+trade_log_YYYYMMDD.jsonl — one JSON line per order:
+  order_id, ticker, side, quantity, product_type, signal_type,
+  routing, arrival_price, micro_price, generated_at,
+  broker_status (FILLED | NOT_EXECUTED | ERROR), broker_fill_price, broker_algo
+```
+
+`get_recon_summary()` → total_generated vs executed_on_broker vs not_executed vs errors
 
 #### Execution Learning Loop
 
@@ -677,11 +737,6 @@ L7UnifiedExecutionSurface
 - **Monthly**: Prune stale patterns, recalibrate coefficients
 
 Context buckets: ticker × product × signal × regime × time-of-day × volatility × order size
-
-#### Dashboard Panels
-
-- **L7 Risk Panel**: risk level, kill switch, NAV, P&L, leverage, gates, VaR
-- **L7 TCA Panel**: cost decomposition, per-product costs, trend, implementation shortfall
 
 ---
 
@@ -746,99 +801,76 @@ Context buckets: ticker × product × signal × regime × time-of-day × volatil
 
 ---
 
-## LIVE EXECUTION — ALPACA BROKER INTEGRATION (PRIMARY)
+## LIVE EXECUTION — IBKR BROKER INTEGRATION (SOLE BROKER)
 
 ### Broker Hierarchy
 ```
-AlpacaBroker    → PRIMARY: Equities + Options (live/paper via ALPACA_PAPER_TRADE)
-PaperBroker     → BACKTESTING: Historical simulation + Futures paper (until Rithmic)
-TradierBroker   → LEGACY: Fallback only
-RithmicBroker   → FUTURE: Live futures execution
+IBKRBroker      → SOLE EXECUTION: Equities + Options + Futures (TWS/Gateway via ib_insync)
+Trade Log       → RECONCILIATION: Records all generated orders vs broker fills
+PaperBroker     → BACKTESTING ONLY: Historical simulation (never used for live)
 ```
 
-### AlpacaBroker (`engine/execution/alpaca_broker.py`)
-**Purpose**: Primary execution broker — routes orders to Alpaca API for live/paper execution.
-Drop-in replacement for PaperBroker/TradierBroker. Same interface, zero code changes to swap.
+### IBKRBroker (`engine/execution/ibkr_broker.py`)
+**Purpose**: Sole execution broker — routes ALL orders through IBKR TWS/Gateway with native
+TWAP/VWAP algo support. No other broker is used for execution. All orders MUST route through
+L7UnifiedExecutionSurface → IBKRBroker. Direct broker calls are PROHIBITED.
 
 #### Configuration
 ```bash
-export ALPACA_API_KEY=<api_key>
-export ALPACA_SECRET_KEY=<secret_key>
-export ALPACA_PAPER_TRADE=True   # True = paper, False = live
+export IBKR_HOST=127.0.0.1           # TWS/Gateway host
+export IBKR_PORT=7497                 # 7497 = paper, 7496 = live
+export IBKR_CLIENT_ID=1              # TWS client ID
+export IBKR_PAPER_TRADE=True         # True = paper, False = live
 ```
 
-#### Activation (one-line change)
-```python
-# In run_open.py or live_loop_orchestrator.py:
-engine = ExecutionEngine(initial_nav=1_000_000.0, broker_type="alpaca")
-```
+#### Native Algo Orders
+- **TWAP**: `place_twap_order()` — IBKR server-side time-weighted splitting (configurable duration)
+- **VWAP**: `place_vwap_order()` — IBKR volume-weighted participation (max 25% of volume)
+- **Adaptive**: `place_adaptive_order()` — IBKR auto-selects optimal algo (Patient/Normal/Urgent)
+- **Market/Limit**: `place_order()` — standard order (PaperBroker-compatible interface)
 
 #### Features
-- **Commission**: $0 stocks, $0 options (Alpaca commission-free)
-- **Paper trading**: Same API as live, just different endpoint
-- **SDK**: alpaca-py (official Alpaca Python SDK)
-- **Market data**: Real-time quotes via Alpaca data API
-- **Positions**: Live position sync from Alpaca account
-- **Orders**: Market, limit, stop, stop-limit supported
+- **SDK**: ib_insync (official Python async wrapper for IBKR TWS API)
+- **Commission**: $0.005/share equity (min $1), $0.65/option, $1.25/future
+- **Futures**: ES, NQ, YM, RTY, VX, ZN, ZB, ZF, ZT — all tradeable
+- **Position sync**: Live positions from IBKR account
+- **Account sync**: NAV, cash, buying power, gross position value
+- **Quote cache**: 5-second TTL
 - **Retry logic**: 4 retries with exponential backoff (2s, 4s, 8s, 16s)
-- **Quote cache**: 5-second TTL, OpenBB fallback
-- **Full audit trail**: All orders logged to `logs/alpaca/`
-- **EOD reconciliation**: Positions synced vs broker
-
-#### Account (Paper)
-- Account: PA3LQ5Q0ZNSP
-- Cash: $100,000
-- Buying Power: $200,000
-- Options: Level 3 approved
-- Shorting: Enabled
+- **Algo fill polling**: `check_algo_fills()` — TWAP/VWAP may take minutes
+- **Full audit trail**: All orders logged to `logs/ibkr_broker/`
 
 ---
 
-## LIVE EXECUTION — TRADIER BROKER INTEGRATION (LEGACY)
+## MANDATORY WIRING RULES
 
-### TradierBroker (`engine/execution/tradier_broker.py`)
-**Purpose**: Drop-in replacement for PaperBroker — routes orders to Tradier API for live execution
+**Any AI model, CLI agent, or external tool that instantiates this system MUST follow these rules.**
+Validate with `python3 -m engine.wiring_manifest` before any execution.
 
-#### Configuration
-```bash
-export TRADIER_API_KEY=<bearer_token>
-export TRADIER_ACCOUNT_ID=<account_id>
-export TRADIER_ENVIRONMENT=sandbox   # "sandbox" or "production"
 ```
+RULE 1:  ALL orders MUST route through L7UnifiedExecutionSurface.submit_order()
+         NEVER call IBKRBroker directly. NEVER use raw HTTP requests to any broker API.
 
-#### Activation (one-line change)
-```python
-# In run_open.py or live_loop_orchestrator.py:
-engine = ExecutionEngine(initial_nav=1_000_000.0, broker_type="tradier")
-```
+RULE 2:  ALL equity orders MUST pass through WonderTrader micro-price before IBKR.
 
-#### API Endpoints Implemented
-| Endpoint | Method | Function |
-|----------|--------|----------|
-| `/v1/accounts/{id}/orders` | POST | Place equity orders (BUY/SELL/SHORT/COVER) |
-| `/v1/accounts/{id}/orders/{oid}` | PUT | Modify orders |
-| `/v1/accounts/{id}/orders/{oid}` | DELETE | Cancel orders |
-| `/v1/accounts/{id}/orders` | GET | List open/filled orders |
-| `/v1/accounts/{id}/positions` | GET | Sync live positions |
-| `/v1/accounts/{id}/balances` | GET | Sync NAV/cash/equity |
-| `/v1/accounts/{id}/gainloss` | GET | Realized P&L history |
-| `/v1/markets/quotes` | GET | Real-time quotes (5s cache TTL) |
+RULE 3:  ALL options MUST go through OptionsSizer (BS + MC + Kelly).
+         REJECTED if no market price, no mispricing edge ≥200bps, or <5 contracts.
 
-#### Safety Features
-- 6 pre-trade risk checks (position size, sector, daily loss, exposure, leverage, cash)
-- 4-retry exponential backoff on API failures (2s, 4s, 8s, 16s)
-- Real-time quote caching (5-second TTL)
-- Fallback to OpenBB prices if Tradier quotes unavailable
-- Daily 5% target manager — risk dials down after target hit
-- Full audit trail (all orders logged to `logs/tradier_broker/`)
-- EOD reconciliation (positions synced vs broker)
-- CSV position export
+RULE 4:  ALL orders MUST pass L7RiskEngine 10-gate pre-trade check before execution.
 
-#### Risk Dial-Down After Daily Target
-```
-Pre-target:   AGGRESSIVE  → full leverage, all sleeves active
-Target hit:   MODERATE    → 60% leverage, reduce P3/P5 sleeves
-Target+buffer: DEFENSIVE  → 30% leverage, P4 neutral-alpha only
+RULE 5:  ALL fills MUST update LearningLoop.record_signal_outcome() after execution.
+
+RULE 6:  ALL fills MUST generate TCA analysis via TransactionCostAnalyzer.
+
+RULE 7:  MetadronCube KillSwitch overrides ALL allocation decisions.
+         When active, no new orders are submitted.
+
+RULE 8:  DecisionMatrix MIN_COMPOSITE_SCORE = 0.55. Trades below this are REJECTED.
+
+RULE 9:  IBKRBroker is the SOLE execution broker. No Alpaca, no Tradier, no raw API.
+
+RULE 10: Trade log records ALL generated orders for reconciliation. Every order the
+         platform generates must be logged regardless of execution outcome.
 ```
 
 ---
@@ -856,7 +888,7 @@ Target+buffer: DEFENSIVE  → 30% leverage, P4 neutral-alpha only
 │  Phase 2  SIGNALS     (1-min)         Macro, Cube, Liquidity, Fund.    │
 │  Phase 3  INTELLIGENCE (5-min)        Alpha, ML ensemble, Agents       │
 │  Phase 4  DECISION    (on signal Δ)   DecisionMatrix, BetaCorridor     │
-│  Phase 5  EXECUTION   (on approval)   ExecutionEngine → Broker         │
+│  Phase 5  EXECUTION   (on approval)   L7 → IBKR (TWAP/VWAP)           │
 │  Phase 6  LEARNING    (continuous)    GSD, Paul, LearningLoop          │
 │  Phase 7  MONITORING  (5-min)         Dashboard, HourlyCSV, Reports    │
 └─────────────────────────────────────────────────────────────────────────┘
@@ -1032,7 +1064,7 @@ Hourly Snapshot → ASCII Recap (terminal)
 - Sector heatmap (11 GICS sectors)
 - Risk metrics panel
 - Fallback: ASCII mode if Rich unavailable
-- Connected to PaperBroker/TradierBroker via callbacks
+- Connected to IBKRBroker via callbacks
 
 ### LiveEarningsGraph (`engine/monitoring/live_earnings_graph.py`)
 **Purpose**: Real-time P&L curve visualization
@@ -1184,7 +1216,7 @@ HOLD
               │
      ┌────────▼────────┐
      │ExecutionEngine  │ ← 10-tier ML vote, 8 risk gates
-     │  + Broker       │ ← PaperBroker (default) or TradierBroker (live)
+     │  + Broker       │ ← IBKRBroker (sole execution, TWAP/VWAP)
      │                 │   Continuously scans for alpha throughout day
      │                 │   5% daily target → risk dial-down after hit
      └────────┬────────┘
@@ -1252,8 +1284,8 @@ HOLD
 # Full morning pipeline (paper mode)
 python3 run_open.py
 
-# Full morning pipeline (live Tradier)
-TRADIER_API_KEY=<key> TRADIER_ACCOUNT_ID=<id> TRADIER_ENVIRONMENT=sandbox python3 run_open.py
+# Full morning pipeline (live IBKR)
+IBKR_HOST=127.0.0.1 IBKR_PORT=7497 python3 run_open.py
 
 # Evening reconciliation
 python3 run_close.py
@@ -1311,7 +1343,7 @@ TOTALS:              14/14 ✅    14/14 ✅   14/14 ✅       14/14 ✅
 logs/
 ├── returns/                    ← Hourly CSV: returns_YYYY-MM-DD.csv
 ├── paper_broker/               ← Paper broker trade logs
-├── tradier_broker/             ← Tradier API logs + reconciliation
+├── ibkr_broker/                ← IBKR order audit trail + algo execution logs
 ├── learning_loop/              ← Signal outcomes JSONL + snapshots
 ├── gsd_plugin/                 ← Gradient Signal Dynamics logs
 ├── paul_plugin/                ← Paul pattern library logs
@@ -1330,7 +1362,7 @@ logs/
 ## DESIGN RULES (IMMUTABLE)
 
 1. **All data via OpenBB** (sole source, 34+ providers) — no yfinance dependency
-2. **Paper broker default** — TradierBroker available for live/sandbox (set env vars)
+2. **IBKR sole broker** — IBKRBroker via ib_insync, native TWAP/VWAP algo orders
 3. **6-layer architecture is immutable** — extend within layers, not across
 4. **Beta managed within 7–12% corridor** — vol-normalised
 5. **Alpha targeted at 95%+** — aggressive multi-sleeve allocation
@@ -1371,14 +1403,14 @@ InvestmentPlatformOrchestrator (Master)
 ├── Step 10: OptionsEngine + BlackScholes ──── Greeks, IV, mispricing scanner
 ├── Step 11: Internal Analysis Pipeline ────── Technical + Fundamental + Macro
 ├── Step 12: Trade Thesis Generation ───────── Scored trade ideas
-└── Step 13: ExecutionEngine → AlpacaBroker ── Order routing and execution
+└── Step 13: ExecutionEngine → L7 → IBKRBroker ── Order routing and execution
 ```
 
 ### Data Flow
 
 ```
 Market Hours (09:30-16:00 ET):
-  Alpaca API (real-time quotes, 2-5s) → Signal Pipeline → AlpacaBroker (execution)
+  IBKR (real-time quotes, 2-5s) → Signal Pipeline → L7 → IBKRBroker (execution)
   Heartbeat: 2-min cadence, open/close bursts at 1-min
 
 After Market Close (16:00-20:00 ET):
@@ -1409,16 +1441,15 @@ OptionsEngine
 ├── Receives BlackScholes theoretical prices
 ├── Identifies mispriced options (>10% threshold)
 ├── Computes hedge ratios via Greeks
-└── Routes to AlpacaBroker for execution
+└── Routes to L7 → IBKRBroker for execution
 ```
 
 ### Broker Hierarchy
 
 ```
-AlpacaBroker    → PRIMARY: Equities + Options (live/paper)
-PaperBroker     → BACKTESTING: Historical simulation + Futures paper (until Rithmic)
-TradierBroker   → LEGACY: Fallback only
-RithmicBroker   → FUTURE: Live futures execution
+IBKRBroker      → SOLE: Equities + Options + Futures (TWS/Gateway, TWAP/VWAP)
+Trade Log       → RECON: Records all generated orders vs broker fills
+PaperBroker     → BACKTESTING ONLY: Historical simulation (never used for live)
 ```
 
 ---
@@ -1641,7 +1672,7 @@ Portfolio Returns + SPY Returns
          ├── Product classification (equity/option/future)
          ├── Risk gates (8 gates)
          ├── DecisionMatrix (6 gates)
-         └── Broker execution (Alpaca primary)
+         └── Broker execution (IBKR via L7)
 ```
 
 ### Thinking Tab Data Flow (SSE Pipeline)
@@ -2000,7 +2031,7 @@ Retention: 30 days / 10 GB cap.
 
 ### Environment Variables
 
-`ANTHROPIC_API_KEY`, `ALPACA_API_KEY`, `ALPACA_SECRET_KEY`, `ALPACA_PAPER_TRADE`, `OPENBB_TOKEN`, `ZEP_API_KEY`, `TRADIER_API_KEY`, `TRADIER_ACCOUNT_ID`, `TRADIER_ENVIRONMENT`, `ENGINE_API_PORT`, `PORT`, `NODE_ENV`, `FLASK_PORT`, `LLM_BRIDGE_PORT`, `AIRLLM_PORT`, `QWEN_MODEL_PATH`, `QWEN_SERVER_PORT`, `QWEN_GPU_DEVICES`, `AIRLLM_MODEL_PATH`, `AIRLLM_GPU_DEVICES`, `ANTHROPIC_MODEL`, `LLM_BRIDGE_URL`, `METADRON_MODE`, `METADRON_CUBE_MODE`, `PYTHONUNBUFFERED`, `GRAFANA_ADMIN_PASSWORD`
+`ANTHROPIC_API_KEY`, `IBKR_HOST`, `IBKR_PORT`, `IBKR_CLIENT_ID`, `IBKR_PAPER_TRADE`, `OPENBB_TOKEN`, `ZEP_API_KEY`, `ENGINE_API_PORT`, `PORT`, `NODE_ENV`, `FLASK_PORT`, `LLM_BRIDGE_PORT`, `AIRLLM_PORT`, `QWEN_MODEL_PATH`, `QWEN_SERVER_PORT`, `QWEN_GPU_DEVICES`, `AIRLLM_MODEL_PATH`, `AIRLLM_GPU_DEVICES`, `ANTHROPIC_MODEL`, `LLM_BRIDGE_URL`, `METADRON_MODE`, `METADRON_CUBE_MODE`, `PYTHONUNBUFFERED`, `GRAFANA_ADMIN_PASSWORD`
 
 ### Startup Sequence
 
