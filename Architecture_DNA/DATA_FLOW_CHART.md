@@ -33,53 +33,53 @@ trade execution to learning feedback.
                 │ 1044 securities │ │ routing to       │ │ + FMP fallback  │
                 │ GICS 4-tier     │ │ engine layers    │ │ sentiment score │
                 │ 26 RV pairs     │ │                  │ │ urgency rating  │
-                └────────┬────────┘ └────────┬─────────┘ └───┬───────┬─────┘
-                         │                   │               │       │
-                         └───────────┬───────┘               │       │
-                                     │                       │       │
-                                     │                       │       │
-═════════════════════════════════════╪═══════════════════════╪═══════╪═════
- STAGE 2: LAYERS — Signal Processing (1-min cadence)        │       │
-═════════════════════════════════════╪═══════════════════════╪═══════╪═════
-                                     │                       │       │
-   TRACK A: SIGNAL ENGINES           │      TRACK B: NEWS+MIRO      │
-   (MetadronCube → signals)          │      (NewsEngine → Miro)     │
-                                     │                       │       │
-          ┌──────────────────────────▼──────────────────┐    │       │
-          │            FedLiquidityPlumbing              │    │       │
-          │  SOFR │ reserves │ TGA │ ON-RRP │ M2V       │    │       │
-          │  → CubeLiquidityTensor │ MoneyVelocityTracker│   │       │
-          └──────────────────────────┬──────────────────┘    │       │
-                                     │                       │       │
-          ┌──────────────────────────▼──────────────────┐    │       │
-          │              MacroEngine (GMTF)              │    │       │
-          │  ┌────────────────────────────────────────┐  │    │       │
-          │  │ MoneyVelocityModule │ SectorRanker     │  │    │       │
-          │  │ CarryToVolatility   │ RegimeTransition │  │    │       │
-          │  │ YieldCurveAnalyzer  │ CreditPulseMonitor│ │    │       │
-          │  │ MacroFeatureBuilder (50+ features)     │  │    │       │
-          │  └────────────────────────────────────────┘  │    │       │
-          │  → regime │ rm_adjustment │ sector_weights   │    │       │
-          └──────────────────────────┬──────────────────┘    │       │
-                                     │                       │       │
-          ┌──────────────────────────▼──────────────────┐    │       │
-          │         MetadronCube  C(t) = f(L,R,F)       │    │       │
-          │  ┌────────────────────────────────────────┐  │    │       │
-          │  │ L0: FedPlumbingLayer                   │  │    │       │
-          │  │ L1: LiquidityTensor    L(t) ∈ [-1,+1] │  │    │       │
-          │  │ L2: ReserveFlowKernel  ΔRes → ΔSector  │  │    │       │
-          │  │ LR: RiskStateModel     R(t) ∈ [0,1]   │  │    │       │
-          │  │ LF: CapitalFlowModel   F(t) rotation   │  │    │       │
-          │  │ L4: RegimeEngine       HMM+RL 4-regime │  │    │       │
-          │  │ LG: GateZAllocator     5-sleeve alloc  │  │    │       │
-          │  │ LE: GateLogic          4-gate entry     │  │    │       │
-          │  │ LK: KillSwitch ════════════════════════╪══╪═══╪═► HALT
-          │  │ LC: FCLPLoop           daily recal      │  │    │       │
-          │  └────────────────────────────────────────┘  │    │       │
-          │  → regime │ leverage │ beta_cap │ sleeves    │    │       │
-          └──────────────────────────┬──────────────────┘    │       │
-                                     │                       │       │
-                                     │              ┌────────▼───────▼────────┐
+                └────────┬────────┘ └────────┬─────────┘ └────────┬────────┘
+                         │                   │                    │
+                         └───────────┬───────┘                    │
+                                     │                            │
+                                     │                            │
+═════════════════════════════════════╪════════════════════════════╪════════
+ STAGE 2: LAYERS — Signal Processing (1-min cadence)             │
+═════════════════════════════════════╪════════════════════════════╪════════
+                                     │                            │
+   TRACK A: SIGNAL ENGINES           │       TRACK B: NEWS+MIRO  │
+   (MetadronCube → signals)          │       (NewsEngine → Miro) │
+                                     │                            │
+          ┌──────────────────────────▼──────────────────┐         │
+          │            FedLiquidityPlumbing              │         │
+          │  SOFR │ reserves │ TGA │ ON-RRP │ M2V       │         │
+          │  → CubeLiquidityTensor │ MoneyVelocityTracker│        │
+          └──────────────────────────┬──────────────────┘         │
+                                     │                            │
+          ┌──────────────────────────▼──────────────────┐         │
+          │              MacroEngine (GMTF)              │         │
+          │  ┌────────────────────────────────────────┐  │         │
+          │  │ MoneyVelocityModule │ SectorRanker     │  │         │
+          │  │ CarryToVolatility   │ RegimeTransition │  │         │
+          │  │ YieldCurveAnalyzer  │ CreditPulseMonitor│ │         │
+          │  │ MacroFeatureBuilder (50+ features)     │  │         │
+          │  └────────────────────────────────────────┘  │         │
+          │  → regime │ rm_adjustment │ sector_weights   │         │
+          └──────────────────────────┬──────────────────┘         │
+                                     │                            │
+          ┌──────────────────────────▼──────────────────┐         │
+          │         MetadronCube  C(t) = f(L,R,F)       │         │
+          │  ┌────────────────────────────────────────┐  │         │
+          │  │ L0: FedPlumbingLayer                   │  │         │
+          │  │ L1: LiquidityTensor    L(t) ∈ [-1,+1] │  │         │
+          │  │ L2: ReserveFlowKernel  ΔRes → ΔSector  │  │         │
+          │  │ LR: RiskStateModel     R(t) ∈ [0,1]   │  │         │
+          │  │ LF: CapitalFlowModel   F(t) rotation   │  │         │
+          │  │ L4: RegimeEngine       HMM+RL 4-regime │  │         │
+          │  │ LG: GateZAllocator     5-sleeve alloc  │  │         │
+          │  │ LE: GateLogic          4-gate entry     │  │         │
+          │  │ LK: KillSwitch ════════════════════════╪══╪════► HALT
+          │  │ LC: FCLPLoop           daily recal      │  │         │
+          │  └────────────────────────────────────────┘  │         │
+          │  → regime │ leverage │ beta_cap │ sleeves    │         │
+          └──────────────────────────┬──────────────────┘         │
+                                     │                            │
+                                     │              ┌─────────────▼───────────┐
                                      │              │ News+MiroMomentum       │
                                      │              │ Pipeline                │
                                      │              │                         │
@@ -118,46 +118,48 @@ trade execution to learning feedback.
                                      │                           │
   ┌──────────────────────────────────┤                           │
   │                                  │                           │
-  │    TRACK A continues:            │          TRACK B signals  │
-  │                                  │
-  │  ┌───────────────────┐  ┌───────┴──────────┐
-  │  │SecurityAnalysis   │  │ ContagionEngine  │
-  │  │Graham-Dodd-Klarman│  │ 21 nodes, 7 shock│
-  │  │top-down + bottom  │  │ scenarios, multi-│
-  │  │up, MoS ≥33%      │  │ step propagation │
-  │  └────────┬──────────┘  └────────┬─────────┘
-  │           │                      │
-  │  ┌────────▼──────────┐  ┌────────▼──────────┐
-  │  │  StatArbEngine    │  │FixedIncomeEngine  │
-  │  │  Medallion mean-  │  │ yield curve,      │
-  │  │  reversion + co-  │  │ credit spreads,   │
-  │  │  integration pairs│  │ duration ladder   │
-  │  └────────┬──────────┘  └────────┬──────────┘
-  │           │                      │
-  │  ┌────────▼──────────┐  ┌────────▼──────────┐
-  │  │DistressedAsset    │  │PatternDiscovery   │
-  │  │5-model ensemble:  │  │MiroFish agent sim │
-  │  │Altman Z, Merton   │  │+ AI-Newton PySR   │
-  │  │KMV, Ohlson,       │  │symbolic regression│
-  │  │Zmijewski, ML GBM  │  │→ PatternBus       │
-  │  └────────┬──────────┘  └────────┬──────────┘
-  │           │                      │
-  │  ┌────────▼──────────┐  ┌────────▼──────────┐
-  │  │AdaptiveThreshold  │  │  VelocityEngine   │
-  │  │252-day rolling    │  │  money velocity   │
-  │  │percentile calib   │  │  tracking         │
-  │  └────────┬──────────┘  └────────┬──────────┘
-  │           │                      │
-  │           └──────────┬───────────┘
-  │                      │
-  │     TRACK A signals  │          TRACK B signals  │
-  │                      │                           │
-  └──────────────────────┼───────────────────────────┘
-                         │
-                         ▼
-                ALL SIGNALS MERGE
-            (Track A + Track B)
-                         │
+  │    TRACK A continues:            │                           │
+  │                                  │                           │
+  │  ┌───────────────────┐  ┌───────┴──────────┐                │
+  │  │SecurityAnalysis   │  │ ContagionEngine  │                │
+  │  │Graham-Dodd-Klarman│  │ 21 nodes, 7 shock│                │
+  │  │top-down + bottom  │  │ scenarios, multi-│                │
+  │  │up, MoS ≥33%      │  │ step propagation │                │
+  │  └────────┬──────────┘  └────────┬─────────┘                │
+  │           │                      │                           │
+  │  ┌────────▼──────────┐  ┌────────▼──────────┐               │
+  │  │  StatArbEngine    │  │FixedIncomeEngine  │               │
+  │  │  Medallion mean-  │  │ yield curve,      │               │
+  │  │  reversion + co-  │  │ credit spreads,   │               │
+  │  │  integration pairs│  │ duration ladder   │               │
+  │  └────────┬──────────┘  └────────┬──────────┘               │
+  │           │                      │                           │
+  │  ┌────────▼──────────┐  ┌────────▼──────────┐               │
+  │  │DistressedAsset    │  │PatternDiscovery   │               │
+  │  │5-model ensemble:  │  │MiroFish agent sim │               │
+  │  │Altman Z, Merton   │  │+ AI-Newton PySR   │               │
+  │  │KMV, Ohlson,       │  │symbolic regression│               │
+  │  │Zmijewski, ML GBM  │  │→ PatternBus       │               │
+  │  └────────┬──────────┘  └────────┬──────────┘               │
+  │           │                      │                           │
+  │  ┌────────▼──────────┐  ┌────────▼──────────┐               │
+  │  │AdaptiveThreshold  │  │  VelocityEngine   │               │
+  │  │252-day rolling    │  │  money velocity   │               │
+  │  │percentile calib   │  │  tracking         │               │
+  │  └────────┬──────────┘  └────────┬──────────┘               │
+  │           │                      │                           │
+  │           └──────────┬───────────┘                           │
+  │                      │                                       │
+  │     TRACK A signals  │                  TRACK B signals      │
+  │                      │                                       │
+  │                      └───────────────────┬───────────────────┘
+  │                                          │
+  └──────────────────────────────────────────┘
+                                     │
+                                     ▼
+                            ALL SIGNALS MERGE
+                           (Track A + Track B)
+                                     │
 ═══════════════════════════╪══════════════════════════════════════════════
  STAGE 3: INTELLIGENCE — ML/AI Decision Layer (5-min cadence)
 ═══════════════════════════╪══════════════════════════════════════════════
