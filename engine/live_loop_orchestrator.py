@@ -848,30 +848,87 @@ class LiveLoopOrchestrator:
     def run_signal_phase(self) -> PhaseResult:
         """Phase 2: Signal generation from all signal engines.
 
-        Runs at 1-minute cadence:
-            - FedLiquidityPlumbing.update()
-            - MacroEngine.analyze()
-            - MetadronCube.compute()
-            - SecurityAnalysisEngine.analyze()
-            - ContagionEngine.run_all_scenarios()
-            - StatArbEngine.scan_pairs()
-            - FixedIncomeEngine.get_summary()
-            - NewsEngine.run_miro_on_news_tickers() → EventDriven + CVR
+        Runs at 1-minute cadence, two independent parallel tracks:
+
+        TRACK A (MetadronCube → Signal Engines):
+            FedLiquidityPlumbing → MacroEngine → MetadronCube →
+            SecurityAnalysis, Contagion, StatArb, FixedIncome,
+            DistressedAsset, PatternDiscovery, AdaptiveThreshold
+
+        TRACK B (NewsEngine → MiroMomentum, independent from Cube):
+            NewsEngine.run_miro_on_news_tickers() →
+            EventDrivenEngine (enriched) + CVREngine (enriched)
+
+        Both tracks run independently and their signals converge
+        before the Intelligence phase (Stage 3).
         """
         pr = PhaseResult(phase=LoopPhase.SIGNALS.value, timestamp=datetime.now().isoformat())
         t0 = time.monotonic()
-        signals_count = 0
+
+        track_a_result = self._run_track_a()
+        track_b_result = self._run_track_b()
+
+        # ── MERGE: Converge both tracks into phase result ───────────
+
+        signals_count = track_a_result.get("signals", 0) + track_b_result.get("signals", 0)
+
+        pr.data["track_a"] = track_a_result
+        pr.data["track_b"] = track_b_result
+        pr.data["track_a_latency_ms"] = track_a_result.get("latency_ms", 0)
+        pr.data["track_b_latency_ms"] = track_b_result.get("latency_ms", 0)
+        pr.data["track_a_signals"] = track_a_result.get("signals", 0)
+        pr.data["track_b_signals"] = track_b_result.get("signals", 0)
+
+        pr.data["macro_regime"] = track_a_result.get("macro_regime", "")
+        pr.data["cube_regime"] = track_a_result.get("cube_regime", "")
+        pr.data["cube_target_beta"] = track_a_result.get("cube_target_beta", 0.0)
+        pr.data["macro_vix"] = track_a_result.get("macro_vix", 0.0)
+        pr.data["cube_kill_switch"] = track_a_result.get("cube_kill_switch", False)
+
+        pr.data["news_miro_tickers"] = track_b_result.get("news_miro_tickers", 0)
+        pr.data["news_miro_buys"] = track_b_result.get("news_miro_buys", 0)
+        pr.data["news_miro_sells"] = track_b_result.get("news_miro_sells", 0)
+
+        logger.info(
+            "Signals phase: Track A=%d signals (%.0fms) | Track B=%d signals (%.0fms) | Total=%d",
+            track_a_result.get("signals", 0), track_a_result.get("latency_ms", 0),
+            track_b_result.get("signals", 0), track_b_result.get("latency_ms", 0),
+            signals_count,
+        )
+
+        self._last_signals = {
+            "macro_regime": pr.data.get("macro_regime", ""),
+            "cube_regime": pr.data.get("cube_regime", ""),
+            "cube_target_beta": pr.data.get("cube_target_beta", 0.0),
+            "vix": pr.data.get("macro_vix", 0.0),
+        }
+
+        pr.items_processed = signals_count
+        pr.duration_ms = (time.monotonic() - t0) * 1000
+        pr.success = True
+        return pr
+
+    # ── TRACK A: MetadronCube → Parallel Signal Engines ─────────────
+
+    def _run_track_a(self) -> dict:
+        """Track A: FedLiquidity → MacroEngine → MetadronCube → signal engines.
+
+        Sequential pipeline from macro data through the Cube, then fans out
+        to all signal engines fed by the Cube's regime output.
+        """
+        ta = {"signals": 0, "errors": []}
+        ta_t0 = time.monotonic()
 
         # Fed Liquidity Plumbing
         fed = self._get("fed_liquidity")
         if fed:
             try:
-                fed_result = fed.update() if hasattr(fed, "update") else None
-                pr.data["fed_liquidity"] = "updated"
-                signals_count += 1
+                fed.update() if hasattr(fed, "update") else None
+                ta["fed_liquidity"] = "updated"
+                ta["signals"] += 1
             except Exception as exc:
-                pr.data["fed_liquidity_error"] = str(exc)
-                logger.warning("FedLiquidity error: %s", exc)
+                ta["fed_liquidity_error"] = str(exc)
+                ta["errors"].append(f"FedLiquidity: {exc}")
 
         # Macro Engine
         macro = self._get("macro_engine")
@@ -879,13 +936,13 @@ class LiveLoopOrchestrator:
             try:
                 snap = macro.analyze()
                 self._last_macro_snapshot = snap
-                pr.data["macro_regime"] = snap.regime.value if hasattr(snap, "regime") else str(snap)
-                pr.data["macro_vix"] = getattr(snap, "vix", 0.0)
-                signals_count += 1
-                logger.info("Macro regime: %s  VIX: %.1f", pr.data["macro_regime"], pr.data["macro_vix"])
+                ta["macro_regime"] = snap.regime.value if hasattr(snap, "regime") else str(snap)
+                ta["macro_vix"] = getattr(snap, "vix", 0.0)
+                ta["signals"] += 1
+                logger.info("Track A — Macro regime: %s  VIX: %.1f", ta["macro_regime"], ta["macro_vix"])
             except Exception as exc:
-                pr.data["macro_error"] = str(exc)
-                logger.warning("MacroEngine error: %s", exc)
+                ta["macro_error"] = str(exc)
+                ta["errors"].append(f"MacroEngine: {exc}")
 
         # MetadronCube
         cube = self._get("metadron_cube")
@@ -893,33 +950,27 @@ class LiveLoopOrchestrator:
             try:
                 cube_out = cube.compute(self._last_macro_snapshot)
                 self._last_cube_output = cube_out
-                pr.data["cube_regime"] = cube_out.regime.value if hasattr(cube_out, "regime") else str(cube_out)
-                pr.data["cube_target_beta"] = getattr(cube_out, "target_beta", 0.0)
-                signals_count += 1
+                ta["cube_regime"] = cube_out.regime.value if hasattr(cube_out, "regime") else str(cube_out)
+                ta["cube_target_beta"] = getattr(cube_out, "target_beta", 0.0)
+                ta["signals"] += 1
 
-                # Forward cube kill-switch state to AllocationEngine
                 cube_kill = getattr(cube_out, "kill_switch_active", False)
                 alloc = self._get("allocation_engine")
                 if alloc and hasattr(alloc, "set_cube_kill_switch"):
                     alloc.set_cube_kill_switch(cube_kill)
-                pr.data["cube_kill_switch"] = cube_kill
+                ta["cube_kill_switch"] = cube_kill
 
-                logger.info(
-                    "Cube regime: %s  target_beta: %.3f",
-                    pr.data["cube_regime"], pr.data["cube_target_beta"],
-                )
+                logger.info("Track A — Cube regime: %s  target_beta: %.3f", ta["cube_regime"], ta["cube_target_beta"])
             except Exception as exc:
-                pr.data["cube_error"] = str(exc)
-                logger.warning("MetadronCube error: %s", exc)
+                ta["cube_error"] = str(exc)
+                ta["errors"].append(f"MetadronCube: {exc}")
 
-        # Security Analysis Engine
+        # Parallel signal engines (all fed by Cube output)
         sa = self._get("security_analysis")
         if sa:
             try:
                 universe = self._get("universe")
-                tickers = []
-                if universe and hasattr(universe, "get_all"):
-                    tickers = [s.ticker for s in universe.get_all()[:50]]
+                tickers = [s.ticker for s in universe.get_all()[:50]] if universe and hasattr(universe, "get_all") else []
                 if tickers:
                     sa_macro = {}
                     if self._last_macro_snapshot:
@@ -936,41 +987,32 @@ class LiveLoopOrchestrator:
                             "fedfunds": getattr(snap, "fedfunds", 0.05),
                         }
                     sa_result = sa.analyze(tickers, sa_macro, {})
-                    pr.data["security_analysis_count"] = getattr(sa_result, "tickers_analyzed", 0)
-                    signals_count += 1
+                    ta["security_analysis_count"] = getattr(sa_result, "tickers_analyzed", 0)
+                    ta["signals"] += 1
             except Exception as exc:
-                pr.data["security_analysis_error"] = str(exc)
-                logger.warning("SecurityAnalysis error: %s", exc)
+                ta["security_analysis_error"] = str(exc)
 
-        # Contagion Engine — cross-asset contagion graph + shock scenarios
         contagion = self._get("contagion_engine")
         if contagion:
             try:
                 scenarios = contagion.run_all_scenarios()
-                pr.data["contagion_scenarios"] = len(scenarios) if scenarios else 0
+                ta["contagion_scenarios"] = len(scenarios) if scenarios else 0
                 self._last_contagion_output = scenarios
-                signals_count += 1
+                ta["signals"] += 1
             except Exception as exc:
-                pr.data["contagion_error"] = str(exc)
-                logger.warning("ContagionEngine error: %s", exc)
+                ta["contagion_error"] = str(exc)
 
-        # StatArb Engine — Medallion mean-reversion + cointegration pairs
         stat_arb = self._get("stat_arb_engine")
         if stat_arb:
             try:
                 universe = self._get("universe")
-                tickers = []
-                if universe and hasattr(universe, "get_all"):
-                    tickers = [s.ticker for s in universe.get_all()[:50]]
+                tickers = [s.ticker for s in universe.get_all()[:50]] if universe and hasattr(universe, "get_all") else []
                 if tickers and hasattr(stat_arb, "scan_pairs"):
                     from .data.openbb_data import get_adj_close
                     import pandas as pd
                     price_data = {}
                     try:
-                        prices_df = get_adj_close(
-                            tickers[:30],
-                            start=(datetime.now() - timedelta(days=120)).strftime("%Y-%m-%d"),
-                        )
+                        prices_df = get_adj_close(tickers[:30], start=(datetime.now() - timedelta(days=120)).strftime("%Y-%m-%d"))
                         if isinstance(prices_df, pd.DataFrame) and not prices_df.empty:
                             for col in prices_df.columns:
                                 if col in tickers:
@@ -979,73 +1021,74 @@ class LiveLoopOrchestrator:
                         pass
                     if price_data:
                         pairs = stat_arb.scan_pairs(price_data)
-                        pr.data["stat_arb_pairs"] = len(pairs) if pairs else 0
-                        signals_count += 1
+                        ta["stat_arb_pairs"] = len(pairs) if pairs else 0
+                        ta["signals"] += 1
             except Exception as exc:
-                pr.data["stat_arb_error"] = str(exc)
-                logger.warning("StatArbEngine error: %s", exc)
+                ta["stat_arb_error"] = str(exc)
 
-        # Fixed Income Engine — yield curve, credit spreads, FI signals
         fi_engine = self._get("fixed_income_engine")
         if fi_engine:
             try:
                 fi_summary = fi_engine.get_summary()
-                pr.data["fixed_income"] = "updated"
-                pr.data["fi_yield_10y"] = fi_summary.get("treasury_10y", 0.0) if fi_summary else 0.0
+                ta["fixed_income"] = "updated"
+                ta["fi_yield_10y"] = fi_summary.get("treasury_10y", 0.0) if fi_summary else 0.0
                 self._last_fi_output = fi_summary
-                signals_count += 1
+                ta["signals"] += 1
             except Exception as exc:
-                pr.data["fixed_income_error"] = str(exc)
-                logger.warning("FixedIncomeEngine error: %s", exc)
+                ta["fixed_income_error"] = str(exc)
 
-        # News + MiroMomentum branch — runs separately, feeds EventDriven + CVR directly
+        ta["latency_ms"] = round((time.monotonic() - ta_t0) * 1000, 1)
+        return ta
+
+    # ── TRACK B: NewsEngine → MiroMomentum (independent) ───────────
+
+    def _run_track_b(self) -> dict:
+        """Track B: NewsEngine → MiroMomentum → EventDriven + CVR.
+
+        Runs independently from Track A. Feeds directly from the NewsEngine
+        (newsfilter.io) without any connection to MetadronCube.
+        """
+        tb = {"signals": 0, "errors": []}
+        tb_t0 = time.monotonic()
+
         news = self._get("news_engine")
-        if news:
-            try:
-                # Run MiroMomentum on news-flagged tickers
-                enriched = news.run_miro_on_news_tickers()
-                if enriched:
-                    pr.data["news_miro_tickers"] = len(enriched)
-                    pr.data["news_miro_buys"] = sum(1 for v in enriched.values() if v["signal"] == "BUY")
-                    pr.data["news_miro_sells"] = sum(1 for v in enriched.values() if v["signal"] == "SELL")
-                    self._last_news_miro_output = enriched
+        if not news:
+            tb["status"] = "news_engine_unavailable"
+            tb["latency_ms"] = 0
+            return tb
 
-                    # Feed directly to EventDrivenEngine
-                    events = self._get("event_driven")
-                    if events and hasattr(events, "_news_engine"):
-                        events._news_engine = news  # Share warmed singleton
-                        events._news_miro_signals = enriched
-                        pr.data["news_to_event_driven"] = True
+        try:
+            enriched = news.run_miro_on_news_tickers()
+            if enriched:
+                tb["news_miro_tickers"] = len(enriched)
+                tb["news_miro_buys"] = sum(1 for v in enriched.values() if v["signal"] == "BUY")
+                tb["news_miro_sells"] = sum(1 for v in enriched.values() if v["signal"] == "SELL")
+                self._last_news_miro_output = enriched
 
-                    # Feed directly to CVREngine
-                    cvr = self._get("cvr_engine")
-                    if cvr and hasattr(cvr, "_news_engine"):
-                        cvr._news_engine = news  # Share warmed singleton
-                        cvr._news_miro_signals = enriched
-                        pr.data["news_to_cvr"] = True
+                events = self._get("event_driven")
+                if events and hasattr(events, "_news_engine"):
+                    events._news_engine = news
+                    events._news_miro_signals = enriched
+                    tb["news_to_event_driven"] = True
 
-                    signals_count += 1
-                else:
-                    # Still refresh the feed even if no tickers flagged
-                    news.refresh()
-                    pr.data["news_feed_refreshed"] = True
-            except Exception as exc:
-                pr.data["news_miro_error"] = str(exc)
-                logger.warning("News+MiroMomentum error: %s", exc)
+                cvr = self._get("cvr_engine")
+                if cvr and hasattr(cvr, "_news_engine"):
+                    cvr._news_engine = news
+                    cvr._news_miro_signals = enriched
+                    tb["news_to_cvr"] = True
 
-        # Store signals for change detection
-        new_signals = {
-            "macro_regime": pr.data.get("macro_regime", ""),
-            "cube_regime": pr.data.get("cube_regime", ""),
-            "cube_target_beta": pr.data.get("cube_target_beta", 0.0),
-            "vix": pr.data.get("macro_vix", 0.0),
-        }
-        self._last_signals = new_signals
+                tb["signals"] += 1
+            else:
+                news.refresh()
+                tb["news_feed_refreshed"] = True
+        except Exception as exc:
+            tb["news_miro_error"] = str(exc)
+            tb["errors"].append(f"News+Miro: {exc}")
+            logger.warning("Track B — News+MiroMomentum error: %s", exc)
 
-        pr.items_processed = signals_count
-        pr.duration_ms = (time.monotonic() - t0) * 1000
-        pr.success = True
-        return pr
+        tb["latency_ms"] = round((time.monotonic() - tb_t0) * 1000, 1)
+        return tb
+
 
     def run_intelligence_phase(self) -> PhaseResult:
         """Phase 3: ML intelligence, signal engine analysis, and agent scoring.
