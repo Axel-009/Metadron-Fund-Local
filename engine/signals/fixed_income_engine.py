@@ -64,8 +64,8 @@ class FixedIncomeEngine:
                 self._broker = get_broker()
             except Exception:
                 try:
-                    from engine.execution.alpaca_broker import AlpacaBroker
-                    self._broker = AlpacaBroker()
+                    from engine.execution.ibkr_broker import IBKRBroker
+                    self._broker = IBKRBroker()
                 except Exception:
                     try:
                         from engine.execution.paper_broker import PaperBroker

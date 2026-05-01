@@ -557,7 +557,7 @@ class CVREngine:
         """
         # Refresh CVR candidates from live news/filings and update prices.
         # Wrapped in try/except so analysis always proceeds even when the
-        # data feeds are unavailable (no FMP/Alpaca key configured).
+        # data feeds are unavailable (no FMP/IBKR key configured).
         try:
             self.discover_and_refresh()
         except Exception as e:

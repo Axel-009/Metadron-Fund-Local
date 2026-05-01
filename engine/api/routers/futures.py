@@ -1,7 +1,7 @@
 """Futures router — real-time futures data, positions, orders, margin, term structure.
 
 Data flow:
-  Contracts & Prices → OpenBB get_prices() for =F tickers, Alpaca fallback for ETF proxies
+  Contracts & Prices → OpenBB get_prices() for =F tickers, ETF proxies as fallback
   Positions          → broker.get_all_positions() filtered to futures prefixes
   Orders             → broker.get_orders() filtered to futures prefixes
   Margin             → broker.get_portfolio_summary() + BetaCorridor analytics
@@ -9,11 +9,6 @@ Data flow:
   Roll Calendar      → Computed from CME standard expiry rules
   Hedge Calculator   → BetaCorridor.calculate_hedge_ratio()
 
-BROKER SWAP NOTE:
-  Alpaca paper broker does not support real futures. We use ETF proxies
-  (SPY→ES, QQQ→NQ, DIA→YM, etc.) for position tracking, and Yahoo =F
-  tickers for live futures prices. When upgrading to IBKR or Tradier with
-  real futures support, replace ETF proxy logic with direct futures positions.
 """
 
 import logging
@@ -149,7 +144,7 @@ def _compute_roll_date(expiry_str: str, root: str) -> dict:
 async def futures_contracts():
     """Live futures contract data with real-time prices.
 
-    Fetches from OpenBB (Yahoo =F tickers), falls back to Alpaca ETF proxies.
+    Fetches from OpenBB (Yahoo =F tickers), falls back to ETF proxies.
     Returns contract specs, prices, volume, and computed expiry info.
     """
     try:
@@ -214,7 +209,7 @@ async def futures_contracts():
         except Exception as e:
             logger.warning("Futures price fetch failed, will return specs only: %s", e)
 
-        # If no OpenBB data, try Alpaca proxies
+        # If no OpenBB data, try ETF proxies
         if not price_data:
             try:
                 from engine.data.openbb_data import get_prices as gp
@@ -382,7 +377,7 @@ async def futures_orders(limit: int = Query(50, ge=1, le=200)):
         broker = _get_broker()
         orders = []
 
-        # Try broker.get_orders() (Alpaca)
+        # Try broker.get_orders()
         if hasattr(broker, "get_orders") and callable(broker.get_orders):
             try:
                 raw = broker.get_orders()

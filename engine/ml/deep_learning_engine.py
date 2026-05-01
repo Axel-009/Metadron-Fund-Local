@@ -5,6 +5,11 @@ Implements Proximal Policy Optimization (PPO) for algorithmic trading using
 only numpy. Includes a full Gym-like trading environment with a 50-feature
 state vector and walk-forward validation.
 
+Signals feed into the AlphaOptimizer (universe merge + dedup + cap
+enforcement) and the 4-gate decision matrix (FUNDAMENTALS 40%,
+FLOW_HEADLINES 20%, MACRO_REGIME 20%, MOMENTUM 20%).
+Execution routed via IBKR; paper trade log for reconciliation only.
+
 No torch, tensorflow, or gym dependency required.
 """
 

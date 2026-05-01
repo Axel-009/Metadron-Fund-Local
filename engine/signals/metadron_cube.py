@@ -14,10 +14,10 @@ Multi-layer intelligence tensor between MacroEngine and AlphaOptimizer:
                   Crash floor ≥ +25%, Gamma corridor [7%–12%]
 
 4-Gate Entry Logic:
-    Gate 1 — Flow/Headlines: ETF creations + Tensor signal → shortlist
-    Gate 2 — Macro/Beta: Kernel projections + rates/FX betas → filter
-    Gate 3 — Fundamentals: Quality/ROIC/FCF + GNN supply-chain penalty
-    Gate 4 — Momentum/Technical: Breadth/leadership/gamma/vanna confirms
+    Gate 1 — Fundamentals (40%): Quality/ROIC/FCF + GNN supply-chain penalty
+    Gate 2 — Flow/Headlines (20%): ETF creations + Tensor signal → shortlist
+    Gate 3 — Macro/Regime (20%): Kernel projections + rates/FX betas → filter
+    Gate 4 — Momentum/Technical (20%): Breadth/leadership/gamma/vanna confirms
 
 Kill-Switch: HY OAS +35bp & VIX term flat/inverted & breadth <50%
              → auto β ≤ 0.35, max tail spend
@@ -665,16 +665,16 @@ class GateZAllocator:
 class GateLogic:
     """4-Gate entry logic for position approval.
 
-    Gate 1 — Flow/Headlines:  ETF creations + Tensor signal → shortlist
-    Gate 2 — Macro/Beta:      Kernel projections + rates/FX betas → filter
-    Gate 3 — Fundamentals:    Quality/ROIC/FCF + GNN supply-chain penalty
-    Gate 4 — Momentum/Tech:   Breadth/leadership/gamma/vanna confirms
+    Gate 1 — Fundamentals (40%):      Quality/ROIC/FCF + GNN supply-chain penalty
+    Gate 2 — Flow/Headlines (20%):    ETF creations + Tensor signal → shortlist
+    Gate 3 — Macro/Regime (20%):      Kernel projections + rates/FX betas → filter
+    Gate 4 — Momentum/Technical (20%): Breadth/leadership/gamma/vanna confirms
 
     Each gate returns a score in [0, 1]. A position must pass all 4 gates
     with a combined score above the threshold (default 0.50).
     """
 
-    GATE_WEIGHTS = [0.20, 0.25, 0.30, 0.25]  # Flow, Macro, Fundamentals, Momentum
+    GATE_WEIGHTS = [0.40, 0.20, 0.20, 0.20]  # Fundamentals, Flow, Macro, Momentum
     PASS_THRESHOLD = 0.50
 
     def evaluate(self, ticker: str, flow_score: float = 0.5, macro_score: float = 0.5,
