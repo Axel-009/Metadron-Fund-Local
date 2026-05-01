@@ -67,7 +67,7 @@ def _reg(cid, mod, cls, phase, phase_name, mandatory=True, deps=(), desc=""):
 _reg("universe_engine",
      "engine.data.universe_engine", "UniverseEngine",
      1, "DATA", deps=(),
-     desc="1,044+ securities (SP500+SP400+SP600), GICS 4-tier, 26 RV pairs")
+     desc="4-run scan: SP500(~500) + SP400(~400) + SP600(~600) + ETF/FI(~70) + 26 RV pairs = ~1,600 securities")
 _reg("data_quality_gate",
      "engine.data.data_quality", "DataQualityGate",
      1, "DATA", deps=(),
@@ -79,9 +79,15 @@ _reg("data_ingestion",
 _reg("data_pool",
      "engine.data.universal_pooling", "UniversalDataPool",
      1, "DATA", deps=("data_quality_gate",),
-     desc="Cross-asset data pooling with freshness tracking")
+     desc="Cross-asset data dispatcher — routes 9 asset classes to destination layers")
+_reg("news_engine",
+     "engine.signals.news_engine", "NewsEngine",
+     1, "DATA", deps=(),
+     desc="newsfilter.io WebSocket (10K+ sources) + FMP fallback — feeds Track B independently")
 
 # ---------- Phase 2: SIGNALS ----------
+# Track A: FedLiquidity → MacroEngine → MetadronCube → parallel signal engines
+# Track B: NewsEngine → MiroMomentum → EventDriven + CVR (independent from Cube)
 _reg("fed_liquidity",
      "engine.signals.fed_liquidity_plumbing", "FedLiquidityPlumbing",
      2, "SIGNALS", deps=("data_pool",),
@@ -94,48 +100,55 @@ _reg("metadron_cube",
      "engine.signals.metadron_cube", "MetadronCube",
      2, "SIGNALS", deps=("fed_liquidity", "macro_engine"),
      desc="C(t) = f(L,R,F) — 10-layer intelligence tensor + KillSwitch")
+# Track A signal engines — all fed by MetadronCube regime output
 _reg("security_analysis",
      "engine.signals.security_analysis_engine", "SecurityAnalysisEngine",
-     2, "SIGNALS", deps=("data_pool",),
-     desc="Graham-Dodd-Klarman top-down + bottom-up (Stage 3.1)")
+     2, "SIGNALS", deps=("metadron_cube", "data_pool"),
+     desc="Track A — Graham-Dodd-Klarman top-down + bottom-up")
 _reg("contagion_engine",
      "engine.signals.contagion_engine", "ContagionEngine",
-     2, "SIGNALS", deps=("data_pool",),
-     desc="21-node graph topology, 7 shock scenarios")
+     2, "SIGNALS", deps=("metadron_cube", "data_pool"),
+     desc="Track A — 21-node graph topology, 7 shock scenarios")
 _reg("stat_arb_engine",
      "engine.signals.stat_arb_engine", "StatArbEngine",
-     2, "SIGNALS", deps=("data_pool",),
-     desc="Medallion mean reversion + cointegration pairs")
+     2, "SIGNALS", deps=("metadron_cube", "data_pool"),
+     desc="Track A — Medallion mean reversion + cointegration pairs")
 _reg("distressed_assets",
      "engine.signals.distressed_asset_engine", "DistressedAssetEngine",
-     2, "SIGNALS", deps=("data_pool",),
-     desc="5-model distress ensemble + Graham-Mielle framework")
-_reg("cvr_engine",
-     "engine.signals.cvr_engine", "CVREngine",
-     2, "SIGNALS", deps=("data_pool",),
-     desc="5-model CVR valuation, 4 live instruments")
-_reg("event_driven",
-     "engine.signals.event_driven_engine", "EventDrivenEngine",
-     2, "SIGNALS", deps=("data_pool",),
-     desc="12 event categories, M&A arb, PEAD SUE drift")
+     2, "SIGNALS", deps=("metadron_cube", "data_pool"),
+     desc="Track A — 5-model distress ensemble + Graham-Mielle framework")
 _reg("pattern_discovery",
      "engine.signals.pattern_discovery_engine", "PatternDiscoveryEngine",
-     2, "SIGNALS", deps=("data_pool",),
-     desc="MiroFish + AI-Newton symbolic regression")
-_reg("social_prediction",
-     "engine.signals.social_prediction_engine", "MiroMomentumEngine",
-     2, "SIGNALS", deps=("data_pool",),
-     desc="Agent-based market microstructure signals")
+     2, "SIGNALS", deps=("metadron_cube", "data_pool"),
+     desc="Track A — MiroFish + AI-Newton symbolic regression")
 _reg("adaptive_thresholds",
      "engine.signals.adaptive_thresholds", "AdaptiveThresholdCalibrator",
-     2, "SIGNALS", deps=(),
-     desc="Walk-forward threshold recalibration")
+     2, "SIGNALS", deps=("metadron_cube",),
+     desc="Track A — rolling percentile threshold recalibration")
+
+# Track B signal engines — fed by NewsEngine, independent from Cube
+_reg("social_prediction",
+     "engine.signals.social_prediction_engine", "MiroMomentumEngine",
+     2, "SIGNALS", deps=("news_engine",),
+     desc="Track B — agent-based market sim on news-flagged tickers (40% sentiment + 60% agent)")
+_reg("event_driven",
+     "engine.signals.event_driven_engine", "EventDrivenEngine",
+     2, "SIGNALS", deps=("news_engine", "social_prediction"),
+     desc="Track B — 12 event categories, enriched by News+MiroMomentum")
+_reg("cvr_engine",
+     "engine.signals.cvr_engine", "CVREngine",
+     2, "SIGNALS", deps=("news_engine", "social_prediction"),
+     desc="Track B — 5-model CVR valuation, enriched by News+MiroMomentum")
 
 # ---------- Phase 3: INTELLIGENCE ----------
 _reg("alpha_optimizer",
      "engine.ml.alpha_optimizer", "AlphaOptimizer",
-     3, "INTELLIGENCE", deps=("macro_engine", "metadron_cube"),
-     desc="Walk-forward ML alpha + mean-variance + credit quality")
+     3, "INTELLIGENCE",
+     deps=("macro_engine", "metadron_cube", "universe_engine",
+           "security_analysis", "contagion_engine", "stat_arb_engine",
+           "distressed_assets", "event_driven", "cvr_engine",
+           "pattern_discovery", "social_prediction"),
+     desc="Universe merge (4 runs) + aggregate + dedup + cap enforcement + dual alpha scoring → FullUniverseEngine Scan Slate")
 _reg("pattern_recognition",
      "engine.ml.pattern_recognition", "PatternRecognitionEngine",
      3, "INTELLIGENCE", deps=("data_pool",),
@@ -251,69 +264,81 @@ _reg("memory_monitor",
 # Read as: source FEEDS INTO target.
 
 WIRING_EDGES: List[Tuple[str, str, str]] = [
-    # Data layer feeds everything downstream
-    ("universe_engine",      "data_ingestion",       "securities universe"),
+    # ── STAGE 1: SCAN ──────────────────────────────────────────────
+    ("universe_engine",      "data_ingestion",       "4-run universe (SP500+SP400+SP600+ETF/FI+RV)"),
     ("data_ingestion",       "data_quality_gate",    "raw market data"),
     ("data_quality_gate",    "data_pool",            "validated data"),
 
-    # Data pool fans out to all signal engines
+    # Data pool dispatches to Track A engines
     ("data_pool",            "fed_liquidity",        "FRED macro series"),
     ("data_pool",            "macro_engine",         "market data"),
     ("data_pool",            "security_analysis",    "fundamentals"),
     ("data_pool",            "contagion_engine",     "cross-asset prices"),
     ("data_pool",            "stat_arb_engine",      "pair prices"),
     ("data_pool",            "distressed_assets",    "credit data"),
-    ("data_pool",            "cvr_engine",           "CVR instrument prices"),
-    ("data_pool",            "event_driven",         "event catalysts"),
     ("data_pool",            "pattern_discovery",    "OHLCV data"),
-    ("data_pool",            "social_prediction",    "agent sim data"),
 
-    # Signal engine cascade
+    # ── STAGE 2 TRACK A: MetadronCube → signal engines ─────────────
     ("fed_liquidity",        "macro_engine",         "fed plumbing state"),
     ("fed_liquidity",        "metadron_cube",        "Layer 0 tensor"),
     ("macro_engine",         "metadron_cube",        "regime + GMTF"),
+    ("metadron_cube",        "security_analysis",    "regime context"),
+    ("metadron_cube",        "contagion_engine",     "regime context"),
+    ("metadron_cube",        "stat_arb_engine",      "regime context"),
+    ("metadron_cube",        "distressed_assets",    "regime context"),
+    ("metadron_cube",        "pattern_discovery",    "regime context"),
+    ("metadron_cube",        "adaptive_thresholds",  "regime context"),
     ("metadron_cube",        "allocation_engine",    "sleeve allocation + KillSwitch"),
     ("metadron_cube",        "decision_matrix",      "regime + risk state"),
 
-    # Intelligence layer
+    # ── STAGE 2 TRACK B: NewsEngine → MiroMomentum (independent) ───
+    ("news_engine",          "social_prediction",    "news-flagged tickers"),
+    ("social_prediction",    "event_driven",         "enriched signals (40% sentiment + 60% agent)"),
+    ("social_prediction",    "cvr_engine",           "enriched signals (40% sentiment + 60% agent)"),
+
+    # ── STAGE 3: INTELLIGENCE (Track A + Track B converge) ─────────
+    # AlphaOptimizer receives ALL signals from both tracks
+    ("universe_engine",      "alpha_optimizer",      "4-run universe for merge/dedup"),
     ("macro_engine",         "alpha_optimizer",      "macro features"),
     ("metadron_cube",        "alpha_optimizer",      "regime + allocation"),
     ("security_analysis",    "alpha_optimizer",      "12 alpha features"),
+    ("contagion_engine",     "alpha_optimizer",      "contagion risk scores"),
+    ("stat_arb_engine",      "alpha_optimizer",      "pair signals"),
+    ("distressed_assets",    "alpha_optimizer",      "distress signals"),
     ("pattern_discovery",    "alpha_optimizer",      "pattern features"),
+    ("event_driven",         "alpha_optimizer",      "event signals (Track B enriched)"),
+    ("cvr_engine",           "alpha_optimizer",      "CVR valuations (Track B enriched)"),
     ("social_prediction",    "social_features",      "social snapshot"),
     ("social_features",      "alpha_optimizer",      "social_alpha composite"),
     ("universe_engine",      "universe_classifier",  "securities for classification"),
 
-    # Decision layer
-    ("alpha_optimizer",      "decision_matrix",      "alpha weights + signals"),
-    ("macro_engine",         "decision_matrix",      "macro gate score"),
-    ("contagion_engine",     "decision_matrix",      "contagion risk"),
-    ("distressed_assets",    "decision_matrix",      "distress signals"),
-    ("cvr_engine",           "decision_matrix",      "CVR valuations"),
-    ("event_driven",         "decision_matrix",      "event signals"),
-    ("stat_arb_engine",      "decision_matrix",      "stat arb pairs"),
+    # ── STAGE 4: DECISION ──────────────────────────────────────────
+    # AlphaOptimizer → FullUniverseEngine Scan Slate → DecisionMatrix
+    ("alpha_optimizer",      "decision_matrix",      "FullUniverseEngine Scan Slate (scored, deduped, cap-enforced)"),
     ("decision_matrix",      "allocation_engine",    "approved trades"),
     ("beta_corridor",        "allocation_engine",    "beta target"),
     ("options_engine",       "options_sizer",        "vol surface + greeks"),
 
-    # Execution chain (THE CRITICAL PATH models keep skipping)
+    # ── STAGE 4: EXECUTION (ALL through L7 — never direct) ────────
     ("allocation_engine",    "l7_execution_surface", "sized orders"),
-    ("options_sizer",        "l7_execution_surface", "options orders"),
+    ("options_sizer",        "l7_execution_surface", "edge-gated options orders"),
     ("conviction_override",  "l7_execution_surface", "override multipliers"),
     ("wondertrader_engine",  "l7_execution_surface", "micro-price + TWAP/VWAP"),
     ("exchange_core_engine", "l7_execution_surface", "order matching"),
-    ("l7_execution_surface", "ibkr_broker",          "routed orders"),
-    ("l7_execution_surface", "tca_engine",           "fill data"),
+    ("l7_execution_surface", "ibkr_broker",          "routed orders (TWAP/VWAP/Adaptive/Market)"),
+    ("l7_execution_surface", "tca_engine",           "fill data → cost decomposition"),
 
-    # Learning feedback loops
+    # ── STAGE 5: LEARNING (feedback to Stages 2-4) ────────────────
     ("l7_execution_surface", "learning_loop",        "execution outcomes"),
-    ("learning_loop",        "alpha_optimizer",      "signal accuracy feedback"),
+    ("learning_loop",        "macro_engine",         "regime feedback → retune priors"),
+    ("learning_loop",        "alpha_optimizer",      "signal accuracy → retune tier weights"),
     ("learning_loop",        "adaptive_thresholds",  "threshold recalibration"),
+    ("learning_loop",        "decision_matrix",      "gate accuracy → retune thresholds"),
     ("learning_loop",        "agent_scorecard",      "agent performance data"),
     ("agent_scorecard",      "sector_bots",          "tier assignments"),
     ("agent_scorecard",      "research_bots",        "tier assignments"),
 
-    # Monitoring
+    # ── STAGE 5: MONITORING ────────────────────────────────────────
     ("data_pool",            "anomaly_detector",     "price/volume data"),
     ("l7_execution_surface", "portfolio_analytics",  "position data"),
 ]
