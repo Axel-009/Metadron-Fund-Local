@@ -37,51 +37,88 @@ trade execution to learning feedback.
                          │                   │               │       │
                          └───────────┬───────┘               │       │
                                      │                       │       │
-                              to Track A              to Track B     │
-                              (Cube → signals)        (News+Miro)   │
                                      │                       │       │
-═════════════════════════════════════╪═══════════════════════════╪═════════
- STAGE 2: LAYERS — Signal Processing (1-min cadence)            │
-═════════════════════════════════════╪═══════════════════════════╪═════════
+═════════════════════════════════════╪═══════════════════════╪═══════╪═════
+ STAGE 2: LAYERS — Signal Processing (1-min cadence)        │       │
+═════════════════════════════════════╪═══════════════════════╪═══════╪═════
+                                     │                       │       │
+   TRACK A: SIGNAL ENGINES           │      TRACK B: NEWS+MIRO      │
+   (MetadronCube → signals)          │      (NewsEngine → Miro)     │
+                                     │                       │       │
+          ┌──────────────────────────▼──────────────────┐    │       │
+          │            FedLiquidityPlumbing              │    │       │
+          │  SOFR │ reserves │ TGA │ ON-RRP │ M2V       │    │       │
+          │  → CubeLiquidityTensor │ MoneyVelocityTracker│   │       │
+          └──────────────────────────┬──────────────────┘    │       │
+                                     │                       │       │
+          ┌──────────────────────────▼──────────────────┐    │       │
+          │              MacroEngine (GMTF)              │    │       │
+          │  ┌────────────────────────────────────────┐  │    │       │
+          │  │ MoneyVelocityModule │ SectorRanker     │  │    │       │
+          │  │ CarryToVolatility   │ RegimeTransition │  │    │       │
+          │  │ YieldCurveAnalyzer  │ CreditPulseMonitor│ │    │       │
+          │  │ MacroFeatureBuilder (50+ features)     │  │    │       │
+          │  └────────────────────────────────────────┘  │    │       │
+          │  → regime │ rm_adjustment │ sector_weights   │    │       │
+          └──────────────────────────┬──────────────────┘    │       │
+                                     │                       │       │
+          ┌──────────────────────────▼──────────────────┐    │       │
+          │         MetadronCube  C(t) = f(L,R,F)       │    │       │
+          │  ┌────────────────────────────────────────┐  │    │       │
+          │  │ L0: FedPlumbingLayer                   │  │    │       │
+          │  │ L1: LiquidityTensor    L(t) ∈ [-1,+1] │  │    │       │
+          │  │ L2: ReserveFlowKernel  ΔRes → ΔSector  │  │    │       │
+          │  │ LR: RiskStateModel     R(t) ∈ [0,1]   │  │    │       │
+          │  │ LF: CapitalFlowModel   F(t) rotation   │  │    │       │
+          │  │ L4: RegimeEngine       HMM+RL 4-regime │  │    │       │
+          │  │ LG: GateZAllocator     5-sleeve alloc  │  │    │       │
+          │  │ LE: GateLogic          4-gate entry     │  │    │       │
+          │  │ LK: KillSwitch ════════════════════════╪══╪═══╪═► HALT
+          │  │ LC: FCLPLoop           daily recal      │  │    │       │
+          │  └────────────────────────────────────────┘  │    │       │
+          │  → regime │ leverage │ beta_cap │ sleeves    │    │       │
+          └──────────────────────────┬──────────────────┘    │       │
+                                     │                       │       │
+                                     │              ┌────────▼───────▼────────┐
+                                     │              │ News+MiroMomentum       │
+                                     │              │ Pipeline                │
+                                     │              │                         │
+                                     │              │ run_miro_on_news_       │
+                                     │              │  tickers():             │
+                                     │              │ 1. Flag tickers with    │
+                                     │              │    breaking news        │
+                                     │              │ 2. MiroMomentumEngine   │
+                                     │              │    per flagged ticker   │
+                                     │              │ 3. Combined score:      │
+                                     │              │    40% sentiment        │
+                                     │              │    60% agent sim        │
+                                     │              │                         │
+                                     │              │ → EventDrivenEngine     │
+                                     │              │ → CVREngine             │
+                                     │              │ → MLVoteEnsemble T6     │
+                                     │              │ → Direct L7 if ≥ 0.7   │
+                                     │              └────────────┬────────────┘
                                      │                           │
-          ┌──────────────────────────▼──────────────────┐        │
-          │            FedLiquidityPlumbing              │        │
-          │  SOFR │ reserves │ TGA │ ON-RRP │ M2V       │        │
-          │  → CubeLiquidityTensor │ MoneyVelocityTracker│       │
-          └──────────────────────────┬──────────────────┘        │
+                                     │              ┌────────────▼────────────┐
+                                     │              │  EventDrivenEngine      │
+                                     │              │  12 categories: M&A arb,│
+                                     │              │  PEAD, spinoff, activist│
+                                     │              │  buyback, catalyst      │
+                                     │              │  Mitchell-Pulvino M&A   │
+                                     │              │  SUE PEAD model         │
+                                     │              └────────────┬────────────┘
                                      │                           │
-          ┌──────────────────────────▼──────────────────┐        │
-          │              MacroEngine (GMTF)              │        │
-          │  ┌────────────────────────────────────────┐  │        │
-          │  │ MoneyVelocityModule │ SectorRanker     │  │        │
-          │  │ CarryToVolatility   │ RegimeTransition │  │        │
-          │  │ YieldCurveAnalyzer  │ CreditPulseMonitor│ │        │
-          │  │ MacroFeatureBuilder (50+ features)     │  │        │
-          │  └────────────────────────────────────────┘  │        │
-          │  → regime │ rm_adjustment │ sector_weights   │        │
-          └──────────────────────────┬──────────────────┘        │
+                                     │              ┌────────────▼────────────┐
+                                     │              │     CVREngine           │
+                                     │              │  5-model valuation:     │
+                                     │              │  binary option, barrier,│
+                                     │              │  milestone, MC, real opt│
+                                     │              │  liquidity/credit adj   │
+                                     │              └────────────┬────────────┘
                                      │                           │
-          ┌──────────────────────────▼──────────────────┐        │
-          │         MetadronCube  C(t) = f(L,R,F)       │        │
-          │  ┌────────────────────────────────────────┐  │        │
-          │  │ L0: FedPlumbingLayer                   │  │        │
-          │  │ L1: LiquidityTensor    L(t) ∈ [-1,+1] │  │        │
-          │  │ L2: ReserveFlowKernel  ΔRes → ΔSector  │  │        │
-          │  │ LR: RiskStateModel     R(t) ∈ [0,1]   │  │        │
-          │  │ LF: CapitalFlowModel   F(t) rotation   │  │        │
-          │  │ L4: RegimeEngine       HMM+RL 4-regime │  │        │
-          │  │ LG: GateZAllocator     5-sleeve alloc  │  │        │
-          │  │ LE: GateLogic          4-gate entry     │  │        │
-          │  │ LK: KillSwitch ◄═══════════════════════╪══╪═► HALT
-          │  │ LC: FCLPLoop           daily recal      │  │        │
-          │  └────────────────────────────────────────┘  │        │
-          │  → regime │ leverage │ beta_cap │ sleeves    │        │
-          └──────────────────────────┬──────────────────┘        │
-                                     │                           │
-  ┌──────────────────────────────────┤
-  │                                  │
-  │    TRACK A: SIGNAL ENGINES       │
-  │    (from MetadronCube output)    │
+  ┌──────────────────────────────────┤                           │
+  │                                  │                           │
+  │    TRACK A continues:            │          TRACK B signals  │
   │                                  │
   │  ┌───────────────────┐  ┌───────┴──────────┐
   │  │SecurityAnalysis   │  │ ContagionEngine  │
@@ -113,66 +150,13 @@ trade execution to learning feedback.
   │           │                      │
   │           └──────────┬───────────┘
   │                      │
-  │     TRACK A signals  │
-  │                      │
-  │                      │
-  └──────────────────────┘
-
-
-                                        TRACK B: NEWS+MIRO
-                                        (independent — feeds directly from
-                                         NewsEngine in Stage 1, NOT from Cube)
-
-                         │
-                         │ (from NewsEngine in Stage 1 — same instance,
-                         │  newsfilter.io + FMP fallback + sentiment +
-                         │  urgency rating — no duplicate engine)
-                         │
-          ┌──────────────▼──────────────────────────┐
-          │     News+MiroMomentum Pipeline           │
-          │                                          │
-          │  NewsEngine.run_miro_on_news_tickers():  │
-          │    1. Flag tickers with breaking news    │
-          │    2. MiroMomentumEngine per ticker       │
-          │    3. Combined = 40% sentiment            │
-          │                 + 60% agent sim           │
-          │                                          │
-          │  Outputs to:                             │
-          │    → EventDrivenEngine (enriched)         │
-          │    → CVREngine (enriched)                │
-          │    → MLVoteEnsemble Tier 6               │
-          │    → Direct L7 if combined ≥ 0.7         │
-          └──────────────┬───────────────────────────┘
-                         │
-          ┌──────────────▼──────────────┐
-          │     EventDrivenEngine       │
-          │  12 categories:             │
-          │  M&A arb, PEAD, spinoff,    │
-          │  activist, buyback,         │
-          │  catalyst, etc.             │
-          │  Mitchell-Pulvino M&A       │
-          │  SUE PEAD model             │
-          └──────────────┬──────────────┘
-                         │
-          ┌──────────────▼──────────────┐
-          │        CVREngine            │
-          │  5-model valuation:         │
-          │  binary option, barrier,    │
-          │  milestone tree, Monte      │
-          │  Carlo, real options         │
-          │  liquidity/credit adj       │
-          └──────────────┬──────────────┘
-                         │
-                  TRACK B signals
-                         │
-
-
-  ═══════════════════════╤═══════════════════════════════════════
-                         │
-        TRACK A signals + TRACK B signals
+  │     TRACK A signals  │          TRACK B signals  │
+  │                      │                           │
+  └──────────────────────┼───────────────────────────┘
                          │
                          ▼
                 ALL SIGNALS MERGE
+            (Track A + Track B)
                          │
 ═══════════════════════════╪══════════════════════════════════════════════
  STAGE 3: INTELLIGENCE — ML/AI Decision Layer (5-min cadence)
