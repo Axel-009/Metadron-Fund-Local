@@ -4,13 +4,13 @@ Sits between AlphaOptimizer and ExecutionEngine in the signal pipeline:
     UniverseEngine -> MacroEngine -> MetadronCube -> AlphaOptimizer
         -> **DecisionMatrix** -> ExecutionEngine
 
-Target 95%+ alpha. Six approval gates (weighted):
-    1. ALPHA_QUALITY    (25%)  Alpha signal strength (Sharpe, quality tier)
-    2. REGIME_ALIGNMENT (20%)  Trade alignment with MetadronCube regime
-    3. RISK_BUDGET      (20%)  VaR / leverage / drawdown headroom
-    4. CONVICTION_SCORE (15%)  ML ensemble vote + agent consensus
-    5. MOMENTUM_CONFIRM (10%)  RSI, MACD, breakout confirmation
-    6. LIQUIDITY_CHECK  (10%)  ADV / spread / executable size
+Target 95%+ alpha. Four approval gates (binary pass/fail at composite ≥ 0.55).
+All gates are cross-asset and asset-agnostic — applied uniformly across the
+merged AlphaOptimizer output (equities, options, futures, ETFs):
+    1. FUNDAMENTALS     (40%)  Quality/ROIC/FCF + Graham-Dodd grade + earnings + credit
+    2. FLOW_HEADLINES   (20%)  ETF flow + news sentiment + sector rotation signals
+    3. MACRO_REGIME     (20%)  MetadronCube regime alignment + yield curve + risk state
+    4. MOMENTUM         (20%)  RSI, MACD, breakout, mean-reversion, cross-asset momentum
 
 AlphaBetaUnleashed (Dataset 1) — 1-minute cadence beta management:
     Rm_adjusted = Rm_realized + macro.rm_adjustment
@@ -51,14 +51,10 @@ SPREAD_MAX_BPS = 30.0                 # Max acceptable spread
 
 # Gate definitions
 GATE_CONFIGS = {
-    "ALPHA_QUALITY":       {"weight": 0.22, "threshold": 0.50},
-    "REGIME_ALIGNMENT":    {"weight": 0.17, "threshold": 0.45},
-    "RISK_BUDGET":         {"weight": 0.17, "threshold": 0.40},
-    "CONVICTION_SCORE":    {"weight": 0.12, "threshold": 0.50},
-    "MOMENTUM_CONFIRM":    {"weight": 0.08, "threshold": 0.35},
-    "LIQUIDITY_CHECK":     {"weight": 0.08, "threshold": 0.30},
-    "MC_RISK":             {"weight": 0.08, "threshold": 0.40},
-    "REGIME_PROBABILITY":  {"weight": 0.08, "threshold": 0.35},
+    "FUNDAMENTALS":        {"weight": 0.40, "threshold": 0.45},
+    "FLOW_HEADLINES":      {"weight": 0.20, "threshold": 0.35},
+    "MACRO_REGIME":        {"weight": 0.20, "threshold": 0.40},
+    "MOMENTUM":            {"weight": 0.20, "threshold": 0.35},
 }
 
 # MC risk bounds
@@ -485,12 +481,13 @@ class DecisionMatrix:
         self._approved_count: int = 0
         self._rejected_count: int = 0
 
-    # -- Gate evaluators -----------------------------------------------------
-    def _score_alpha_quality(self, proposal: dict) -> DecisionGate:
-        """Gate 1: Alpha signal strength from AlphaOptimizer."""
-        cfg = GATE_CONFIGS["ALPHA_QUALITY"]
+    # -- Gate evaluators (4-gate cross-asset, asset-agnostic) ----------------
+
+    def _score_fundamentals(self, proposal: dict) -> DecisionGate:
+        """Gate 1 (40%): Fundamentals — quality, ROIC, FCF, Graham-Dodd grade, credit."""
+        cfg = GATE_CONFIGS["FUNDAMENTALS"]
         gate = DecisionGate(
-            gate_name="ALPHA_QUALITY",
+            gate_name="FUNDAMENTALS",
             weight=cfg["weight"],
             pass_threshold=cfg["threshold"],
         )
@@ -526,11 +523,11 @@ class DecisionMatrix:
         gate.evaluate()
         return gate
 
-    def _score_regime_alignment(self, proposal: dict) -> DecisionGate:
-        """Gate 2: Does the trade align with MetadronCube regime?"""
-        cfg = GATE_CONFIGS["REGIME_ALIGNMENT"]
+    def _score_flow_headlines(self, proposal: dict) -> DecisionGate:
+        """Gate 2 (20%): Flow/Headlines — ETF flow + news sentiment + sector rotation."""
+        cfg = GATE_CONFIGS["FLOW_HEADLINES"]
         gate = DecisionGate(
-            gate_name="REGIME_ALIGNMENT",
+            gate_name="FLOW_HEADLINES",
             weight=cfg["weight"],
             pass_threshold=cfg["threshold"],
         )
@@ -553,11 +550,11 @@ class DecisionMatrix:
         gate.evaluate()
         return gate
 
-    def _score_risk_budget(self, proposal: dict) -> DecisionGate:
-        """Gate 3: VaR / leverage / drawdown budget check."""
-        cfg = GATE_CONFIGS["RISK_BUDGET"]
+    def _score_macro_regime(self, proposal: dict) -> DecisionGate:
+        """Gate 3 (20%): Macro/Regime — MetadronCube regime alignment + risk state."""
+        cfg = GATE_CONFIGS["MACRO_REGIME"]
         gate = DecisionGate(
-            gate_name="RISK_BUDGET",
+            gate_name="MACRO_REGIME",
             weight=cfg["weight"],
             pass_threshold=cfg["threshold"],
         )
@@ -625,11 +622,11 @@ class DecisionMatrix:
         gate.evaluate()
         return gate
 
-    def _score_momentum(self, proposal: dict) -> DecisionGate:
-        """Gate 5: Technical momentum confirmation (RSI, MACD, breakout)."""
-        cfg = GATE_CONFIGS["MOMENTUM_CONFIRM"]
+    def _score_momentum_cross_asset(self, proposal: dict) -> DecisionGate:
+        """Gate 4 (20%): Momentum — RSI, MACD, breakout, cross-asset momentum."""
+        cfg = GATE_CONFIGS["MOMENTUM"]
         gate = DecisionGate(
-            gate_name="MOMENTUM_CONFIRM",
+            gate_name="MOMENTUM",
             weight=cfg["weight"],
             pass_threshold=cfg["threshold"],
         )
@@ -881,18 +878,16 @@ class DecisionMatrix:
         ticker = trade_proposal.get("ticker", "UNKNOWN")
         side = trade_proposal.get("side", "long")
 
-        # Run all six gates
+        # Run all 4 gates (cross-asset, asset-agnostic)
         gates = [
-            self._score_alpha_quality(trade_proposal),
-            self._score_regime_alignment(trade_proposal),
-            self._score_risk_budget(trade_proposal),
-            self._score_conviction(trade_proposal),
-            self._score_momentum(trade_proposal),
-            self._score_liquidity(trade_proposal),
+            self._score_fundamentals(trade_proposal),
+            self._score_flow_headlines(trade_proposal),
+            self._score_macro_regime(trade_proposal),
+            self._score_momentum_cross_asset(trade_proposal),
         ]
 
         composite = self.compute_composite_score(gates)
-        all_critical_passed = all(g.passed for g in gates[:3])  # First 3 are critical
+        all_critical_passed = gates[0].passed  # FUNDAMENTALS (40%) is the critical gate
         approved = composite >= self.min_composite and all_critical_passed
 
         rejection_reasons = []
