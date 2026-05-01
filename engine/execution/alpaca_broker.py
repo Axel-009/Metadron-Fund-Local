@@ -1,6 +1,12 @@
-"""AlpacaBroker — Live execution via Alpaca Brokerage API (alpaca-py SDK).
+"""DEPRECATED — AlpacaBroker is no longer used for execution.
 
-Drop-in replacement for PaperBroker. Implements the same
+IBKR is the sole execution broker (see ibkr_broker.py).
+This file is retained ONLY because paper_broker.py data types (Order,
+OrderSide, Position, etc.) are imported from it by other modules.
+Do NOT use AlpacaBroker for new code. All orders route through
+L7UnifiedExecutionSurface → IBKRBroker.
+
+Original: Alpaca Brokerage API (alpaca-py SDK). Implements the same
 interface so ExecutionEngine can swap between paper and Alpaca
 with a single config toggle.
 

@@ -23,7 +23,7 @@ made, trades executed on the broker.
    single-run data flow. Every engine, every connection, every stage.
 
 2. Read `engine/wiring_manifest.py` — this is the machine-readable component
-   registry. Run `python3 -m engine.wiring_manifest` to validate all 42
+   registry. Run `python3 -m engine.wiring_manifest` to validate all 43
    components import correctly and the execution chain is connected.
 
 3. Read `Architecture_DNA/ARCHITECTURE_DNA.md` — full architecture specification
@@ -161,7 +161,7 @@ export FMP_API_KEY=your_fmp_key
 python3 -m engine.wiring_manifest
 ```
 
-This validates all 42 components import correctly, all 58 wiring edges are
+This validates all 43 components import correctly, all 59 wiring edges are
 valid, and all 10 routing rules are displayed. **Verdict must be ALL CHECKS
 PASSED.** If any component fails to import, fix the dependency before
 proceeding. Do NOT skip this step.
@@ -177,7 +177,7 @@ from engine.wiring_manifest import bootstrap_full_system
 system = bootstrap_full_system(nav=100_000, ibkr_paper=True)
 ```
 
-This instantiates all 42 components across 7 phases in the correct order:
+This instantiates all 43 components across 7 phases in the correct order:
 
 **Phase 1 DATA (5 components):**
 - `system.get("universe_engine")` — UniverseEngine: 4-run scan, ~1,600 securities
@@ -186,7 +186,7 @@ This instantiates all 42 components across 7 phases in the correct order:
 - `system.get("data_pool")` — UniversalDataPool: cross-asset dispatcher to engine layers
 - `system.get("news_engine")` — NewsEngine: newsfilter.io WebSocket + FMP fallback
 
-**Phase 2 SIGNALS — Track A (7 components, fed by MetadronCube):**
+**Phase 2 SIGNALS — Track A (8 components, fed by MetadronCube):**
 - `system.get("fed_liquidity")` — FedLiquidityPlumbing: SOFR, reserves, TGA, ON-RRP, M2V
 - `system.get("macro_engine")` — MacroEngine: GMTF regime + sector ranking (7 sub-engines)
 - `system.get("metadron_cube")` — MetadronCube: C(t)=f(L,R,F), 10-layer tensor + KillSwitch
@@ -196,6 +196,7 @@ This instantiates all 42 components across 7 phases in the correct order:
 - `system.get("distressed_assets")` — DistressedAssetEngine: 5-model ensemble
 - `system.get("pattern_discovery")` — PatternDiscoveryEngine: MiroFish + AI-Newton
 - `system.get("adaptive_thresholds")` — AdaptiveThresholdCalibrator: rolling percentile
+- `system.get("fixed_income_engine")` — FixedIncomeEngine: yield curve, credit spreads, FI signals
 
 **Phase 2 SIGNALS — Track B (3 components, fed by NewsEngine, independent):**
 - `system.get("social_prediction")` — MiroMomentumEngine: agent sim on news-flagged tickers

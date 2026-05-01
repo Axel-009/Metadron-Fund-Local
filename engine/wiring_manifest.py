@@ -125,6 +125,10 @@ _reg("adaptive_thresholds",
      "engine.signals.adaptive_thresholds", "AdaptiveThresholdCalibrator",
      2, "SIGNALS", deps=("metadron_cube",),
      desc="Track A — rolling percentile threshold recalibration")
+_reg("fixed_income_engine",
+     "engine.signals.fixed_income_engine", "FixedIncomeEngine",
+     2, "SIGNALS", deps=("metadron_cube", "data_pool"),
+     desc="Track A — yield curve, credit spreads, duration ladder, FI signals")
 
 # Track B signal engines — fed by NewsEngine, independent from Cube
 _reg("social_prediction",
@@ -306,6 +310,7 @@ WIRING_EDGES: List[Tuple[str, str, str]] = [
     ("stat_arb_engine",      "alpha_optimizer",      "pair signals"),
     ("distressed_assets",    "alpha_optimizer",      "distress signals"),
     ("pattern_discovery",    "alpha_optimizer",      "pattern features"),
+    ("fixed_income_engine",  "alpha_optimizer",      "yield curve + credit spread signals"),
     ("event_driven",         "alpha_optimizer",      "event signals (Track B enriched)"),
     ("cvr_engine",           "alpha_optimizer",      "CVR valuations (Track B enriched)"),
     ("social_prediction",    "social_features",      "social snapshot"),

@@ -1,6 +1,10 @@
-"""TradierBroker — Live execution via Tradier Brokerage API.
+"""DEPRECATED — TradierBroker is no longer used for execution.
 
-Drop-in replacement for PaperBroker. Implements the same interface so
+IBKR is the sole execution broker (see ibkr_broker.py).
+This file is retained for reference only. Do NOT use TradierBroker
+for new code. All orders route through L7UnifiedExecutionSurface → IBKRBroker.
+
+Original: Tradier Brokerage API. Implements the same interface so
 ExecutionEngine can swap between paper and live with a single config toggle.
 
 Environment variables:
