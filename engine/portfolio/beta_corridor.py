@@ -1,7 +1,7 @@
 """Beta Corridor Engine — Dataset 1 integration.
 Manages portfolio beta within the 7%-12% return corridor.
 Alpha extracted through IG/Fallen Angel names or RV mispricing.
-Uses OpenBB for market data (paper broker mode).
+Uses OpenBB for market data. Execution via IBKR through L7.
 """
 
 import logging

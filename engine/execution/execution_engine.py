@@ -24,7 +24,7 @@ Deep Trading Features:
     - Intraday momentum decomposition
 
 Risk Gate Manager:
-    - Pre-trade risk validation (8 gates)
+    - Pre-trade risk validation (4-gates)
     - Position-level limits
     - Portfolio-level limits
     - Drawdown circuit breakers
@@ -60,7 +60,7 @@ from .paper_broker import (
     PaperBroker, OrderSide, SignalType, Position,
 )
 
-# Alpaca broker (primary)
+# Legacy broker import (backward compat — IBKR is sole broker via L7)
 try:
     from .alpaca_broker import AlpacaBroker
 except ImportError:
@@ -151,7 +151,7 @@ class MicroPriceEstimate:
 class MicroPriceEngine:
     """Estimate micro-prices from daily OHLCV data (OpenBB).
 
-    In paper broker mode, we estimate bid/ask from high/low range
+    In trade log (reconciliation), we estimate bid/ask from high/low range
     and compute order flow imbalance from close position within range.
     """
 
@@ -1112,7 +1112,7 @@ class ExecutionEngine:
 
     Runs the complete Metadron Capital investment engine with:
     - Deep trading features (micro-price, cross-asset)
-    - 8-gate risk management
+    - 4-gate risk management
     - Smart trade allocation
     - Pipeline performance tracking
     """
@@ -1127,7 +1127,7 @@ class ExecutionEngine:
         # Resolve NAV: use Alpaca account if available, otherwise passed value
         self._requested_nav = initial_nav
 
-        # Broker: Alpaca (primary) — NO silent fallback
+        # Broker: IBKR (sole broker) — NO silent fallback
         self._broker_alert = None
         if broker_type == "alpaca":
             if AlpacaBroker is not None:

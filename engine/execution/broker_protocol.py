@@ -101,7 +101,7 @@ TradierBroker is already fully implemented at:
 
 It satisfies BrokerProtocol (same method surface as PaperBroker /
 AlpacaBroker).  However, it is NOT yet wired into ExecutionEngine or
-L7UnifiedExecutionSurface — there is no broker_type="tradier" path in either
+L7UnifiedExecutionSurface — there is no broker_type="ibkr" path in either
 class's __init__().
 
 To activate TradierBroker, follow Step 3 above with:

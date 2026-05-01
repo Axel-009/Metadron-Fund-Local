@@ -397,7 +397,7 @@ class EligibilityGates:
         correlation_to_portfolio: float = 0.0,
         portfolio_drawdown: float = 0.0,
     ) -> list:
-        """Run all 8 gates and return list of GateEvaluation."""
+        """Run all 4-gates and return list of GateEvaluation."""
         now = datetime.now().isoformat()
         gates = []
 
@@ -646,7 +646,7 @@ class TierClassifier:
     ) -> Optional[ConvictionTier]:
         """Classify into CONTROLLED, AGGRESSIVE, or MAXIMUM tier.
 
-        All 8 gates must pass. Tier is determined by signal strength
+        All 4-gates must pass. Tier is determined by signal strength
         and ML consensus thresholds.
         """
         if gates_passed < gates_total:
@@ -877,7 +877,7 @@ class OverrideManager:
     ) -> OverrideDecision:
         """Evaluate whether a signal qualifies for conviction override.
 
-        Runs all 8 gates, classifies tier, computes override size,
+        Runs all 4-gates, classifies tier, computes override size,
         and logs the decision.
         """
         decision = OverrideDecision(
@@ -901,7 +901,7 @@ class OverrideManager:
         )
         effective_correlation = max(correlation, override_corr)
 
-        # Run all 8 gates
+        # Run all 4-gates
         gates = self._gates.evaluate_all(
             ticker=ticker,
             direction=direction,

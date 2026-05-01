@@ -682,7 +682,7 @@ class DecisionMatrix:
         Parameters
         ----------
         gate_results : list[DecisionGate]
-            Results from all six gates.
+            Results from all 4-gates.
 
         Returns
         -------
@@ -697,7 +697,7 @@ class DecisionMatrix:
 
     # -- Main evaluation methods ---------------------------------------------
     def evaluate_trade(self, trade_proposal: dict) -> dict:
-        """Evaluate a single trade through all six gates.
+        """Evaluate a single trade through all 4-gates.
 
         Parameters
         ----------

@@ -132,7 +132,7 @@ def get_engine() -> "_ExecutionEngine":
         - self.cube        : MetadronCube (signal generation)
         - self.alpha       : AlphaOptimizer (signal ranking)
         - self.beta        : BetaCorridor (futures hedging)
-        - self.risk_gates  : RiskGateManager (8-gate pre-trade check)
+        - self.risk_gates  : RiskGateManager (4-gate pre-trade check)
         - self.ensemble    : MLVoteEnsemble (10-tier weighted vote)
         - self.allocator   : TradeAllocator (position sizing)
 

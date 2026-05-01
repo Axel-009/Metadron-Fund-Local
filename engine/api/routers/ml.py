@@ -917,7 +917,7 @@ async def strategy_signals():
 
     Full pipeline:
         MetadronCube (regime) → VolatilitySurface → StatArbEngine (pairs/mean reversion)
-        → MLVoteEnsemble (10-tier) → DecisionMatrix (6-gate) → execution signals
+        → MLVoteEnsemble (10-tier) → DecisionMatrix (4-gate) → execution signals
 
     Returns a unified view of:
         1. Vol surface summary + anomalies
