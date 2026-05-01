@@ -75,60 +75,98 @@ trade execution to learning feedback.
           │  → regime │ leverage │ beta_cap │ sleeves    │        │
           └──────────────────────────┬──────────────────┘        │
                                      │                           │
-  ┌──────────────────────────────────┼───────────────────────────┤
-  │                                  │                           │
-  │    TRACK A: SIGNAL ENGINES       │    TRACK B: NEWS+MIRO     │
-  │    (from MetadronCube output)    │    (parallel, from        │
-  │                                  │     newsfilter.io)        │
-  │                                  │                           │
-  │  ┌───────────────────┐  ┌───────┴──────────┐   ┌────────────▼────────────┐
-  │  │SecurityAnalysis   │  │ ContagionEngine  │   │  News+MiroMomentum      │
-  │  │Graham-Dodd-Klarman│  │ 21 nodes, 7 shock│   │  Pipeline               │
-  │  │top-down + bottom  │  │ scenarios, multi-│   │                         │
-  │  │up, MoS ≥33%      │  │ step propagation │   │  NewsEngine             │
-  │  └────────┬──────────┘  └────────┬─────────┘   │  .run_miro_on_news_     │
-  │           │                      │              │   tickers():            │
-  │  ┌────────▼──────────┐  ┌────────▼──────────┐   │                         │
-  │  │  StatArbEngine    │  │FixedIncomeEngine  │   │  1. Flag tickers with  │
-  │  │  Medallion mean-  │  │ yield curve,      │   │     breaking news      │
-  │  │  reversion + co-  │  │ credit spreads,   │   │  2. MiroMomentumEngine │
-  │  │  integration pairs│  │ duration ladder   │   │     per flagged ticker │
-  │  └────────┬──────────┘  └────────┬──────────┘   │  3. Combined score:    │
-  │           │                      │              │     40% sentiment      │
-  │  ┌────────▼──────────┐  ┌────────▼──────────┐   │     60% agent sim     │
-  │  │DistressedAsset    │  │PatternDiscovery   │   │                         │
-  │  │5-model ensemble:  │  │MiroFish agent sim │   │  Outputs to:           │
-  │  │Altman Z, Merton   │  │+ AI-Newton PySR   │   │  → EventDrivenEngine  │
-  │  │KMV, Ohlson,       │  │symbolic regression│   │    (enriched signals) │
-  │  │Zmijewski, ML GBM  │  │→ PatternBus       │   │  → CVREngine          │
-  │  └────────┬──────────┘  └────────┬──────────┘   │    (enriched signals) │
-  │           │                      │              │  → MLVoteEnsemble T6  │
-  │  ┌────────▼──────────┐  ┌────────▼──────────┐   │  → Direct L7 if ≥ 0.7│
-  │  │AdaptiveThreshold  │  │  VelocityEngine   │   └──────────┬────────────┘
-  │  │252-day rolling    │  │  money velocity   │              │
-  │  │percentile calib   │  │  tracking         │              │
-  │  └────────┬──────────┘  └────────┬──────────┘   ┌──────────▼──────────┐
-  │           │                      │              │ EventDrivenEngine   │
-  │           └──────────┬───────────┘              │ 12 categories:     │
-  │                      │                          │ M&A arb, PEAD,     │
-  │                      │                          │ spinoff, activist, │
-  │                      │                          │ buyback, catalyst  │
-  │                      │                          │ Mitchell-Pulvino   │
-  │                      │                          │ SUE PEAD model     │
-  │                      │                          └─────────┬──────────┘
-  │                      │                                    │
-  │                      │                          ┌─────────▼──────────┐
-  │                      │                          │    CVREngine       │
-  │                      │                          │ 5-model valuation: │
-  │                      │                          │ binary option,     │
-  │                      │                          │ barrier, milestone,│
-  │                      │                          │ Monte Carlo, real  │
-  │                      │                          │ options            │
-  │                      │                          └─────────┬──────────┘
-  │                      │                                    │
-  │     TRACK A signals  │            TRACK B signals         │
-  │                      │                                    │
-  └──────────────────────┼────────────────────────────────────┘
+  ┌──────────────────────────────────┤
+  │                                  │
+  │    TRACK A: SIGNAL ENGINES       │
+  │    (from MetadronCube output)    │
+  │                                  │
+  │  ┌───────────────────┐  ┌───────┴──────────┐
+  │  │SecurityAnalysis   │  │ ContagionEngine  │
+  │  │Graham-Dodd-Klarman│  │ 21 nodes, 7 shock│
+  │  │top-down + bottom  │  │ scenarios, multi-│
+  │  │up, MoS ≥33%      │  │ step propagation │
+  │  └────────┬──────────┘  └────────┬─────────┘
+  │           │                      │
+  │  ┌────────▼──────────┐  ┌────────▼──────────┐
+  │  │  StatArbEngine    │  │FixedIncomeEngine  │
+  │  │  Medallion mean-  │  │ yield curve,      │
+  │  │  reversion + co-  │  │ credit spreads,   │
+  │  │  integration pairs│  │ duration ladder   │
+  │  └────────┬──────────┘  └────────┬──────────┘
+  │           │                      │
+  │  ┌────────▼──────────┐  ┌────────▼──────────┐
+  │  │DistressedAsset    │  │PatternDiscovery   │
+  │  │5-model ensemble:  │  │MiroFish agent sim │
+  │  │Altman Z, Merton   │  │+ AI-Newton PySR   │
+  │  │KMV, Ohlson,       │  │symbolic regression│
+  │  │Zmijewski, ML GBM  │  │→ PatternBus       │
+  │  └────────┬──────────┘  └────────┬──────────┘
+  │           │                      │
+  │  ┌────────▼──────────┐  ┌────────▼──────────┐
+  │  │AdaptiveThreshold  │  │  VelocityEngine   │
+  │  │252-day rolling    │  │  money velocity   │
+  │  │percentile calib   │  │  tracking         │
+  │  └────────┬──────────┘  └────────┬──────────┘
+  │           │                      │
+  │           └──────────┬───────────┘
+  │                      │
+  │     TRACK A signals  │
+  │                      │
+  │                      │
+  └──────────────────────┘
+
+
+                                        TRACK B: NEWS+MIRO
+                                        (independent — feeds directly from
+                                         NewsEngine in Stage 1, NOT from Cube)
+
+                ┌─────────────────┐
+                │   NewsEngine    │ ◄── from Stage 1 (newsfilter.io)
+                │ (Stage 1 data)  │
+                └────────┬────────┘
+                         │
+          ┌──────────────▼──────────────────────────┐
+          │     News+MiroMomentum Pipeline           │
+          │                                          │
+          │  NewsEngine.run_miro_on_news_tickers():  │
+          │    1. Flag tickers with breaking news    │
+          │    2. MiroMomentumEngine per ticker       │
+          │    3. Combined = 40% sentiment            │
+          │                 + 60% agent sim           │
+          │                                          │
+          │  Outputs to:                             │
+          │    → EventDrivenEngine (enriched)         │
+          │    → CVREngine (enriched)                │
+          │    → MLVoteEnsemble Tier 6               │
+          │    → Direct L7 if combined ≥ 0.7         │
+          └──────────────┬───────────────────────────┘
+                         │
+          ┌──────────────▼──────────────┐
+          │     EventDrivenEngine       │
+          │  12 categories:             │
+          │  M&A arb, PEAD, spinoff,    │
+          │  activist, buyback,         │
+          │  catalyst, etc.             │
+          │  Mitchell-Pulvino M&A       │
+          │  SUE PEAD model             │
+          └──────────────┬──────────────┘
+                         │
+          ┌──────────────▼──────────────┐
+          │        CVREngine            │
+          │  5-model valuation:         │
+          │  binary option, barrier,    │
+          │  milestone tree, Monte      │
+          │  Carlo, real options         │
+          │  liquidity/credit adj       │
+          └──────────────┬──────────────┘
+                         │
+                  TRACK B signals
+                         │
+
+
+  ═══════════════════════╤═══════════════════════════════════════
+                         │
+        TRACK A signals + TRACK B signals
                          │
                          ▼
                 ALL SIGNALS MERGE
