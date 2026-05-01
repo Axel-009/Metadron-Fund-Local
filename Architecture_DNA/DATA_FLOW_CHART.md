@@ -29,10 +29,20 @@ trade execution to learning feedback.
                           ▼                   ▼                   ▼
                 ┌─────────────────┐ ┌─────────────────┐ ┌─────────────────┐
                 │ UniverseEngine  │ │UniversalDataPool│ │   NewsEngine    │
-                │ S&P 1500 + FTSE│ │ cross-asset      │ │ newsfilter.io   │
-                │ 1044 securities │ │ routing to       │ │ + FMP fallback  │
-                │ GICS 4-tier     │ │ engine layers    │ │ sentiment score │
-                │ 26 RV pairs     │ │                  │ │ urgency rating  │
+                │                 │ │ cross-asset      │ │ newsfilter.io   │
+                │ 4-RUN SCAN:     │ │ routing to       │ │ + FMP fallback  │
+                │ Run 1: SP500    │ │ engine layers    │ │ sentiment score │
+                │  (~500 tickers) │ │                  │ │ urgency rating  │
+                │ Run 2: SP400    │ │                  │ │                 │
+                │  (~400 tickers) │ │                  │ │                 │
+                │ Run 3: SP600    │ │                  │ │                 │
+                │  (~600 tickers) │ │                  │ │                 │
+                │ Run 4: ETF + FI │ │                  │ │                 │
+                │  (~70 tickers)  │ │                  │ │                 │
+                │ + 26 RV pairs   │ │                  │ │                 │
+                │                 │ │                  │ │                 │
+                │ Total: ~1,600   │ │                  │ │                 │
+                │ securities      │ │                  │ │                 │
                 └────────┬────────┘ └────────┬─────────┘ └────────┬────────┘
                          │                   │                    │
                          └───────────┬───────┘                    │
@@ -134,28 +144,34 @@ trade execution to learning feedback.
 ═══════════════════════════╪══════════════════════════════════════════════
                         │
      ┌──────────────────▼──────────────────────────────────────┐
-     │              FullUniverseScan (async, 4 runs)           │
+     │      AlphaOptimizer (dual pipeline + universe merge)    │
      │                                                         │
-     │  Run 1: S&P 500  ──→ MiroMomentum per ticker           │
-     │  Run 2: S&P 400  ──→ MiroMomentum per ticker           │
-     │  Run 3: S&P 600  ──→ MiroMomentum per ticker           │
-     │  Run 4: ETF + FI ──→ MiroMomentum per ticker           │
+     │  STEP 1 — Universe Merge:                               │
+     │    Receive all ~1,600 tickers from UniverseEngine       │
+     │    (4 runs: SP500 + SP400 + SP600 + ETF/FI + RV pairs) │
+     │    + all signal outputs from Track A + Track B          │
      │                                                         │
-     │  → aggregate_runs() → dedup → cap enforcement           │
-     │  → AllocationSlate                                      │
-     └──────────────────┬──────────────────────────────────────┘
-                        │
-     ┌──────────────────▼──────────────────────────────────────┐
-     │              AlphaOptimizer (dual pipeline)             │
+     │  STEP 2 — Aggregate + Dedup:                            │
+     │    aggregate_runs(): merge all 4 universe runs          │
+     │    dedup by ticker: keep highest-confidence signal      │
+     │    when same ticker appears across multiple runs        │
      │                                                         │
-     │  Standard: XGBoost(60%) + LinReg(40%) + CAPM(20% blend)│
-     │            + QualityRanker + 22 features + EWMA cov     │
-     │            → SLSQP mean-variance optimization           │
+     │  STEP 3 — Cap Enforcement:                              │
+     │    Enforce allocation bucket limits per ticker:          │
+     │    IG ≤ 40% │ HY ≤ 10% │ Distressed ≤ 10%             │
+     │    TLTW ≤ 15% │ FI ≤ 5% │ CVR ≤ 10%                   │
+     │    Options ≤ 25% notional │ Futures ≤ 15%              │
+     │    Reject tickers that would breach bucket caps         │
      │                                                         │
-     │  Enhanced: WalkForward + FactorLibrary(50+ factors)     │
-     │            + sector MVO                                 │
+     │  STEP 4 — Alpha Scoring (dual pipeline):                │
+     │    Standard: XGBoost(60%) + LinReg(40%) + CAPM(20%)    │
+     │              + QualityRanker + 22 features + EWMA cov   │
+     │              → SLSQP mean-variance optimization         │
+     │    Enhanced: WalkForward + FactorLibrary(50+ factors)   │
+     │              + sector MVO                               │
      │                                                         │
-     │  → AlphaOutput (signals + weights + Sharpe)             │
+     │  → FullUniverseEngine Scan Slate                        │
+     │    (scored, deduped, cap-enforced, allocation-ready)     │
      └──────────────────┬──────────────────────────────────────┘
                         │
      CONCURRENT ML MODELS (all feed into MLVoteEnsemble):
@@ -211,9 +227,9 @@ trade execution to learning feedback.
           ┌─────────────▼─────────────────────────────────────┐
           │    DECISION: Two paths (both route to L7)         │
           │                                                    │
-          │  PATH A: FullUniverseScan slate                    │
+          │  PATH A: FullUniverseEngine Scan Slate              │
+          │    (already deduped, cap-enforced from Stage 3)    │
           │    → AllocationEngine.apply_rules()                │
-          │    → bucket enforcement (IG/HY/Dist/TLTW/FI/CVR)  │
           │    → BetaCorridor (7-12% return corridor)          │
           │                                                    │
           │  PATH B: DecisionMatrix (6-gate)                   │
@@ -371,21 +387,27 @@ trade execution to learning feedback.
  CROSS-STAGE PIPELINES (span multiple stages)
 ═══════════════════════════════════════════════════════════════════════════════
 
-  1. NEWS+MIRO PIPELINE:
-     Stage 1 (NewsEngine) → Stage 2 (run_miro_on_news_tickers: 40% sentiment
-     + 60% agent sim) → Stage 2 (enrich EventDriven + CVR) → Stage 3
-     (MLVoteEnsemble T6) → Stage 4 (direct L7 if ≥ 0.7)
+  1. UNIVERSE → INTELLIGENCE PIPELINE:
+     Stage 1 (UniverseEngine 4-run scan: SP500+SP400+SP600+ETF/FI+RV pairs)
+     → Stage 2 (Track A signals enrich each ticker)
+     → Stage 3 (AlphaOptimizer: aggregate + dedup + cap enforce + score)
+     → Stage 4 (FullUniverseEngine Scan Slate → AllocationEngine)
 
-  2. KILL SWITCH CHAIN:
+  2. NEWS+MIRO PIPELINE:
+     Stage 1 (NewsEngine) → Stage 2 Track B (run_miro_on_news_tickers:
+     40% sentiment + 60% agent sim) → enrich EventDriven + CVR
+     → Stage 3 (MLVoteEnsemble T6) → Stage 4 (direct L7 if ≥ 0.7)
+
+  3. KILL SWITCH CHAIN:
      Stage 2 (MetadronCube.KillSwitch) → Stage 4 (AllocationEngine.cube_kill
      _switch_override) → Stage 4 (L7RiskEngine.G7) → HALT all execution
 
-  3. LEARNING FEEDBACK LOOP:
+  4. LEARNING FEEDBACK LOOP:
      Stage 5 (LearningLoop) → Stage 2 (regime priors, sector weights)
                              → Stage 3 (tier weights, ensemble tuning)
                              → Stage 4 (gate thresholds, slippage model)
 
-  4. OPTIONS EDGE PIPELINE:
+  5. OPTIONS EDGE PIPELINE:
      Stage 3 (signal with market_price) → Stage 4 (OptionsSizer: BS + MC →
      fair value vs market → edge ≥ 200bps? → Kelly sizing → 5+ contracts)
      → Stage 4 (L7 IBKR execution)
