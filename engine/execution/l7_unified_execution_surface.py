@@ -1,22 +1,25 @@
 """L7 Unified Execution Surface — Fused continuous execution arm.
 
 Unifies WonderTrader (micro-price + CTA + routing), ExchangeCore (order matching),
-AlpacaBroker/PaperBroker (bookkeeping), and OptionsEngine (derivatives)
-into one continuous execution arm that routes ALL tradeable products through Alpaca
-.
+IBKRBroker (sole execution broker with native TWAP/VWAP algo), and OptionsEngine
+(derivatives) into one continuous execution arm.
 
 Pipeline position:
     All 29 signal types → L7UnifiedExecutionSurface
-        ├── Equity orders  → WonderTrader micro-price → ExchangeCore matching → AlpacaBroker
-        ├── Options orders → OptionsEngine Greeks → vol-adjusted routing → AlpacaBroker
-        └── Futures orders → Beta corridor hedge → AlpacaBroker
-    Paper log maintained in parallel for ML learning / backtesting.
+        ├── Equity orders  → WonderTrader micro-price → ExchangeCore → IBKR (TWAP/VWAP)
+        ├── Options orders → OptionsEngine Greeks → vol-adjusted → IBKR
+        └── Futures orders → Beta corridor hedge → IBKR
+    Trade log maintained in parallel for reconciliation (generated vs executed).
+
+Broker: IBKR only (native TWAP/VWAP/Adaptive algo orders via ib_insync).
+Trade log: Records all orders the platform generates — used for recon to verify
+           which orders were actually executed on the broker vs generated but not filled.
 
 Design rules (per CLAUDE.md):
     - try/except on ALL external imports — system runs degraded, never broken
     - Pure-numpy fallbacks — no crashes if optional packages missing
-    - Alpaca is PRIMARY execution broker for all products ()
-    - Paper log is ALWAYS maintained for learning loop
+    - IBKR is the SOLE execution broker with native algo routing
+    - Trade log ALWAYS maintained for reconciliation and learning loop
     - Fixed income / FX / liquidity are for research only — never executed here
 """
 
@@ -55,16 +58,17 @@ except ImportError:
 # Internal imports — all guarded
 try:
     from .paper_broker import (
-        PaperBroker, OrderSide, OrderType, OrderStatus,
+        OrderSide, OrderType, OrderStatus,
         SignalType, Order, Position, PortfolioState,
     )
 except ImportError:
-    PaperBroker = None  # type: ignore[assignment,misc]
+    pass
 
 try:
-    from .alpaca_broker import AlpacaBroker
+    from .ibkr_broker import IBKRBroker, IBKRAlgoType
 except ImportError:
-    AlpacaBroker = None  # type: ignore[assignment,misc]
+    IBKRBroker = None  # type: ignore[assignment,misc]
+    IBKRAlgoType = None  # type: ignore[assignment,misc]
 
 try:
     from .wondertrader_engine import WonderTraderEngine, MicroPriceResult, CTASignal
@@ -246,13 +250,13 @@ class TransactionCostAnalyzer:
         1. Spread cost: half-spread at time of order
         2. Market impact: price movement caused by our order
         3. Timing cost: adverse price movement between decision and fill
-        4. Commission: Alpaca commission schedule
+        4. Commission: IBKR tiered commission schedule
     """
 
-    # Commission schedule (Alpaca: $0 everything)
-    EQUITY_COMMISSION_PER_SHARE = 0.0       # Alpaca: $0 equity commissions
-    OPTION_COMMISSION_PER_CONTRACT = 0.0    # Alpaca: $0 option commissions ()
-    FUTURE_COMMISSION_PER_CONTRACT = 1.50   # Estimated
+    # Commission schedule (IBKR tiered pricing)
+    EQUITY_COMMISSION_PER_SHARE = 0.005     # IBKR: ~$0.005/share (min $1)
+    OPTION_COMMISSION_PER_CONTRACT = 0.65   # IBKR: ~$0.65/contract
+    FUTURE_COMMISSION_PER_CONTRACT = 1.25   # IBKR: ~$1.25/contract
 
     # Market impact model: sqrt(qty / ADV) * volatility * impact_coeff
     IMPACT_COEFFICIENT = 0.10
@@ -416,20 +420,20 @@ RESEARCH_ONLY_PREFIXES = frozenset({
 # are NOT in this set — they are tradeable via L7 for alpha extraction.
 # Index ETFs (SPY, QQQ, IWM, DIA, VT, EFA, EEM) are also tradeable.
 
-# Futures that ARE tradeable via Alpaca — equity index + VIX
-TRADEABLE_FUTURES = frozenset({"ES", "NQ", "YM", "RTY", "VX"})
+# Futures tradeable via IBKR — equity index + VIX + treasuries
+TRADEABLE_FUTURES = frozenset({"ES", "NQ", "YM", "RTY", "VX", "ZN", "ZB", "ZF", "ZT"})
 
 
 class MultiProductRouter:
     """Routes orders by product type through the appropriate execution path.
 
-    All products route to AlpacaBroker as primary execution broker.
-    Paper log is always maintained in parallel.
+    All products route to IBKR as sole execution broker with native algo routing.
+    Trade log maintained in parallel for reconciliation.
 
     Routing paths:
-        EQUITY:  → WonderTrader micro-price → ExchangeCore matching → Alpaca
-        OPTION:  → OptionsEngine Greeks check → vol-adjusted limit → Alpaca
-        FUTURE:  → Beta corridor validation → Alpaca
+        EQUITY:  → WonderTrader micro-price → ExchangeCore matching → IBKR (TWAP/VWAP)
+        OPTION:  → OptionsEngine Greeks check → vol-adjusted limit → IBKR
+        FUTURE:  → Beta corridor validation → IBKR
     """
 
     def __init__(self):
@@ -1216,27 +1220,23 @@ class L7UnifiedExecutionSurface:
     """Fused continuous execution arm for Metadron Capital.
 
     Unifies WonderTrader (micro-price + CTA + routing), ExchangeCore (order
-    matching), AlpacaBroker/PaperBroker (bookkeeping), OptionsEngine
+    matching), IBKRBroker (sole execution with native TWAP/VWAP), OptionsEngine
     (derivatives), and QuantStrategyExecutor (12 technical strategies) into
     one continuous execution surface.
 
-    ALL tradeable products (equities, options, futures) route through Alpaca
-    as the primary execution broker (). A paper broker
-    log is ALWAYS maintained in parallel for ML learning, backtesting, and
-    pattern identification.
-
-    Fixed income, FX, and liquidity instruments are for sector allocation /
-    macro research only — never executed here.
+    ALL tradeable products route through IBKR as the sole execution broker.
+    A trade log records every order the platform generates for reconciliation
+    (generated vs actually executed on the broker).
 
     Architecture:
         L7UnifiedExecutionSurface
         ├── Continuous intraday loop (1-min heartbeat from live_loop_orchestrator)
         ├── Multi-product router (equities, options, futures)
-        │   ├── Equity → WonderTrader micro-price → ExchangeCore → Alpaca
-        │   ├── Options → OptionsEngine Greeks → vol-adjusted → Alpaca
-        │   └── Futures → Beta corridor hedge → Alpaca
+        │   ├── Equity → WonderTrader micro-price → ExchangeCore → IBKR (TWAP/VWAP)
+        │   ├── Options → OptionsEngine Greeks → vol-adjusted → IBKR
+        │   └── Futures → Beta corridor hedge → IBKR
         ├── Unified order book (all products, all horizons)
-        ├── Dual broker: Alpaca (primary) + PaperBroker (log)
+        ├── IBKR broker (sole execution) + trade log (reconciliation)
         ├── L7RiskEngine (10 gates, per-execution update)
         ├── TransactionCostAnalyzer (per-trade decomposition)
         ├── ExecutionLearningLoop (pattern identification)
@@ -1301,52 +1301,68 @@ class L7UnifiedExecutionSurface:
 
     def __init__(
         self,
-        initial_cash: float = 1_000.0,
+        initial_cash: float = 100_000.0,
         log_dir: Optional[str] = None,
-        broker_type: str = "alpaca",  # "alpaca" | "paper"
-        alpaca_api_key: Optional[str] = None,
-        alpaca_secret_key: Optional[str] = None,
-        alpaca_paper: bool = True,
-                                enable_paper_log: bool = True,
+        ibkr_host: Optional[str] = None,
+        ibkr_port: Optional[int] = None,
+        ibkr_client_id: Optional[int] = None,
+        ibkr_paper: bool = True,
         daily_target_pct: float = 0.05,
     ):
         self._log_dir = Path(log_dir or "logs/l7_execution")
         self._log_dir.mkdir(parents=True, exist_ok=True)
 
-        # --- Sub-engines (all guarded) ---
-
-        # Primary broker: Alpaca (preferred) (legacy)
+        # --- Broker: IBKR only ---
         self._broker: Optional[object] = None
 
-        if broker_type == "alpaca" and AlpacaBroker is not None:
+        if IBKRBroker is not None:
             try:
-                self._broker = AlpacaBroker(
+                self._broker = IBKRBroker(
                     initial_cash=initial_cash,
-                    log_dir=self._log_dir / "alpaca",
-                    api_key=alpaca_api_key,
-                    secret_key=alpaca_secret_key,
-                    paper=alpaca_paper,
+                    log_dir=self._log_dir / "ibkr",
+                    host=ibkr_host,
+                    port=ibkr_port,
+                    client_id=ibkr_client_id,
+                    paper=ibkr_paper,
                     daily_target_pct=daily_target_pct,
                 )
-                logger.info("L7: AlpacaBroker connected (paper=%s)", alpaca_paper)
+                logger.info("L7: IBKRBroker connected (paper=%s)", ibkr_paper)
             except Exception as e:
-                logger.warning("L7: AlpacaBroker init failed: %s — paper-only mode", e)
+                logger.warning("L7: IBKRBroker init failed: %s — trade-log-only mode", e)
+        else:
+            logger.warning("L7: ib_insync not installed — no live execution")
 
-        
-        
-        
+        # --- Trade log for reconciliation (generated vs executed) ---
+        self._trade_log_dir = self._log_dir / "trade_log"
+        self._trade_log_dir.mkdir(parents=True, exist_ok=True)
+        self._trade_log: deque[dict] = deque(maxlen=50_000)
 
-        # Paper broker log (always on for learning)
-        self._paper: Optional[object] = None
-        if enable_paper_log and PaperBroker is not None:
-            try:
-                self._paper = PaperBroker(
-                    initial_cash=initial_cash,
-                    log_dir=self._log_dir / "paper_log",
-                    daily_target_pct=daily_target_pct,
-                )
-            except Exception as e:
-                logger.warning("L7: PaperBroker init failed: %s", e)
+        # --- Prometheus metrics (optional) ---
+        self._prom = None
+        try:
+            from prometheus_client import Counter, Gauge, Histogram, Summary
+            self._prom = {
+                "orders_total": Counter("l7_orders_total", "Total orders submitted", ["product", "side", "algo"]),
+                "orders_filled": Counter("l7_orders_filled", "Orders filled", ["product", "algo"]),
+                "orders_rejected": Counter("l7_orders_rejected", "Orders rejected", ["reason"]),
+                "fill_latency": Histogram("l7_fill_latency_seconds", "Order fill latency", buckets=[0.1, 0.5, 1, 5, 30, 60, 300]),
+                "slippage_bps": Summary("l7_slippage_bps", "Realized slippage in bps", ["product"]),
+                "nav": Gauge("l7_nav_usd", "Current NAV"),
+                "gross_leverage": Gauge("l7_gross_leverage", "Gross leverage ratio"),
+                "net_leverage": Gauge("l7_net_leverage", "Net leverage ratio"),
+                "position_count": Gauge("l7_position_count", "Active positions"),
+                "daily_pnl": Gauge("l7_daily_pnl_usd", "Daily P&L"),
+                "risk_level": Gauge("l7_risk_level", "Risk level (0=NORMAL,1=ELEVATED,2=HIGH,3=CRITICAL)"),
+                "kill_switch": Gauge("l7_kill_switch_active", "Kill switch status (0/1)"),
+                "twap_orders": Counter("l7_twap_orders", "TWAP algo orders"),
+                "vwap_orders": Counter("l7_vwap_orders", "VWAP algo orders"),
+                "ibkr_connected": Gauge("l7_ibkr_connected", "IBKR connection status (0/1)"),
+                "tca_total_cost_bps": Summary("l7_tca_total_cost_bps", "TCA total cost per trade"),
+                "tca_implementation_shortfall": Summary("l7_tca_is_usd", "Implementation shortfall USD"),
+            }
+            logger.info("L7: Prometheus metrics registered")
+        except ImportError:
+            logger.debug("L7: prometheus_client not installed — metrics disabled")
 
         # WonderTrader: CTA signals + micro-price + routing
         self._wondertrader: Optional[object] = None
@@ -1417,14 +1433,16 @@ class L7UnifiedExecutionSurface:
         self._heartbeat_count: int = 0
         self._daily_target_pct = daily_target_pct
 
+        # Update Prometheus connection gauge
+        if self._prom:
+            self._prom["ibkr_connected"].set(1 if self._broker and hasattr(self._broker, 'is_connected') and self._broker.is_connected else 0)
+
         logger.info(
             "L7UnifiedExecutionSurface initialized: cash=$%.2f, "
-            "alpaca=%s, , paper_log=%s, wondertrader=%s, exchange_core=%s, "
+            "ibkr=%s, trade_log=YES, wondertrader=%s, exchange_core=%s, "
             "options=%s, quant=%s, beta_corridor=%s",
             initial_cash,
-            "YES" if self._broker and AlpacaBroker is not None and isinstance(self._broker, AlpacaBroker) else "NO",
-            
-            "YES" if self._paper else "NO",
+            "YES" if self._broker and hasattr(self._broker, 'is_connected') and self._broker.is_connected else "NO",
             "YES" if self._wondertrader else "NO",
             "YES" if self._exchange_core else "NO",
             "YES" if self._options_engine else "NO",
@@ -1462,8 +1480,8 @@ class L7UnifiedExecutionSurface:
         4. Pre-trade risk gates (10 checks)
         5. Slippage estimation
         6. Product-specific execution path
-        7. Alpaca execution (primary) (fallback) + paper log
-        8. Post-trade risk update
+        7. IBKR execution (TWAP/VWAP/Market) + trade log for recon
+        8. Post-trade risk update + Prometheus metrics
         9. TCA analysis
         10. Learning loop outcome recording
         """
@@ -1539,10 +1557,10 @@ class L7UnifiedExecutionSurface:
         if order.status == "FILLED":
             self._filled_orders.append(order)
 
-            # 7. Also log to paper broker for learning
-            self._log_to_paper(order)
+            # 7. Record in trade log for reconciliation
+            self._log_to_trade_log(order)
 
-            # 8. Post-trade risk update
+            # 8. Post-trade risk update + Prometheus
             nav, cash, positions, daily_pnl, gross_exp, net_exp = self._get_portfolio_state()
             risk_state = self._risk_engine.post_trade_update(
                 order, nav, cash, positions, daily_pnl, gross_exp, net_exp,
@@ -1560,6 +1578,22 @@ class L7UnifiedExecutionSurface:
             # 10. Learning loop
             self._learning.record_outcome(order, tca, regime, daily_vol)
 
+            # Prometheus metric updates
+            if self._prom:
+                risk_level_map = {"NORMAL": 0, "ELEVATED": 1, "HIGH": 2, "CRITICAL": 3}
+                self._prom["nav"].set(nav)
+                self._prom["gross_leverage"].set(risk_state.gross_leverage)
+                self._prom["net_leverage"].set(risk_state.net_leverage)
+                self._prom["position_count"].set(risk_state.position_count)
+                self._prom["daily_pnl"].set(risk_state.daily_pnl)
+                self._prom["risk_level"].set(risk_level_map.get(risk_state.risk_level, 0))
+                self._prom["kill_switch"].set(1 if risk_state.kill_switch_active else 0)
+                pt = order.product_type.value if isinstance(order.product_type, ProductType) else str(order.product_type)
+                self._prom["slippage_bps"].labels(product=pt).observe(tca.total_cost_bps)
+                self._prom["tca_total_cost_bps"].observe(tca.total_cost_bps)
+                self._prom["tca_implementation_shortfall"].observe(abs(tca.implementation_shortfall_usd))
+                self._prom["ibkr_connected"].set(1 if self._broker and hasattr(self._broker, 'is_connected') and self._broker.is_connected else 0)
+
             logger.info(
                 "L7 FILLED: %s %s %d %s @ $%.2f (slip=%.1fbps, cost=%.1fbps, risk=%s)",
                 side, ticker, quantity, order.product_type.value,
@@ -1574,7 +1608,7 @@ class L7UnifiedExecutionSurface:
     # ------------------------------------------------------------------
 
     def _execute_equity(self, order: L7Order, regime: str, arrival_price: float, daily_vol: float):
-        """Equity path: WonderTrader micro-price → ExchangeCore → Alpaca."""
+        """Equity path: WonderTrader micro-price → ExchangeCore → IBKR (TWAP/VWAP)."""
         ticker = order.ticker
         price = arrival_price
 
@@ -1596,11 +1630,11 @@ class L7UnifiedExecutionSurface:
         # Step 3: Compute transaction cost
         order.transaction_cost = abs(order.quantity * fill_price) * (order.slippage_bps / 10_000)
 
-        # Step 4: Route to broker (Alpaca)
+        # Step 4: Route to IBKR
         self._route_to_broker(order, fill_price)
 
     def _execute_option(self, order: L7Order, regime: str, arrival_price: float):
-        """Options path: OptionsEngine Greeks → vol-adjusted → Alpaca."""
+        """Options path: OptionsEngine Greeks → vol-adjusted → IBKR."""
         price = arrival_price
 
         # Options have wider spreads — adjust slippage
@@ -1617,11 +1651,11 @@ class L7UnifiedExecutionSurface:
         fill_price = self._slippage.apply_slippage(price, order.side, order.slippage_bps)
         order.transaction_cost = abs(order.quantity * fill_price) * (order.slippage_bps / 10_000)
 
-        # Route to broker (Alpaca) with option-specific fields
+        # Route to IBKR
         self._route_to_broker(order, fill_price)
 
     def _execute_future(self, order: L7Order, regime: str, arrival_price: float):
-        """Futures path: Beta corridor validation → Alpaca."""
+        """Futures path: Beta corridor validation → IBKR."""
         price = arrival_price
 
         # Futures are tight — lower slippage
@@ -1645,17 +1679,38 @@ class L7UnifiedExecutionSurface:
     # ------------------------------------------------------------------
 
     def _route_to_broker(self, order: L7Order, fill_price: float):
-        """Route order to primary broker (Alpaca). Falls back to paper if unavailable."""
-        # Map L7 side to broker OrderSide
+        """Route order to IBKR with appropriate algo (TWAP/VWAP/Market).
+
+        Records every order in the trade log for reconciliation regardless
+        of execution outcome.
+        """
         side_map = {"BUY": "BUY", "SELL": "SELL", "SHORT": "SHORT", "COVER": "COVER"}
         broker_side = side_map.get(order.side, "BUY")
 
         executed = False
+        algo_used = "MARKET"
 
-        # Primary: broker (Alpaca)
-        if self._broker:
+        # Record in trade log BEFORE execution (generated order)
+        trade_log_entry = {
+            "order_id": order.order_id,
+            "ticker": order.ticker,
+            "side": order.side,
+            "quantity": order.quantity,
+            "product_type": order.product_type.value if isinstance(order.product_type, ProductType) else str(order.product_type),
+            "signal_type": order.signal_type,
+            "routing": order.routing.value if isinstance(order.routing, RoutingStrategy) else str(order.routing),
+            "limit_price": order.limit_price,
+            "arrival_price": order.arrival_price,
+            "micro_price": order.micro_price,
+            "generated_at": _now_iso(),
+            "broker_status": "PENDING",
+            "broker_fill_price": None,
+            "broker_algo": None,
+        }
+
+        # Route to IBKR with algo selection
+        if self._broker and hasattr(self._broker, 'is_connected') and self._broker.is_connected:
             try:
-                # Convert to broker order format
                 from .paper_broker import OrderSide as BrokerSide, SignalType as BrokerSignal
                 t_side = BrokerSide(broker_side)
                 t_signal = BrokerSignal.HOLD
@@ -1664,14 +1719,40 @@ class L7UnifiedExecutionSurface:
                 except (ValueError, KeyError):
                     pass
 
-                result = self._broker.place_order(
-                    ticker=order.ticker,
-                    side=t_side,
-                    quantity=order.quantity,
-                    signal_type=t_signal,
-                    limit_price=order.limit_price,
-                    reason=order.reason or f"L7:{order.signal_type}",
-                )
+                notional = order.quantity * (order.limit_price or order.arrival_price or fill_price)
+
+                # Algo selection based on routing strategy and order size
+                if order.routing == RoutingStrategy.TWAP or (order.routing == RoutingStrategy.SMART and notional > 50_000):
+                    duration = 30 if order.urgency == ExecutionUrgency.MEDIUM else 15 if order.urgency == ExecutionUrgency.HIGH else 60
+                    result = self._broker.place_twap_order(
+                        ticker=order.ticker, side=t_side, quantity=order.quantity,
+                        duration_minutes=duration, signal_type=t_signal,
+                        limit_price=order.limit_price,
+                        reason=order.reason or f"L7:{order.signal_type}",
+                    )
+                    algo_used = "TWAP"
+                    if self._prom:
+                        self._prom["twap_orders"].inc()
+
+                elif order.routing == RoutingStrategy.VWAP:
+                    result = self._broker.place_vwap_order(
+                        ticker=order.ticker, side=t_side, quantity=order.quantity,
+                        duration_minutes=60, max_pct_volume=0.25,
+                        signal_type=t_signal, limit_price=order.limit_price,
+                        reason=order.reason or f"L7:{order.signal_type}",
+                    )
+                    algo_used = "VWAP"
+                    if self._prom:
+                        self._prom["vwap_orders"].inc()
+
+                else:
+                    result = self._broker.place_order(
+                        ticker=order.ticker, side=t_side, quantity=order.quantity,
+                        signal_type=t_signal, limit_price=order.limit_price,
+                        reason=order.reason or f"L7:{order.signal_type}",
+                    )
+                    algo_used = "MARKET"
+
                 if hasattr(result, 'status'):
                     status_str = result.status if isinstance(result.status, str) else result.status.value
                     if status_str in ("FILLED", "PENDING"):
@@ -1680,74 +1761,119 @@ class L7UnifiedExecutionSurface:
                         order.status = "FILLED"
                         order.filled_at = _now_iso()
                         executed = True
-                    else:
-                        order.reason = f"Broker: {getattr(result, 'reason', 'unknown')}"
-            except Exception as e:
-                logger.warning("Broker execution failed for %s: %s — falling back to paper", order.ticker, e)
 
-        # Fallback: paper broker simulation
+                        trade_log_entry["broker_status"] = "FILLED"
+                        trade_log_entry["broker_fill_price"] = order.fill_price
+                    else:
+                        order.reason = f"IBKR: {getattr(result, 'reason', 'unknown')}"
+                        trade_log_entry["broker_status"] = status_str
+
+                trade_log_entry["broker_algo"] = algo_used
+
+                # Prometheus metrics
+                if self._prom:
+                    pt = order.product_type.value if isinstance(order.product_type, ProductType) else str(order.product_type)
+                    self._prom["orders_total"].labels(product=pt, side=order.side, algo=algo_used).inc()
+                    if executed:
+                        self._prom["orders_filled"].labels(product=pt, algo=algo_used).inc()
+
+            except Exception as e:
+                logger.error("IBKR execution failed for %s: %s", order.ticker, e)
+                trade_log_entry["broker_status"] = f"ERROR: {e}"
+                if self._prom:
+                    self._prom["orders_rejected"].labels(reason="ibkr_error").inc()
+
+        # No broker or not connected — log as NOT EXECUTED
         if not executed:
-            logger.error(
-                "🚨 PAPER FALLBACK: %s %s %d @ $%.2f — NO BROKER CONNECTION. "
-                "Order filled in simulation only, NOT reaching any market.",
-                order.side, order.ticker, order.quantity, fill_price
+            trade_log_entry["broker_status"] = "NOT_EXECUTED"
+            logger.warning(
+                "TRADE LOG ONLY: %s %s %d @ $%.2f — IBKR not connected. "
+                "Order recorded for reconciliation but NOT executed on any market.",
+                order.side, order.ticker, order.quantity, fill_price,
             )
+            if self._prom:
+                self._prom["orders_rejected"].labels(reason="no_broker").inc()
             order.fill_price = fill_price
             order.fill_quantity = order.quantity
             order.status = "FILLED"
             order.filled_at = _now_iso()
-            order.reason = (order.reason or "") + " [paper-fallback]"
+            order.reason = (order.reason or "") + " [not-executed-on-broker]"
 
-    # Backward-compat alias
-    
+        # Always persist to trade log for reconciliation
+        self._trade_log.append(trade_log_entry)
+        self._persist_trade_log_entry(trade_log_entry)
 
-    def _log_to_paper(self, order: L7Order):
-        """Log the filled order to paper broker for learning/backtesting."""
-        if not self._paper:
-            return
+    def _persist_trade_log_entry(self, entry: dict):
+        """Append trade log entry to JSONL file for recon audit."""
+        today = datetime.now(timezone.utc).strftime("%Y%m%d")
+        log_file = self._trade_log_dir / f"trade_log_{today}.jsonl"
         try:
-            from .paper_broker import OrderSide as BrokerSide, SignalType as BrokerSignal
-            side = BrokerSide(order.side)
-            signal = BrokerSignal.HOLD
-            try:
-                signal = BrokerSignal(order.signal_type)
-            except (ValueError, KeyError):
-                pass
-            self._paper.place_order(
-                ticker=order.ticker, side=side,
-                quantity=order.quantity, signal_type=signal,
-                limit_price=order.fill_price,
-                reason=f"L7-mirror:{order.order_id}",
-            )
+            with open(log_file, "a") as f:
+                f.write(json.dumps(entry) + "\n")
         except Exception as e:
-            logger.debug("Paper log failed for %s: %s", order.ticker, e)
+            logger.debug("Trade log write failed: %s", e)
+
+    def _log_to_trade_log(self, order: L7Order):
+        """Record a filled order to the reconciliation trade log."""
+        entry = {
+            "order_id": order.order_id,
+            "ticker": order.ticker,
+            "side": order.side,
+            "quantity": order.quantity,
+            "fill_price": order.fill_price,
+            "signal_type": order.signal_type,
+            "status": order.status,
+            "timestamp": _now_iso(),
+        }
+        self._trade_log.append(entry)
+        self._persist_trade_log_entry(entry)
+
+    def get_trade_log(self, last_n: int = 0) -> List[dict]:
+        """Return trade log entries for reconciliation dashboard."""
+        entries = list(self._trade_log)
+        if last_n > 0:
+            entries = entries[-last_n:]
+        return entries
+
+    def get_recon_summary(self) -> dict:
+        """Reconciliation summary: generated vs executed vs failed."""
+        entries = list(self._trade_log)
+        executed = sum(1 for e in entries if e.get("broker_status") == "FILLED")
+        not_executed = sum(1 for e in entries if e.get("broker_status") == "NOT_EXECUTED")
+        errored = sum(1 for e in entries if str(e.get("broker_status", "")).startswith("ERROR"))
+        return {
+            "total_generated": len(entries),
+            "executed_on_broker": executed,
+            "not_executed": not_executed,
+            "errors": errored,
+            "execution_rate": executed / max(len(entries), 1),
+        }
 
     # ------------------------------------------------------------------
     # Price + portfolio state helpers
     # ------------------------------------------------------------------
 
     def _get_price(self, ticker: str) -> float:
-        """Get current price from broker (Alpaca) or paper broker."""
+        """Get current price from IBKR broker."""
+        if self._broker and hasattr(self._broker, 'get_quote'):
+            try:
+                p = self._broker.get_quote(ticker)
+                if p and p > 0:
+                    return p
+            except Exception as e:
+                logger.error("L7: IBKR price fetch failed for ticker=%s: %s", ticker, e, exc_info=True)
         if self._broker and hasattr(self._broker, '_get_current_price'):
             try:
                 p = self._broker._get_current_price(ticker)
                 if p > 0:
                     return p
-            except Exception as e:
-                logger.error("L7: broker price fetch failed for ticker=%s: %s", ticker, e, exc_info=True)
-        if self._paper and hasattr(self._paper, '_get_current_price'):
-            try:
-                p = self._paper._get_current_price(ticker)
-                if p > 0:
-                    return p
-            except Exception as e:
-                logger.error("L7: paper broker price fetch failed for ticker=%s: %s", ticker, e, exc_info=True)
+            except Exception:
+                pass
         return 0.0
 
     def _get_portfolio_state(self) -> Tuple[float, float, dict, float, float, float]:
         """Get (nav, cash, positions, daily_pnl, gross_exposure, net_exposure)."""
-        # Prefer broker state (Alpaca)
-        broker = self._broker or self._paper
+        broker = self._broker
         if broker is None:
             return self._initial_cash, self._initial_cash, {}, 0.0, 0.0, 0.0
 
