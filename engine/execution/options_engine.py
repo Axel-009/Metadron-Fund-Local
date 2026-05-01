@@ -1683,23 +1683,23 @@ def scan_option_chain(
 class OptionsSizer:
     """Compute option contract quantity using Black-Scholes, Monte Carlo, and Kelly.
 
-    Called by AllocationEngine before orders reach L7 execution surface.
-    Ensures option contract counts reflect proper risk/reward sizing
-    rather than falling through to qty=1.
+    ONLY sizes positions where genuine mispricing is detected.
+    If BS theoretical vs market price doesn't show sufficient edge,
+    the position is REJECTED — no allocation.
 
-    Flow:
-        1. BS theoretical price → fair value per contract
-        2. Monte Carlo simulation → win probability and expected payoff
-        3. Kelly criterion → optimal fraction of capital to risk
-        4. Contract count = Kelly-sized dollar amount / (premium × 100)
-
-    The 100 multiplier accounts for standard US equity options (100 shares/contract).
+    This is NOT a budget converter. It is an edge-gated sizer:
+        1. BS + MC establish fair value
+        2. Compare fair value vs market price → edge in bps
+        3. If edge < MIN_EDGE_BPS → REJECT (no allocation)
+        4. Kelly criterion sizes the position based on the detected edge
+        5. Minimum 5 contracts — token positions (1-2) are not meaningful
     """
 
     CONTRACT_MULTIPLIER = 100
     KELLY_MULTIPLIER = 1.5
     MAX_CONTRACTS_PCT_NAV = 0.05
-    MIN_CONTRACTS = 1
+    MIN_CONTRACTS = 5
+    MIN_EDGE_BPS = 200
     MC_SIMS = 10_000
     MC_STEPS = 63
 
@@ -1780,11 +1780,39 @@ class OptionsSizer:
         win_prob = float(np.mean(itm_mask))
         avg_win_payoff = float(np.mean(payoffs[itm_mask])) if np.any(itm_mask) else 0.0
 
-        # 3. Kelly criterion — all values per-share (not per-contract)
-        # Win: average per-share profit when ITM (payoff minus premium paid)
-        # Loss: premium per share (max loss for long option)
-        avg_net_win = max(avg_win_payoff - bs_price, 0.0)
-        avg_loss = bs_price
+        # 3. Edge detection — ONLY proceed if mispricing exists
+        # Fair value = average of BS and MC for robustness
+        fair_value = (bs_price + mc_price) / 2.0
+        entry_price = market_price if market_price and market_price > 0 else None
+
+        if entry_price is None:
+            return {
+                "contracts": 0,
+                "rejected": True,
+                "reject_reason": "no market price — cannot assess mispricing",
+                "bs_price": round(bs_price, 4),
+                "mc_price": round(mc_price, 4),
+                "edge_bps": 0.0,
+            }
+
+        # Edge: how much the option is underpriced (positive = we buy cheap)
+        edge_bps = ((fair_value - entry_price) / entry_price * 10_000) if entry_price > 0 else 0.0
+
+        if abs(edge_bps) < self.MIN_EDGE_BPS:
+            return {
+                "contracts": 0,
+                "rejected": True,
+                "reject_reason": f"insufficient edge ({edge_bps:.0f}bps < {self.MIN_EDGE_BPS}bps minimum)",
+                "bs_price": round(bs_price, 4),
+                "mc_price": round(mc_price, 4),
+                "edge_bps": round(edge_bps, 1),
+                "market_price": entry_price,
+                "fair_value": round(fair_value, 4),
+            }
+
+        # 4. Kelly criterion — size based on detected edge
+        avg_net_win = max(avg_win_payoff - entry_price, 0.0)
+        avg_loss = entry_price
 
         if avg_net_win > 0 and avg_loss > 0 and win_prob > 0:
             win_loss_ratio = avg_net_win / avg_loss
@@ -1793,17 +1821,12 @@ class OptionsSizer:
         else:
             kelly_f = 0.0
 
-        # Scale Kelly by multiplier (aggressive but capped)
         aggressive_kelly = kelly_f * self.KELLY_MULTIPLIER
         aggressive_kelly = min(aggressive_kelly, self.MAX_CONTRACTS_PCT_NAV)
 
-        # 4. Compute contract count
-        # When Kelly detects edge: use Kelly-sized amount (capped by budget)
-        # When Kelly = 0 (no edge / fair-valued): deploy full budget allocation
-        # This ensures the allocation engine's dollar budget gets properly converted
-        # to contracts rather than falling through to qty=1
+        # 5. Contract count — Kelly-sized if edge, otherwise deploy budget on confirmed mispricing
         kelly_dollar_amount = aggressive_kelly * nav
-        cost_per_contract = bs_price * self.CONTRACT_MULTIPLIER
+        cost_per_contract = entry_price * self.CONTRACT_MULTIPLIER
 
         if kelly_f > 0 and kelly_dollar_amount > 0:
             effective_budget = min(kelly_dollar_amount, budget_dollars)
@@ -1811,17 +1834,28 @@ class OptionsSizer:
             effective_budget = budget_dollars
 
         if cost_per_contract > 0:
-            contracts = max(self.MIN_CONTRACTS, int(effective_budget / cost_per_contract))
+            contracts = int(effective_budget / cost_per_contract)
         else:
-            contracts = self.MIN_CONTRACTS
+            contracts = 0
+
+        # Enforce minimum meaningful position
+        if contracts < self.MIN_CONTRACTS:
+            if budget_dollars >= self.MIN_CONTRACTS * cost_per_contract:
+                contracts = self.MIN_CONTRACTS
+            else:
+                return {
+                    "contracts": 0,
+                    "rejected": True,
+                    "reject_reason": f"budget ${budget_dollars:.0f} cannot fund {self.MIN_CONTRACTS} contracts at ${cost_per_contract:.0f} each",
+                    "bs_price": round(bs_price, 4),
+                    "mc_price": round(mc_price, 4),
+                    "edge_bps": round(edge_bps, 1),
+                    "cost_per_contract": round(cost_per_contract, 2),
+                }
 
         # Cap at max % of NAV
-        max_contracts_by_nav = max(1, int((self.MAX_CONTRACTS_PCT_NAV * nav) / max(cost_per_contract, 1)))
+        max_contracts_by_nav = max(self.MIN_CONTRACTS, int((self.MAX_CONTRACTS_PCT_NAV * nav) / max(cost_per_contract, 1)))
         contracts = min(contracts, max_contracts_by_nav)
-
-        # Edge calculation (mispricing)
-        entry_price = market_price if market_price and market_price > 0 else bs_price
-        edge_bps = ((mc_price - entry_price) / entry_price * 10_000) if entry_price > 0 else 0.0
 
         # Greeks for the sized position
         delta = self.bs.delta(spot, strike, T, risk_free, vol, is_call) * contracts
@@ -1831,10 +1865,13 @@ class OptionsSizer:
 
         return {
             "contracts": contracts,
+            "rejected": False,
             "bs_price": round(bs_price, 4),
             "mc_price": round(mc_price, 4),
             "mc_std_error": round(mc_std_error, 4),
             "mc_win_prob": round(win_prob, 4),
+            "fair_value": round(fair_value, 4),
+            "market_price": round(entry_price, 4),
             "kelly_fraction": round(kelly_f, 6),
             "kelly_aggressive": round(aggressive_kelly, 6),
             "kelly_dollar_amount": round(kelly_dollar_amount, 2),
@@ -1855,24 +1892,33 @@ class OptionsSizer:
         vol: float,
         nav: float,
         budget_dollars: float,
+        market_price: float,
         is_call: bool = True,
+        strike: Optional[float] = None,
         otm_pct: float = 0.05,
         expiry_days: int = 30,
         risk_free: float = 0.05,
     ) -> dict:
-        """Convenience: size an OTM option from a signal without knowing the strike.
+        """Size an option position — ONLY if mispricing is detected.
 
-        Computes strike as spot × (1 ± otm_pct) based on call/put.
+        Requires market_price for edge assessment. Without it, the position
+        is rejected — we don't blindly allocate into fairly-priced options.
+
+        Parameters
+        ----------
+        market_price : float
+            Current market price of the option. Required for mispricing detection.
+        strike : float, optional
+            If not provided, computed as spot × (1 ± otm_pct).
         """
-        if is_call:
-            strike = spot * (1 + otm_pct)
-        else:
-            strike = spot * (1 - otm_pct)
+        if strike is None:
+            strike = spot * (1 + otm_pct) if is_call else spot * (1 - otm_pct)
 
         result = self.size_option(
             spot=spot, strike=strike, expiry_days=expiry_days,
             vol=vol, is_call=is_call, nav=nav,
             budget_dollars=budget_dollars, risk_free=risk_free,
+            market_price=market_price,
         )
         result["ticker"] = ticker
         result["strike"] = round(strike, 2)

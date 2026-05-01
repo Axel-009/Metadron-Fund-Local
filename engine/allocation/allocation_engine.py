@@ -685,10 +685,12 @@ class AllocationEngine:
         base_size = min(d_conf * d_cap * d_lev, d_cap)
         dollar_amount = to_float(money(base_size * D(total_capital)))
 
-        # Options: BS + MC + Kelly sizing for proper contract quantity
+        # Options: BS + MC + Kelly sizing — ONLY if mispricing detected
         options_sizing = None
         if bucket in (BucketType.OPTIONS_IG, BucketType.OPTIONS_HY, BucketType.OPTIONS_DISTRESSED):
             options_sizing = self._size_option_contracts(sig, dollar_amount, total_capital)
+            if options_sizing is None:
+                return None
 
         alloc = PositionAllocation(
             ticker=sig.ticker,
@@ -716,14 +718,28 @@ class AllocationEngine:
     def _size_option_contracts(
         self, sig: ScanSignal, budget_dollars: float, nav: float,
     ) -> Optional[dict]:
-        """Use OptionsSizer (BS + MC + Kelly) for proper option contract sizing."""
+        """Use OptionsSizer (BS + MC + Kelly) — ONLY allocates on detected mispricing.
+
+        Requires market_price on the signal for edge assessment. Options without
+        a market price or without sufficient mispricing edge are rejected.
+        """
         if get_options_sizer is None:
             return None
         try:
             sizer = get_options_sizer()
-            spot = getattr(sig, "spot_price", 0) or getattr(sig, "price", 0) or 100.0
+            spot = getattr(sig, "spot_price", 0) or getattr(sig, "price", 0) or 0
             vol = getattr(sig, "implied_vol", 0) or getattr(sig, "volatility", 0) or 0.25
+            market_price = getattr(sig, "market_price", 0) or getattr(sig, "option_price", 0) or 0
+            strike = getattr(sig, "strike", None)
             signal_type = (sig.signal_type or "").upper()
+
+            if spot <= 0:
+                logger.debug("OptionsSizer: %s skipped — no spot price", sig.ticker)
+                return None
+
+            if market_price <= 0:
+                logger.debug("OptionsSizer: %s skipped — no market price for mispricing detection", sig.ticker)
+                return None
 
             is_call = "PUT" not in signal_type
             otm_pct = 0.05
@@ -741,18 +757,28 @@ class AllocationEngine:
                 vol=vol,
                 nav=nav,
                 budget_dollars=budget_dollars,
+                market_price=market_price,
                 is_call=is_call,
+                strike=strike,
                 otm_pct=otm_pct,
                 expiry_days=expiry_days,
             )
+
+            if result.get("rejected"):
+                logger.info(
+                    "OptionsSizer REJECTED %s: %s (edge=%.0fbps)",
+                    sig.ticker, result.get("reject_reason", ""), result.get("edge_bps", 0),
+                )
+                return None
+
             logger.info(
-                "OptionsSizer: %s → %d contracts (BS=$%.2f, MC=$%.2f, Kelly=%.4f, edge=%.0fbps)",
-                sig.ticker, result["contracts"], result["bs_price"],
-                result["mc_price"], result["kelly_fraction"], result["edge_bps"],
+                "OptionsSizer: %s → %d contracts (fair=$%.2f vs mkt=$%.2f, edge=%.0fbps, Kelly=%.4f)",
+                sig.ticker, result["contracts"], result["fair_value"],
+                result["market_price"], result["edge_bps"], result["kelly_fraction"],
             )
             return result
         except Exception as e:
-            logger.warning("OptionsSizer failed for %s: %s — falling back to budget sizing", sig.ticker, e)
+            logger.warning("OptionsSizer failed for %s: %s", sig.ticker, e)
             return None
 
     def _infer_bucket(self, sig: ScanSignal) -> str:
