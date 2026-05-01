@@ -112,7 +112,7 @@ trade execution to learning feedback.
           │  │DistressedAsset    │  │PatternDisc   ││  │ → EventDrivenEngine │
           │  │5-model ensemble:  │  │MiroFish +    ││  │ → CVREngine         │
           │  │Altman Z, Merton   │  │AI-Newton PySR││  │ → MLVoteEnsemble T6 │
-          │  │KMV, Ohlson,       │  │→ PatternBus  ││  │ → Direct L7 if ≥0.7│
+          │  │KMV, Ohlson,       │  │→ PatternBus  ││  │ → MLVoteEnsemble T6│
           │  │Zmijewski, ML GBM  │  │              ││  └─────────┬───────────┘
           │  └────────┬──────────┘  └──────┬───────┘│            │
           │           │                    │        │  ┌─────────▼───────────┐
@@ -242,7 +242,6 @@ trade execution to learning feedback.
           │    → KellySizer (1.5x multiplier)                  │
           │                                                    │
           │  DIRECT ROUTES (high conviction, still via L7):    │
-          │    NEWS_MIRO_DIRECT  (combined ≥ 0.7)              │
           │    EVENT_DIRECT      (conviction ≥ 0.7)            │
           │    CVR_DIRECT        (STRONG_BUY)                  │
           └─────────────┬─────────────────────────────────────┘
@@ -396,7 +395,7 @@ trade execution to learning feedback.
   2. NEWS+MIRO PIPELINE:
      Stage 1 (NewsEngine) → Stage 2 Track B (run_miro_on_news_tickers:
      40% sentiment + 60% agent sim) → enrich EventDriven + CVR
-     → Stage 3 (MLVoteEnsemble T6) → Stage 4 (direct L7 if ≥ 0.7)
+     → Stage 3 (MLVoteEnsemble T6 + AlphaOptimizer convergence)
 
   3. KILL SWITCH CHAIN:
      Stage 2 (MetadronCube.KillSwitch) → Stage 4 (AllocationEngine.cube_kill

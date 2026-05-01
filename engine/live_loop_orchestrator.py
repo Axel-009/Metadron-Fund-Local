@@ -1843,29 +1843,11 @@ class LiveLoopOrchestrator:
                 logger.warning("Execution failed for %s: %s", trade.get("ticker"), exc)
 
         # ── Direct L7 execution for high-conviction signal engines ──────
-        # News+MiroMomentum, EventDriven, and CVR can submit trades directly
-        # to L7 without going through DecisionMatrix, when conviction is high.
+        # EventDriven and CVR can submit trades directly to L7 without going
+        # through DecisionMatrix, when conviction is high.
+        # NEWS_MIRO does NOT bypass DecisionMatrix — it feeds Track B signals
+        # into the AlphaOptimizer and MLVoteEnsemble T6 via the normal pipeline.
         if exec_engine and hasattr(exec_engine, "l7_submit"):
-            # News+MiroMomentum direct trades (combined_score > 0.7 or < -0.7)
-            # Raised from 0.3 to 0.7 to match EVENT_DIRECT conviction threshold —
-            # prevents marginal sentiment from bypassing DecisionMatrix gates.
-            if self._last_news_miro_output:
-                for ticker, sig in self._last_news_miro_output.items():
-                    try:
-                        score = sig.get("combined_score", 0)
-                        if abs(score) >= 0.7:
-                            side = "BUY" if score > 0 else "SELL"
-                            conf = sig.get("miro_confidence", 0.5)
-                            qty = max(1, int(conf * 50))
-                            exec_engine.l7_submit(
-                                ticker=ticker, side=side, quantity=qty,
-                                signal_type="NEWS_MIRO_DIRECT",
-                                regime=regime,
-                            )
-                            executed += 1
-                            pr.data.setdefault("direct_news_miro", []).append(ticker)
-                    except Exception:
-                        pass
 
             # EventDriven direct trades (high-confidence event positions)
             events = self._get("event_driven")
