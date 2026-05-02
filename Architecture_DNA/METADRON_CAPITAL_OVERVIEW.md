@@ -175,7 +175,7 @@ Options are treated as a precision instrument, not a speculative tool:
 
 ### Risk Management
 
-- **Kill Switch**: 20% portfolio drawdown triggers automatic halt
+- **Kill Switch**: 5% portfolio drawdown triggers automatic halt
   (requires manual operator reset)
 - **10-Gate Pre-Trade Risk Check**: Position size, sector concentration,
   daily loss, gross/net leverage, trade throttle, drawdown, cash
@@ -267,7 +267,7 @@ sustained performance:
 |-----------|---------------|
 | Core Engine | Python (pure-numpy fallbacks, no single-framework dependency) |
 | ML Models | XGBoost, scikit-learn, HMM (hmmlearn), pure-numpy PPO |
-| Data Source | OpenBB (34+ providers: FMP, FRED, SEC, CBOE, Polygon) |
+| Data Source | Interactive Brokers (real-time) + OpenBB (historical, 34+ providers) |
 | Execution | Interactive Brokers (TWS/Gateway via ib_insync) |
 | Options Pricing | Black-Scholes + Monte Carlo (10K path simulation) |
 | Monitoring | Prometheus + Grafana |
