@@ -1,11 +1,8 @@
 """IBKRBroker — Live execution via Interactive Brokers TWS/Gateway (ib_insync SDK).
 
-Drop-in replacement for IBKRBroker. Implements the same
-interface so ExecutionEngine and L7UnifiedExecutionSurface can swap
-brokers with a single config toggle.
-
-IBKR advantage over IBKR/IBKR: native TWAP/VWAP algo orders executed
-server-side by IBKR's algo engine — real institutional-grade order splitting.
+Sole execution broker for Metadron Capital. All orders route through
+L7UnifiedExecutionSurface → IBKRBroker. Native TWAP/VWAP algo orders
+executed server-side by IBKR's algo engine.
 
 Environment variables:
     IBKR_HOST           — TWS/Gateway host (default: 127.0.0.1)
@@ -106,8 +103,8 @@ class IBKRAlgoType(str, Enum):
 class IBKRBroker:
     """Interactive Brokers execution broker with native TWAP/VWAP algo support.
 
-    Connects to TWS or IB Gateway via ib_insync. Provides the same interface
-    as IBKRBroker for drop-in swapping.
+    Connects to TWS or IB Gateway via ib_insync. Implements the standard
+    broker interface (place_order, get_positions, sync_account).
 
     Key features:
         - Native TWAP/VWAP algo orders (server-side splitting by IBKR)
