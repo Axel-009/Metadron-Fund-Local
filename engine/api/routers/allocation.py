@@ -305,7 +305,7 @@ def _fallback_rules() -> dict:
     rules = AllocationRules() if ENGINE_AVAILABLE else {}
     if isinstance(rules, dict):
         return {
-            "max_drawdown_kill_switch": 0.20,
+            "max_drawdown_kill_switch": 0.10,
             "ig_equity_pct": 0.40,
             "hy_equity_pct": 0.10,
             "distressed_equity_pct": 0.10,

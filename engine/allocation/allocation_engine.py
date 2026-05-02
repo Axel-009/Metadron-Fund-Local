@@ -108,7 +108,7 @@ class AllocationRules:
 
     Hard rule: If margin required > 8%, reduce IG by 5% (IG → 35%).
     """
-    max_drawdown_kill_switch: float = 0.20
+    max_drawdown_kill_switch: float = 0.10
     # ── Equity sleeves (90% total) ────────────────────────────────
     ig_equity_pct: float = 0.40             # 40% — IG single name equities
     hy_equity_pct: float = 0.10             # 10% — HY equities (separate from distressed)
