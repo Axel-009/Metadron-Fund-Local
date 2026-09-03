@@ -345,8 +345,8 @@ class TestL7UnifiedExecutionSurface:
         )
         assert order.ticker == "AAPL"
         assert order.product_type == ProductType.EQUITY
-        # Should fill (via paper fallback)
-        assert order.status == "FILLED"
+        # No Schwab connection in tests → fully gated, logged as DRY_RUN (never faked as FILLED)
+        assert order.status in ("FILLED", "DRY_RUN")
         assert order.fill_price >= 0
 
     def test_reject_research_only(self):
@@ -370,12 +370,26 @@ class TestL7UnifiedExecutionSurface:
         )
         assert order.product_type == ProductType.OPTION
 
-    def test_future_routing(self):
+    def test_future_rejected(self):
+        """Futures are classified but never routed — Schwab-only, options-only overlay."""
         order = self.l7.submit_order(
             ticker="ES", side="BUY", quantity=1,
             product_type="FUTURE", contract="ES",
         )
         assert order.product_type == ProductType.FUTURE
+        assert order.status == "REJECTED"
+        assert "Futures not supported" in order.reason
+
+    def test_option_notional_uses_multiplier(self):
+        """G1/G8 must see contracts × premium × 100."""
+        order = self.l7.submit_order(
+            ticker="AAPL", side="BUY", quantity=50,
+            product_type="OPTION", option_type="CALL", strike=180.0,
+            expiry="2026-09-10", limit_price=5.0, contract_symbol="AAPL  260910C00180000",
+        )
+        # 50 × $5 × 100 = $25,000 on $10k NAV → G1 breach
+        assert order.status == "REJECTED"
+        assert "G1_POSITION" in order.reason or "G8_CASH" in order.reason
 
     def test_heartbeat(self):
         self.l7.heartbeat(regime="TRENDING")

@@ -89,8 +89,8 @@ class DailySummaryGenerator:
         }
 
         try:
-            from engine.execution.paper_broker import PaperBroker
-            pb = PaperBroker()
+            from engine.execution.schwab_broker import get_shared_broker
+            pb = get_shared_broker()
             pv = pb.get_portfolio_value() if hasattr(pb, "get_portfolio_value") else 0
             nav["paper_nav"] = pv if isinstance(pv, (int, float)) else 0
         except Exception as e:

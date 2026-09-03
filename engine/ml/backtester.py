@@ -26,7 +26,7 @@ try:
     from ..data.yahoo_data import get_adj_close, get_returns
     from ..data.universe_engine import SECTOR_ETFS, RV_PAIRS
     from ..portfolio.beta_corridor import ALPHA, R_LOW, R_HIGH, BETA_MAX, VOL_STANDARD
-    from ..execution.paper_broker import SignalType
+    from ..execution.broker_types import SignalType
 except ImportError:
     get_adj_close = None
     get_returns = None

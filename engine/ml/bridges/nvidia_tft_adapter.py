@@ -15,7 +15,7 @@ except Exception:
     TFT_AVAILABLE = False
 
 try:
-    from engine.execution.paper_broker import SignalType
+    from engine.execution.broker_types import SignalType
 except Exception:
     class SignalType:
         TFT_BUY = "TFT_BUY"

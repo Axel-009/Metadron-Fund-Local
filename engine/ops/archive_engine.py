@@ -50,8 +50,8 @@ class ArchiveEngine:
         trades = []
         # trade log
         try:
-            from engine.execution.paper_broker import PaperBroker
-            pb = PaperBroker()
+            from engine.execution.schwab_broker import get_shared_broker
+            pb = get_shared_broker()
             paper_trades = pb.get_trade_history() if hasattr(pb, "get_trade_history") else []
             for t in paper_trades:
                 rec = dict(t) if isinstance(t, dict) else {}

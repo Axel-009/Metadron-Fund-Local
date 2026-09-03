@@ -11,7 +11,7 @@ from pathlib import Path
 import numpy as np
 
 try:
-    from engine.execution.paper_broker import SignalType
+    from engine.execution.broker_types import SignalType
 except Exception:
     class SignalType:
         ML_AGENT_BUY = "ML_AGENT_BUY"

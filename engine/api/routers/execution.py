@@ -64,8 +64,8 @@ async def reconciliation():
         FUTURES_PREFIXES = ("ES", "NQ", "YM", "CL", "GC", "ZB", "ZN", "6E", "RTY", "VX")
 
         # trade log positions
-        from engine.execution.paper_broker import PaperBroker
-        paper = PaperBroker()
+        from engine.execution.schwab_broker import get_shared_broker
+        paper = get_shared_broker()
         paper_pos = paper.get_all_positions()
         paper_nav = paper.compute_nav()
 
@@ -919,8 +919,8 @@ async def top_of_book():
             broker = eng.broker
         except Exception:
             try:
-                from engine.execution.paper_broker import PaperBroker
-                broker = PaperBroker()
+                from engine.execution.schwab_broker import get_shared_broker
+                broker = get_shared_broker()
             except Exception:
                 pass
 

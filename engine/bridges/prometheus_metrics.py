@@ -1142,8 +1142,8 @@ def _collect_live_metrics(metrics: dict):
 
     # ── Reconciliation Metrics ─────────────────────────────────
     try:
-        from engine.execution.paper_broker import PaperBroker
-        pb = PaperBroker()
+        from engine.execution.schwab_broker import get_shared_broker
+        pb = get_shared_broker()
         paper_pos = pb.get_all_positions()
         paper_nav = pb.compute_nav()
         metrics["recon_paper_nav"].set(paper_nav)

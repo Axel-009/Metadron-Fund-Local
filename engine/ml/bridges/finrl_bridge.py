@@ -16,7 +16,7 @@ except Exception:
     FINRL_AVAILABLE = False
 
 try:
-    from engine.execution.paper_broker import SignalType
+    from engine.execution.broker_types import SignalType
 except Exception:
     class SignalType:
         DRL_AGENT_BUY = "DRL_AGENT_BUY"

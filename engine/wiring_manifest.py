@@ -205,10 +205,30 @@ _reg("exchange_core_engine",
      "engine.execution.exchange_core_engine", "ExchangeCoreEngine",
      5, "EXECUTION", deps=(),
      desc="LMAX Disruptor ring buffer order matching")
-_reg("ibkr_broker",
-     "engine.execution.ibkr_broker", "IBKRBroker",
+_reg("schwab_broker",
+     "engine.execution.schwab_broker", "SchwabBroker",
      5, "EXECUTION", deps=(),
-     desc="SOLE execution broker — IBKR TWS/Gateway via ib_insync")
+     desc="SOLE data + execution broker — Charles Schwab Trader API (equities, ETFs, 1–7 DTE options)")
+_reg("schwab_account_router",
+     "engine.execution.schwab_account_router", "SchwabAccountRouter",
+     5, "EXECUTION", deps=("schwab_broker",),
+     desc="Multi-account mandates: ROTH 25/75 · LLC equities+ETF · INDIVIDUAL 100% options · 20% DD guard")
+_reg("short_dte_options_engine",
+     "engine.execution.short_dte_options_engine", "ShortDTEOptionsEngine",
+     5, "EXECUTION", deps=("schwab_broker",),
+     desc="1–7 DTE options: BSM IV → VolSurface edge → Greeks → MC gate → composite → vega-Kelly → ladder")
+_reg("macro_event_flagger",
+     "engine.execution.macro_event_flagger", "MacroEventFlagger",
+     5, "EXECUTION", deps=("schwab_broker",),
+     desc="Hourly important market / macro-moving event flag → sizing scales + forced rotation review")
+_reg("universe_tranche_scan",
+     "engine.execution.universe_tranche_scan", "UniverseTrancheScanner",
+     5, "EXECUTION", deps=("schwab_broker",),
+     desc="Universe scan as 3 SEPARATE tranches (S&P 500 → SmallCap 600 → remaining ~400) → concurrence vote → slate")
+_reg("eod_allocation_council",
+     "engine.execution.eod_allocation_council", "EODAllocationCouncil",
+     5, "EXECUTION", deps=("l7_execution_surface",),
+     desc="Market-close council on equities/ETF price execution → next-day sleeve allocation")
 _reg("conviction_override",
      "engine.execution.conviction_override", "OverrideManager",
      5, "EXECUTION", deps=("decision_matrix",),
@@ -216,7 +236,7 @@ _reg("conviction_override",
 _reg("l7_execution_surface",
      "engine.execution.l7_unified_execution_surface", "L7UnifiedExecutionSurface",
      5, "EXECUTION",
-     deps=("ibkr_broker", "wondertrader_engine", "exchange_core_engine",
+     deps=("schwab_broker", "wondertrader_engine", "exchange_core_engine",
            "decision_matrix", "conviction_override"),
      desc="MANDATORY routing point — ALL orders flow through here")
 _reg("tca_engine",
@@ -330,7 +350,7 @@ WIRING_EDGES: List[Tuple[str, str, str]] = [
     ("conviction_override",  "l7_execution_surface", "override multipliers"),
     ("wondertrader_engine",  "l7_execution_surface", "micro-price + TWAP/VWAP"),
     ("exchange_core_engine", "l7_execution_surface", "order matching"),
-    ("l7_execution_surface", "ibkr_broker",          "routed orders (TWAP/VWAP/Adaptive/Market)"),
+    ("l7_execution_surface", "schwab_broker",        "routed orders (TWAP/VWAP/Adaptive/Market/Option)"),
     ("l7_execution_surface", "tca_engine",           "fill data → cost decomposition"),
 
     # ── STAGE 5: LEARNING (feedback to Stages 2-4) ────────────────
@@ -372,12 +392,12 @@ ROUTING_RULES: List[RoutingRule] = [
         rule_id="R01",
         description=(
             "ALL orders MUST route through L7UnifiedExecutionSurface.submit_order(). "
-            "NEVER call IBKRBroker.place_order() directly. NEVER use raw requests.post() "
+            "NEVER call SchwabBroker.place_order() directly. NEVER use raw requests.post() "
             "to any broker API."
         ),
         enforced_by="l7_execution_surface",
         check_type="route_through",
-        details="l7_execution_surface -> ibkr_broker",
+        details="l7_execution_surface -> schwab_broker",
     ),
     RoutingRule(
         rule_id="R02",
@@ -453,13 +473,13 @@ ROUTING_RULES: List[RoutingRule] = [
     RoutingRule(
         rule_id="R09",
         description=(
-            "IBKRBroker is the SOLE execution broker. No raw API calls to IBKR, "
-            "Tradier, or any other broker. AlpacaBroker and TradierBroker exist only "
+            "SchwabBroker is the SOLE data + execution broker. No raw API calls to Schwab "
+            "or any other broker. Paper/Tradier/Alpaca/IBKR brokers were deleted "
             "as legacy references — they MUST NOT be used for new execution code."
         ),
-        enforced_by="ibkr_broker",
+        enforced_by="schwab_broker",
         check_type="exclusive_broker",
-        details="Only engine.execution.ibkr_broker.IBKRBroker is permitted",
+        details="Only engine.execution.schwab_broker.SchwabBroker (via SchwabAccountRouter) is permitted",
     ),
     RoutingRule(
         rule_id="R10",
@@ -561,7 +581,7 @@ def validate_wiring() -> Dict[str, Any]:
     # --- Check 3: Execution chain is connected ---
     # L7 must have broker, wondertrader, risk engine, TCA, learning loop
     execution_chain = [
-        ("l7_execution_surface", "ibkr_broker", "L7 -> IBKRBroker"),
+        ("l7_execution_surface", "schwab_broker", "L7 -> SchwabBroker"),
         ("l7_execution_surface", "tca_engine", "L7 -> TCA (via fills)"),
         ("l7_execution_surface", "learning_loop", "L7 -> LearningLoop (feedback)"),
     ]
@@ -586,8 +606,10 @@ def validate_wiring() -> Dict[str, Any]:
     # Scan key files for direct IBKRBroker/IBKRBroker (legacy) usage in
     # execution paths (not legacy references or try/except fallbacks).
     _FORBIDDEN_BROKER_IMPORTS = [
-        ("engine.execution.alpaca_broker", "AlpacaBroker"),
-        ("engine.execution.tradier_broker", "TradierBroker"),
+        ("engine.execution.alpaca_broker", "AlpacaBroker"),   # deleted — any import is a violation
+        ("engine.execution.tradier_broker", "TradierBroker"), # deleted — any import is a violation
+        ("engine.execution.ibkr_broker", "IBKRBroker"),       # deleted — any import is a violation
+        ("engine.execution.paper_broker", "PaperBroker"),     # deleted — any import is a violation
     ]
     _FILES_TO_SCAN = [
         "engine/execution/l7_unified_execution_surface.py",
@@ -616,7 +638,7 @@ def validate_wiring() -> Dict[str, Any]:
                     message=(
                         f"WARNING: {cls_name} referenced in {fpath}. "
                         f"Ensure it is NOT used for live execution — "
-                        f"IBKRBroker via L7 is the sole execution path."
+                        f"SchwabBroker via L7 is the sole execution path."
                     ),
                     severity="WARNING",
                 ))
@@ -713,8 +735,8 @@ class SystemState:
 
     @property
     def broker(self):
-        """Shortcut to IBKRBroker (via L7)."""
-        return self.components.get("ibkr_broker")
+        """Shortcut to SchwabBroker (via L7)."""
+        return self.components.get("schwab_broker")
 
     def summary(self) -> str:
         """One-line summary of boot status."""
@@ -808,10 +830,16 @@ def _instantiate(
         return cls(nav=nav)
     elif cid == "options_engine":
         return cls(nav=nav)
-    elif cid == "ibkr_broker":
-        return cls(initial_cash=nav, paper=ibkr_paper)
+    elif cid == "schwab_broker":
+        # ibkr_paper=True → do not connect (offline DRY_RUN); False → connect using env credentials
+        return cls(initial_cash=nav, connect=not ibkr_paper)
+    elif cid in ("schwab_account_router", "short_dte_options_engine", "macro_event_flagger", "universe_tranche_scan"):
+        return cls(broker=state.get("schwab_broker")) if cid != "schwab_account_router" else cls(connect=not ibkr_paper, initial_cash=nav)
+    elif cid == "eod_allocation_council":
+        from engine.allocation.allocation_engine import AllocationRules
+        return cls(AllocationRules())
     elif cid == "l7_execution_surface":
-        return cls(initial_cash=nav, ibkr_paper=ibkr_paper)
+        return cls(initial_cash=nav, broker=state.get("schwab_broker"), connect_broker=not ibkr_paper)
     elif cid == "data_ingestion":
         # Wire to universe engine if available
         ue = state.get("universe_engine")
@@ -902,7 +930,7 @@ def _print_boot_report(state: SystemState) -> None:
     print("=" * 78)
     print()
     print(f"  NAV:        ${state.nav:,.0f}")
-    print(f"  IBKR mode:  {'PAPER' if state.ibkr_paper else 'LIVE'}")
+    print(f"  Schwab:     {'OFFLINE DRY_RUN' if state.ibkr_paper else 'CONNECTED (orders live only if SCHWAB_LIVE_ORDERS=true)'}")
     print(f"  Booted:     {len(state.components)}/{len(COMPONENTS)}")
     print(f"  Failed:     {len(state.failed)}")
     print()

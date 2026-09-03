@@ -56,9 +56,9 @@ class BucketType(str, Enum):
     OPTIONS_IG = "OPTIONS_IG"              # Options overlay (notional, funded by margin)
     OPTIONS_HY = "OPTIONS_HY"
     OPTIONS_DISTRESSED = "OPTIONS_DISTRESSED"
-    FUTURES_BETA = "FUTURES_BETA"          # Futures beta corridor (ES/NQ, funded by margin)
-    # Levered overlay: 25% options notional + beta corridor futures
-    MARGIN = "MARGIN"                      # 8% — initial margin for options + futures
+    FUTURES_BETA = "FUTURES_BETA"          # RETIRED — kept for enum compat, cap is 0 (no futures; Schwab, options-only overlay)
+    # Levered overlay: 25% options notional (1-7 DTE), strictly options
+    MARGIN = "MARGIN"                      # 8% — initial margin for options
     MONEY_MARKET = "MONEY_MARKET"          # 2% — dry powder (HARD FLOOR)
 
 
@@ -98,13 +98,13 @@ class AllocationRules:
             FI/Macro:           5%  — fixed income + macro signals
             Event/CVR:         10%  — event-driven + contingent value rights
         Margin (8%):
-            Covers 25% options notional + beta corridor futures (ES/NQ)
+            Covers 25% options notional (1-7 DTE overlay; no futures)
         Money Market (2%):
             Hard floor dry powder — NEVER breached
 
     Leverage overlay (funded by margin):
-        Options: 25% notional exposure (IG + HY + Distressed)
-        Futures: Beta corridor positions (EMini or equiv)
+        Options: 25% notional exposure (IG 10 + HY 10 + Distressed 5), 1-7 DTE only
+        Futures: NONE — beta corridor is a directional fair-value input to the options engine
 
     Hard rule: If margin required > 8%, reduce IG by 5% (IG → 35%).
     """
@@ -121,9 +121,11 @@ class AllocationRules:
     options_ig_pct: float = 0.10            #   10% IG options
     options_hy_pct: float = 0.10            #   10% HY options
     options_distressed_pct: float = 0.05    #    5% distressed options
-    futures_beta_pct: float = 0.15          # Beta corridor futures (notional, regime-dependent)
+    futures_beta_pct: float = 0.0           # RETIRED — strictly options; futures never allocated
+    options_dte_min: int = 1                # options overlay tenor window (days)
+    options_dte_max: int = 7
     # ── Margin + dry powder ───────────────────────────────────────
-    margin_pct: float = 0.08               # 8% — IM for options + futures
+    margin_pct: float = 0.08               # 8% — IM for options
     margin_breach_threshold: float = 0.08  # If margin > 8%, reduce IG by 5%
     ig_reduction_on_margin_breach: float = 0.05  # IG drops 40% → 35%
     money_market_pct: float = 0.02          # 2% — HARD FLOOR dry powder
@@ -133,7 +135,7 @@ class AllocationRules:
     cube_kill_switch_override: bool = True  # Honor MetadronCube kill-switch
     # ── Profit-taking rule ────────────────────────────────────────
     profit_take_threshold: float = 0.20     # 20% aggregate P&L → liquidate overlays, lock gains
-    profit_take_overlays_only: bool = True  # Only liquidate options + futures (not equity core)
+    profit_take_overlays_only: bool = True  # Only liquidate options overlay (not equity core)
     timestamp: str = ""
 
     def __post_init__(self):
@@ -154,6 +156,8 @@ class AllocationRules:
             "options_hy_pct": self.options_hy_pct,
             "options_distressed_pct": self.options_distressed_pct,
             "futures_beta_pct": self.futures_beta_pct,
+            "options_dte_min": self.options_dte_min,
+            "options_dte_max": self.options_dte_max,
             "margin_pct": self.margin_pct,
             "margin_breach_threshold": self.margin_breach_threshold,
             "ig_reduction_on_margin_breach": self.ig_reduction_on_margin_breach,
@@ -580,7 +584,7 @@ class AllocationEngine:
             )
 
         # ── Margin breach check ───────────────────────────────────
-        # If margin required for options + futures > threshold, reduce IG by 5%
+        # If margin required for the options overlay > threshold, reduce IG by 5%
         options_margin = (
             self._utilization[BucketType.OPTIONS_IG]
             + self._utilization[BucketType.OPTIONS_HY]
@@ -718,38 +722,41 @@ class AllocationEngine:
     def _size_option_contracts(
         self, sig: ScanSignal, budget_dollars: float, nav: float,
     ) -> Optional[dict]:
-        """Use OptionsSizer (BS + MC + Kelly) — ONLY allocates on detected mispricing.
+        """Options sleeve sizing — 1-7 DTE only.
 
-        Requires market_price on the signal for edge assessment. Options without
-        a market price or without sufficient mispricing edge are rejected.
+        The allocation engine reserves the bucket-capped dollar budget; the actual
+        contract selection/sizing (BSM IV at the contract's own DTE, Monte Carlo of
+        the full scan, RSI/momentum + beta corridor gating, vega-budget Kelly) is
+        done by ``ShortDTEOptionsEngine`` on the live Schwab chain at execution.
+
+        When the signal already carries a quoted contract (market_price), a quick
+        OptionsSizer mispricing pre-check runs here with expiry clipped to 1-7 days.
+        Otherwise the budget is passed through with ``deferred=True``.
         """
-        if get_options_sizer is None:
-            return None
+        spot = getattr(sig, "spot_price", 0) or getattr(sig, "price", 0) or 0
+        market_price = getattr(sig, "market_price", 0) or getattr(sig, "option_price", 0) or 0
+        if get_options_sizer is None or spot <= 0 or market_price <= 0:
+            return {
+                "deferred": True, "engine": "ShortDTEOptionsEngine",
+                "budget_dollars": round(budget_dollars, 2),
+                "dte_window": [self.rules.options_dte_min, self.rules.options_dte_max],
+                "contracts": 0, "note": "contract selection + sizing at execution on live Schwab chain",
+            }
         try:
             sizer = get_options_sizer()
-            spot = getattr(sig, "spot_price", 0) or getattr(sig, "price", 0) or 0
             vol = getattr(sig, "implied_vol", 0) or getattr(sig, "volatility", 0) or 0.25
-            market_price = getattr(sig, "market_price", 0) or getattr(sig, "option_price", 0) or 0
             strike = getattr(sig, "strike", None)
             signal_type = (sig.signal_type or "").upper()
 
-            if spot <= 0:
-                logger.debug("OptionsSizer: %s skipped — no spot price", sig.ticker)
-                return None
-
-            if market_price <= 0:
-                logger.debug("OptionsSizer: %s skipped — no market price for mispricing detection", sig.ticker)
-                return None
-
             is_call = "PUT" not in signal_type
-            otm_pct = 0.05
-            expiry_days = 30
+            otm_pct = 0.02
+            expiry_days = int(getattr(sig, "expiry_days", 0) or self.rules.options_dte_max)
+            expiry_days = max(self.rules.options_dte_min, min(self.rules.options_dte_max, expiry_days))
 
             if "DISTRESSED" in signal_type or "FALLEN" in signal_type:
-                otm_pct = 0.10
-                expiry_days = 45
+                otm_pct = 0.05
             elif "HY" in signal_type:
-                otm_pct = 0.07
+                otm_pct = 0.03
 
             result = sizer.size_from_signal(
                 ticker=sig.ticker,
@@ -795,8 +802,10 @@ class AllocationEngine:
                 return BucketType.OPTIONS_HY
             return BucketType.OPTIONS_IG
 
-        # Futures — beta corridor instruments
+        # Futures — NOT allocated (Schwab API has no futures; overlay is strictly options).
+        # Returning the retired bucket (cap 0) makes _size_position drop the signal.
         if itype == InstrumentType.FUTURE or itype == InstrumentType.DERIVATIVE:
+            logger.info("[AllocationEngine] %s: futures/derivative signal dropped — options-only overlay", ticker)
             return BucketType.FUTURES_BETA
 
         # TLTW / cash payout ETF
@@ -1009,15 +1018,15 @@ class AllocationEngine:
         futures_pnl: float = 0.0,
         equities_pnl: float = 0.0,
         options_pnl: float = 0.0,
+        broker_pnl: Optional[float] = None,
     ) -> dict:
-        """3-layer profit-take check with per-product-class breakdown.
+        """Profit-take check with per-product-class breakdown (Schwab, options-only overlay).
 
-        Layer 1 (IBKR-specific): If IBKR broker P&L > 20% →
-            liquidate OPTIONS only, re-run. IBKR handles equities + options.
-        Layer 2 (Futures-specific): If futures/Rithmic P&L > 20% →
-            liquidate FUTURES only, re-run. Futures on trade log (Rithmic later).
-        Layer 3 (Aggregate): If total P&L > 20% →
-            liquidate ALL overlays (options + futures), re-run.
+        Layer 1 (Options overlay): If options P&L > 20% of NAV → liquidate OPTIONS, re-run.
+        Layer 2 (Broker): If Schwab account P&L (equities + options) > 20% → liquidate OPTIONS.
+        Layer 3 (Aggregate): If total P&L > 20% → liquidate ALL overlays (= options), re-run.
+        Futures layer retired — ``futures_pnl`` is accepted for compatibility and ignored.
+        ``broker_pnl`` supersedes the legacy ``ibkr_pnl`` name.
 
         Equity core positions are always retained. Only overlays liquidated.
 
@@ -1055,6 +1064,9 @@ class AllocationEngine:
         total_pnl = nav - initial_nav
         total_pct = total_pnl / initial_nav
         threshold = self.rules.profit_take_threshold
+        if broker_pnl is not None:
+            ibkr_pnl = broker_pnl
+        futures_pnl = 0.0  # retired
 
         # P&L breakdown (always reported)
         breakdown = {
@@ -1064,6 +1076,7 @@ class AllocationEngine:
             "options": round(options_pnl, 2),
             "futures": round(futures_pnl, 2),
             "ibkr_combined": round(ibkr_pnl, 2),
+            "broker_combined": round(ibkr_pnl, 2),
         }
 
         result = {
@@ -1080,8 +1093,7 @@ class AllocationEngine:
             BucketType.OPTIONS_HY.value,
             BucketType.OPTIONS_DISTRESSED.value,
         ]
-        futures_buckets = [BucketType.FUTURES_BETA.value]
-        all_overlay_buckets = options_buckets + futures_buckets
+        all_overlay_buckets = list(options_buckets)  # strictly options
 
         # ── Layer 3 (checked first — aggregate overrides individual) ──
         if total_pct >= threshold:
@@ -1091,34 +1103,34 @@ class AllocationEngine:
             result["action"] = "PROFIT_TAKE_ALL_OVERLAYS"
             logger.critical(
                 "[AllocationEngine] PROFIT TAKE — AGGREGATE: total P&L %.1f%% >= %.0f%% "
-                "— liquidating ALL overlays (options + futures). Re-run on next scan.",
+                "— liquidating ALL overlays (options). Re-run on next scan.",
                 total_pct * 100, threshold * 100,
             )
             return result
 
-        # ── Layer 1 (IBKRBroker: equities + options) ──
-        if initial_nav > 0 and ibkr_pnl / initial_nav >= threshold:
+        # ── Layer 1 (Options overlay P&L) ──
+        if initial_nav > 0 and options_pnl / initial_nav >= threshold:
             result["triggered"] = True
-            result["trigger_layer"] = "ibkr"
+            result["trigger_layer"] = "options"
             result["liquidate"] = options_buckets
             result["action"] = "PROFIT_TAKE_OPTIONS"
             logger.critical(
-                "[AllocationEngine] PROFIT TAKE — IBKR: IBKR P&L $%.0f (%.1f%%) >= %.0f%% "
+                "[AllocationEngine] PROFIT TAKE — OPTIONS: overlay P&L $%.0f (%.1f%%) >= %.0f%% "
                 "— liquidating OPTIONS. Equities retained. Re-run on next scan.",
-                ibkr_pnl, (ibkr_pnl / initial_nav) * 100, threshold * 100,
+                options_pnl, (options_pnl / initial_nav) * 100, threshold * 100,
             )
             return result
 
-        # ── Layer 2 (Futures: trade log / Rithmic) ──
-        if initial_nav > 0 and futures_pnl / initial_nav >= threshold:
+        # ── Layer 2 (Schwab account: equities + options) ──
+        if initial_nav > 0 and ibkr_pnl / initial_nav >= threshold:
             result["triggered"] = True
-            result["trigger_layer"] = "futures"
-            result["liquidate"] = futures_buckets
-            result["action"] = "PROFIT_TAKE_FUTURES"
+            result["trigger_layer"] = "broker"
+            result["liquidate"] = options_buckets
+            result["action"] = "PROFIT_TAKE_OPTIONS"
             logger.critical(
-                "[AllocationEngine] PROFIT TAKE — FUTURES: Futures P&L $%.0f (%.1f%%) >= %.0f%% "
-                "— liquidating FUTURES. Options + equities retained. Re-run on next scan.",
-                futures_pnl, (futures_pnl / initial_nav) * 100, threshold * 100,
+                "[AllocationEngine] PROFIT TAKE — SCHWAB: account P&L $%.0f (%.1f%%) >= %.0f%% "
+                "— liquidating OPTIONS. Equities retained. Re-run on next scan.",
+                ibkr_pnl, (ibkr_pnl / initial_nav) * 100, threshold * 100,
             )
             return result
 

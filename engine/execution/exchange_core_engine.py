@@ -845,8 +845,8 @@ class ExchangeCoreEngine:
 
     Integration with PaperBroker::
 
-        from engine.execution.paper_broker import PaperBroker
-        broker = PaperBroker()
+        from engine.execution.schwab_broker import get_shared_broker
+        broker = get_shared_broker()
         engine = ExchangeCoreEngine()
         engine.route_to_paper_broker(broker, "AAPL", "BUY", 100, 150.0, "LIMIT")
     """
@@ -1205,10 +1205,10 @@ class ExchangeCoreEngine:
 
         # Map side to PaperBroker OrderSide
         try:
-            from .paper_broker import OrderSide, SignalType as PBSignalType
+            from .broker_types import OrderSide, SignalType as PBSignalType
         except ImportError:
             try:
-                from engine.execution.paper_broker import OrderSide, SignalType as PBSignalType
+                from engine.execution.broker_types import OrderSide, SignalType as PBSignalType
             except ImportError:
                 # Graceful degradation -- return engine result only
                 return {

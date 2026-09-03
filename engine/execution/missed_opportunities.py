@@ -44,7 +44,7 @@ except ImportError:
     MarketRegime = None
 
 try:
-    from ..execution.paper_broker import SignalType
+    from ..execution.broker_types import SignalType
 except ImportError:
     SignalType = None
 

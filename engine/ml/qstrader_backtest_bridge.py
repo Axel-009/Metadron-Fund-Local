@@ -226,7 +226,7 @@ except ImportError:
     UniversalDataPool = None  # type: ignore
 
 try:
-    from engine.execution.paper_broker import SignalType
+    from engine.execution.broker_types import SignalType
 except ImportError:
     class SignalType:  # type: ignore[no-redef]
         LONG = "LONG"

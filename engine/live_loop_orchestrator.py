@@ -10,7 +10,7 @@ Architecture:
     Phase 2  SIGNALS       (1-min cadence)  Macro, Cube, Liquidity, Fundamentals
     Phase 3  INTELLIGENCE  (5-min cadence)  Alpha optimizer, ML ensemble, agents
     Phase 4  DECISION      (on signal Δ)    Decision matrix, beta corridor, options
-    Phase 5  EXECUTION     (on approval)    Execution engine, options, futures hedge
+    Phase 5  EXECUTION     (on approval)    L7 → Schwab: equities + 1-7 DTE options overlay
     Phase 6  LEARNING      (continuous)     Feedback loops, agent gradients
     Phase 7  MONITORING    (5-min cadence)  P&L, risk, anomaly, snapshot
 
@@ -420,6 +420,8 @@ _HEARTBEAT_INTERVAL = 180          # Base: 3 minutes (balances load vs responsiv
 _SIGNAL_CADENCE = 180              # 3 minutes — full signal pipeline
 _INTELLIGENCE_CADENCE = 300        # 5 minutes — alpha optimizer, ML ensemble
 _MONITORING_CADENCE = 300          # 5 minutes — P&L, risk, anomaly
+_FULL_SCAN_CADENCE = 1800          # 30 minutes — FULL scan + allocation rotation until the close
+_MACRO_FLAG_CADENCE = 3600         # 1 hour — important market / macro-moving event flag
 _AFTER_HOURS_INTERVAL = 1800       # 30 minutes
 _OVERNIGHT_INTERVAL = 3600         # 1 hour
 
@@ -462,7 +464,7 @@ class LiveLoopOrchestrator:
     def __init__(
         self,
         initial_nav: float = 1_000_000.0,
-        broker_type: str = "ibkr",
+        broker_type: str = "schwab",
         heartbeat_interval: float = _HEARTBEAT_INTERVAL,
         enable_risk_gates: bool = True,
         enable_persistence: bool = True,
@@ -513,6 +515,18 @@ class LiveLoopOrchestrator:
         self._last_contagion_output: Any = None    # ContagionEngine scenarios
         self._last_fi_output: Any = None           # FixedIncomeEngine summary
         self._last_news_miro_output: Any = None    # News+MiroMomentum enriched signals
+        self._last_options_report: Any = None      # ShortDTEOptionsEngine.last_run of the last cycle
+        self._last_execution_orders: List[dict] = []  # Phase 5 order log (feeds in-chat patch)
+        # 30-min full-scan rotation / hourly macro flag / EOD council
+        self._last_full_scan_time: Optional[datetime] = None
+        self._last_macro_flag_time: Optional[datetime] = None
+        self._last_macro_flag: Any = None
+        self._macro_flagger: Any = None
+        self._last_council_verdict: Any = None
+        self._tranche_scanner: Any = None
+        self._last_tranche_result: Any = None
+        self._full_scan_count = 0
+        self._drawdown_blocks: List[str] = []
         self._scan_task: Any = None                # background asyncio task for run_full_cycle
 
         # Initialize components
@@ -749,6 +763,22 @@ class LiveLoopOrchestrator:
 
         # Phase 1: DATA (every tick)
         self._run_phase_safe(LoopPhase.DATA, self.run_data_phase, result)
+
+        # Hourly: important market / macro-moving event flag (all sessions except weekend)
+        if self._session != MarketSession.WEEKEND and self._should_run_cadence(self._last_macro_flag_time, _MACRO_FLAG_CADENCE):
+            try:
+                self.run_macro_event_flag()
+            except Exception as exc:  # noqa: BLE001
+                logger.warning("macro event flag failed: %s", exc)
+            self._last_macro_flag_time = now
+
+        # Every 30 min until the close: FULL scan + allocation rotation
+        if self._session in (MarketSession.MARKET_OPEN, MarketSession.INTRADAY) and \
+                self._should_run_cadence(self._last_full_scan_time, _FULL_SCAN_CADENCE):
+            self._run_phase_safe(LoopPhase.SIGNALS, self.run_full_scan_rotation, result)
+            self._last_full_scan_time = now
+            self._last_signal_time = now
+            self._last_intelligence_time = now
 
         # Phase 2: SIGNALS (1-min cadence)
         if self._should_run_cadence(self._last_signal_time, _SIGNAL_CADENCE):
@@ -1724,17 +1754,46 @@ class LiveLoopOrchestrator:
         pr.success = True
         return pr
 
-    def run_execution_phase(self) -> PhaseResult:
-        """Phase 5: Order execution.
+    # Direct-route thresholds (architecture ref)
+    NEWS_MIRO_DIRECT_MIN = 0.30     # |combined_score| ≥ 0.3 → NEWS_MIRO_DIRECT
+    EVENT_DIRECT_MIN = 0.70         # confidence ≥ 0.7 → EVENT_DIRECT
+    DIRECT_ROUTE_NAV_PCT = 0.01     # each direct-route order sized at 1 % NAV
 
-        Triggered when approved trades exist:
-            - ExecutionEngine.execute() for equity trades
-            - OptionsEngine for options trades
-            - Beta management via BetaCorridor
+    def _live_nav(self, exec_engine) -> float:
+        try:
+            nav = float(exec_engine.get_nav()) if exec_engine and hasattr(exec_engine, "get_nav") else 0.0
+        except Exception:
+            nav = 0.0
+        if nav <= 0 and exec_engine is not None and hasattr(exec_engine, "broker"):
+            nav = float(getattr(getattr(exec_engine.broker, "state", None), "nav", 0.0) or 0.0)
+        return nav
+
+    def _shares_for(self, exec_engine, ticker: str, dollars: float) -> tuple[int, float]:
+        """Convert a dollar allocation to whole shares at the live Schwab quote."""
+        price = 0.0
+        try:
+            price = float(exec_engine.broker.get_quote(ticker) or 0.0)
+        except Exception:
+            price = 0.0
+        if price <= 0 or dollars <= 0:
+            return 0, price
+        return int(dollars // price), price
+
+    def run_execution_phase(self) -> PhaseResult:
+        """Phase 5: Order execution — everything through L7 → Schwab.
+
+            - Equity slate positions: dollar_amount → shares at live quote → L7.submit_order
+            - Options buckets (OPTIONS_IG/HY/DISTRESSED): ShortDTEOptionsEngine.scan()
+              (1-7 DTE, BSM@DTE, Monte Carlo of the full scan, RSI/momentum + beta
+              corridor direction) → L7.submit_option_intent
+            - Beta corridor: directional fair value only — NO futures / hedge orders
+            - Direct routes: NEWS_MIRO_DIRECT (≥0.3), EVENT_DIRECT (≥0.7), CVR_DIRECT
+            - Convexity put ladder legs that fit the cycle budget
         """
         pr = PhaseResult(phase=LoopPhase.EXECUTION.value, timestamp=datetime.now().isoformat())
         t0 = time.monotonic()
         executed = 0
+        order_log: List[dict] = []
 
         # Check circuit breaker — block execution if risk too high
         if self._circuit_breaker.level in (RiskLevel.CRITICAL, RiskLevel.KILL_SWITCH):
@@ -1750,146 +1809,210 @@ class LiveLoopOrchestrator:
             return pr
 
         exec_engine = self._get("execution_engine")
+        if exec_engine is None or not hasattr(exec_engine, "l7_submit"):
+            pr.data["error"] = "execution_engine unavailable"
+            self._approved_trades.clear()
+            pr.duration_ms = (time.monotonic() - t0) * 1000
+            pr.success = False
+            return pr
 
         # Determine current regime for L7 routing
         regime = "TRENDING"
         if self._last_macro_snapshot and hasattr(self._last_macro_snapshot, "regime"):
-            regime = str(getattr(self._last_macro_snapshot, "regime", "TRENDING"))
+            regime = str(getattr(getattr(self._last_macro_snapshot, "regime", None), "value",
+                                 getattr(self._last_macro_snapshot, "regime", "TRENDING")))
+        nav = self._live_nav(exec_engine)
+
+        options_universe: List[tuple] = []
+        beta_notes: List[str] = []
+
+        # ── 20% drawdown rule — checked BEFORE any add (portfolio + per account) ──
+        dd = self._drawdown_gate(exec_engine, nav)
+        pr.data["drawdown"] = dd
+        if not dd.get("adds_allowed", True):
+            pr.data["blocked_by_drawdown"] = True
+            pr.data["rotation_plan"] = dd.get("rotation_plan", [])
+            logger.critical("Execution adds BLOCKED by 20%% drawdown rule: %s", dd.get("directive"))
+            self._approved_trades = [t for t in self._approved_trades
+                                     if str(t.get("side", "BUY")).upper() in ("SELL", "CLOSE")]
+        add_scale = float(dd.get("add_scale", 1.0))
+
+        # ── hourly macro flag → sizing response ──
+        mf = self._last_macro_flag
+        opt_scale = float(getattr(mf, "options_add_scale", 1.0)) if mf else 1.0
+        eq_scale = float(getattr(mf, "equities_add_scale", 1.0)) if mf else 1.0
+        pr.data["macro_flag"] = getattr(mf, "level", "NONE") if mf else "NONE"
+        pr.data["add_scales"] = {"drawdown": add_scale, "options_macro": opt_scale, "equities_macro": eq_scale}
+
+        def _record(ticker, res, kind, **extra):
+            nonlocal executed
+            status = (res or {}).get("status", "NO_RESULT")
+            order_log.append({"ticker": ticker, "kind": kind, "status": status,
+                              "reason": (res or {}).get("reason", ""), **extra})
+            if status in ("FILLED", "DRY_RUN"):
+                executed += 1
 
         for trade in self._approved_trades:
-            trade_type = trade.get("decision", {}).get("type", "equity") if isinstance(
-                trade.get("decision"), dict
-            ) else "equity"
+            decision = trade.get("decision")
+            trade_type = decision.get("type", "equity") if isinstance(decision, dict) else "equity"
+            ticker = trade.get("ticker", "") or ""
+            bucket = str(trade.get("bucket") or (decision.get("bucket", "") if isinstance(decision, dict) else "") or "")
+            instrument_type = str(trade.get("instrument_type", "") or "").upper()
+            signal = trade.get("signal")
 
             try:
-                # L7 Unified Execution Surface — routes ALL products
-                if exec_engine and hasattr(exec_engine, "l7") and exec_engine.l7 is not None:
-                    ticker = trade.get("ticker", "")
-                    signal = trade.get("signal")
-                    if not ticker:
-                        continue
+                # Beta corridor: directional input only — never an order
+                if trade_type == "beta_hedge":
+                    beta_notes.append(f"{ticker}: corridor action {getattr(signal, 'action', 'HOLD')} "
+                                      f"(not traded — used as options direction bias)")
+                    continue
 
-                    # Determine side + quantity from signal
-                    alpha_pred = getattr(signal, "alpha_pred", 0.0)
-                    weight = getattr(signal, "weight", 0.0)
-                    qty = max(1, int(abs(weight) * 100)) if weight != 0 else 1
+                # Options sleeves → collected for the short-DTE scan
+                if trade_type == "options" or instrument_type in ("OPTION", "OPTIONS") or bucket.startswith("OPTIONS_"):
+                    und = ticker or getattr(signal, "underlying", "")
+                    if und:
+                        options_universe.append((und, bucket if bucket.startswith("OPTIONS_") else "OPTIONS_IG"))
+                    continue
 
-                    if trade_type == "options":
-                        side = "BUY" if alpha_pred >= 0 else "SELL"
-                        exec_engine.l7_submit(
-                            ticker=ticker, side=side, quantity=qty,
-                            signal_type=getattr(signal, "signal_type", "HOLD"),
-                            regime=regime, product_type="OPTION",
-                        )
-                    elif trade_type == "beta_hedge":
-                        action = getattr(signal, "action", "HOLD")
-                        instrument = getattr(signal, "instrument", "SPY")
-                        hedge_qty = getattr(signal, "quantity", 0)
-                        if action != "HOLD" and hedge_qty > 0:
-                            exec_engine.l7_submit(
-                                ticker=instrument, side=action, quantity=hedge_qty,
-                                signal_type="MICRO_PRICE_BUY" if action == "BUY" else "MICRO_PRICE_SELL",
-                                regime=regime, product_type="FUTURE" if instrument in ("ES", "NQ", "VX") else "EQUITY",
-                            )
-                    else:
-                        side = "BUY" if (alpha_pred > 0 or weight > 0) else "SELL"
-                        if alpha_pred == 0 and weight == 0:
-                            continue
-                        exec_engine.l7_submit(
-                            ticker=ticker, side=side, quantity=qty,
-                            signal_type=getattr(signal, "signal_type", "HOLD"),
-                            regime=regime,
-                        )
-                    executed += 1
+                if not ticker:
+                    continue
 
-                # Fallback: direct broker execution (when L7 not available)
-                elif exec_engine:
-                    if trade_type == "options":
-                        options = self._get("options_engine")
-                        if options and hasattr(options, "execute"):
-                            options.execute(trade["signal"])
-                            executed += 1
-                        elif options and hasattr(options, "evaluate_strategy"):
-                            options.evaluate_strategy(trade["signal"])
-                            executed += 1
+                # Equity: size from the allocation slate's dollar amount at the live quote
+                dollars = float(trade.get("dollar_amount") or 0.0)
+                if dollars <= 0 and signal is not None:
+                    dollars = abs(float(getattr(signal, "weight", 0.0) or 0.0)) * nav
+                dollars *= add_scale * eq_scale
+                qty, price = self._shares_for(exec_engine, ticker, dollars)
+                if qty <= 0:
+                    order_log.append({"ticker": ticker, "kind": "EQUITY", "status": "SKIPPED",
+                                      "reason": f"dollar_amount ${dollars:,.0f} < 1 share @ ${price:.2f}" if price > 0
+                                      else "no Schwab quote"})
+                    continue
 
-                    elif trade_type == "beta_hedge":
-                        if hasattr(exec_engine, "broker"):
-                            signal = trade["signal"]
-                            action = getattr(signal, "action", "HOLD")
-                            qty = getattr(signal, "quantity", 0)
-                            instrument = getattr(signal, "instrument", "SPY")
-                            if action != "HOLD" and qty > 0:
-                                if action == "BUY":
-                                    exec_engine.broker.buy(instrument, qty)
-                                elif action == "SELL":
-                                    exec_engine.broker.sell(instrument, qty)
-                                executed += 1
-
-                    else:
-                        ticker = trade.get("ticker", "")
-                        signal = trade.get("signal")
-                        if ticker and hasattr(exec_engine, "broker"):
-                            alpha_pred = getattr(signal, "alpha_pred", 0.0)
-                            weight = getattr(signal, "weight", 0.0)
-                            if alpha_pred > 0 or weight > 0:
-                                exec_engine.broker.buy(ticker, max(1, int(abs(weight) * 100)))
-                            elif alpha_pred < 0:
-                                exec_engine.broker.sell(ticker, max(1, int(abs(weight) * 100)))
-                            executed += 1
+                direction = float(trade.get("alpha_score") or getattr(signal, "alpha_pred", 0.0) or
+                                  trade.get("position_size") or getattr(signal, "weight", 0.0) or 0.0)
+                if direction == 0:
+                    direction = 1.0  # slate positions are long-only unless told otherwise
+                side = "BUY" if direction > 0 else "SELL"
+                sig_type = getattr(signal, "signal_type", None) or ("QUALITY_BUY" if side == "BUY" else "QUALITY_SELL")
+                res = exec_engine.l7_submit(
+                    ticker=ticker, side=side, quantity=qty, signal_type=str(sig_type), regime=regime,
+                    sector=bucket, reason=f"slate {bucket} ${dollars:,.0f} conf={trade.get('confidence', 0)}",
+                )
+                _record(ticker, res, "EQUITY", bucket=bucket, qty=qty, price=price, side=side)
 
             except Exception as exc:
-                pr.errors.append(f"{trade.get('ticker', '?')}: {exc}")
-                logger.warning("Execution failed for %s: %s", trade.get("ticker"), exc)
+                pr.errors.append(f"{ticker or '?'}: {exc}")
+                logger.warning("Execution failed for %s: %s", ticker, exc)
 
-        # ── Direct L7 execution for high-conviction signal engines ──────
-        # EventDriven and CVR can submit trades directly to L7 without going
-        # through DecisionMatrix, when conviction is high.
-        # NEWS_MIRO does NOT bypass DecisionMatrix — it feeds Track B signals
-        # into the AlphaOptimizer and MLVoteEnsemble T6 via the normal pipeline.
-        if exec_engine and hasattr(exec_engine, "l7_submit"):
+        # ── Options overlay: 1-7 DTE engine on the options buckets ─────────────
+        options_report = None
+        sd = getattr(exec_engine, "options_engine_short_dte", None)
+        if sd is not None and options_universe and opt_scale * add_scale <= 0:
+            pr.data["options_skipped"] = f"macro flag {pr.data['macro_flag']} / drawdown {dd.get('level')} — no new options adds"
+            options_universe = []
+        if sd is not None and options_universe:
+            try:
+                sd.regime = regime if regime in ("CALM", "NORMAL", "STRESSED", "CRISIS") else sd.regime
+                seen = set()
+                universe = [(t, b) for t, b in options_universe if not (t in seen or seen.add(t))]
+                # options budget = mandate headroom (Individual 100% / Roth 25%) × macro × drawdown scale
+                opt_nav = nav
+                broker = getattr(exec_engine, "broker", None)
+                if hasattr(broker, "options_budget"):
+                    budget = sum(broker.options_budget().values())
+                    opt_nav = budget / 0.25 if budget > 0 else 0.0   # engine caps 25% notional of the NAV it is given
+                scan = sd.scan(universe, nav=opt_nav * opt_scale * add_scale)
+                options_report = scan["report"]
+                for intent in scan["intents"]:
+                    res = exec_engine.l7_submit_option_intent(intent, regime=regime)
+                    _record(intent.ticker, res, "OPTION", bucket=intent.bucket, contract=intent.contract_symbol,
+                            contracts=intent.contracts, limit=intent.limit_price, dte=intent.dte,
+                            composite=round(intent.composite, 3), edge_bps=round(intent.edge_bps, 1))
+                for leg in (scan.get("ladder") or {}).get("placeable", []):
+                    res = exec_engine.l7_submit(
+                        ticker="SPY", side="BUY", quantity=int(leg["contracts"]), product_type="OPTION",
+                        option_type="PUT", strike=float(leg["strike"]), expiry=str(leg.get("expiry", "")),
+                        limit_price=float(leg["limit_price"]), signal_type="CONVEXITY_HEDGE", regime=regime,
+                        contract_symbol=leg["contract_symbol"], sector="HEDGE",
+                        reason="ConvexityHedgeManager put ladder",
+                    )
+                    _record("SPY", res, "HEDGE", contract=leg["contract_symbol"], contracts=leg["contracts"],
+                            limit=leg["limit_price"])
+            except Exception as exc:
+                pr.errors.append(f"options overlay: {exc}")
+                logger.warning("Options overlay failed: %s", exc)
+        elif options_universe:
+            pr.errors.append("options overlay: ShortDTEOptionsEngine unavailable")
+        self._last_options_report = options_report
 
-            # EventDriven direct trades (high-confidence event positions)
-            events = self._get("event_driven")
-            if events and hasattr(events, "get_active_positions"):
-                try:
-                    positions = events.get_active_positions() if callable(getattr(events, "get_active_positions", None)) else []
-                    for pos in positions[:5]:
-                        ticker = getattr(pos, "ticker", "")
-                        conf = getattr(pos, "confidence", 0)
-                        if ticker and conf >= 0.7:
-                            signal_dir = getattr(pos, "signal", "HOLD")
-                            if signal_dir in ("LONG", "BUY"):
-                                exec_engine.l7_submit(ticker=ticker, side="BUY", quantity=max(1, int(conf * 30)), signal_type="EVENT_DIRECT", regime=regime)
-                                executed += 1
-                            elif signal_dir in ("SHORT", "SELL"):
-                                exec_engine.l7_submit(ticker=ticker, side="SELL", quantity=max(1, int(conf * 30)), signal_type="EVENT_DIRECT", regime=regime)
-                                executed += 1
-                            pr.data.setdefault("direct_event", []).append(ticker)
-                except Exception:
-                    pass
+        # ── Direct L7 routes for high-conviction signal engines ──────────────
+        direct_qty = lambda t: self._shares_for(exec_engine, t, nav * self.DIRECT_ROUTE_NAV_PCT)[0]
 
-            # CVR direct trades (strong buy/sell valuations)
-            cvr = self._get("cvr_engine")
-            if cvr and hasattr(cvr, "get_active_instruments"):
-                try:
-                    instruments = cvr.get_active_instruments() if callable(getattr(cvr, "get_active_instruments", None)) else []
-                    for inst in instruments[:3]:
-                        ticker = getattr(inst, "ticker", "")
-                        signal = getattr(inst, "signal", "HOLD")
-                        if ticker and signal in ("STRONG_BUY", "BUY"):
-                            exec_engine.l7_submit(ticker=ticker, side="BUY", quantity=10, signal_type="CVR_DIRECT", regime=regime)
-                            executed += 1
-                            pr.data.setdefault("direct_cvr", []).append(ticker)
-                        elif ticker and signal in ("SELL", "AVOID"):
-                            exec_engine.l7_submit(ticker=ticker, side="SELL", quantity=10, signal_type="CVR_DIRECT", regime=regime)
-                            executed += 1
-                            pr.data.setdefault("direct_cvr", []).append(ticker)
-                except Exception:
-                    pass
+        # NEWS_MIRO_DIRECT (|combined| ≥ 0.3)
+        nm = self._last_news_miro_output or {}
+        try:
+            ranked = sorted(nm.values(), key=lambda v: abs(float(v.get("combined_score", 0.0))), reverse=True)
+            for v in ranked[:5]:
+                score = float(v.get("combined_score", 0.0))
+                t = v.get("ticker", "")
+                if not t or abs(score) < self.NEWS_MIRO_DIRECT_MIN or v.get("signal") == "HOLD":
+                    continue
+                q = direct_qty(t)
+                if q <= 0:
+                    continue
+                res = exec_engine.l7_submit(ticker=t, side="BUY" if score > 0 else "SELL", quantity=q,
+                                            signal_type="NEWS_MIRO_DIRECT", regime=regime,
+                                            reason=f"news+miro combined={score:+.2f}")
+                _record(t, res, "NEWS_MIRO_DIRECT", score=score, qty=q)
+                pr.data.setdefault("direct_news_miro", []).append(t)
+        except Exception as exc:
+            logger.debug("NEWS_MIRO_DIRECT error: %s", exc)
 
-        # L7 heartbeat (every iteration)
-        if exec_engine and hasattr(exec_engine, "l7_heartbeat"):
+        # EVENT_DIRECT (confidence ≥ 0.7)
+        events = self._get("event_driven")
+        if events and hasattr(events, "get_active_positions"):
+            try:
+                positions = events.get_active_positions() if callable(getattr(events, "get_active_positions", None)) else []
+                for pos in positions[:5]:
+                    t = getattr(pos, "ticker", "")
+                    conf = float(getattr(pos, "confidence", 0) or 0)
+                    if not t or conf < self.EVENT_DIRECT_MIN:
+                        continue
+                    signal_dir = getattr(pos, "signal", "HOLD")
+                    q = direct_qty(t)
+                    if q <= 0:
+                        continue
+                    if signal_dir in ("LONG", "BUY"):
+                        _record(t, exec_engine.l7_submit(ticker=t, side="BUY", quantity=q, signal_type="EVENT_DIRECT", regime=regime), "EVENT_DIRECT", conf=conf)
+                    elif signal_dir in ("SHORT", "SELL"):
+                        _record(t, exec_engine.l7_submit(ticker=t, side="SELL", quantity=q, signal_type="EVENT_DIRECT", regime=regime), "EVENT_DIRECT", conf=conf)
+                    pr.data.setdefault("direct_event", []).append(t)
+            except Exception as exc:
+                logger.debug("EVENT_DIRECT error: %s", exc)
+
+        # CVR_DIRECT (STRONG_BUY / SELL valuations)
+        cvr = self._get("cvr_engine")
+        if cvr and hasattr(cvr, "get_active_instruments"):
+            try:
+                instruments = cvr.get_active_instruments() if callable(getattr(cvr, "get_active_instruments", None)) else []
+                for inst in instruments[:3]:
+                    t = getattr(inst, "ticker", "")
+                    sig = getattr(inst, "signal", "HOLD")
+                    q = direct_qty(t) if t else 0
+                    if q <= 0:
+                        continue
+                    if sig in ("STRONG_BUY", "BUY"):
+                        _record(t, exec_engine.l7_submit(ticker=t, side="BUY", quantity=q, signal_type="CVR_DIRECT", regime=regime), "CVR_DIRECT", signal=sig)
+                        pr.data.setdefault("direct_cvr", []).append(t)
+                    elif sig in ("SELL", "AVOID"):
+                        _record(t, exec_engine.l7_submit(ticker=t, side="SELL", quantity=q, signal_type="CVR_DIRECT", regime=regime), "CVR_DIRECT", signal=sig)
+                        pr.data.setdefault("direct_cvr", []).append(t)
+            except Exception as exc:
+                logger.debug("CVR_DIRECT error: %s", exc)
+
+        # L7 heartbeat (every iteration) — also fires Schwab TWAP slices / position sync
+        if hasattr(exec_engine, "l7_heartbeat"):
             try:
                 exec_engine.l7_heartbeat(regime=regime)
             except Exception as exc:
@@ -1897,7 +2020,17 @@ class LiveLoopOrchestrator:
 
         pr.data["trades_executed"] = executed
         pr.data["trades_attempted"] = len(self._approved_trades)
+        pr.data["orders"] = order_log
+        pr.data["beta_corridor_notes"] = beta_notes
+        pr.data["options_overlay"] = {
+            "universe": sorted({t for t, _ in options_universe}),
+            "intents": len((options_report or {}).get("intents", [])),
+            "market": (options_report or {}).get("market", {}),
+        }
+        pr.data["nav"] = nav
+        pr.data["broker"] = exec_engine.get_broker_status() if hasattr(exec_engine, "get_broker_status") else {}
         pr.items_processed = executed
+        self._last_execution_orders = order_log
 
         # Clear executed trades
         self._approved_trades.clear()
@@ -2350,16 +2483,18 @@ class LiveLoopOrchestrator:
                             "quantity": getattr(pos, "quantity", 0),
                             "market_value": getattr(pos, "market_value", 0),
                         }
-                    # IBKRBroker positions (if live broker available)
+                    # Schwab account positions (fresh sync) vs engine-side state
                     broker_positions = {}
-                    if hasattr(exec_engine, "_ibkr_broker") and exec_engine._ibkr_broker:
-                        ab = exec_engine._ibkr_broker
-                        if hasattr(ab, "state") and hasattr(ab.state, "positions"):
-                            for t, pos in ab.state.positions.items():
+                    if hasattr(broker, "sync_positions") and getattr(broker, "connected", False):
+                        try:
+                            broker.sync_positions()
+                            for t, pos in broker.state.positions.items():
                                 broker_positions[t] = {
                                     "quantity": getattr(pos, "quantity", 0),
                                     "market_value": getattr(pos, "market_value", 0),
                                 }
+                        except Exception as sync_exc:
+                            pr.data["broker_sync_error"] = str(sync_exc)
                     if paper_positions or broker_positions:
                         recon = security.broker_lock.reconcile(paper_positions, broker_positions)
                         pr.data["broker_recon_clean"] = recon.get("clean", True)
@@ -2370,48 +2505,38 @@ class LiveLoopOrchestrator:
             except Exception as exc:
                 pr.data["broker_recon_error"] = str(exc)
 
-        # ── Profit-taking: 3-layer P&L check → liquidate overlays ──
-        # Layer 1: IBKRBroker P&L > 20% → sell options, re-run
-        # Layer 2: Futures/Rithmic P&L > 20% → sell futures, re-run
-        # Layer 3: Aggregate P&L > 20% → sell ALL overlays, re-run
+        # ── Profit-taking: P&L check → liquidate options overlay ──
+        # Layer 1: options overlay P&L > 20% → sell options, re-run
+        # Layer 2: Schwab account P&L > 20% → sell options, re-run
+        # Layer 3: Aggregate P&L > 20% → sell ALL overlays (options), re-run
         alloc = self._get("allocation_engine")
         exec_engine = self._get("execution_engine")
         if alloc and hasattr(alloc, "check_profit_take") and nav > 0:
             try:
-                # Extract per-product-class P&L from brokers
-                ibkr_pnl = 0.0
+                # Per-product-class P&L from the single Schwab broker
+                broker_pnl = 0.0
                 equities_pnl = 0.0
                 options_pnl = 0.0
-                futures_pnl = 0.0
 
-                if exec_engine:
-                    broker = getattr(exec_engine, "broker", None)
-                    if broker:
-                        # IBKRBroker combined P&L (equities + options)
-                        if hasattr(broker, "state"):
-                            ibkr_pnl = getattr(broker.state, "total_pnl", 0.0)
-                        # Split equities vs options if broker tracks them
-                        if hasattr(broker, "get_equity_pnl"):
-                            equities_pnl = broker.get_equity_pnl()
-                        elif hasattr(broker, "state") and hasattr(broker.state, "positions"):
-                            for _, pos in broker.state.positions.items():
-                                equities_pnl += getattr(pos, "unrealized_pnl", 0.0) + getattr(pos, "realized_pnl", 0.0)
-                        if hasattr(broker, "get_options_pnl"):
-                            options_pnl = broker.get_options_pnl()
-
-                    # Futures P&L from trade log (until Rithmic connected)
-                    paper = getattr(exec_engine, "_paper_broker", None) or getattr(exec_engine, "paper_broker", None)
-                    if paper and hasattr(paper, "state"):
-                        # trade log tracks futures positions
-                        for _, pos in getattr(paper.state, "positions", {}).items():
-                            if getattr(pos, "sector", "") == "FUTURES" or getattr(pos, "ticker", "") in ("ES", "NQ", "YM", "RTY", "VX", "ZN", "ZB", "MES", "MNQ"):
-                                futures_pnl += getattr(pos, "unrealized_pnl", 0.0) + getattr(pos, "realized_pnl", 0.0)
+                broker = getattr(exec_engine, "broker", None) if exec_engine else None
+                if broker is not None and hasattr(broker, "state"):
+                    broker_pnl = float(getattr(broker.state, "total_pnl", 0.0) or 0.0)
+                    if hasattr(broker, "get_equity_pnl") and hasattr(broker, "get_options_pnl"):
+                        equities_pnl = float(broker.get_equity_pnl() or 0.0)
+                        options_pnl = float(broker.get_options_pnl() or 0.0)
+                    else:
+                        for _, pos in getattr(broker.state, "positions", {}).items():
+                            pnl = getattr(pos, "unrealized_pnl", 0.0) + getattr(pos, "realized_pnl", 0.0)
+                            asset = str(getattr(pos, "asset_type", "") or getattr(pos, "sector", "")).upper()
+                            if asset == "OPTION" or len(str(getattr(pos, "ticker", ""))) > 12:
+                                options_pnl += pnl
+                            else:
+                                equities_pnl += pnl
 
                 profit_check = alloc.check_profit_take(
                     nav=nav,
                     initial_nav=self._initial_nav,
-                    ibkr_pnl=ibkr_pnl,
-                    futures_pnl=futures_pnl,
+                    broker_pnl=broker_pnl,
                     equities_pnl=equities_pnl,
                     options_pnl=options_pnl,
                 )
@@ -2438,11 +2563,11 @@ class LiveLoopOrchestrator:
                                 product_type=bucket,
                             )
                     logger.critical(
-                        "[LiveLoop] PROFIT TAKE [%s]: total=%.1f%% equities=$%.0f options=$%.0f futures=$%.0f "
+                        "[LiveLoop] PROFIT TAKE [%s]: total=%.1f%% equities=$%.0f options=$%.0f "
                         "— liquidating %s, next scan re-enters fresh",
                         profit_check["trigger_layer"],
                         profit_check["pnl_breakdown"]["total_pct"] * 100,
-                        equities_pnl, options_pnl, futures_pnl,
+                        equities_pnl, options_pnl,
                         profit_check["liquidate"],
                     )
             except Exception as exc:
@@ -2576,6 +2701,14 @@ class LiveLoopOrchestrator:
                             getattr(snapshot, "total_signals", 0))
             except Exception as exc:
                 logger.warning("EOD learning snapshot failed: %s", exc)
+
+        # EOD Allocation Council — equities & ETFs only (price execution → next-day sleeves)
+        try:
+            verdict = self.run_eod_allocation_council()
+            if verdict is not None:
+                logger.info("EOD council: grade=%s next-day=%s", verdict.execution_grade, verdict.next_day_allocation)
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("EOD allocation council failed: %s", exc)
 
         # L7 market close — daily learning + pattern persistence
         exec_engine = self._get("execution_engine")
@@ -2873,6 +3006,278 @@ class LiveLoopOrchestrator:
             return _OVERNIGHT_INTERVAL
         else:
             return self._heartbeat_interval
+
+    # ------------------------------------------------------------------
+    # 30-min full-scan rotation · hourly macro flag · 20% DD gate · EOD council
+    # ------------------------------------------------------------------
+    def run_full_scan_rotation(self) -> PhaseResult:
+        """Every 30 minutes until the close: FULL scan → allocation re-cut → rotation.
+
+        Re-runs the complete signal + intelligence + decision stack so the
+        allocation slate is rebuilt from the latest rotation news (News+Miro),
+        technicals (RSI / momentum / chart patterns) and market events (hourly
+        macro flag). Approved trades produced here flow into Phase 5 on the same
+        heartbeat, so a rotation recommended at 10:30 is executed at 10:30.
+        """
+        pr = PhaseResult(phase="FULL_SCAN_ROTATION", timestamp=datetime.now().isoformat())
+        t0 = time.monotonic()
+        self._full_scan_count += 1
+        logger.info("=" * 60)
+        logger.info("FULL SCAN #%d — 30-min rotation (macro flag=%s)", self._full_scan_count,
+                    getattr(self._last_macro_flag, "level", "NONE") if self._last_macro_flag else "NONE")
+        logger.info("=" * 60)
+
+        exec_engine = self._get("execution_engine")
+        # 1. full-universe pipeline (Schwab-fed) when available
+        if exec_engine and hasattr(exec_engine, "run_pipeline"):
+            try:
+                res = exec_engine.run_pipeline()
+                pr.data["pipeline_stages"] = len((res or {}).get("stages", {}))
+            except Exception as exc:  # noqa: BLE001
+                pr.errors.append(f"pipeline: {exc}")
+        # 2. signals → intelligence → decision on the fresh scan
+        sig = self.run_signal_phase(); pr.data["signals"] = sig.items_processed
+        intel = self.run_intelligence_phase(); pr.data["intelligence"] = intel.items_processed
+        dec = self.run_decision_phase(); pr.data["approved"] = len(self._approved_trades)
+        pr.errors += sig.errors + intel.errors + dec.errors
+        # 2b. universe scan in THREE separate tranches (S&P 500 → SmallCap 600 → remaining ~400),
+        #     each scored on its own distribution, then a concurrence vote builds the slate.
+        tr = self.run_tranche_universe_scan(exec_engine)
+        if tr is not None:
+            pr.data["tranche_scan"] = {t.name: {"universe": t.universe_size, "screened": t.screened,
+                                                "top": [c.ticker for c in t.top]} for t in tr.tranches}
+            pr.data["tranche_final"] = [c.ticker for c in tr.final]
+            merged = self._merge_tranche_slate(tr, exec_engine)
+            pr.data["tranche_merged_into_slate"] = merged
+            pr.data["approved"] = len(self._approved_trades)
+        # 3. rotation context: macro flag forces a rotation review → slate rebuilt with reduced risk
+        mf = self._last_macro_flag
+        if mf is not None and getattr(mf, "force_rotation_review", False):
+            pr.data["rotation_review"] = f"forced by macro flag {mf.level}: " + "; ".join(mf.triggers[:3])
+        alloc = self._get("allocation_engine")
+        if alloc is not None and hasattr(alloc, "rules"):
+            pr.data["allocation_rules"] = {k: v for k, v in alloc.rules.to_dict().items()
+                                           if k.endswith("_pct")}
+        pr.items_processed = int(pr.data.get("approved", 0))
+        pr.duration_ms = (time.monotonic() - t0) * 1000
+        pr.success = not pr.errors
+        return pr
+
+    def run_tranche_universe_scan(self, exec_engine: Any = None) -> Any:
+        """Run the universe scan as three SEPARATE tranche scans, then concur.
+
+        Scan 1 = S&P 500, Scan 2 = S&P SmallCap 600, Scan 3 = remaining ~400
+        (MidCap 400 + extras). Each tranche result is reported on its own; only
+        after the last tranche does the concurrence vote build the allocation
+        slate. Never scans the whole universe in one pass.
+        """
+        exec_engine = exec_engine or self._get("execution_engine")
+        broker = getattr(exec_engine, "broker", None)
+        if broker is None or not getattr(broker, "is_connected", lambda: False)():
+            logger.info("tranche scan skipped — Schwab not connected")
+            return None
+        try:
+            from engine.execution.universe_tranche_scan import UniverseTrancheScanner
+            if self._tranche_scanner is None or self._tranche_scanner.broker is not broker:
+                self._tranche_scanner = UniverseTrancheScanner(
+                    broker, options_engine=getattr(exec_engine, "options_engine_short_dte", None))
+            bias = None
+            sd = getattr(exec_engine, "options_engine_short_dte", None)
+            if sd is not None:
+                try:
+                    bias = float(sd.market_context().direction_bias)
+                except Exception:  # noqa: BLE001
+                    bias = None
+            res = self._tranche_scanner.run(corridor_bias=bias)
+            self._last_tranche_result = res
+            for t in res.tranches:
+                logger.info("%s → universe %d, screened %d, top: %s", t.name, t.universe_size, t.screened,
+                            ", ".join(c.ticker for c in t.top[:8]))
+            logger.info("CONCURRENCE → %d names: %s", len(res.final), ", ".join(c.ticker for c in res.final))
+            return res
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("tranche scan failed: %s", exc)
+            return None
+
+    def _merge_tranche_slate(self, tr: Any, exec_engine: Any) -> int:
+        """Fold the concurrence output into the approved slate (dedup by ticker).
+
+        Equity rows are sized from the allocation file: sleeve weight × NAV
+        spread over the names selected for that sleeve. Options-bucket names
+        become options rows for the 1–7 DTE scan.
+        """
+        have = {str(t.get("ticker", "")).upper() for t in self._approved_trades}
+        nav = self._live_nav(exec_engine)
+        alloc = self._get("allocation_engine")
+        rules = getattr(alloc, "rules", None)
+        sleeve_pct = {
+            "IG_EQUITY": getattr(rules, "ig_equity_pct", 0.40), "HY_EQUITY": getattr(rules, "hy_equity_pct", 0.10),
+            "DISTRESSED": getattr(rules, "distressed_equity_pct", 0.10), "TLTW": getattr(rules, "tltw_cashflow_pct", 0.15),
+            "FIXED_INCOME": getattr(rules, "fi_macro_pct", 0.05), "CVR": getattr(rules, "event_driven_cvr_pct", 0.10),
+        }
+        by_sleeve: Dict[str, int] = {}
+        for c in tr.final:
+            by_sleeve[c.sleeve] = by_sleeve.get(c.sleeve, 0) + 1
+        merged = 0
+        for row in tr.equity_slate():
+            t = row["ticker"].upper()
+            if t in have:
+                continue
+            n = max(1, by_sleeve.get(row["bucket"], 1))
+            # equity dollars = sleeve % × NAV ÷ names in sleeve, capped at L7 G1 (10% NAV)
+            row["dollar_amount"] = min(0.10 * nav, float(sleeve_pct.get(row["bucket"], 0.05)) * nav / n)
+            self._approved_trades.append(row); have.add(t); merged += 1
+        for und, bucket in tr.options_universe():
+            self._approved_trades.append({"ticker": und, "signal": None, "bucket": bucket, "instrument_type": "OPTION",
+                                          "decision": {"type": "options", "bucket": bucket, "source": "TRANCHE_CONCURRENCE"}})
+            merged += 1
+        return merged
+
+    def get_tranche_markdown(self) -> str:
+        tr = self._last_tranche_result
+        return tr.markdown() if tr is not None else "_No tranche universe scan this run._"
+
+    def run_macro_event_flag(self) -> Any:
+        """Hourly: flag important market / macro-moving events (MacroEventFlagger)."""
+        try:
+            from engine.execution.macro_event_flagger import MacroEventFlagger
+        except Exception as exc:  # noqa: BLE001
+            logger.debug("MacroEventFlagger unavailable: %s", exc)
+            return None
+        exec_engine = self._get("execution_engine")
+        broker = getattr(exec_engine, "broker", None) if exec_engine else None
+        if self._macro_flagger is None:
+            self._macro_flagger = MacroEventFlagger(broker=broker)
+        else:
+            self._macro_flagger.broker = broker
+        headlines: List[str] = []
+        nm = self._last_news_miro_output or {}
+        if isinstance(nm, dict):
+            for v in nm.values():
+                if isinstance(v, dict):
+                    for k in ("headline", "title", "summary", "news"):
+                        if v.get(k):
+                            headlines.append(str(v[k]))
+        regime = ""
+        if self._last_macro_snapshot is not None and hasattr(self._last_macro_snapshot, "regime"):
+            regime = str(getattr(getattr(self._last_macro_snapshot, "regime", None), "value",
+                                 getattr(self._last_macro_snapshot, "regime", "")))
+        vix = None
+        rep = self._last_options_report or {}
+        if isinstance(rep, dict):
+            vix = (rep.get("market") or {}).get("vix")
+        flag = self._macro_flagger.evaluate(headlines=headlines, regime=regime, vix_level=vix)
+        self._last_macro_flag = flag
+        if flag.level in ("IMPORTANT", "CRITICAL"):
+            # a macro-moving event also forces the next full scan immediately
+            self._last_full_scan_time = None
+        return flag
+
+    def _drawdown_gate(self, exec_engine, nav: float) -> dict:
+        """20% drawdown → rotate or close; evaluated before every add."""
+        broker = getattr(exec_engine, "broker", None) if exec_engine else None
+        out = {"adds_allowed": True, "add_scale": 1.0, "level": "OK", "directive": "", "accounts": {}}
+        try:
+            if hasattr(broker, "guard"):                        # SchwabAccountRouter
+                snap = broker.portfolio_snapshot()
+                pdd = snap["drawdown"]
+                out.update({"adds_allowed": pdd["adds_allowed"], "add_scale": pdd["add_scale"],
+                            "level": pdd["level"], "directive": pdd["directive"], "drawdown": pdd["drawdown"]})
+                for label, a in snap["accounts"].items():
+                    out["accounts"][label] = a["drawdown"]
+                    if not a["drawdown"]["adds_allowed"]:
+                        positions = {sym: {"quantity": p.quantity, "unrealized_pnl": p.unrealized_pnl,
+                                           "realized_pnl": p.realized_pnl, "sector": p.sector}
+                                     for sym, p in broker.brokers[label].state.positions.items()}
+                        out.setdefault("rotation_plan", []).extend(broker.guard.rotation_plan(label, positions))
+            else:
+                from engine.execution.account_mandates import DrawdownGuard
+                if not hasattr(self, "_dd_guard"):
+                    self._dd_guard = DrawdownGuard()
+                    self._dd_guard.seed_peak("PORTFOLIO", self._initial_nav)
+                st = self._dd_guard.check("PORTFOLIO", nav)
+                out.update({"adds_allowed": st.adds_allowed, "add_scale": st.add_scale, "level": st.level,
+                            "directive": st.directive, "drawdown": st.drawdown})
+                if not st.adds_allowed and broker is not None and hasattr(broker, "state"):
+                    positions = {sym: {"quantity": p.quantity, "unrealized_pnl": p.unrealized_pnl,
+                                       "realized_pnl": p.realized_pnl, "sector": p.sector}
+                                 for sym, p in broker.state.positions.items()}
+                    out["rotation_plan"] = self._dd_guard.rotation_plan("PORTFOLIO", positions)
+        except Exception as exc:  # noqa: BLE001
+            out["error"] = str(exc)
+        if not out["adds_allowed"]:
+            self._drawdown_blocks.append(out["directive"])
+            # portfolio DD ≥ 20% is the first rung of the kill-switch ordering
+            # (DD 20% → Cube kill-switch → margin breach). We record the trigger and
+            # keep execution open for SELL/CLOSE only so the rotation can actually happen.
+            if out.get("level") == "ROTATE_OR_CLOSE":
+                trig = "PORTFOLIO_DRAWDOWN_20PCT"
+                if trig not in self._circuit_breaker.triggers:
+                    self._circuit_breaker.triggers.append(trig)
+                self._circuit_breaker.current_drawdown_pct = max(
+                    self._circuit_breaker.current_drawdown_pct, float(out.get("drawdown", 0.0) or 0.0))
+        return out
+
+    def run_eod_allocation_council(self) -> Any:
+        """Market close: council on equities/ETF allocation (price execution → next-day sleeves)."""
+        try:
+            from engine.execution.eod_allocation_council import EODAllocationCouncil
+        except Exception as exc:  # noqa: BLE001
+            logger.debug("EODAllocationCouncil unavailable: %s", exc)
+            return None
+        exec_engine = self._get("execution_engine")
+        alloc = self._get("allocation_engine")
+        rules = getattr(alloc, "rules", None)
+        if rules is None:
+            try:
+                from engine.allocation.allocation_engine import AllocationRules
+                rules = AllocationRules()
+            except Exception:  # noqa: BLE001
+                return None
+        l7 = getattr(exec_engine, "l7", None)
+        orders = []
+        if l7 is not None:
+            orders = list(getattr(l7, "_filled_orders", [])) + list(getattr(l7, "_dry_run_orders", []))
+            orders += [o for o in getattr(l7, "_order_book", []) if str(getattr(o, "status", "")).upper() == "REJECTED"]
+        broker = getattr(exec_engine, "broker", None)
+        positions = dict(getattr(getattr(broker, "state", None), "positions", {}) or {})
+        nav = self._live_nav(exec_engine)
+        close_prices: Dict[str, float] = {}
+        tickers = sorted({o.ticker for o in orders if " " not in str(o.ticker)})
+        if tickers and hasattr(broker, "get_quotes"):
+            try:
+                for t, q in (broker.get_quotes(tickers) or {}).items():
+                    if isinstance(q, dict) and (q.get("last") or q.get("mark")):
+                        close_prices[t] = float(q.get("last") or q.get("mark"))
+            except Exception:  # noqa: BLE001
+                pass
+        dd = self._drawdown_gate(exec_engine, nav)
+        momentum: Dict[str, float] = {}
+        rep = self._last_options_report or {}
+        if isinstance(rep, dict):
+            for t, row in (rep.get("per_ticker") or {}).items():
+                m = (row or {}).get("momentum") or {}
+                if isinstance(m, dict) and m.get("score") is not None:
+                    momentum[t] = float(m["score"])
+        vix = (rep.get("market") or {}).get("vix") if isinstance(rep, dict) else None
+        regime = ""
+        if self._last_macro_snapshot is not None and hasattr(self._last_macro_snapshot, "regime"):
+            regime = str(getattr(getattr(self._last_macro_snapshot, "regime", None), "value",
+                                 getattr(self._last_macro_snapshot, "regime", "")))
+        council = EODAllocationCouncil(rules)
+        verdict = council.convene(
+            l7_orders=orders, nav=nav, positions=positions, close_prices=close_prices, drawdown=dd,
+            macro_flag=self._last_macro_flag.to_dict() if self._last_macro_flag else None,
+            momentum=momentum, regime=regime, vix=vix, account_router=broker if hasattr(broker, "mandates") else None,
+        )
+        self._last_council_verdict = verdict
+        # apply next-day sleeves to the allocation rules (equities/ETF only; hard rules preserved)
+        if alloc is not None and hasattr(alloc, "rules"):
+            EODAllocationCouncil.apply_to_rules(alloc.rules, verdict)
+        return verdict
+
+    def get_council_markdown(self) -> str:
+        return self._last_council_verdict.markdown() if self._last_council_verdict else "(no EOD council has run yet)"
 
     def _should_run_cadence(self, last_time: Optional[datetime], cadence_seconds: float) -> bool:
         """Check whether enough time has elapsed since last run."""

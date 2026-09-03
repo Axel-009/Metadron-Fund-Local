@@ -48,7 +48,8 @@ except ImportError:
     MarketRegime = None
 
 try:
-    from ..execution.paper_broker import PaperBroker, Position, SignalType
+    from ..execution.broker_types import Position, SignalType
+    from ..execution.schwab_broker import SchwabBroker as PaperBroker
 except ImportError:
     PaperBroker = None
     Position = None

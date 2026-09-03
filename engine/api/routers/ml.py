@@ -143,7 +143,7 @@ async def models_status():
             ("L5", "ExecutionEngine", "engine.execution.execution_engine"),
             ("L5", "DecisionMatrix", "engine.execution.decision_matrix"),
             ("L5", "OptionsEngine", "engine.execution.options_engine"),
-            ("L5", "PaperBroker", "engine.execution.paper_broker"),
+            ("L5", "SchwabBroker", "engine.execution.schwab_broker"),
             ("L5", "AlpacaBroker", "engine.execution.alpaca_broker"),
             ("L6", "ResearchBots", "engine.agents.research_bots"),
             ("L6", "SectorBots", "engine.agents.sector_bots"),

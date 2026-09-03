@@ -30,6 +30,7 @@ Risk Gate Manager:
     - Drawdown circuit breakers
 """
 
+import os
 import logging
 import numpy as np
 import pandas as pd
@@ -56,15 +57,17 @@ from ..signals.macro_engine import MacroEngine, MacroSnapshot, MarketRegime
 from ..signals.metadron_cube import MetadronCube, CubeOutput
 from ..ml.alpha_optimizer import AlphaOptimizer, AlphaOutput, AlphaSignal
 from ..portfolio.beta_corridor import BetaCorridor, BetaState, BetaAction
-from .paper_broker import (
-    PaperBroker, OrderSide, SignalType, Position,
-)
+from .broker_types import OrderSide, SignalType, Position
+from .schwab_broker import SchwabBroker
 
-# Legacy broker import (backward compat — IBKR is sole broker via L7)
+# Sole broker. ``PaperBroker`` alias kept only for type hints in legacy call sites.
+PaperBroker = SchwabBroker
+
 try:
-    from .alpaca_broker import AlpacaBroker
-except ImportError:
-    AlpacaBroker = None  # type: ignore[assignment,misc]
+    from .short_dte_options_engine import ShortDTEOptionsEngine, ShortDTEConfig
+except ImportError:  # pragma: no cover
+    ShortDTEOptionsEngine = None  # type: ignore[assignment,misc]
+    ShortDTEConfig = None  # type: ignore[assignment,misc]
 
 
 # L7 HFT Technical Execution (quant-trading strategies)
@@ -1122,38 +1125,60 @@ class ExecutionEngine:
         initial_nav: Optional[float] = None,
         top_n_per_sector: int = 5,
         enable_risk_gates: bool = True,
-        broker_type: str = "ibkr",
+        broker_type: str = "schwab",
+        broker: Optional[SchwabBroker] = None,
+        connect_broker: Optional[bool] = None,
+        account_number: Optional[str] = None,
     ):
+        """
+        Args:
+            broker: an existing SchwabBroker to share (API layer / tests). When None
+                    the engine builds THE single SchwabBroker for the process and
+                    hands the same instance to L7.
+            connect_broker: force connect / don't connect. Default: connect only
+                    when Schwab credentials are present in the environment.
+            account_number: Schwab account (last 4 digits ok) — default env
+                    SCHWAB_ACCOUNT_NUMBER or the first account on the token.
+        """
         self._requested_nav = initial_nav
 
-        # Broker initialization — IBKR is sole broker, others are legacy fallback
+        # Broker initialization — Schwab is the sole broker (data + execution)
         self._broker_alert = None
-        if broker_type == "ibkr":
-            try:
-                from .ibkr_broker import IBKRBroker
-                self.broker = IBKRBroker(initial_cash=initial_nav or 100_000.0)
-                logger.info("ExecutionEngine using IBKRBroker (paper=%s)", self.broker._paper)
-            except Exception as e:
-                logger.warning("IBKRBroker init failed: %s — falling back to trade log mode", e)
-                self.broker = PaperBroker(initial_cash=initial_nav or 100_000.0)
-                self._broker_alert = "NOTICE: IBKR unavailable — trade log mode (no live execution)"
-        elif broker_type == "ibkr":
-            if AlpacaBroker is not None:
-                try:
-                    self.broker = AlpacaBroker(initial_cash=initial_nav or 100_000.0)
-                    logger.info("ExecutionEngine using AlpacaBroker (legacy, paper=%s)",
-                                self.broker.paper)
-                except Exception as e:
-                    logger.error("AlpacaBroker failed: %s — falling back to trade log", e)
-                    self.broker = PaperBroker(initial_cash=initial_nav or 100_000.0)
-                    self._broker_alert = "NOTICE: AlpacaBroker failed — trade log mode"
-            else:
-                self.broker = PaperBroker(initial_cash=initial_nav or 100_000.0)
-                self._broker_alert = "NOTICE: AlpacaBroker unavailable — trade log mode"
+        if broker_type not in ("schwab", "ibkr", "paper", "alpaca", "tradier"):
+            raise ValueError(f"Unsupported broker_type={broker_type!r}; only 'schwab' is available")
+        if broker_type != "schwab":
+            logger.warning("broker_type=%s is retired — using Schwab", broker_type)
+        if broker is not None:
+            self.broker = broker
         else:
-            self.broker = PaperBroker(initial_cash=initial_nav or 100_000.0)
-            logger.info("ExecutionEngine using trade log mode (broker_type=%s)", broker_type)
-            self._broker_alert = f"NOTICE: Trade log mode (broker_type={broker_type})"
+            if connect_broker is None:
+                connect_broker = any(
+                    os.environ.get(k) for k in
+                    ("SCHWAB_AUTH_MODE", "SCHWAB_APP_KEY", "SCHWAB_ACCESS_TOKEN", "SCHWAB_TOKEN_PATH")
+                )
+            try:
+                # Multi-account mandates (ROTH 25/75, LLC equities+ETF, INDIVIDUAL options)
+                # → SchwabAccountRouter; otherwise a single SchwabBroker.
+                from .schwab_account_router import build_schwab_broker
+                self.broker = build_schwab_broker(
+                    connect=bool(connect_broker),
+                    account_number=account_number or os.environ.get("SCHWAB_ACCOUNT_NUMBER") or None,
+                    initial_cash=initial_nav or 100_000.0,
+                )
+            except Exception as e:
+                logger.error("SchwabBroker init failed: %s — dry-run mode", e)
+                self.broker = SchwabBroker(initial_cash=initial_nav or 100_000.0, connect=False)
+        try:
+            from .schwab_broker import set_shared_broker
+            set_shared_broker(self.broker)
+        except Exception:  # noqa: BLE001
+            pass
+        if self.broker.is_connected:
+            mode = "LIVE ORDERS" if getattr(self.broker, "live_orders", False) else "DRY_RUN (SCHWAB_LIVE_ORDERS=false)"
+            logger.info("ExecutionEngine using SchwabBroker acct=%s %s", getattr(self.broker, "account_display", "?"), mode)
+        else:
+            self._broker_alert = "NOTICE: Schwab not connected — dry-run mode (orders gated + logged, nothing sent)"
+            logger.warning(self._broker_alert)
 
         # Dynamic NAV: pull from broker if it has live data
         self._dynamic_nav = self._resolve_nav()
@@ -1241,21 +1266,32 @@ class ExecutionEngine:
         if L7UnifiedExecutionSurface is not None:
             try:
                 self.l7 = L7UnifiedExecutionSurface(
-                    initial_cash=initial_nav,
-                    ibkr_paper=True,
+                    initial_cash=self._dynamic_nav,
+                    broker=self.broker,           # ONE shared Schwab instance
                 )
-                logger.info("L7 Unified Execution Surface initialized")
+                logger.info("L7 Unified Execution Surface initialized (shared Schwab broker)")
             except Exception as e:
                 logger.warning(f"L7 init failed (running without L7): {e}")
 
+        # Short-DTE (1-7 day) options engine — BSM@DTE + MC of the full scan
+        self.options_engine_short_dte = None
+        if ShortDTEOptionsEngine is not None:
+            try:
+                self.options_engine_short_dte = ShortDTEOptionsEngine(
+                    broker=self.broker, nav=self._dynamic_nav, regime="NORMAL",
+                )
+            except Exception as e:
+                logger.warning("ShortDTEOptionsEngine init failed: %s", e)
+
         # --- Broker routing guard -----------------------------------------------
         self._trade_log = []  # Track which broker each trade went through
+        self._last_options_scan = None  # latest ShortDTEOptionsEngine.scan() result
 
     def _resolve_nav(self) -> float:
         """Resolve NAV dynamically from broker.
 
         Priority:
-        1. Broker account equity (IBKR live or legacy broker)
+        1. Schwab account equity (liquidationValue)
         2. Broker state NAV (trade log mode)
         3. Requested NAV (passed in)
         4. RAISE ERROR — never hardcode NAV
@@ -1290,10 +1326,10 @@ class ExecutionEngine:
             return self._requested_nav
 
         logger.error("NAV RESOLUTION FAILED: no broker connection, no state, no requested NAV.")
-        logger.error("Check IBKR_HOST/IBKR_PORT or pass initial_nav explicitly.")
+        logger.error("Check SCHWAB_* credentials or pass initial_nav explicitly.")
         raise RuntimeError(
-            "NAV resolution failed. Broker unavailable and no initial_nav provided. "
-            "Set IBKR_HOST/IBKR_PORT in .env or pass initial_nav to ExecutionEngine."
+            "NAV resolution failed. Schwab unavailable and no initial_nav provided. "
+            "Set SCHWAB_APP_KEY/SCHWAB_APP_SECRET (+ token) in .env or pass initial_nav to ExecutionEngine."
         )
 
     def get_nav(self) -> float:
@@ -1301,18 +1337,37 @@ class ExecutionEngine:
         self._dynamic_nav = self._resolve_nav()
         return self._dynamic_nav
 
+    def _options_bucket_for(self, sig) -> Optional[str]:
+        """Map an alpha signal to its options bucket (IG / HY / DISTRESSED) via quality tier.
+
+        Architecture: OPTIONS_IG 10% (tiers A/B), OPTIONS_HY 10% (tier C),
+        OPTIONS_DISTRESSED 5% (tier D / distress signals). Unknown → IG.
+        """
+        tier = str(getattr(sig, "quality_tier", "") or "").upper()
+        stype = str(getattr(sig, "signal_type", "") or "").upper()
+        if "DISTRESS" in stype or tier == "D":
+            return "OPTIONS_DISTRESSED"
+        if tier == "C" or "HY" in stype or "HIGH_YIELD" in stype:
+            return "OPTIONS_HY"
+        return "OPTIONS_IG"
+
     def get_broker_status(self) -> dict:
         """Get current broker status and any routing alerts."""
         broker_type = type(self.broker).__name__
-        is_live = broker_type in ("IBKRBroker", "AlpacaBroker")
+        connected = bool(getattr(self.broker, "is_connected", False))
+        live = bool(getattr(self.broker, "live_orders", False))
         return {
             "broker": broker_type,
-            "is_live": is_live,
-            "is_trade_log_only": broker_type == "PaperBroker",
+            "account": getattr(self.broker, "account_display", None),
+            "connected": connected,
+            "is_live": connected and live,
+            "is_dry_run": not (connected and live),
+            "is_trade_log_only": not connected,
             "alert": self._broker_alert,
             "trades_today": len(self._trade_log),
-            "trades_to_broker": sum(1 for t in self._trade_log if t.get("broker") in ("IBKRBroker", "AlpacaBroker")),
-            "trades_to_log": sum(1 for t in self._trade_log if t.get("broker") == "PaperBroker"),
+            "trades_to_broker": sum(1 for t in self._trade_log if str(t.get("broker", "")).startswith("Schwab")),
+            "accounts": (self.broker.portfolio_snapshot()["accounts"] if hasattr(self.broker, "portfolio_snapshot") else None),
+            "trades_to_log": sum(1 for t in self._trade_log if t.get("broker") != "SchwabBroker"),
         }
 
     def _log_trade_broker(self, ticker: str, side: str, quantity: int, broker_name: str):
@@ -1324,8 +1379,8 @@ class ExecutionEngine:
             "broker": broker_name,
             "timestamp": datetime.now(timezone.utc).isoformat(),
         })
-        if broker_name == "PaperBroker":
-            logger.warning("TRADE LOG ONLY: %s %s %d — not executed on live broker",
+        if broker_name != "SchwabBroker":
+            logger.warning("TRADE LOG ONLY: %s %s %d — not executed on Schwab",
                            side, ticker, quantity)
 
     def reconcile_positions(self) -> dict:
@@ -1844,83 +1899,37 @@ class ExecutionEngine:
         }
         self.tracker.record_stage("alpha", (datetime.now() - t0).total_seconds() * 1000, result["stages"]["alpha"])
 
-        # Stage 5.25: Options chain scanning (full universe momentum + volatility)
+        # Stage 5.25: Options scan — 1-7 DTE only, via ShortDTEOptionsEngine on Schwab chains.
+        # BSM IV solved per quoted contract at ITS dte, Monte Carlo of the full scan,
+        # RSI/momentum + beta-corridor directional gating, vega-budget Kelly sizing.
         t0 = datetime.now()
         options_data = {"status": "not_scanned"}
         try:
-            from .options_engine import BlackScholesModel
-            bs = BlackScholesModel()
-            from alpaca.trading.requests import GetOptionContractsRequest
-            from alpaca.trading.enums import AssetStatus, ContractType
-            
-            # Use top 10 alpha signals only (faster than 30)
-            options_candidates = []
+            if self.options_engine_short_dte is None:
+                raise RuntimeError("ShortDTEOptionsEngine unavailable")
+            regime_name = cube_out.regime.value if hasattr(cube_out.regime, "value") else str(cube_out.regime)
+            self.options_engine_short_dte.regime = regime_name
+            self.options_engine_short_dte.nav = self._dynamic_nav
+            # Universe = top alpha names mapped to their allocation bucket
+            universe = []
             for sig in alpha_out.signals[:10]:
-                ticker = sig.ticker
-                spot = 0.0
-                try:
-                    from ..data.openbb_data import get_adj_close
-                    p = get_adj_close([ticker], start=datetime.now().strftime("%Y-%m-%d"))
-                    if not p.empty:
-                        spot = float(p[ticker].iloc[-1])
-                except Exception as e:
-                    logger.warning("Options: spot price fetch failed for ticker=%s: %s", ticker, e)
-                    continue
-                if spot <= 0:
-                    continue
-                
-                # Get options chain from IBKRBroker
-                try:
-                    req = GetOptionContractsRequest(
-                        underlying_symbols=[ticker],
-                        status=AssetStatus.ACTIVE,
-                        expiration_date_gte=(datetime.now() + timedelta(days=7)).strftime("%Y-%m-%d"),
-                        expiration_date_lte=(datetime.now() + timedelta(days=45)).strftime("%Y-%m-%d"),
-                        limit=20,
-                    )
-                    chain = self.broker.trading_client.get_option_contracts(req)
-                    contracts = chain.option_contracts if hasattr(chain, 'option_contracts') else []
-                    
-                    for c in contracts:
-                        if not getattr(c, 'tradable', False):
-                            continue
-                        strike = float(c.strike_price)
-                        opt_type = 'call' if c.type == ContractType.CALL else 'put'
-                        iv = float(c.implied_volatility) if hasattr(c, 'implied_volatility') and c.implied_volatility else 0.30
-                        T = max((datetime.strptime(c.expiration_date, "%Y-%m-%d") - datetime.now()).days / 365.0, 0.001)
-                        if opt_type == 'call':
-                            theo = bs.call_price(spot, strike, T, 0.05, iv)
-                        else:
-                            theo = bs.put_price(spot, strike, T, 0.05, iv)
-                        delta = bs.delta(spot, strike, T, 0.05, iv, opt_type == 'call')
-                        
-                        options_candidates.append({
-                            "ticker": ticker,
-                            "symbol": c.symbol,
-                            "type": opt_type,
-                            "strike": strike,
-                            "expiry": c.expiration_date,
-                            "theo_price": round(theo, 2),
-                            "delta": round(delta, 3),
-                            "iv": round(iv, 4),
-                            "alpha": sig.alpha_pred,
-                            "momentum": sig.momentum_1m,
-                        })
-                except Exception as e:
-                    logger.error("Options: chain processing failed for ticker=%s: %s", ticker, e, exc_info=True)
-
-            if options_candidates:
-                for o in options_candidates:
-                    o["score"] = abs(o["alpha"]) * abs(o["delta"]) * (1 + abs(o["momentum"]))
-                options_candidates.sort(key=lambda x: x["score"], reverse=True)
-                options_data = {
-                    "total_scanned": len(options_candidates),
-                    "top_10": options_candidates[:10],
-                    "regime": cube_out.regime.value,
-                }
-                logger.info(f"Options scan: {len(options_candidates)} opportunities")
-            else:
-                options_data = {"status": "no_contracts_available"}
+                bucket = self._options_bucket_for(sig)
+                if bucket:
+                    universe.append((sig.ticker, bucket))
+            scan = self.options_engine_short_dte.scan(universe, nav=self._dynamic_nav)
+            rep = scan["report"]
+            options_data = {
+                "total_scanned": len(rep.get("per_ticker", {})),
+                "dte_window": [1, 7],
+                "intents": [i.to_dict() for i in scan["intents"]],
+                "ladder": rep.get("ladder", {}),
+                "market": rep.get("market", {}),
+                "per_ticker": rep.get("per_ticker", {}),
+                "committed_by_bucket": rep.get("committed_by_bucket", {}),
+                "regime": regime_name,
+            }
+            self._last_options_scan = scan
+            logger.info("Options scan (1-7 DTE): %d tickers, %d intents", len(universe), len(scan["intents"]))
         except Exception as e:
             options_data = {"error": str(e)}
             logger.warning(f"Options scan failed: {e}")
@@ -2181,17 +2190,23 @@ class ExecutionEngine:
                     })
                     continue
 
-            # Execute — with stop/take_profit from quant technical consensus
+            # Execute through L7 (single entry point: G1-G10, TCA, trade log, Schwab)
             levels = hft_stop_levels.get(ticker, {})
-            order = self.broker.place_order(
-                ticker=ticker,
-                side=allocation["side"],
-                quantity=allocation["quantity"],
-                signal_type=vote.signal,
-                reason=f"Vote={vote.score:.1f} Alpha={alpha_map.get(ticker, AlphaSignal(ticker=ticker)).alpha_pred:.4f} Conf={vote.confidence:.2f}",
-                stop_loss=levels.get("stop_loss") or None,
-                take_profit=levels.get("take_profit") or None,
-            )
+            reason = f"Vote={vote.score:.1f} Alpha={alpha_map.get(ticker, AlphaSignal(ticker=ticker)).alpha_pred:.4f} Conf={vote.confidence:.2f}"
+            regime_name = cube_out.regime.value if hasattr(cube_out.regime, "value") else str(cube_out.regime)
+            if self.l7 is not None:
+                l7_order = self.l7.submit_order(
+                    ticker=ticker, side=allocation["side"].value, quantity=allocation["quantity"],
+                    signal_type=vote.signal.value, regime=regime_name, limit_price=None, reason=reason,
+                )
+                order_id, order_status = l7_order.order_id, l7_order.status
+            else:
+                order = self.broker.place_order(
+                    ticker=ticker, side=allocation["side"], quantity=allocation["quantity"],
+                    signal_type=vote.signal, reason=reason,
+                )
+                order_id, order_status = order.id, getattr(order.status, "value", str(order.status))
+            self._log_trade_broker(ticker, allocation["side"].value, allocation["quantity"], type(self.broker).__name__)
 
             if self.risk_gates:
                 self.risk_gates.record_trade()
@@ -2204,7 +2219,8 @@ class ExecutionEngine:
                 "vote_score": vote.score,
                 "confidence": vote.confidence,
                 "signal": vote.signal.value,
-                "order_id": order.id,
+                "order_id": order_id,
+                "status": order_status,
                 "hft_size_mult": hft_size_adjustments.get(ticker, 1.0),
                 "stop_loss": levels.get("stop_loss", 0.0),
                 "take_profit": levels.get("take_profit", 0.0),
@@ -2213,19 +2229,47 @@ class ExecutionEngine:
             trades.append(trade_record)
             self._trade_log.append(trade_record)
 
-        # Beta rebalance via SPY
-        if beta_action.action != "HOLD":
-            side = OrderSide.BUY if beta_action.action == "BUY" else OrderSide.SELL
-            self.broker.place_order(
-                ticker="SPY",
-                side=side,
-                quantity=beta_action.quantity,
-                signal_type=SignalType.MICRO_PRICE_BUY if side == OrderSide.BUY else SignalType.MICRO_PRICE_SELL,
-                reason=beta_action.reason,
-            )
+        # Beta corridor: directional fair value only (no futures / SPY hedge orders).
+        # Its state is consumed by the ShortDTEOptionsEngine as direction_bias.
+        beta_note = {"action": beta_action.action, "quantity": 0, "reason": beta_action.reason,
+                     "note": "corridor used as directional input to options overlay; no hedge order placed"}
+
+        # Options overlay: submit 1-7 DTE intents through L7 (G1-G10 + broker-edge caps)
+        option_trades = []
+        scan = getattr(self, "_last_options_scan", None)
+        if scan and self.l7 is not None:
+            regime_name = cube_out.regime.value if hasattr(cube_out.regime, "value") else str(cube_out.regime)
+            for intent in scan.get("intents", []):
+                try:
+                    o = self.l7.submit_option_intent(intent, regime=regime_name)
+                    option_trades.append({
+                        "ticker": intent.ticker, "bucket": intent.bucket, "contract": intent.contract_symbol,
+                        "structure": intent.structure, "contracts": intent.contracts, "limit": intent.limit_price,
+                        "dte": intent.dte, "composite": intent.composite, "edge_bps": intent.edge_bps,
+                        "order_id": o.order_id, "status": o.status, "reason": o.reason,
+                    })
+                    self._log_trade_broker(intent.contract_symbol, "BUY", intent.contracts, type(self.broker).__name__)
+                except Exception as e:
+                    option_trades.append({"ticker": getattr(intent, "ticker", "?"), "status": "ERROR", "reason": str(e)})
+            for leg in (scan.get("ladder", {}) or {}).get("placeable", []):
+                try:
+                    o = self.l7.submit_order(
+                        ticker="SPY", side="BUY", quantity=int(leg["contracts"]), product_type="OPTION",
+                        option_type="PUT", strike=float(leg["strike"]), expiry=str(leg.get("expiry", "")),
+                        limit_price=float(leg["limit_price"]), signal_type="CONVEXITY_HEDGE",
+                        regime=regime_name, reason="ConvexityHedgeManager put ladder",
+                        contract_symbol=leg["contract_symbol"], sector="HEDGE",
+                    )
+                    option_trades.append({"ticker": "SPY", "bucket": "HEDGE", "contract": leg["contract_symbol"],
+                                          "contracts": leg["contracts"], "limit": leg["limit_price"],
+                                          "order_id": o.order_id, "status": o.status, "reason": o.reason})
+                except Exception as e:
+                    option_trades.append({"ticker": "SPY", "bucket": "HEDGE", "status": "ERROR", "reason": str(e)})
 
         result["stages"]["execution"] = {
             "trades": trades,
+            "option_trades": option_trades,
+            "beta_corridor": beta_note,
             "blocked_trades": blocked_trades,
             "portfolio": self.broker.get_portfolio_summary(),
             "risk_profile": risk_profile,
@@ -2393,7 +2437,7 @@ class ExecutionEngine:
             )
             return order.to_dict()
 
-        # Fallback: direct broker
+        # Fallback: direct Schwab broker (L7 unavailable)
         side_enum = OrderSide(side) if side in [s.value for s in OrderSide] else OrderSide.BUY
         sig_enum = SignalType.HOLD
         try:
@@ -2402,9 +2446,16 @@ class ExecutionEngine:
             pass
         order = self.broker.place_order(
             ticker=ticker, side=side_enum, quantity=quantity,
-            signal_type=sig_enum,
+            signal_type=sig_enum, limit_price=kwargs.get("limit_price"),
+            reason=kwargs.get("reason", ""),
         )
         return order.to_dict()
+
+    def l7_submit_option_intent(self, intent, regime: str = "NORMAL") -> Optional[dict]:
+        """Route a ShortDTEOptionsEngine intent through L7."""
+        if self.l7 is None:
+            return None
+        return self.l7.submit_option_intent(intent, regime=regime).to_dict()
 
     def l7_heartbeat(self, regime: str = "TRENDING"):
         """Forward heartbeat to L7 surface (called every minute)."""

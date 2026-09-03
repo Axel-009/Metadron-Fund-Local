@@ -5,7 +5,7 @@ Tests all 6 layers + learning loop + asset class routing:
     L2 Signals (MacroEngine, MetadronCube, GMTF)
     L3 ML (AlphaOptimizer)
     L4 Portfolio (BetaCorridor)
-    L5 Execution (PaperBroker, TradierBroker, ExecutionEngine)
+    L5 Execution (SchwabBroker — the only broker, ExecutionEngine)
     L6 Agents (SectorBots, Scorecard)
     Learning Loop (signal accuracy, regime feedback, tier weights)
 """
@@ -38,9 +38,10 @@ from engine.portfolio.beta_corridor import (
     BetaCorridor, BetaState, BetaAction,
     ALPHA, EXECUTION_MULTIPLIER, VOL_STANDARD,
 )
-from engine.execution.paper_broker import (
-    PaperBroker, OrderSide, OrderStatus, SignalType, Position,
+from engine.execution.broker_types import (
+    OrderSide, OrderStatus, SignalType, Position,
 )
+from engine.execution.schwab_broker import SchwabBroker
 from engine.agents.sector_bots import (
     SectorBot, SectorBotManager, AgentScorecard, AgentTier,
 )
@@ -271,36 +272,34 @@ class TestBetaCorridor:
 
 
 # ===========================================================================
-# L5: Execution (PaperBroker)
+# L5: Execution (SchwabBroker — offline DRY_RUN; nothing is sent)
 # ===========================================================================
-class TestPaperBroker:
+class TestSchwabBroker:
     def test_init(self):
-        broker = PaperBroker(initial_cash=1_000_000)
+        broker = SchwabBroker(initial_cash=1_000_000, connect=False)
         assert broker.state.cash == 1_000_000
         assert broker.state.nav == 1_000_000
+        assert broker.is_connected is False
+        assert broker.live_orders is False
 
-    def test_place_order_buy(self):
-        broker = PaperBroker(initial_cash=100_000)
-        # Mock price by directly updating
+    def test_place_order_buy_dry_run(self):
+        broker = SchwabBroker(initial_cash=100_000, connect=False)
         order = broker.place_order("TEST", OrderSide.BUY, 100, reason="test")
-        # If no price data, should be rejected
-        if order.status == OrderStatus.REJECTED:
-            assert "No price" in order.reason
-        # If filled, check state
-        elif order.status == OrderStatus.FILLED:
-            assert broker.state.cash < 100_000
-            assert "TEST" in broker.state.positions
+        # Offline: order is recorded as DRY_RUN / REJECTED — never FILLED, never sent
+        assert order.status in (OrderStatus.DRY_RUN, OrderStatus.REJECTED)
+        assert broker.state.cash == 100_000
 
     def test_signal_types(self):
         assert len(SignalType) == 29  # 15 original + 4 social + 3 distress + 2 CVR + 4 event + HOLD
         assert SignalType.MICRO_PRICE_BUY.value == "MICRO_PRICE_BUY"
 
     def test_portfolio_summary(self):
-        broker = PaperBroker(initial_cash=500_000)
+        broker = SchwabBroker(initial_cash=500_000, connect=False)
         summary = broker.get_portfolio_summary()
         assert summary["cash"] == 500_000
-        assert summary["positions"] == 0
+        assert summary["position_count"] == 0
         assert summary["nav"] == 500_000
+        assert summary["broker"] == "SCHWAB" and summary["live_orders"] is False
 
 
 # ===========================================================================
@@ -833,225 +832,6 @@ class TestLearningLoop:
 
 
 # ===========================================================================
-# Tradier Broker
+# Legacy Tradier / Alpaca / IBKR / Paper broker tests removed — Schwab is the
+# only broker. See tests/test_schwab_broker.py, tests/test_account_router.py.
 # ===========================================================================
-class TestTradierBrokerModule:
-    """Unit tests for TradierBroker — no live API calls (mocked)."""
-
-    def test_import(self):
-        from engine.execution.tradier_broker import (
-            TradierBroker, TradierAPIClient,
-            _SIDE_TO_TRADIER, _TRADIER_SIDE_MAP, _BASE_URLS,
-        )
-        assert "sandbox" in _BASE_URLS
-        assert "production" in _BASE_URLS
-
-    def test_side_mapping_roundtrip(self):
-        from engine.execution.tradier_broker import _SIDE_TO_TRADIER, _TRADIER_SIDE_MAP
-        for local_side, tradier_str in _SIDE_TO_TRADIER.items():
-            assert tradier_str in _TRADIER_SIDE_MAP
-            assert _TRADIER_SIDE_MAP[tradier_str] == local_side
-
-    def test_api_client_init_sandbox(self):
-        from engine.execution.tradier_broker import TradierAPIClient
-        client = TradierAPIClient(
-            api_key="test_key",
-            account_id="test_acct",
-            environment="sandbox",
-        )
-        assert client.environment == "sandbox"
-        assert "sandbox.tradier.com" in client.base_url
-        assert client.api_key == "test_key"
-        assert client.account_id == "test_acct"
-
-    def test_api_client_init_production(self):
-        from engine.execution.tradier_broker import TradierAPIClient
-        client = TradierAPIClient(
-            api_key="prod_key",
-            account_id="prod_acct",
-            environment="production",
-        )
-        assert client.environment == "production"
-        assert "api.tradier.com" in client.base_url
-
-    def test_api_client_invalid_environment(self):
-        from engine.execution.tradier_broker import TradierAPIClient
-        with pytest.raises(ValueError, match="Invalid environment"):
-            TradierAPIClient(api_key="k", account_id="a", environment="invalid")
-
-    def test_broker_interface_matches_paper(self):
-        """Verify TradierBroker has the same public methods as PaperBroker."""
-        from engine.execution.tradier_broker import TradierBroker
-        required_methods = [
-            "place_order", "compute_nav", "compute_exposures",
-            "get_position", "get_all_positions", "get_portfolio_summary",
-            "refresh_prices", "reconcile", "get_risk_profile",
-            "get_daily_target_state", "reset_daily_target",
-            "get_leverage_multiplier", "emit_dashboard_state",
-            "get_dashboard_snapshot", "get_dashboard_history",
-            "register_dashboard_callback", "get_trade_history",
-            "get_daily_pnl", "get_drawdown", "get_performance_metrics",
-            "export_positions_csv",
-        ]
-        for method in required_methods:
-            assert hasattr(TradierBroker, method), f"TradierBroker missing method: {method}"
-
-    def test_broker_init_offline(self):
-        """TradierBroker should init gracefully without network."""
-        from engine.execution.tradier_broker import TradierBroker
-        import os
-        # Use dummy credentials
-        broker = TradierBroker(
-            initial_cash=10_000,
-            api_key="dummy_key",
-            account_id="dummy_acct",
-            environment="sandbox",
-        )
-        # Should initialize even though API calls fail
-        assert broker.state.cash == 10_000
-        assert broker.client.environment == "sandbox"
-
-    def test_broker_portfolio_summary_format(self):
-        """Verify portfolio summary includes broker field."""
-        from engine.execution.tradier_broker import TradierBroker
-        broker = TradierBroker(
-            initial_cash=50_000,
-            api_key="dummy",
-            account_id="dummy",
-            environment="sandbox",
-        )
-        summary = broker.get_portfolio_summary()
-        assert "broker" in summary
-        assert summary["broker"] == "tradier"
-        assert "environment" in summary
-        assert summary["environment"] == "sandbox"
-        assert "nav" in summary
-        assert "cash" in summary
-
-    def test_risk_profile_default(self):
-        from engine.execution.tradier_broker import TradierBroker
-        broker = TradierBroker(
-            initial_cash=10_000,
-            api_key="dummy",
-            account_id="dummy",
-            environment="sandbox",
-        )
-        assert broker.get_risk_profile() == "AGGRESSIVE"
-        assert broker.get_leverage_multiplier() == 1.0
-
-    def test_daily_target_state(self):
-        from engine.execution.tradier_broker import TradierBroker
-        broker = TradierBroker(
-            initial_cash=10_000,
-            api_key="dummy",
-            account_id="dummy",
-            environment="sandbox",
-        )
-        state = broker.get_daily_target_state()
-        assert "risk_profile" in state
-        assert "target_pct" in state
-        assert state["target_pct"] == 0.05
-
-    def test_place_order_no_price(self):
-        """Order should be rejected when no price data available."""
-        from engine.execution.tradier_broker import TradierBroker
-        broker = TradierBroker(
-            initial_cash=10_000,
-            api_key="dummy",
-            account_id="dummy",
-            environment="sandbox",
-        )
-        # This should fail gracefully (no real API)
-        order = broker.place_order("FAKEXYZ", OrderSide.BUY, 10, reason="test")
-        assert order.status in (OrderStatus.REJECTED,)
-        assert order.ticker == "FAKEXYZ"
-
-    def test_execution_engine_broker_type(self):
-        """ExecutionEngine should accept broker_type parameter."""
-        from engine.execution.execution_engine import ExecutionEngine
-        # Default should be paper
-        # We can't instantiate fully without market data, but we can verify
-        # the parameter is accepted at the class level
-        import inspect
-        sig = inspect.signature(ExecutionEngine.__init__)
-        assert "broker_type" in sig.parameters
-
-
-# ===========================================================================
-# Alpaca Broker
-# ===========================================================================
-class TestAlpacaBrokerModule:
-    """Unit tests for AlpacaBroker — no live API calls (imports + interface)."""
-
-    def test_import(self):
-        from engine.execution.alpaca_broker import (
-            AlpacaBroker, _ALPACA_BASE_URLS, _ALPACA_STATUS_MAP,
-        )
-        assert True in _ALPACA_BASE_URLS
-        assert False in _ALPACA_BASE_URLS
-        assert _ALPACA_BASE_URLS[True] == "https://paper-api.alpaca.markets"
-        assert _ALPACA_BASE_URLS[False] == "https://api.alpaca.markets"
-
-    def test_status_mapping(self):
-        from engine.execution.alpaca_broker import _ALPACA_STATUS_MAP
-        assert _ALPACA_STATUS_MAP.get("filled") == OrderStatus.FILLED
-        assert _ALPACA_STATUS_MAP.get("new") == OrderStatus.PENDING
-        assert _ALPACA_STATUS_MAP.get("canceled") == OrderStatus.CANCELLED
-        assert _ALPACA_STATUS_MAP.get("rejected") == OrderStatus.REJECTED
-
-    def test_broker_interface_matches_paper(self):
-        """Verify AlpacaBroker has the same public methods as PaperBroker."""
-        from engine.execution.alpaca_broker import AlpacaBroker
-        required_methods = [
-            "place_order", "compute_nav", "compute_exposures",
-            "get_position", "get_all_positions", "get_portfolio_summary",
-            "refresh_prices", "reconcile", "get_risk_profile",
-            "get_daily_target_state", "reset_daily_target",
-            "get_leverage_multiplier", "emit_dashboard_state",
-            "get_dashboard_snapshot", "get_dashboard_history",
-            "register_dashboard_callback", "get_trade_history",
-            "get_daily_pnl", "get_drawdown", "get_performance_metrics",
-            "export_positions_csv",
-            # Alpaca-specific
-            "get_orders", "cancel_order", "get_gainloss",
-            "preview_order", "get_asset", "get_clock", "get_portfolio_history",
-            "close_position", "close_all_positions",
-        ]
-        for method in required_methods:
-            assert hasattr(AlpacaBroker, method), f"AlpacaBroker missing method: {method}"
-
-    def test_alpaca_broker_init_signatures(self):
-        """Verify __init__ accepts same params as TradierBroker."""
-        from engine.execution.alpaca_broker import AlpacaBroker
-        import inspect
-        sig = inspect.signature(AlpacaBroker.__init__)
-        params = list(sig.parameters.keys())
-        assert "initial_cash" in params
-        assert "log_dir" in params
-        assert "api_key" in params
-        assert "secret_key" in params
-        assert "paper" in params
-
-    def test_execution_engine_accepts_alpaca(self):
-        """ExecutionEngine should accept broker_type='alpaca'."""
-        from engine.execution.execution_engine import ExecutionEngine
-        import inspect
-        sig = inspect.signature(ExecutionEngine.__init__)
-        assert "broker_type" in sig.parameters
-        # Check AlpacaBroker import exists in source
-        source = inspect.getsource(ExecutionEngine)
-        assert "AlpacaBroker" in source
-        assert "alpaca" in source
-
-    def test_alpaca_broker_constants(self):
-        """Verify commission mapping (Alpaca is $0)."""
-        from engine.execution.alpaca_broker import AlpacaBroker
-        # Commission is hardcoded as 0.0 in _log_trade and reconcile
-        import inspect
-        source = inspect.getsource(AlpacaBroker._log_trade)
-        assert "commission" in source
-        assert "0.0" in source
-
-
-if __name__ == "__main__":
-    pytest.main([__file__, "-v"])

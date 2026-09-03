@@ -7,10 +7,9 @@ per router module.
 
 BROKER SWAP NOTE:
     To change the active broker, set METADRON_BROKER_TYPE env var:
-        "ibkr"  — IBKRBroker (default, requires IBKR_API_KEY)
-        "paper"   — PaperBroker (simulation only)
-        "ibkr"  — IBKRBroker (requires IBKR_API_KEY, not yet wired in ExecutionEngine)
-        "ibkr"    — IBKRBroker (future — implement broker_protocol.BrokerProtocol)
+        "schwab" — SchwabBroker / SchwabAccountRouter (the ONLY broker; data +
+                   execution for equities, ETFs and 1–7 DTE options).
+        Legacy values (paper / ibkr / tradier / alpaca) map to "schwab".
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 PROBLEM SOLVED BY THIS MODULE
@@ -109,7 +108,12 @@ def _broker_type() -> str:
         Changing it after the singleton is created has no effect until the
         process restarts (or _reset_singletons() is called — dev only).
     """
-    return os.getenv("METADRON_BROKER_TYPE", "ibkr").lower().strip()
+    # Schwab is the only broker. Any legacy value ("paper", "ibkr", "tradier",
+    # "alpaca") is accepted and mapped to "schwab" so old .env files keep working.
+    v = os.getenv("METADRON_BROKER_TYPE", "schwab").lower().strip()
+    if v != "schwab":
+        logger.warning("METADRON_BROKER_TYPE=%r is retired — using 'schwab'", v)
+    return "schwab"
 
 
 def _strict_mode() -> bool:
@@ -161,21 +165,22 @@ def get_engine() -> "_ExecutionEngine":
             from engine.execution.execution_engine import ExecutionEngine
             _engine = ExecutionEngine(broker_type=broker)
             logger.info(
-                "Shared singleton: ExecutionEngine ready — broker=%s paper=%s",
+                "Shared singleton: ExecutionEngine ready — broker=%s connected=%s live_orders=%s",
                 type(_engine.broker).__name__,
-                getattr(_engine.broker, "paper", "unknown"),
+                getattr(_engine.broker, "is_connected", False),
+                getattr(_engine.broker, "live_orders", False),
             )
         except Exception as exc:
             if _strict_mode():
                 raise
             logger.warning(
                 "Shared singleton: ExecutionEngine init failed (%s) — "
-                "falling back to bare PaperBroker.  "
-                "Set IBKR_HOST / IBKR_PORT to connect. Default: 127.0.0.1:7497 (paper).",
+                "falling back to an OFFLINE SchwabBroker (DRY_RUN, nothing sent). "
+                "Set SCHWAB_AUTH_MODE / SCHWAB_ACCESS_TOKEN (+ SCHWAB_ACCOUNT_*) to connect.",
                 exc,
             )
             from engine.execution.execution_engine import ExecutionEngine
-            _engine = ExecutionEngine(broker_type="paper")
+            _engine = ExecutionEngine(broker_type="schwab", connect_broker=False)
 
     return _engine
 
@@ -271,8 +276,13 @@ def get_l7() -> Optional["_L7"]:
             from engine.execution.l7_unified_execution_surface import (
                 L7UnifiedExecutionSurface,
             )
-            _l7 = L7UnifiedExecutionSurface(broker_type=_broker_type())
-            logger.info("Shared singleton: L7UnifiedExecutionSurface ready")
+            # L7 is owned by the ExecutionEngine and shares its Schwab broker —
+            # never build a second L7 / second broker for the same account.
+            eng = get_engine()
+            _l7 = getattr(eng, "l7", None)
+            if _l7 is None:
+                _l7 = L7UnifiedExecutionSurface(broker=eng.broker)
+            logger.info("Shared singleton: L7UnifiedExecutionSurface ready (shared Schwab broker)")
         except Exception as exc:
             logger.warning(
                 "Shared singleton: L7UnifiedExecutionSurface init failed (%s) — "

@@ -75,7 +75,7 @@ except (ImportError, FileNotFoundError, AttributeError, Exception):
     logger.info("QLIB backtest engine unavailable — numpy walk-forward fallback")
 
 try:
-    from engine.execution.paper_broker import SignalType
+    from engine.execution.broker_types import SignalType
 except Exception:
     class SignalType:
         ML_AGENT_BUY = "ML_AGENT_BUY"

@@ -68,8 +68,8 @@ class FixedIncomeEngine:
                     self._broker = IBKRBroker()
                 except Exception:
                     try:
-                        from engine.execution.paper_broker import PaperBroker
-                        self._broker = PaperBroker()
+                        from engine.execution.schwab_broker import get_shared_broker
+                        self._broker = get_shared_broker()
                     except Exception as e:
                         logger.warning(f"No broker available: {e}")
         return self._broker

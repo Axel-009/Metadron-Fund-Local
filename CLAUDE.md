@@ -33,7 +33,7 @@ Beta managed within a 7–12% return corridor (S&P 500 historical earnings range
 Alpha extracted through top-down macro → GICS sector selection → bottom-up stock picking.
 Money velocity (V = GDP/M2) + cyclical vs secular decomposition drive regime classification.
 Platform targets 95%+ alpha via aggressive multi-sleeve allocation with continuous ML walk-forward optimisation.
-Paper broker mode — live HFT opportunity-based execution, continuously scanning for alpha throughout the day.
+Charles Schwab is the SOLE data + execution broker (no paper broker, no futures). Live loop: FULL scan + allocation rotation every 30 min until the close, hourly macro-event flag, EOD equities/ETF allocation council.
 **5% daily compound target (minimum)** — once hit, risk dials down (AGGRESSIVE → MODERATE → DEFENSIVE) to retain gains on close.
 Alpha maximized through positioning + selection; beta managed through leverage execution multipliers.
 Data sourced via **OpenBB** (34+ providers: FRED, SEC, Polygon, FMP, CBOE, ECB, OECD, etc.) — sole data source, no yfinance dependency.
@@ -41,7 +41,7 @@ Data sourced via **OpenBB** (34+ providers: FRED, SEC, Polygon, FMP, CBOE, ECB, 
 ## Signal Pipeline
 
 ```
-UniverseEngine → MacroEngine → MetadronCube → SecurityAnalysis → PatternDiscovery → CrossAssetContagion → SocialPrediction → DistressedAssets → CVR → EventDriven → TickerSelection → AlphaOptimizer → BetaCorridor → DecisionMatrix → L7UnifiedExecutionSurface → AlpacaBroker + PaperLog
+UniverseEngine → MacroEngine → MetadronCube → SecurityAnalysis → PatternDiscovery → CrossAssetContagion → SocialPrediction → DistressedAssets → CVR → EventDriven → TickerSelection → AlphaOptimizer → BetaCorridor → DecisionMatrix → L7UnifiedExecutionSurface → SchwabBroker / SchwabAccountRouter (DRY_RUN log unless SCHWAB_LIVE_ORDERS=true)
      (L1)           (L2)          (L2)          (L2/3.1)          (L2/3.2)            (L2/3.5)             (L2/L3)            (L2)          (L2)     (L2)          (L2/4)          (L3)            (L4)           (L5)                    (L7)                       (L7)
 ```
 
@@ -96,8 +96,8 @@ AlphaOptimizer (regime-universe)
 AlphaBetaUnleashed (Dataset 1) — 1-min cadence
     ├── Rm_adjusted = Rm_realized + macro.rm_adjustment
     ├── target_beta = corridor_fn(Rm_adjusted) × 4.7 × vol_adj
-    ├── MES_hedge_beta = target_beta - sleeve_beta
-    └── execute via PaperBroker, AlpacaBroker, or TradierBroker (broker_type="alpaca"|"tradier"|"paper")
+    ├── beta corridor = fair value for directionality (options: 1–7 DTE only, no futures)
+    └── execute via SchwabBroker through L7 (broker_type="schwab" is the only value)
 ```
 
 ## Architecture
@@ -144,16 +144,22 @@ Metadron-Capital/                        ← Master monorepo (Layer 0: Hub)
 │   ├── portfolio/                       ← L4: Portfolio construction
 │   │   └── beta_corridor.py            ← Beta corridor 7–12% + vol-normalisation
 │   ├── execution/                       ← L5: Execution + L7 HFT routing
-│   │   ├── paper_broker.py             ← Simulated broker (OpenBB prices)
-│   │   ├── alpaca_broker.py            ← Live broker via Alpaca API (paper/production)
-│   │   ├── tradier_broker.py           ← Live broker via Tradier API (legacy, sandbox/production)
-│   │   ├── execution_engine.py         ← Full pipeline orchestrator + ML vote ensemble (broker_type="paper"|"alpaca"|"tradier")
+│   │   ├── broker_types.py             ← Shared Order/Position/PortfolioState/SignalType dataclasses
+│   │   ├── schwab_broker.py            ← SOLE broker: Schwab Trader API (auth, quotes, chains, orders, sync). DRY_RUN unless SCHWAB_LIVE_ORDERS=true
+│   │   ├── schwab_account_router.py    ← Multi-account mandates ROTH 25/75 · LLC equities+ETF · INDIVIDUAL 100% options
+│   │   ├── account_mandates.py         ← Mandates + 20% DrawdownGuard (rotate-or-close before every add)
+│   │   ├── short_dte_options_engine.py ← 1–7 DTE options: BSM IV → VolSurface edge → Greeks → MC gate → composite → vega-Kelly → put ladder
+│   │   ├── macro_event_flagger.py      ← Hourly important market / macro-moving event flag
+│   │   ├── universe_tranche_scan.py    ← Universe scan in 3 SEPARATE tranches (S&P 500 → SmallCap 600 → remaining ~400) → concurrence → slate
+│   │   ├── eod_allocation_council.py   ← Market-close council: equities/ETF execution → next-day allocation
+│   │   ├── run_patch_report.py         ← In-chat learning + rotation patch after every run (replaces Phase 6/7 in sandbox)
+│   │   ├── execution_engine.py         ← Full pipeline orchestrator + ML vote ensemble (broker_type="schwab")
 │   │   ├── decision_matrix.py          ← 6-gate trade approval + Kelly sizing + ABU beta
 │   │   ├── options_engine.py           ← Black-Scholes, Greeks, vol surface, θ+Γ optimizer
 │   │   ├── conviction_override.py       ← 3-tier conviction override system
 │   │   ├── exchange_core_engine.py     ← L7 LMAX Disruptor ring buffer order matching (Python)
 │   │   ├── wondertrader_engine.py      ← L7 CTA trend-following + HFT micro-price + TWAP/VWAP
-│   │   └── l7_unified_execution_surface.py ← L7 fused execution arm (all products → Tradier + paper log)
+│   │   └── l7_unified_execution_surface.py ← L7 fused execution arm (equities/ETF/options → Schwab; G10 options cap mandate-aware)
 │   ├── live_loop_orchestrator.py       ← End-to-end continuous live loop (ingestion → execution → learning)
 │   │   # L7 HFT Execution arm:
 │   │   # quant_strategy_executor.py  → 12 independent technical strategies (Stage 6.5)
@@ -408,7 +414,7 @@ python3 core/platform.py
 ## Design Rules
 
 1. **All data via OpenBB** (34+ providers: FRED, SEC, CBOE, etc.) — sole data source, no broker dependency
-2. **Paper broker default** — AlpacaBroker available for live/paper execution (set ALPACA_API_KEY, ALPACA_SECRET_KEY, ALPACA_PAPER_TRADE in .env). Switch with `broker_type="alpaca"`. Legacy TradierBroker also supported via `broker_type="tradier"`.
+2. **Schwab only** — `SchwabBroker` (single account) or `SchwabAccountRouter` (when `SCHWAB_ACCOUNT_ROTH/LLC/INDIVIDUAL` are set) is the sole data + execution broker. Paper/Tradier/Alpaca/IBKR brokers are deleted; futures are removed from allocation (options only, 1–7 DTE). Orders are DRY_RUN (risk-gated + logged) unless `SCHWAB_LIVE_ORDERS=true`. Account mandates: ROTH 25% options / 75% equities; LLC equities+ETFs only; INDIVIDUAL 100% options. A 20% drawdown (account or portfolio) blocks adds and emits a rotate-or-close plan.
 3. **6-layer architecture is immutable** — extend within layers
 4. **Beta managed within 7–12% corridor** — vol-normalised
 5. **Alpha targeted at 95%+** — aggressive multi-sleeve allocation

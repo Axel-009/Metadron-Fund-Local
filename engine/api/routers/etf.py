@@ -23,8 +23,8 @@ def _get_broker():
             from engine.execution.alpaca_broker import AlpacaBroker
             _broker = AlpacaBroker()
         except Exception:
-            from engine.execution.paper_broker import PaperBroker
-            _broker = PaperBroker()
+            from engine.execution.schwab_broker import get_shared_broker
+            _broker = get_shared_broker()
     return _broker
 
 

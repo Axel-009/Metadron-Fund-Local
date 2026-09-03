@@ -20,7 +20,7 @@ STEP 1 — Import shared dataclasses from paper_broker.py
     The paper_broker module is the canonical source of all shared data types.
     IBKRBroker implements this pattern:
 
-        from engine.execution.paper_broker import (
+        from engine.execution.broker_types import (
             Order, OrderSide, OrderType, OrderStatus, SignalType,
             Position, PortfolioState, RiskLimiter, PerformanceTracker,
             DailyTargetManager, LiveDashboardState, RiskProfile,
@@ -133,7 +133,7 @@ if TYPE_CHECKING:
     # These types are defined in paper_broker.py and imported by all brokers.
     import pandas as pd
 
-    from engine.execution.paper_broker import (
+    from engine.execution.broker_types import (
         Order,
         OrderSide,
         OrderType,

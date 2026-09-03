@@ -9,7 +9,7 @@ import logging
 import numpy as np
 
 try:
-    from engine.execution.paper_broker import SignalType
+    from engine.execution.broker_types import SignalType
 except Exception:
     class SignalType:
         MC_BUY = "MC_BUY"

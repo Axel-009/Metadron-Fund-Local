@@ -89,8 +89,8 @@ def generate_recon_log() -> Path:
 
     try:
         # Get trade log positions
-        from engine.execution.paper_broker import PaperBroker
-        paper = PaperBroker()
+        from engine.execution.schwab_broker import get_shared_broker
+        paper = get_shared_broker()
         paper_positions = paper.get_all_positions()
 
         # Get IBKRBroker positions

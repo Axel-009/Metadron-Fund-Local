@@ -79,7 +79,7 @@ except (ImportError, FileNotFoundError, AttributeError, Exception):
     logger.info("hedgefund-tracker PerformanceEvaluator unavailable")
 
 try:
-    from engine.execution.paper_broker import SignalType
+    from engine.execution.broker_types import SignalType
 except Exception:
     class SignalType:
         ML_AGENT_BUY = "ML_AGENT_BUY"

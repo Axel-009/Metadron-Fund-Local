@@ -1,30 +1,33 @@
 """L7 Unified Execution Surface — Fused continuous execution arm.
 
 Unifies WonderTrader (micro-price + CTA + routing), ExchangeCore (order matching),
-IBKRBroker (sole execution broker with native TWAP/VWAP algo), and OptionsEngine
-(derivatives) into one continuous execution arm.
+SchwabBroker (sole execution + market-data broker, bookkeeping) and the
+ShortDTEOptionsEngine / OptionsEngine (1-7 DTE derivatives) into one continuous
+execution arm.
 
 Pipeline position:
     All 29 signal types → L7UnifiedExecutionSurface
-        ├── Equity orders  → WonderTrader micro-price → ExchangeCore → IBKR (TWAP/VWAP)
-        ├── Options orders → OptionsEngine Greeks → vol-adjusted → IBKR
-        └── Futures orders → Beta corridor hedge → IBKR
+        ├── Equity orders  → WonderTrader micro-price → ExchangeCore → Schwab (sliced TWAP/VWAP)
+        └── Options orders → ShortDTEOptionsEngine (BSM@DTE + MC + RSI/momentum + beta corridor)
+                             → Schwab option order (single leg or vertical)
+    Futures are NOT traded (Schwab API has no futures order entry; overlay is options-only).
     Trade log maintained in parallel for reconciliation (generated vs executed).
 
-Broker: IBKR only (native TWAP/VWAP/Adaptive algo orders via ib_insync).
-Trade log: Records all orders the platform generates — used for recon to verify
-           which orders were actually executed on the broker vs generated but not filled.
+Broker: Schwab only. ONE SchwabBroker instance is shared by ExecutionEngine, L7 and the
+API layer (inject via ``broker=``). SCHWAB_LIVE_ORDERS=false → every order is fully
+risk-checked and logged with status DRY_RUN but never sent.
 
 Design rules (per CLAUDE.md):
     - try/except on ALL external imports — system runs degraded, never broken
     - Pure-numpy fallbacks — no crashes if optional packages missing
-    - IBKR is the SOLE execution broker with native algo routing
+    - Schwab is the SOLE execution broker; all data + execution go through it
     - Trade log ALWAYS maintained for reconciliation and learning loop
-    - Fixed income / FX / liquidity are for research only — never executed here
+    - Fixed income / FX / liquidity / futures are research only — never executed here
 """
 
 from __future__ import annotations
 
+import os
 import time
 import uuid
 import json
@@ -57,7 +60,7 @@ except ImportError:
 
 # Internal imports — all guarded
 try:
-    from .paper_broker import (
+    from .broker_types import (
         OrderSide, OrderType, OrderStatus,
         SignalType, Order, Position, PortfolioState,
     )
@@ -65,10 +68,9 @@ except ImportError:
     pass
 
 try:
-    from .ibkr_broker import IBKRBroker, IBKRAlgoType
+    from .schwab_broker import SchwabBroker
 except ImportError:
-    IBKRBroker = None  # type: ignore[assignment,misc]
-    IBKRAlgoType = None  # type: ignore[assignment,misc]
+    SchwabBroker = None  # type: ignore[assignment,misc]
 
 try:
     from .wondertrader_engine import WonderTraderEngine, MicroPriceResult, CTASignal
@@ -146,7 +148,12 @@ class L7Order:
     option_type: str = ""      # CALL / PUT
     strike: float = 0.0
     expiry: str = ""           # YYYY-MM-DD
-    # Futures-specific
+    contract_symbol: str = ""  # Schwab/OCC option symbol, e.g. "SPY   260910C00775000"
+    legs: list = field(default_factory=list)   # multi-leg option legs (VERTICAL)
+    structure: str = "SINGLE"  # SINGLE | VERTICAL
+    sector: str = ""           # allocation bucket / sector for G2
+    delta_exposure_usd: float = 0.0  # contracts × delta × 100 × spot (for G9)
+    # Futures-specific (classification only — futures are REJECTED, never routed)
     contract: str = ""         # ES, NQ, VX, ZN, etc.
     # Execution results
     fill_price: float = 0.0
@@ -187,6 +194,8 @@ class L7Order:
             "timing_cost_bps": self.timing_cost_bps,
             "option_type": self.option_type, "strike": self.strike,
             "expiry": self.expiry, "contract": self.contract,
+            "contract_symbol": self.contract_symbol, "structure": self.structure,
+            "legs": self.legs, "sector": self.sector,
         }
 
 
@@ -250,13 +259,13 @@ class TransactionCostAnalyzer:
         1. Spread cost: half-spread at time of order
         2. Market impact: price movement caused by our order
         3. Timing cost: adverse price movement between decision and fill
-        4. Commission: IBKR tiered commission schedule
+        4. Commission: Schwab commission schedule
     """
 
-    # Commission schedule (IBKR tiered pricing)
-    EQUITY_COMMISSION_PER_SHARE = 0.005     # IBKR: ~$0.005/share (min $1)
-    OPTION_COMMISSION_PER_CONTRACT = 0.65   # IBKR: ~$0.65/contract
-    FUTURE_COMMISSION_PER_CONTRACT = 1.25   # IBKR: ~$1.25/contract
+    # Commission schedule (Schwab retail: $0 equities, $0.65/contract options)
+    EQUITY_COMMISSION_PER_SHARE = 0.0       # Schwab: $0 online equity commissions
+    OPTION_COMMISSION_PER_CONTRACT = 0.65   # Schwab: $0.65/contract
+    FUTURE_COMMISSION_PER_CONTRACT = 0.0    # not traded
 
     # Market impact model: sqrt(qty / ADV) * volatility * impact_coeff
     IMPACT_COEFFICIENT = 0.10
@@ -420,20 +429,23 @@ RESEARCH_ONLY_PREFIXES = frozenset({
 # are NOT in this set — they are tradeable via L7 for alpha extraction.
 # Index ETFs (SPY, QQQ, IWM, DIA, VT, EFA, EEM) are also tradeable.
 
-# Futures tradeable via IBKR — equity index + VIX + treasuries
+# Futures roots — recognised for CLASSIFICATION ONLY. The Schwab Trader API has no
+# futures order entry and the Metadron overlay is strictly options, so any order
+# classified as FUTURE is rejected at submit_order().
 TRADEABLE_FUTURES = frozenset({"ES", "NQ", "YM", "RTY", "VX", "ZN", "ZB", "ZF", "ZT"})
+FUTURES_REJECT_REASON = "Futures not supported: Schwab API has no futures order entry; overlay is options-only"
 
 
 class MultiProductRouter:
     """Routes orders by product type through the appropriate execution path.
 
-    All products route to IBKR as sole execution broker with native algo routing.
+    All products route to Schwab as sole execution broker (sliced TWAP/VWAP).
     Trade log maintained in parallel for reconciliation.
 
     Routing paths:
-        EQUITY:  → WonderTrader micro-price → ExchangeCore matching → IBKR (TWAP/VWAP)
-        OPTION:  → OptionsEngine Greeks check → vol-adjusted limit → IBKR
-        FUTURE:  → Beta corridor validation → IBKR
+        EQUITY:  → WonderTrader micro-price → ExchangeCore matching → Schwab (TWAP/VWAP)
+        OPTION:  → ShortDTEOptionsEngine (BSM@DTE, MC, RSI/momentum, beta corridor) → Schwab
+        FUTURE:  → REJECTED (not supported)
     """
 
     def __init__(self):
@@ -636,8 +648,8 @@ class L7RiskEngine:
         G6: Trade throttle ≤ 100/day
         G7: Max drawdown ≤ 10% halt
         G8: Cash sufficiency for buys
-        G9: Options delta exposure ≤ 20% NAV (new)
-        G10: Futures notional ≤ 50% NAV (new)
+        G9: Options delta exposure ≤ 20% NAV
+        G10: Options notional ≤ 25% NAV (IG 10 / HY 10 / DIST 5 per AllocationRules)
     """
 
     # Gate limits
@@ -651,7 +663,7 @@ class L7RiskEngine:
         "G7_MAX_DRAWDOWN":    0.10,   # 10% from peak
         "G8_CASH":            0.0,    # must have cash for buys
         "G9_OPTIONS_DELTA":   0.20,   # 20% NAV
-        "G10_FUTURES_NOTIONAL": 0.50, # 50% NAV
+        "G10_OPTIONS_NOTIONAL": 0.25, # 25% NAV total options notional
     }
 
     def __init__(self, initial_nav: float = 1_000.0):
@@ -666,9 +678,22 @@ class L7RiskEngine:
         # Sector exposure tracking
         self._sector_exposure: Dict[str, float] = {}
 
-        # Options/futures specific
+        # Options specific
         self._options_delta_exposure: float = 0.0
-        self._futures_notional: float = 0.0
+        self._options_notional: float = 0.0
+
+    mandate_broker: Any = None   # SchwabAccountRouter when multi-account mandates are active
+
+    def options_notional_cap(self, nav: float) -> float:
+        base = self.LIMITS["G10_OPTIONS_NOTIONAL"]
+        b = self.mandate_broker
+        if b is None or not hasattr(b, "mandates") or nav <= 0:
+            return base
+        try:
+            allowed = sum(m.options_pct * b.brokers[l].state.nav for l, m in b.mandates.items())
+            return max(base, min(1.0, allowed / nav))
+        except Exception:  # noqa: BLE001
+            return base
 
     def reset_daily(self, nav: float):
         """Reset daily counters at market open."""
@@ -691,7 +716,9 @@ class L7RiskEngine:
     ) -> Tuple[bool, List[str]]:
         """Run all risk gates before execution. Returns (passed, violations)."""
         violations = []
-        order_value = order.quantity * (order.limit_price or order.arrival_price or 100)
+        unit_price = order.limit_price or order.arrival_price or 100
+        multiplier = 100.0 if order.product_type == ProductType.OPTION else 1.0
+        order_value = abs(order.quantity) * unit_price * multiplier
 
         # Auto-reset daily counters
         today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
@@ -712,7 +739,15 @@ class L7RiskEngine:
                     f"(limit {self.LIMITS['G1_POSITION']:.0%})"
                 )
 
-        # G2: Sector concentration — tracked externally
+        # G2: Sector / bucket concentration
+        if order.sector and nav > 0 and order.side in ("BUY", "SHORT"):
+            new_sector = self._sector_exposure.get(order.sector, 0.0) + order_value
+            if new_sector / nav > self.LIMITS["G2_SECTOR"]:
+                violations.append(
+                    f"G2_SECTOR: {order.sector} would be {new_sector/nav:.1%} of NAV "
+                    f"(limit {self.LIMITS['G2_SECTOR']:.0%})"
+                )
+        # (legacy note) sector map for equities is tracked externally
         # (checked via _sector_exposure but we allow it through if unknown)
 
         # G3: Daily loss circuit breaker
@@ -766,23 +801,27 @@ class L7RiskEngine:
                 f"G8_CASH: order ${order_value:.2f} exceeds cash ${cash:.2f}"
             )
 
-        # G9: Options delta exposure
+        # G9: Options delta exposure (real Δ$ when the options engine supplies it)
         if order.product_type == ProductType.OPTION:
-            new_delta = self._options_delta_exposure + order_value * 0.5  # rough delta
+            delta_usd = abs(order.delta_exposure_usd) if order.delta_exposure_usd else order_value * 0.5
+            new_delta = self._options_delta_exposure + delta_usd
             if nav > 0 and new_delta / nav > self.LIMITS["G9_OPTIONS_DELTA"]:
                 violations.append(
                     f"G9_OPTIONS_DELTA: options delta {new_delta/nav:.1%} exceeds "
                     f"{self.LIMITS['G9_OPTIONS_DELTA']:.0%}"
                 )
 
-        # G10: Futures notional
-        if order.product_type == ProductType.FUTURE:
-            new_notional = self._futures_notional + order_value
-            if nav > 0 and new_notional / nav > self.LIMITS["G10_FUTURES_NOTIONAL"]:
-                violations.append(
-                    f"G10_FUTURES_NOTIONAL: futures {new_notional/nav:.1%} exceeds "
-                    f"{self.LIMITS['G10_FUTURES_NOTIONAL']:.0%}"
-                )
+            # G10: Options notional — 25 % NAV overlay cap by default; when account
+            # mandates are configured the cap is Σ(mandate options_pct × account NAV) / NAV
+            # (ROTH 25% + INDIVIDUAL 100% + LLC 0%), so the allocation file is honoured per account.
+            if order.side in ("BUY", "SHORT"):
+                cap = self.options_notional_cap(nav)
+                new_notional = self._options_notional + order_value
+                if nav > 0 and new_notional / nav > cap:
+                    violations.append(
+                        f"G10_OPTIONS_NOTIONAL: options {new_notional/nav:.1%} exceeds "
+                        f"{cap:.0%}"
+                    )
 
         if violations:
             self._gate_violations.append({
@@ -856,11 +895,18 @@ class L7RiskEngine:
             "G7_MAX_DRAWDOWN": dd <= self.LIMITS["G7_MAX_DRAWDOWN"],
         }
 
-        # Update options/futures tracking
+        # Update options / sector tracking
         if order.product_type == ProductType.OPTION:
-            self._options_delta_exposure += abs(order.fill_quantity * order.fill_price * 0.5)
-        elif order.product_type == ProductType.FUTURE:
-            self._futures_notional += abs(order.fill_quantity * order.fill_price)
+            notional = abs(order.fill_quantity * order.fill_price * 100.0)
+            sign = 1.0 if order.side in ("BUY", "SHORT") else -1.0
+            self._options_notional = max(0.0, self._options_notional + sign * notional)
+            delta_usd = abs(order.delta_exposure_usd) if order.delta_exposure_usd else notional * 0.5
+            self._options_delta_exposure = max(0.0, self._options_delta_exposure + sign * delta_usd)
+        if order.sector:
+            mult = 100.0 if order.product_type == ProductType.OPTION else 1.0
+            sign = 1.0 if order.side in ("BUY", "SHORT") else -1.0
+            self._sector_exposure[order.sector] = max(
+                0.0, self._sector_exposure.get(order.sector, 0.0) + sign * abs(order.fill_quantity * order.fill_price * mult))
 
         state = RiskState(
             nav=nav,
@@ -1220,23 +1266,23 @@ class L7UnifiedExecutionSurface:
     """Fused continuous execution arm for Metadron Capital.
 
     Unifies WonderTrader (micro-price + CTA + routing), ExchangeCore (order
-    matching), IBKRBroker (sole execution with native TWAP/VWAP), OptionsEngine
-    (derivatives), and QuantStrategyExecutor (12 technical strategies) into
-    one continuous execution surface.
+    matching), SchwabBroker (sole execution + data broker, sliced TWAP/VWAP),
+    ShortDTEOptionsEngine / OptionsEngine (1-7 DTE derivatives), and
+    QuantStrategyExecutor (12 technical strategies) into one continuous
+    execution surface.
 
-    ALL tradeable products route through IBKR as the sole execution broker.
+    ALL tradeable products route through Schwab as the sole execution broker.
     A trade log records every order the platform generates for reconciliation
     (generated vs actually executed on the broker).
 
     Architecture:
         L7UnifiedExecutionSurface
         ├── Continuous intraday loop (1-min heartbeat from live_loop_orchestrator)
-        ├── Multi-product router (equities, options, futures)
-        │   ├── Equity → WonderTrader micro-price → ExchangeCore → IBKR (TWAP/VWAP)
-        │   ├── Options → OptionsEngine Greeks → vol-adjusted → IBKR
-        │   └── Futures → Beta corridor hedge → IBKR
+        ├── Multi-product router (equities, options; futures rejected)
+        │   ├── Equity → WonderTrader micro-price → ExchangeCore → Schwab (TWAP/VWAP)
+        │   └── Options → ShortDTEOptionsEngine intent → Schwab option order
         ├── Unified order book (all products, all horizons)
-        ├── IBKR broker (sole execution) + trade log (reconciliation)
+        ├── Schwab broker (sole execution, shared instance) + trade log (reconciliation)
         ├── L7RiskEngine (10 gates, per-execution update)
         ├── TransactionCostAnalyzer (per-trade decomposition)
         ├── ExecutionLearningLoop (pattern identification)
@@ -1287,9 +1333,8 @@ class L7UnifiedExecutionSurface:
             "utilization_pct": float,
         },
         "derivatives_overlay": {
-            "_description": "After all 4 runs — options + futures from margin budget",
+            "_description": "After all 4 runs — 1-7 DTE options overlay (IG 10 / HY 10 / DIST 5)",
             "options": [{"ticker": str, "type": str, "notional": float}],
-            "futures": [{"contract": str, "direction": str, "lots": int, "notional": float, "margin": float}],
         },
         "bucket_utilization_summary": {
             "_description": "Final summary after all runs — target vs deployed vs util%",
@@ -1303,34 +1348,43 @@ class L7UnifiedExecutionSurface:
         self,
         initial_cash: float = 100_000.0,
         log_dir: Optional[str] = None,
-        ibkr_host: Optional[str] = None,
-        ibkr_port: Optional[int] = None,
-        ibkr_client_id: Optional[int] = None,
-        ibkr_paper: bool = True,
+        broker: Optional[object] = None,
         daily_target_pct: float = 0.05,
+        connect_broker: Optional[bool] = None,
+        **_legacy_kwargs,
     ):
+        """
+        Args:
+            broker: a SchwabBroker instance shared with ExecutionEngine / API layer.
+                    When None, L7 builds its own SchwabBroker (connects only when
+                    Schwab credentials are present in the environment or
+                    ``connect_broker=True``); otherwise it runs in trade-log-only
+                    DRY_RUN mode. Legacy ``ibkr_*`` kwargs are accepted and ignored.
+        """
         self._log_dir = Path(log_dir or "logs/l7_execution")
         self._log_dir.mkdir(parents=True, exist_ok=True)
+        if _legacy_kwargs:
+            logger.debug("L7: ignoring legacy kwargs %s", sorted(_legacy_kwargs))
 
-        # --- Broker: IBKR only ---
-        self._broker: Optional[object] = None
-
-        if IBKRBroker is not None:
-            try:
-                self._broker = IBKRBroker(
-                    initial_cash=initial_cash,
-                    log_dir=self._log_dir / "ibkr",
-                    host=ibkr_host,
-                    port=ibkr_port,
-                    client_id=ibkr_client_id,
-                    paper=ibkr_paper,
-                    daily_target_pct=daily_target_pct,
+        # --- Broker: Schwab only (single shared instance) ---
+        self._broker: Optional[object] = broker
+        if self._broker is None and SchwabBroker is not None:
+            if connect_broker is None:
+                connect_broker = any(
+                    os.environ.get(k) for k in
+                    ("SCHWAB_AUTH_MODE", "SCHWAB_APP_KEY", "SCHWAB_ACCESS_TOKEN", "SCHWAB_TOKEN_PATH")
                 )
-                logger.info("L7: IBKRBroker connected (paper=%s)", ibkr_paper)
+            try:
+                from .schwab_account_router import build_schwab_broker
+                self._broker = build_schwab_broker(
+                    connect=bool(connect_broker), initial_cash=initial_cash, log_dir=str(self._log_dir / "schwab"),
+                )
             except Exception as e:
-                logger.warning("L7: IBKRBroker init failed: %s — trade-log-only mode", e)
+                logger.warning("L7: Schwab broker init failed: %s — trade-log-only mode", e)
+        if self._broker is not None and getattr(self._broker, "is_connected", False):
+            logger.info("L7: SchwabBroker connected (live_orders=%s)", getattr(self._broker, "live_orders", False))
         else:
-            logger.warning("L7: ib_insync not installed — no live execution")
+            logger.warning("L7: Schwab not connected — orders recorded as DRY_RUN only")
 
         # --- Trade log for reconciliation (generated vs executed) ---
         self._trade_log_dir = self._log_dir / "trade_log"
@@ -1356,7 +1410,7 @@ class L7UnifiedExecutionSurface:
                 "kill_switch": Gauge("l7_kill_switch_active", "Kill switch status (0/1)"),
                 "twap_orders": Counter("l7_twap_orders", "TWAP algo orders"),
                 "vwap_orders": Counter("l7_vwap_orders", "VWAP algo orders"),
-                "ibkr_connected": Gauge("l7_ibkr_connected", "IBKR connection status (0/1)"),
+                "ibkr_connected": Gauge("l7_broker_connected", "Schwab connection status (0/1)"),
                 "tca_total_cost_bps": Summary("l7_tca_total_cost_bps", "TCA total cost per trade"),
                 "tca_implementation_shortfall": Summary("l7_tca_is_usd", "Implementation shortfall USD"),
             }
@@ -1396,7 +1450,7 @@ class L7UnifiedExecutionSurface:
             except Exception as e:
                 logger.warning("L7: QuantStrategyExecutor init failed: %s", e)
 
-        # BetaCorridor for futures hedging
+        # BetaCorridor — directional fair-value input for the options overlay (no futures)
         self._beta_corridor: Optional[object] = None
         if BetaCorridor is not None:
             try:
@@ -1419,6 +1473,8 @@ class L7UnifiedExecutionSurface:
         # --- L7-specific components ---
         self._router = MultiProductRouter()
         self._risk_engine = L7RiskEngine(initial_nav=initial_cash)
+        if hasattr(self._broker, "mandates"):
+            self._risk_engine.mandate_broker = self._broker
         self._tca = TransactionCostAnalyzer()
         self._slippage = SlippageModel()
         self._learning = ExecutionLearningLoop(log_dir=self._log_dir / "learning")
@@ -1427,6 +1483,7 @@ class L7UnifiedExecutionSurface:
         # Unified order book
         self._order_book: deque[L7Order] = deque(maxlen=50_000)
         self._filled_orders: deque[L7Order] = deque(maxlen=50_000)
+        self._dry_run_orders: deque[L7Order] = deque(maxlen=50_000)
 
         # State
         self._initial_cash = initial_cash
@@ -1439,7 +1496,7 @@ class L7UnifiedExecutionSurface:
 
         logger.info(
             "L7UnifiedExecutionSurface initialized: cash=$%.2f, "
-            "ibkr=%s, trade_log=YES, wondertrader=%s, exchange_core=%s, "
+            "schwab=%s, trade_log=YES, wondertrader=%s, exchange_core=%s, "
             "options=%s, quant=%s, beta_corridor=%s",
             initial_cash,
             "YES" if self._broker and hasattr(self._broker, 'is_connected') and self._broker.is_connected else "NO",
@@ -1470,6 +1527,11 @@ class L7UnifiedExecutionSurface:
         daily_vol: float = 0.02,
         kill_switch: bool = False,
         reason: str = "",
+        contract_symbol: str = "",
+        legs: Optional[list] = None,
+        structure: str = "SINGLE",
+        sector: str = "",
+        delta_exposure_usd: float = 0.0,
     ) -> L7Order:
         """Submit a unified order through the L7 execution surface.
 
@@ -1480,7 +1542,7 @@ class L7UnifiedExecutionSurface:
         4. Pre-trade risk gates (10 checks)
         5. Slippage estimation
         6. Product-specific execution path
-        7. IBKR execution (TWAP/VWAP/Market) + trade log for recon
+        7. Schwab execution (TWAP/VWAP/Market, or DRY_RUN) + trade log for recon
         8. Post-trade risk update + Prometheus metrics
         9. TCA analysis
         10. Learning loop outcome recording
@@ -1491,6 +1553,9 @@ class L7UnifiedExecutionSurface:
             signal_type=signal_type, limit_price=limit_price,
             option_type=option_type, strike=strike, expiry=expiry,
             contract=contract, reason=reason,
+            contract_symbol=contract_symbol, legs=list(legs or []),
+            structure=structure or "SINGLE", sector=sector,
+            delta_exposure_usd=delta_exposure_usd,
         )
 
         # 1. Research-only guard
@@ -1501,14 +1566,21 @@ class L7UnifiedExecutionSurface:
             logger.info("L7 REJECTED (research-only): %s", ticker)
             return order
 
-        # 2. Product classification
+        # 2. Product classification (+ futures hard reject — options-only overlay)
         if product_type:
             order.product_type = ProductType(product_type)
         else:
             order.product_type = self._router.classify(order)
+        if order.product_type == ProductType.FUTURE:
+            order.status = "REJECTED"
+            order.reason = FUTURES_REJECT_REASON
+            self._order_book.append(order)
+            self._router.record_route("REJECTED")
+            logger.warning("L7 REJECTED (futures unsupported): %s", ticker)
+            return order
 
         # 3. Learning loop routing suggestion
-        notional = quantity * (limit_price or 100)
+        notional = quantity * (limit_price or 100) * (100 if order.product_type == ProductType.OPTION else 1)
         suggestion = self._learning.suggest_routing(
             ticker, order.product_type.value if isinstance(order.product_type, ProductType) else order.product_type,
             signal_type, regime, daily_vol, notional,
@@ -1521,8 +1593,11 @@ class L7UnifiedExecutionSurface:
             cta_strength = suggestion.get("win_rate", 0.5)
         order.urgency = self._router.determine_urgency(signal_type, cta_strength, kill_switch)
 
-        # Get arrival price
-        arrival_price = self._get_price(ticker)
+        # Get arrival price (option premium for OPTION orders, underlying for equity)
+        if order.product_type == ProductType.OPTION:
+            arrival_price = self._get_option_price(order) or (limit_price or 0.0)
+        else:
+            arrival_price = self._get_price(ticker)
         order.arrival_price = arrival_price
 
         # 4. Pre-trade risk gates
@@ -1545,14 +1620,19 @@ class L7UnifiedExecutionSurface:
         # 6. Product-specific execution path
         if order.product_type == ProductType.OPTION:
             self._execute_option(order, regime, arrival_price)
-        elif order.product_type == ProductType.FUTURE:
-            self._execute_future(order, regime, arrival_price)
         else:
             self._execute_equity(order, regime, arrival_price, daily_vol)
 
         # Record in order book
         self._order_book.append(order)
         self._router.record_route(order.product_type.value if isinstance(order.product_type, ProductType) else str(order.product_type))
+
+        if order.status == "DRY_RUN":
+            self._dry_run_orders.append(order)
+            logger.info(
+                "L7 DRY_RUN: %s %s %d %s @ $%.2f (%s)",
+                side, ticker, quantity, order.product_type.value, order.fill_price, order.reason,
+            )
 
         if order.status == "FILLED":
             self._filled_orders.append(order)
@@ -1608,7 +1688,7 @@ class L7UnifiedExecutionSurface:
     # ------------------------------------------------------------------
 
     def _execute_equity(self, order: L7Order, regime: str, arrival_price: float, daily_vol: float):
-        """Equity path: WonderTrader micro-price → ExchangeCore → IBKR (TWAP/VWAP)."""
+        """Equity path: WonderTrader micro-price → ExchangeCore → Schwab (TWAP/VWAP)."""
         ticker = order.ticker
         price = arrival_price
 
@@ -1630,67 +1710,89 @@ class L7UnifiedExecutionSurface:
         # Step 3: Compute transaction cost
         order.transaction_cost = abs(order.quantity * fill_price) * (order.slippage_bps / 10_000)
 
-        # Step 4: Route to IBKR
+        # Step 4: Route to Schwab
         self._route_to_broker(order, fill_price)
 
     def _execute_option(self, order: L7Order, regime: str, arrival_price: float):
-        """Options path: OptionsEngine Greeks → vol-adjusted → IBKR."""
+        """Options path (1-7 DTE): ShortDTEOptionsEngine intent → Schwab option order.
+
+        The engine has already done BSM-at-DTE IV, Monte Carlo of the full scan,
+        RSI/momentum and beta-corridor gating and vega-budget sizing. L7 owns the
+        portfolio-level risk gates (G1-G10) and the broker hand-off.
+        """
         price = arrival_price
 
-        # Options have wider spreads — adjust slippage
+        # Short-dated options have wider spreads — adjust slippage (bps of premium)
         order.slippage_bps = max(order.slippage_bps, 15.0)
 
-        # Greeks check via OptionsEngine
         if self._options_engine:
             try:
                 self._options_engine.update_regime(regime)
             except Exception as e:
                 logger.debug("OptionsEngine regime update failed: %s", e)
 
-        # Apply slippage
-        fill_price = self._slippage.apply_slippage(price, order.side, order.slippage_bps)
-        order.transaction_cost = abs(order.quantity * fill_price) * (order.slippage_bps / 10_000)
-
-        # Route to IBKR
-        self._route_to_broker(order, fill_price)
-
-    def _execute_future(self, order: L7Order, regime: str, arrival_price: float):
-        """Futures path: Beta corridor validation → IBKR."""
-        price = arrival_price
-
-        # Futures are tight — lower slippage
-        order.slippage_bps = max(order.slippage_bps, 0.5)
-
-        # Beta corridor check
-        if self._beta_corridor:
-            try:
-                # Validate the futures hedge is within corridor
-                pass  # BetaCorridor validation integrated via pipeline
-            except Exception as e:
-                logger.debug("BetaCorridor check failed: %s", e)
-
-        fill_price = self._slippage.apply_slippage(price, order.side, order.slippage_bps)
-        order.transaction_cost = abs(order.quantity * fill_price) * (order.slippage_bps / 10_000)
+        # A limit from the options engine is the executable price; otherwise slip the mid
+        if order.limit_price and order.limit_price > 0:
+            fill_price = float(order.limit_price)
+        else:
+            fill_price = self._slippage.apply_slippage(price, order.side, order.slippage_bps)
+        order.transaction_cost = abs(order.quantity * fill_price * 100.0) * (order.slippage_bps / 10_000)
 
         self._route_to_broker(order, fill_price)
+
+    def submit_option_intent(self, intent, regime: str = "NORMAL", kill_switch: bool = False) -> L7Order:
+        """Submit an ``OptionTradeIntent`` produced by ShortDTEOptionsEngine.scan().
+
+        Maps engine fields onto the unified order so G1-G10 and the trade log see
+        the true contract notional (×100), the real delta exposure and the
+        allocation bucket (G2).
+        """
+        legs = list(getattr(intent, "legs", []) or [])
+        structure = "VERTICAL" if len(legs) > 1 else "SINGLE"
+        return self.submit_order(
+            ticker=getattr(intent, "ticker", ""),
+            side="BUY",  # overlay buys premium (long call/put or debit vertical); direction lives in put_call
+
+            quantity=int(getattr(intent, "contracts", 0) or 0),
+            signal_type=getattr(intent, "signal_type", "OPTIONS_DIRECTIONAL") or "OPTIONS_DIRECTIONAL",
+            product_type="OPTION",
+            limit_price=float(getattr(intent, "limit_price", 0.0) or 0.0) or None,
+            option_type=str(getattr(intent, "put_call", getattr(intent, "option_type", "CALL"))).upper(),
+            strike=float(getattr(intent, "strike", 0.0) or 0.0),
+            expiry=str(getattr(intent, "expiry", "") or ""),
+            regime=regime,
+            kill_switch=kill_switch,
+            reason=(getattr(intent, "reason", "") or
+                    f"{getattr(intent, 'direction', '')} {getattr(intent, 'structure', '')} composite={getattr(intent, 'composite', 0):.2f} "
+                    f"edge={getattr(intent, 'edge_bps', 0):+.0f}bps dte={getattr(intent, 'dte', 0)}").strip(),
+            contract_symbol=getattr(intent, "contract_symbol", "") or "",
+            legs=legs,
+            structure=structure,
+            sector=getattr(intent, "bucket", "") or "",
+            delta_exposure_usd=float((getattr(intent, "greeks", {}) or {}).get("delta_exposure_usd", 0.0) or 0.0),
+        )
 
     # ------------------------------------------------------------------
     # Broker routing
     # ------------------------------------------------------------------
 
     def _route_to_broker(self, order: L7Order, fill_price: float):
-        """Route order to IBKR with appropriate algo (TWAP/VWAP/Market).
+        """Route order to Schwab (equity: market/TWAP/VWAP; option: limit single/vertical).
 
-        Records every order in the trade log for reconciliation regardless
-        of execution outcome.
+        Records every order in the trade log for reconciliation regardless of
+        execution outcome. Broker statuses:
+            FILLED / PENDING → order FILLED (fill price from broker)
+            DRY_RUN          → order DRY_RUN (SCHWAB_LIVE_ORDERS=false; nothing sent)
+            REJECTED / other → order REJECTED with broker reason
+            no broker        → order DRY_RUN "[no broker connection]"
         """
         side_map = {"BUY": "BUY", "SELL": "SELL", "SHORT": "SHORT", "COVER": "COVER"}
         broker_side = side_map.get(order.side, "BUY")
+        is_option = order.product_type == ProductType.OPTION
 
         executed = False
         algo_used = "MARKET"
 
-        # Record in trade log BEFORE execution (generated order)
         trade_log_entry = {
             "order_id": order.order_id,
             "ticker": order.ticker,
@@ -1702,102 +1804,141 @@ class L7UnifiedExecutionSurface:
             "limit_price": order.limit_price,
             "arrival_price": order.arrival_price,
             "micro_price": order.micro_price,
+            "contract_symbol": order.contract_symbol,
+            "structure": order.structure,
+            "legs": order.legs,
+            "sector": order.sector,
             "generated_at": _now_iso(),
             "broker_status": "PENDING",
             "broker_fill_price": None,
             "broker_algo": None,
+            "broker_reason": None,
         }
 
-        # Route to IBKR with algo selection
-        if self._broker and hasattr(self._broker, 'is_connected') and self._broker.is_connected:
+        broker = self._broker
+        broker_available = broker is not None and (
+            getattr(broker, "is_connected", False) or not getattr(broker, "live_orders", True)
+        )
+
+        if broker_available:
             try:
-                from .paper_broker import OrderSide as BrokerSide, SignalType as BrokerSignal
-                t_side = BrokerSide(broker_side)
-                t_signal = BrokerSignal.HOLD
+                t_side = OrderSide(broker_side)
+                t_signal = SignalType.HOLD
                 try:
-                    t_signal = BrokerSignal(order.signal_type)
+                    t_signal = SignalType(order.signal_type)
                 except (ValueError, KeyError):
                     pass
+                reason = order.reason or f"L7:{order.signal_type}"
+                notional = order.quantity * (order.limit_price or order.arrival_price or fill_price) * (100 if is_option else 1)
 
-                notional = order.quantity * (order.limit_price or order.arrival_price or fill_price)
+                if is_option:
+                    limit = float(order.limit_price or fill_price)
+                    if order.structure == "VERTICAL" and len(order.legs) > 1:
+                        result = broker.place_option_spread(
+                            legs=order.legs, net_price=limit, quantity=order.quantity,
+                            underlying=order.ticker, signal_type=t_signal, reason=reason,
+                            strategy="VERTICAL", is_debit=(order.side == "BUY"),
+                        )
+                        algo_used = "OPTION_VERTICAL"
+                    else:
+                        symbol = order.contract_symbol or (order.legs[0]["symbol"] if order.legs else "")
+                        if not symbol:
+                            raise ValueError("option order has no contract_symbol")
+                        instruction = "BUY_TO_OPEN" if order.side == "BUY" else "SELL_TO_CLOSE"
+                        result = broker.place_option_order(
+                            option_symbol=symbol, instruction=instruction, quantity=order.quantity,
+                            limit_price=limit, underlying=order.ticker, signal_type=t_signal, reason=reason,
+                        )
+                        algo_used = "OPTION_LIMIT"
 
-                # Algo selection based on routing strategy and order size
-                if order.routing == RoutingStrategy.TWAP or (order.routing == RoutingStrategy.SMART and notional > 50_000):
+                elif order.routing == RoutingStrategy.TWAP or (order.routing == RoutingStrategy.SMART and notional > 50_000):
                     duration = 30 if order.urgency == ExecutionUrgency.MEDIUM else 15 if order.urgency == ExecutionUrgency.HIGH else 60
-                    result = self._broker.place_twap_order(
+                    result = broker.place_twap_order(
                         ticker=order.ticker, side=t_side, quantity=order.quantity,
                         duration_minutes=duration, signal_type=t_signal,
-                        limit_price=order.limit_price,
-                        reason=order.reason or f"L7:{order.signal_type}",
+                        limit_price=order.limit_price, reason=reason,
                     )
                     algo_used = "TWAP"
                     if self._prom:
                         self._prom["twap_orders"].inc()
 
                 elif order.routing == RoutingStrategy.VWAP:
-                    result = self._broker.place_vwap_order(
+                    result = broker.place_vwap_order(
                         ticker=order.ticker, side=t_side, quantity=order.quantity,
                         duration_minutes=60, max_pct_volume=0.25,
-                        signal_type=t_signal, limit_price=order.limit_price,
-                        reason=order.reason or f"L7:{order.signal_type}",
+                        signal_type=t_signal, limit_price=order.limit_price, reason=reason,
                     )
                     algo_used = "VWAP"
                     if self._prom:
                         self._prom["vwap_orders"].inc()
 
                 else:
-                    result = self._broker.place_order(
+                    result = broker.place_order(
                         ticker=order.ticker, side=t_side, quantity=order.quantity,
-                        signal_type=t_signal, limit_price=order.limit_price,
-                        reason=order.reason or f"L7:{order.signal_type}",
+                        signal_type=t_signal, limit_price=order.limit_price, reason=reason,
                     )
                     algo_used = "MARKET"
 
-                if hasattr(result, 'status'):
+                status_str = "UNKNOWN"
+                if hasattr(result, "status"):
                     status_str = result.status if isinstance(result.status, str) else result.status.value
-                    if status_str in ("FILLED", "PENDING"):
-                        order.fill_price = getattr(result, 'fill_price', fill_price) or fill_price
-                        order.fill_quantity = order.quantity
-                        order.status = "FILLED"
-                        order.filled_at = _now_iso()
-                        executed = True
-
-                        trade_log_entry["broker_status"] = "FILLED"
-                        trade_log_entry["broker_fill_price"] = order.fill_price
-                    else:
-                        order.reason = f"IBKR: {getattr(result, 'reason', 'unknown')}"
-                        trade_log_entry["broker_status"] = status_str
-
+                broker_reason = getattr(result, "reason", "") or ""
+                trade_log_entry["broker_reason"] = broker_reason
                 trade_log_entry["broker_algo"] = algo_used
 
-                # Prometheus metrics
+                if status_str in ("FILLED", "PENDING"):
+                    order.fill_price = getattr(result, "fill_price", fill_price) or fill_price
+                    order.fill_quantity = order.quantity
+                    order.status = "FILLED"
+                    order.filled_at = _now_iso()
+                    executed = True
+                    trade_log_entry["broker_status"] = "FILLED"
+                    trade_log_entry["broker_fill_price"] = order.fill_price
+                elif status_str == "DRY_RUN":
+                    order.fill_price = getattr(result, "fill_price", fill_price) or fill_price
+                    order.fill_quantity = 0
+                    order.status = "DRY_RUN"
+                    order.reason = broker_reason or "DRY_RUN"
+                    executed = True  # handled — do not fall through to the no-broker path
+                    trade_log_entry["broker_status"] = "DRY_RUN"
+                    trade_log_entry["broker_fill_price"] = order.fill_price
+                else:
+                    order.status = "REJECTED"
+                    order.reason = f"Schwab: {broker_reason or status_str}"
+                    executed = True
+                    trade_log_entry["broker_status"] = status_str
+                    if self._prom:
+                        self._prom["orders_rejected"].labels(reason="broker_rejected").inc()
+
                 if self._prom:
                     pt = order.product_type.value if isinstance(order.product_type, ProductType) else str(order.product_type)
                     self._prom["orders_total"].labels(product=pt, side=order.side, algo=algo_used).inc()
-                    if executed:
+                    if order.status == "FILLED":
                         self._prom["orders_filled"].labels(product=pt, algo=algo_used).inc()
 
             except Exception as e:
-                logger.error("IBKR execution failed for %s: %s", order.ticker, e)
+                logger.error("Schwab execution failed for %s: %s", order.ticker, e)
                 trade_log_entry["broker_status"] = f"ERROR: {e}"
+                order.status = "REJECTED"
+                order.reason = f"Schwab error: {e}"
+                executed = True
                 if self._prom:
-                    self._prom["orders_rejected"].labels(reason="ibkr_error").inc()
+                    self._prom["orders_rejected"].labels(reason="broker_error").inc()
 
-        # No broker or not connected — log as NOT EXECUTED
+        # No broker at all — record as DRY_RUN so nothing pretends to be filled
         if not executed:
             trade_log_entry["broker_status"] = "NOT_EXECUTED"
             logger.warning(
-                "TRADE LOG ONLY: %s %s %d @ $%.2f — IBKR not connected. "
+                "TRADE LOG ONLY: %s %s %d @ $%.2f — Schwab not connected. "
                 "Order recorded for reconciliation but NOT executed on any market.",
                 order.side, order.ticker, order.quantity, fill_price,
             )
             if self._prom:
                 self._prom["orders_rejected"].labels(reason="no_broker").inc()
             order.fill_price = fill_price
-            order.fill_quantity = order.quantity
-            order.status = "FILLED"
-            order.filled_at = _now_iso()
-            order.reason = (order.reason or "") + " [not-executed-on-broker]"
+            order.fill_quantity = 0
+            order.status = "DRY_RUN"
+            order.reason = ((order.reason or "") + " [no broker connection]").strip()
 
         # Always persist to trade log for reconciliation
         self._trade_log.append(trade_log_entry)
@@ -1854,14 +1995,14 @@ class L7UnifiedExecutionSurface:
     # ------------------------------------------------------------------
 
     def _get_price(self, ticker: str) -> float:
-        """Get current price from IBKR broker."""
+        """Get current price from the Schwab quote cache."""
         if self._broker and hasattr(self._broker, 'get_quote'):
             try:
                 p = self._broker.get_quote(ticker)
                 if p and p > 0:
-                    return p
+                    return float(p)
             except Exception as e:
-                logger.error("L7: IBKR price fetch failed for ticker=%s: %s", ticker, e, exc_info=True)
+                logger.error("L7: Schwab price fetch failed for ticker=%s: %s", ticker, e, exc_info=True)
         if self._broker and hasattr(self._broker, '_get_current_price'):
             try:
                 p = self._broker._get_current_price(ticker)
@@ -1869,6 +2010,22 @@ class L7UnifiedExecutionSurface:
                     return p
             except Exception:
                 pass
+        return 0.0
+
+    def _get_option_price(self, order: L7Order) -> float:
+        """Mid premium of the option contract (Schwab quote on the OCC symbol)."""
+        symbol = order.contract_symbol or (order.legs[0]["symbol"] if order.legs else "")
+        if not symbol or not self._broker or not hasattr(self._broker, "get_quotes"):
+            return 0.0
+        try:
+            q = self._broker.get_quotes([symbol]).get(symbol.upper()) or self._broker.get_quotes([symbol]).get(symbol)
+            if q:
+                bid, ask = float(q.get("bid") or 0), float(q.get("ask") or 0)
+                if bid > 0 and ask > 0:
+                    return (bid + ask) / 2
+                return float(q.get("last") or q.get("mark") or 0.0)
+        except Exception as e:
+            logger.debug("L7: option quote failed for %s: %s", symbol, e)
         return 0.0
 
     def _get_portfolio_state(self) -> Tuple[float, float, dict, float, float, float]:
@@ -1903,6 +2060,13 @@ class L7UnifiedExecutionSurface:
         Called by live_loop_orchestrator every minute during market hours.
         """
         self._heartbeat_count += 1
+
+        # Broker heartbeat: fires pending TWAP/VWAP slices, refreshes Schwab positions/NAV
+        if self._broker is not None and hasattr(self._broker, "heartbeat"):
+            try:
+                self._broker.heartbeat()
+            except Exception as e:
+                logger.debug("L7: broker heartbeat failed: %s", e)
 
         # Update options engine regime
         if self._options_engine:
@@ -1977,6 +2141,15 @@ class L7UnifiedExecutionSurface:
         """Daily avg TCA cost for dashboard chart."""
         return self._learning.daily_cost_summary
 
+    @property
+    def broker(self):
+        """The single shared SchwabBroker instance."""
+        return self._broker
+
+    def get_dry_run_orders(self, last_n: int = 50) -> List[dict]:
+        """Orders that passed every gate but were not sent (SCHWAB_LIVE_ORDERS=false)."""
+        return [o.to_dict() for o in list(self._dry_run_orders)[-last_n:]]
+
     def get_filled_orders(self, last_n: int = 50) -> List[dict]:
         """Recent filled orders for dashboard."""
         orders = list(self._filled_orders)
@@ -1998,8 +2171,12 @@ class L7UnifiedExecutionSurface:
             "gross_exposure": gross,
             "net_exposure": net,
             "total_fills_today": len(self._filled_orders),
+            "total_dry_run_today": len(self._dry_run_orders),
             "total_orders_today": len(self._order_book),
             "routing_stats": self._router.stats,
+            "broker": "schwab",
+            "broker_connected": bool(self._broker is not None and getattr(self._broker, "is_connected", False)),
+            "live_orders": bool(self._broker is not None and getattr(self._broker, "live_orders", False)),
             "risk_level": risk.risk_level if risk else "UNKNOWN",
             "kill_switch": risk.kill_switch_active if risk else False,
             "var_95_1d": risk.var_95_1d if risk else 0.0,

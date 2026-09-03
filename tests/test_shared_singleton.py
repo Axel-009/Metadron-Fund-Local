@@ -36,10 +36,10 @@ class TestSharedSingletons:
         eng2 = get_engine()
         assert eng1 is not eng2
 
-    def test_paper_broker_fallback(self):
-        """With METADRON_BROKER_TYPE=paper, broker should be PaperBroker."""
+    def test_schwab_broker_only(self):
+        """Any legacy METADRON_BROKER_TYPE maps to Schwab (the only broker)."""
         os.environ["METADRON_BROKER_TYPE"] = "paper"
         from engine.api.shared import _reset_singletons, get_broker
         _reset_singletons()
         broker = get_broker()
-        assert type(broker).__name__ == "PaperBroker"
+        assert type(broker).__name__ in ("SchwabBroker", "SchwabAccountRouter")

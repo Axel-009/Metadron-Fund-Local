@@ -40,7 +40,7 @@ except ImportError:
 # Metadron SignalType — local fallback so this module never crashes
 # ---------------------------------------------------------------------------
 try:
-    from ..execution.paper_broker import SignalType
+    from ..execution.broker_types import SignalType
 except ImportError:
     class SignalType(str, Enum):
         ML_AGENT_BUY = "ML_AGENT_BUY"

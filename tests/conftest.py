@@ -2,7 +2,7 @@
 Metadron Capital — Test Configuration & Fixtures
 
 Provides shared fixtures for all test modules:
-    - paper_broker: PaperBroker instance
+    - paper_broker: offline SchwabBroker (DRY_RUN) — legacy fixture name kept
     - test_db: in-memory SQLite session
     - test_client: FastAPI TestClient with auth bypass
     - api_key_header: creates a test API key and returns the header dict
@@ -38,9 +38,9 @@ def reset_singletons():
 
 @pytest.fixture
 def paper_broker():
-    """Return a fresh PaperBroker instance."""
-    from engine.execution.paper_broker import PaperBroker
-    return PaperBroker()
+    """Return the shared offline Schwab broker (nothing is sent)."""
+    from engine.execution.schwab_broker import get_shared_broker
+    return get_shared_broker()
 
 
 @pytest.fixture

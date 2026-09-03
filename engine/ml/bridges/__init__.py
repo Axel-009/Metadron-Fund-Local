@@ -7,7 +7,7 @@ in engine.execution.execution_engine.
 All bridges follow the pattern:
   - try/except on external imports
   - graceful degradation with pure-numpy fallbacks
-  - produce signals compatible with engine.execution.paper_broker.SignalType
+  - produce signals compatible with engine.execution.broker_types.SignalType
 """
 
 from .finrl_bridge import FinRLBridge
