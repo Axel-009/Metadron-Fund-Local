@@ -1207,7 +1207,7 @@ class ExecutionEngine:
         try:
             self.social = SocialPredictionEngine()
         except Exception as e:
-            logger.warning(f"SocialPredictionEngine init failed: {e}")
+            logger.debug(f"SocialPredictionEngine init failed: {e}")
 
         # Distressed asset engine
         self.distress = None

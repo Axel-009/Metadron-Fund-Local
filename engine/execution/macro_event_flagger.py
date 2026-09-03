@@ -103,11 +103,11 @@ class MacroEventFlagger:
         """Schwab quote → intraday % change (last vs previous close)."""
         if not q:
             return None
+        # Schwab returns netPercentChange in PERCENT units (0.41 == +0.41 %) — always divide by 100.
         for k in ("netPercentChange", "net_pct_change", "pct_change"):
             v = q.get(k)
             if v is not None:
-                v = float(v)
-                return v / 100.0 if abs(v) > 1.0 else v
+                return float(v) / 100.0
         last = q.get("last") or q.get("lastPrice") or q.get("mark") or q.get("price")
         prev = q.get("closePrice") or q.get("prev_close") or q.get("previousClose")
         if last and prev:

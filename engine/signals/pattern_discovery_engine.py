@@ -221,19 +221,19 @@ class PatternDiscoveryEngine:
         try:
             self.mirofish = MiroFishDualSimulation()
         except Exception as e:
-            logger.warning(f"MiroFish init failed: {e}")
+            logger.debug(f"MiroFish init failed: {e}")
 
         self.newton: Optional[AINewtonEngine] = None
         try:
             self.newton = AINewtonEngine()
         except Exception as e:
-            logger.warning(f"AI-Newton init failed: {e}")
+            logger.debug(f"AI-Newton init failed: {e}")
 
         self.openbb: Optional[OpenBBBackend] = None
         try:
             self.openbb = OpenBBBackend()
         except Exception as e:
-            logger.warning(f"OpenBB backend init failed: {e}")
+            logger.debug(f"OpenBB backend init failed: {e}")
 
         logger.info(f"PatternDiscoveryEngine initialized: "
                     f"MiroFish={'ON' if self.mirofish else 'OFF'} "

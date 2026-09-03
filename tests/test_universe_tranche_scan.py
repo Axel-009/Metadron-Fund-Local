@@ -43,22 +43,25 @@ class FakeSchwab:
 def tranches():
     t1 = [f"L{i}" for i in range(60)]
     t2 = [f"S{i}" for i in range(50)]
-    t3 = [f"M{i}" for i in range(40)] + ["SPY", "TLT", "HYG"]
-    return [("SCAN_1_SP500", t1), ("SCAN_2_SP600", t2), ("SCAN_3_REMAINING_400", t3)]
+    t3 = [f"M{i}" for i in range(40)]
+    t4 = ["SPY", "TLT", "HYG", "QQQ", "IWM", "LQD", "TLTW", "XLE", "XLF", "GLD", "AGG", "IEF"]
+    return [("SCAN_1_SP500", t1), ("SCAN_2_SP400", t3), ("SCAN_3_SP600", t2), ("SCAN_4_ETF_FI", t4)]
 
 
-def test_default_tranches_are_disjoint_and_three():
+def test_default_tranches_follow_allocation_guide_order_and_are_disjoint():
     tr = default_tranches()
-    assert [n for n, _ in tr] == ["SCAN_1_SP500", "SCAN_2_SP600", "SCAN_3_REMAINING_400"]
+    assert [n for n, _ in tr] == ["SCAN_1_SP500", "SCAN_2_SP400", "SCAN_3_SP600", "SCAN_4_ETF_FI"]
     sets = [set(t) for _, t in tr]
-    assert not (sets[0] & sets[1]) and not (sets[0] & sets[2]) and not (sets[1] & sets[2])
-    assert all(len(s) > 50 for s in sets)
+    for i in range(4):
+        for j in range(i + 1, 4):
+            assert not (sets[i] & sets[j]), (i, j)
+    assert all(len(s) > 50 for s in sets[:3]) and len(sets[3]) >= 30
 
 
-def test_three_separate_scans_then_concur(tranches):
+def test_separate_scans_per_run_then_concur(tranches):
     all_t = [t for _, ts in tranches for t in ts]
     fb = FakeSchwab(all_t)
-    cfg = TrancheConfig(shortlist_per_tranche=15, top_per_tranche=6, final_max_names=10, min_dollar_volume=1.0)
+    cfg = TrancheConfig(shortlist_per_tranche=15, top_per_tranche=6, final_max_names=10, min_dollar_volume=1.0, cvr_event_scan=False)
     sc = UniverseTrancheScanner(fb, cfg=cfg, tranches=tranches, options_engine=None)
     res = sc.run(corridor_bias=0.2)
     assert isinstance(res, ConcurrenceResult)
@@ -75,11 +78,16 @@ def test_three_separate_scans_then_concur(tranches):
         zs = [c.z_score for c in t.top]
         assert zs == sorted(zs, reverse=True)
     # concurrence: bounded, sector cap, min per tranche when eligible
-    assert 0 < len(res.final) <= cfg.final_max_names
+    scanned = [c for c in res.final if c.tranche != "LOCKED_SLEEVE"]
+    assert 0 < len(scanned) <= cfg.final_max_names + len(res.LOCKED_SLEEVES)
+    # LOCKED ALLOCATION: every equity sleeve is represented (scan candidate or placeholder)
+    assert {c.sleeve for c in res.final} >= set(res.LOCKED_SLEEVES) - {"CVR"}   # CVR is event-based (scan off here)
+    assert isinstance(res.backfill_notes, list)
     per_tr = {}
     for c in res.final:
         per_tr[c.tranche] = per_tr.get(c.tranche, 0) + 1
-    assert len(per_tr) == 3 and all(v >= 1 for v in per_tr.values())
+    per_tr.pop("LOCKED_SLEEVE", None)
+    assert len(per_tr) == 4 and all(v >= 1 for v in per_tr.values())
     sectors = {}
     for c in res.final:
         if c.sector != "Unknown":
@@ -88,22 +96,29 @@ def test_three_separate_scans_then_concur(tranches):
     tickers_final = [c.ticker for c in res.final]
     assert len(tickers_final) == len(set(tickers_final))
     for c in res.final:
+        if c.tranche == "LOCKED_SLEEVE":
+            continue
         assert sum(c.votes.values()) >= 4 and len(c.votes) == 6
     # slate + options universe + markdown
     slate = res.equity_slate()
     assert slate and all(r["decision"]["source"] == "TRANCHE_CONCURRENCE" for r in slate)
     assert all(b.startswith("OPTIONS_") for _, b in res.options_universe())
     md = res.markdown()
-    assert "SCAN_1_SP500" in md and "SCAN_3_REMAINING_400" in md and "Concurrence" in md
+    assert "SCAN_1_SP500" in md and "SCAN_4_ETF_FI" in md and "Concurrence" in md
+    # per-run gold-standard stats are populated
+    for t in res.tranches:
+        assert t.buy_n + t.sell_n + t.hold_n == t.screened
+        assert t.label in ("SP500", "SP400", "SP600", "ETF_FI")
+    assert any(c.why() for t in res.tranches for c in t.top)
 
 
 def test_history_only_for_shortlist(tranches):
     all_t = [t for _, ts in tranches for t in ts]
     fb = FakeSchwab(all_t)
-    cfg = TrancheConfig(shortlist_per_tranche=5, top_per_tranche=3, min_dollar_volume=1.0)
+    cfg = TrancheConfig(shortlist_per_tranche=5, top_per_tranche=3, min_dollar_volume=1.0, cvr_event_scan=False)
     UniverseTrancheScanner(fb, cfg=cfg, tranches=tranches, options_engine=None).run(corridor_bias=0.0)
     # SPY reference + 5 per tranche max
-    assert len(fb.history_calls) <= 1 + 5 * 3
+    assert len(fb.history_calls) <= 1 + 5 * 4  # SPY reference + 5 per run max
 
 
 def test_screen_rejects_illiquid_and_cheap(tranches):
@@ -111,6 +126,25 @@ def test_screen_rejects_illiquid_and_cheap(tranches):
         def get_quotes(self, tickers):
             return {t: {"last": 1.0, "mark": 1.0, "volume": 10, "net_pct_change": 0, "high_52": 2, "low_52": 0.5} for t in tickers}
     fb = Cheap([t for _, ts in tranches for t in ts])
-    res = UniverseTrancheScanner(fb, tranches=tranches, options_engine=None).run(corridor_bias=0.0)
+    res = UniverseTrancheScanner(fb, cfg=TrancheConfig(cvr_event_scan=False), tranches=tranches, options_engine=None).run(corridor_bias=0.0)
     assert all(t.rejected.get("price<min", 0) == t.universe_size for t in res.tranches)
-    assert res.final == []
+    # nothing scanned survives, but the locked sleeves are still filled with placeholders
+    assert all(c.tranche == "LOCKED_SLEEVE" for c in res.final)
+    assert {c.sleeve for c in res.final} == set(res.LOCKED_SLEEVES) - {"CVR"}   # CVR never gets an ETF placeholder
+
+
+def test_cvr_sleeve_is_event_based():
+    """CVR sleeve: filled from live cash+CVR merger targets, never an ETF proxy."""
+    from engine.execution.universe_tranche_scan import ConcurrenceResult
+    from engine.execution.cvr_event_scan import CVREvent
+    assert "CVR" not in ConcurrenceResult.SLEEVE_FALLBACK
+    res = ConcurrenceResult(tranches=[], final=[], dropped=[], corridor_bias=0.0, spy_mom_63d=0.0, as_of="t")
+    ev = CVREvent("LNTH", "Lantheus", "Curium", 102.5, 12.0, "milestones", "PENDING", "2026-08-04", "H1 2027", "u",
+                  price=100.85, spread_pct=0.016, cvr_upside_pct=0.119, score=0.075, why="w")
+    assert res.lock_cvr_from_events([ev], ["ok"]) is True
+    c = [c for c in res.final if c.sleeve == "CVR"][0]
+    assert c.ticker == "LNTH" and c.tranche == "CVR_EVENT" and c.signal == "BUY"
+    res2 = ConcurrenceResult(tranches=[], final=[], dropped=[], corridor_bias=0.0, spy_mom_63d=0.0, as_of="t")
+    notes = res2.lock_sleeves()
+    assert not any(c.sleeve == "CVR" for c in res2.final)
+    assert any(n.startswith("CVR: no live cash+CVR") for n in notes)

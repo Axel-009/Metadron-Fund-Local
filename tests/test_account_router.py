@@ -23,7 +23,7 @@ class TestMandates:
             assert m.drawdown_rotate_pct == 0.20
 
     def test_load_from_env(self):
-        env = {"SCHWAB_ACCOUNT_ROTH": "9565", "SCHWAB_ACCOUNT_LLC": "0514", "SCHWAB_ACCOUNT_INDIVIDUAL": "4806"}
+        env = {"SCHWAB_ACCOUNT_ROTH": "0514", "SCHWAB_ACCOUNT_LLC": "9565", "SCHWAB_ACCOUNT_INDIVIDUAL": "4806"}
         ms = load_mandates(env)
         assert {m.account_last4 for m in ms.values()} == {"9565", "0514", "4806"}
 
@@ -83,7 +83,7 @@ def test_factory_single_vs_router(monkeypatch):
     for k in ("SCHWAB_ACCOUNT_ROTH", "SCHWAB_ACCOUNT_LLC", "SCHWAB_ACCOUNT_INDIVIDUAL", "SCHWAB_ACCOUNT_MANDATES"):
         monkeypatch.delenv(k, raising=False)
     assert type(build_schwab_broker(connect=False)).__name__ == "SchwabBroker"
-    monkeypatch.setenv("SCHWAB_ACCOUNT_ROTH", "9565")
-    monkeypatch.setenv("SCHWAB_ACCOUNT_LLC", "0514")
+    monkeypatch.setenv("SCHWAB_ACCOUNT_ROTH", "0514")
+    monkeypatch.setenv("SCHWAB_ACCOUNT_LLC", "9565")
     monkeypatch.setenv("SCHWAB_ACCOUNT_INDIVIDUAL", "4806")
     assert type(build_schwab_broker(connect=False)).__name__ == "SchwabAccountRouter"

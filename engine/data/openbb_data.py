@@ -30,7 +30,7 @@ try:
     _openbb_available = True
     logger.info("OpenBB SDK loaded — primary data source active")
 except ImportError:
-    logger.warning("OpenBB SDK not available — data fetching will return empty frames")
+    logger.debug("OpenBB SDK not installed — Schwab is the market-data source; this legacy layer returns empty frames")
 
 # ---------------------------------------------------------------------------
 # FMP API Key integration — load from .env or environment
@@ -597,7 +597,7 @@ def get_fred_series(
         end = datetime.now().strftime("%Y-%m-%d")
 
     if not _openbb_available:
-        logger.warning("OpenBB unavailable — cannot fetch FRED series")
+        logger.debug("OpenBB unavailable — FRED series not fetched (Schwab is the data source)")
         return pd.DataFrame()
 
     frames = {}

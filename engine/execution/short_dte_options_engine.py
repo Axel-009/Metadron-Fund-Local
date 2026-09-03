@@ -51,6 +51,7 @@ from __future__ import annotations
 
 import logging
 import math
+import time
 from dataclasses import asdict, dataclass, field
 from datetime import date
 from typing import Any, Dict, List, Optional, Tuple
@@ -105,7 +106,14 @@ class ShortDTEConfig:
     rsi_oversold: float = 25.0
     # Monte Carlo (full-scan)
     mc_paths: int = 3000
-    mc_min_confidence: float = 0.20
+    mc_min_confidence: float = 0.20      # on the horizon-normalised confidence (see monte_carlo)
+    mc_calibration_days: int = 21        # the full-scan MC confidence is calibrated on a 21-day horizon
+    min_contracts: int = 1               # small mandates (Individual $5.7k) trade 1-lots; legacy sizer default was 5
+    chain_retry_wait_s: float = 20.0     # pause before the single chain re-pull after a fetch failure
+    backfill_max_tries: int = 12         # SP400/SP600 names tried per empty bucket (many lack 1-7 DTE chains)
+    backfill_names_per_bucket: int = 3
+    max_position_pct_nav: float = 0.10   # Kelly output may fill a whole bucket (10 % NAV = 40 % of options headroom)
+    kelly_multiplier: float = 1.5        # aggressive Kelly (architecture: 1.5× Kelly on confirmed mispricing)
     mc_var95_floor: float = -0.40
     mc_seed: int = 42
     # chain filters
@@ -147,6 +155,27 @@ class MarketContext:
 
 
 @dataclass
+@dataclass
+class CTARead:
+    """WonderTrader CTA trend core on daily bars: dual-MA (10/30) ⊕ Donchian breakout (20) ⊕
+    ROC-momentum z (12/60), regime-weighted consensus (TRENDING/RANGE/STRESS/CRASH) — the
+    momentum approach documented in the WonderTrader engine, reused for options direction."""
+    regime: str = "RANGE"
+    direction: int = 0
+    strength: float = 0.0        # [0, 1]
+    consensus: float = 0.0       # signed = direction × strength
+    dominant: str = ""
+    dual_ma: float = 0.0
+    breakout: float = 0.0
+    momentum: float = 0.0
+    stop_loss: float = 0.0
+    take_profit: float = 0.0
+
+    def to_dict(self) -> dict:
+        return asdict(self)
+
+
+@dataclass
 class MomentumRead:
     rsi: float
     rsi_prev: float
@@ -161,6 +190,8 @@ class MomentumRead:
     acceleration: float
     direction_score: float      # [-1, 1]
     notes: List[str] = field(default_factory=list)
+    confirmed: bool = False     # RSI breakout/breakdown regime confirmed by a price pattern or 10d momentum
+    cta: Optional[CTARead] = None   # WonderTrader CTA core read (regime-weighted trend consensus)
 
     def to_dict(self) -> dict:
         return asdict(self)
@@ -321,6 +352,11 @@ class ShortDTEOptionsEngine:
         self.bs = BlackScholesModel
         self.sizer = OptionsSizer()
         self.sizer.MIN_EDGE_BPS = self.cfg.min_edge_bps
+        self.backfill_candidates: Dict[str, List[str]] = {}   # {"SP400": [...], "SP600": [...]} set by the cycle
+        self.last_backfill: Dict[str, List[str]] = {}
+        self.sizer.MIN_CONTRACTS = self.cfg.min_contracts
+        self.sizer.MAX_CONTRACTS_PCT_NAV = self.cfg.max_position_pct_nav
+        self.sizer.KELLY_MULTIPLIER = self.cfg.kelly_multiplier
         self.sizer.MAX_CONTRACTS_PCT_NAV = self.cfg.max_single_option_pct
         self.sizer.MC_STEPS = self.cfg.dte_max            # steps == days for 1-7 DTE
         self._rng = np.random.RandomState(self.cfg.mc_seed)
@@ -354,10 +390,12 @@ class ShortDTEOptionsEngine:
                 logger.warning("BetaCorridor failed: %s", e)
         # Fair-value directional tilt: where drift sits inside the 7-12 % corridor,
         # scaled by the target beta the corridor wants.
+        # Continuous: the tilt grows with the DISTANCE from the corridor edge (a drift 1 % under
+        # the 7 % floor is a mild bearish tilt; 10 % under is a full one) — no cliff at the edge.
         if pos == "BELOW":
-            bias = -0.6 - 0.4 * min(1.0, (0.07 - rm) / 0.10)
+            bias = -0.15 - 0.85 * min(1.0, (0.07 - rm) / 0.10)
         elif pos == "ABOVE":
-            bias = 0.6 + 0.4 * min(1.0, (rm - 0.12) / 0.10)
+            bias = 0.15 + 0.85 * min(1.0, (rm - 0.12) / 0.10)
         elif pos == "WITHIN":
             bias = (rm - 0.095) / 0.025 * 0.6
         else:
@@ -391,7 +429,32 @@ class ShortDTEOptionsEngine:
     # ------------------------------------------------------------------
     # 2. RSI / momentum read
     # ------------------------------------------------------------------
-    def momentum_read(self, close: np.ndarray) -> MomentumRead:
+    def cta_read(self, close: np.ndarray, high: Optional[np.ndarray] = None, low: Optional[np.ndarray] = None) -> CTARead:
+        """WonderTrader CTA core on daily bars (see wondertrader_engine: _DualMovingAverage,
+        _ChannelBreakout, _MomentumStrategy, _REGIME_WEIGHTS, _detect_regime, _dynamic_stops)."""
+        try:
+            from engine.execution import wondertrader_engine as wt
+        except Exception:
+            return CTARead()
+        close = np.asarray(close, dtype=float)
+        if close.size < 35:
+            return CTARead()
+        high = np.asarray(high, dtype=float) if high is not None and len(high) == close.size else close
+        low = np.asarray(low, dtype=float) if low is not None and len(low) == close.size else close
+        regime = wt._detect_regime(close)
+        w = wt.WonderTraderEngine._REGIME_WEIGHTS.get(regime, wt.WonderTraderEngine._REGIME_WEIGHTS["RANGE"])
+        d_ma, s_ma = wt._DualMovingAverage(10, 30).generate(close)
+        d_bo, s_bo = wt._ChannelBreakout(20).generate(high, low, close)
+        d_mo, s_mo = wt._MomentumStrategy(12, min(60, max(20, close.size - 13))).generate(close)
+        parts = {"dual_ma": w["dual_ma"] * d_ma * s_ma, "breakout": w["breakout"] * d_bo * s_bo, "momentum": w["momentum"] * d_mo * s_mo}
+        score = float(sum(parts.values()))
+        direction = 0 if abs(score) < 0.05 else (1 if score > 0 else -1)
+        dominant = max(parts, key=lambda k: abs(parts[k])) if direction else ""
+        sl, tp = (wt._dynamic_stops(close, direction) if direction else (0.0, 0.0))
+        return CTARead(regime, direction, min(abs(score), 1.0), float(np.clip(score, -1, 1)), dominant,
+                       parts["dual_ma"], parts["breakout"], parts["momentum"], float(sl), float(tp))
+
+    def momentum_read(self, close: np.ndarray, high: Optional[np.ndarray] = None, low: Optional[np.ndarray] = None) -> MomentumRead:
         cfg = self.cfg
         close = np.asarray(close, dtype=float)
         notes: List[str] = []
@@ -417,10 +480,14 @@ class ShortDTEOptionsEngine:
             score += 0.35; notes.append(f"RSI breakout {rsi_prev:.0f}→{rsi:.0f}")
         elif rsi <= cfg.rsi_breakdown_level and rsi_prev > cfg.rsi_breakdown_level:
             score -= 0.35; notes.append(f"RSI breakdown {rsi_prev:.0f}→{rsi:.0f}")
-        elif rsi > cfg.rsi_overbought:
-            score -= 0.20; notes.append(f"RSI overbought {rsi:.0f} (fade)")
-        elif rsi < cfg.rsi_oversold:
-            score += 0.20; notes.append(f"RSI oversold {rsi:.0f} (bounce)")
+        elif rsi > cfg.rsi_overbought and slope < 0:
+            score -= 0.20; notes.append(f"RSI overbought {rsi:.0f} rolling over (fade)")
+        elif rsi < cfg.rsi_oversold and slope > 0:
+            score += 0.20; notes.append(f"RSI oversold {rsi:.0f} turning (bounce)")
+        elif rsi >= cfg.rsi_breakout_level and slope >= -2:
+            score += 0.25; notes.append(f"RSI {rsi:.0f} breakout regime (held > {cfg.rsi_breakout_level:.0f})")
+        elif rsi <= cfg.rsi_breakdown_level and slope <= 2:
+            score -= 0.25; notes.append(f"RSI {rsi:.0f} breakdown regime (held < {cfg.rsi_breakdown_level:.0f})")
         else:
             score += float(np.clip(slope / 40.0, -0.15, 0.15))
         # price breakout / breakdown
@@ -437,10 +504,25 @@ class ShortDTEOptionsEngine:
         m5, m10, m21 = mtf.get(5, 0.0), mtf.get(10, 0.0), mtf.get(21, 0.0)
         score += float(np.clip(m5 / 3.0, -0.25, 0.25)) + float(np.clip(m10 / 5.0, -0.15, 0.15))
         score += float(np.clip(accel / 5.0, -0.10, 0.10))
-        score = float(np.clip(score, -1.0, 1.0))
+        tech_score = float(np.clip(score, -1.0, 1.0))
+        # WonderTrader CTA core (regime-weighted dual-MA ⊕ Donchian ⊕ ROC-z): 40 % of the read
+        cta = self.cta_read(close, high, low)
+        if cta.direction:
+            notes.append(f"CTA {cta.regime} {'LONG' if cta.direction > 0 else 'SHORT'} {cta.strength:.2f} via {cta.dominant} "
+                         f"(SL {cta.stop_loss:.2f} / TP {cta.take_profit:.2f})")
+        score = float(np.clip(0.60 * tech_score + 0.40 * cta.consensus, -1.0, 1.0))
+        rsi_note = any(n.startswith("RSI break") or "breakout regime" in n or "breakdown regime" in n for n in notes)
+        pattern_agrees = (bo.get("pattern") == ("breakout" if score > 0 else "breakdown") and float(bo.get("confidence", 0)) >= 0.5)
+        mom_agrees = (m10 > 1.0 and score > 0) or (m10 < -1.0 and score < 0)
+        cta_agrees = cta.direction != 0 and (cta.direction > 0) == (score > 0) and cta.strength >= 0.15
+        # confirmed = an RSI regime or CTA trend, corroborated by an independent second read
+        votes = sum([rsi_note, pattern_agrees, mom_agrees, cta_agrees])
+        confirmed = bool(votes >= 2 and (rsi_note or cta_agrees))
+        if confirmed:
+            notes.append("momentum pattern CONFIRMED (" + " + ".join(n for n, f in (("RSI regime", rsi_note), ("price pattern", pattern_agrees), ("10d momentum", mom_agrees), ("CTA trend core", cta_agrees)) if f) + ")")
         return MomentumRead(rsi, rsi_prev, slope, bo.get("pattern", ""), float(bo.get("confidence", 0.0)),
                             div.get("divergence", ""), float(div.get("confidence", 0.0)),
-                            m5, m10, m21, accel, score, notes)
+                            m5, m10, m21, accel, score, notes, confirmed, cta)
 
     # ------------------------------------------------------------------
     # 4. Monte Carlo over exactly `dte` days (full-scan model, MC Greeks)
@@ -456,7 +538,9 @@ class ShortDTEOptionsEngine:
         paths = self._mc._generate_paths(mu, phi, sigma, float(returns[-1]), cfg.mc_paths, horizon, rng)
         cum = np.sum(paths, axis=1)
         stats = self._mc._compute_statistics(paths)
-        conf = self._mc._compute_confidence(stats)
+        # The bridge's confidence (path agreement + |mean return|) is calibrated on the 21-day full
+        # scan; over 1-7 days drift/σ shrinks ∝ √h, so normalise back to the calibration horizon.
+        conf = float(min(1.0, self._mc._compute_confidence(stats) * math.sqrt(cfg.mc_calibration_days / horizon)))
         terminal = spot * np.exp(cum)
         var_pct = float(np.exp(stats["var_95"]) - 1.0)
         passed, reason = True, "ok"
@@ -555,8 +639,15 @@ class ShortDTEOptionsEngine:
     # ------------------------------------------------------------------
     # 9. sizing with bucket + vega caps
     # ------------------------------------------------------------------
-    def _bucket_budget(self, bucket: str, committed: Dict[str, float]) -> float:
+    def _bucket_budget(self, bucket: str, committed: Dict[str, float], eligible_buckets: Optional[set] = None) -> float:
+        """Bucket cap (10/10/5 of NAV) with SPILL-OVER: room in buckets that have NO eligible
+        candidate this cycle flows to the buckets that do, never beyond the 25 % total cap."""
         cap = self.cfg.bucket_caps.get(bucket, 0.05) * self.nav
+        if eligible_buckets is not None:
+            idle = [b for b in self.cfg.bucket_caps if b not in eligible_buckets and b != bucket]
+            live = [b for b in self.cfg.bucket_caps if b in eligible_buckets] or [bucket]
+            spill = sum(self.cfg.bucket_caps[b] for b in idle) * self.nav / max(1, len(live))
+            cap += spill
         used = committed.get(bucket, 0.0) + self.existing_option_notional.get(bucket, 0.0)
         total_used = sum(committed.values()) + sum(self.existing_option_notional.values())
         total_room = self.cfg.total_options_cap * self.nav - total_used
@@ -603,6 +694,79 @@ class ShortDTEOptionsEngine:
             out["structure_reason"] = f"ATM IV {atm_iv:.1%} rich vs HV {surface.hv30:.1%} / regime {self.regime}"
         return out
 
+    def _evaluate(self, ticker: str, bucket: str, ctx: "MarketContext", per_ticker: Dict[str, Any]):
+        """Pass 1 for one underlying: history → momentum/CTA/corridor direction → 1-7 DTE chain →
+        BSM on that DTE → MC at that horizon → best contract + structure. Returns a pending tuple
+        (to be sized in pass 2) or None when the name is rejected (reason recorded in per_ticker)."""
+        cfg = self.cfg
+        rec: Dict[str, Any] = {"ticker": ticker, "bucket": bucket, "status": "", "reasons": []}
+        per_ticker[ticker] = rec
+        hist = self.broker.get_price_history(ticker, days=cfg.history_days)
+        close = np.asarray(hist.get("close", []), dtype=float)
+        if close.size < 30:
+            rec["status"] = "SKIP"; rec["reasons"].append("insufficient price history"); return None
+        spot = float(self.broker.get_quote(ticker) or close[-1])
+        rets = np.diff(np.log(close))
+        hv30 = float(np.std(rets[-21:]) * math.sqrt(TRADING_DAYS))
+        hv90 = float(np.std(rets[-63:]) * math.sqrt(TRADING_DAYS))
+        mom = self.momentum_read(close, hist.get("high"), hist.get("low"))
+        rec["momentum"] = mom.to_dict()
+        # direction = momentum score blended with the beta-corridor fair value tilt
+        w_m = 0.80 if mom.confirmed else 0.65      # confirmed RSI/momentum pattern → corridor is a tilt, not a veto
+        dir_score = float(np.clip(w_m * mom.direction_score + (1 - w_m) * ctx.direction_bias, -1, 1))
+        rec["direction_score"] = dir_score; rec["momentum_confirmed"] = mom.confirmed
+        if abs(dir_score) < 0.15:
+            rec["status"] = "NO_TRADE"; rec["reasons"].append(f"direction score {dir_score:+.2f} too weak (|s|<0.15)"); return None
+        direction = "BULLISH" if dir_score > 0 else "BEARISH"
+        want = "CALL" if direction == "BULLISH" else "PUT"
+        alpha = abs(dir_score)
+
+        chain = self.broker.get_option_chain(ticker, cfg.dte_min, cfg.dte_max, strike_count=cfg.strike_count)
+        if not chain and getattr(self.broker, "last_chain_error", ""):
+            # fetch failed (rate limit / transient) — this is NOT "no chain"; pause and retry once
+            time.sleep(cfg.chain_retry_wait_s)
+            chain = self.broker.get_option_chain(ticker, cfg.dte_min, cfg.dte_max, strike_count=cfg.strike_count)
+            if not chain and getattr(self.broker, "last_chain_error", ""):
+                rec["status"] = "ERROR"; rec["reasons"].append(f"chain fetch failed twice: {self.broker.last_chain_error[:80]}"); return None
+        if not chain:
+            rec["status"] = "SKIP"; rec["reasons"].append("no 1-7 DTE chain"); return None
+        surface = ShortTenorVolSurface(chain, vix=ctx.vix, hist_vol_30d=hv30, hist_vol_90d=hv90)
+        pcr = self._put_call_ratio(chain)
+        signals = PredictiveOptionsSignal(surface).all_signals(pcr=pcr)
+        pred_adj, pred_notes = self.predictive_adjustment(signals, direction)
+        rec["predictive"] = {"adj": pred_adj, "signals": pred_notes, "pcr": pcr}
+
+        # Monte Carlo per DTE present in the chain — full-scan model at exactly that horizon
+        mc_by_dte: Dict[int, MCRead] = {}
+        for dte in sorted({q.dte for q in chain}):
+            mc_by_dte[dte] = self.monte_carlo(rets, spot, dte)
+        rec["monte_carlo"] = {d: m.to_dict() for d, m in mc_by_dte.items()}
+        passing_dtes = [d for d, m in mc_by_dte.items() if m.passed]
+        if not passing_dtes:
+            rec["status"] = "MC_REJECT"; rec["reasons"].extend(m.reason for m in mc_by_dte.values()); return None
+        # MC directional agreement — do not buy calls into a distribution skewed down
+        mc_dir_ok = all((mc_by_dte[d].paths_positive_pct >= 0.5) == (direction == "BULLISH") for d in passing_dtes)
+        if not mc_dir_ok:
+            rec["reasons"].append("MC path skew disagrees with momentum direction → alpha haircut 40%")
+            alpha *= 0.6
+
+        evals: List[ContractEval] = []
+        for q in chain:
+            if q.put_call != want or q.dte not in mc_by_dte or not mc_by_dte[q.dte].passed:
+                continue
+            evals.append(self.evaluate_contract(q, spot, surface, mc_by_dte[q.dte], alpha, pred_adj))
+        evals.sort(key=lambda e: e.composite, reverse=True)
+        rec["top_contracts"] = [e.to_dict() for e in evals[:5]]
+        ok = [e for e in evals if not e.reject_reason]
+        if not ok:
+            rec["status"] = "NO_EDGE"
+            rec["reasons"].extend(sorted({e.reject_reason for e in evals})[:4] or ["no contracts in delta band"])
+            return None
+        best = ok[0]
+        structure = self.regime_structure(spot, surface, best.dte, direction)
+        rec["structure"] = structure
+        return (ticker, bucket, rec, best, structure, chain, spot, mom, ctx, mc_by_dte, pred_adj, direction)
+
     # ------------------------------------------------------------------
     # main scan
     # ------------------------------------------------------------------
@@ -619,67 +783,38 @@ class ShortDTEOptionsEngine:
         per_ticker: Dict[str, Any] = {}
         committed: Dict[str, float] = {}
         vega_used = 0.0
+        pending: List[tuple] = []
 
         for ticker, bucket in universe:
-            rec: Dict[str, Any] = {"ticker": ticker, "bucket": bucket, "status": "", "reasons": []}
-            per_ticker[ticker] = rec
-            hist = self.broker.get_price_history(ticker, days=cfg.history_days)
-            close = np.asarray(hist.get("close", []), dtype=float)
-            if close.size < 30:
-                rec["status"] = "SKIP"; rec["reasons"].append("insufficient price history"); continue
-            spot = float(self.broker.get_quote(ticker) or close[-1])
-            rets = np.diff(np.log(close))
-            hv30 = float(np.std(rets[-21:]) * math.sqrt(TRADING_DAYS))
-            hv90 = float(np.std(rets[-63:]) * math.sqrt(TRADING_DAYS))
-            mom = self.momentum_read(close)
-            rec["momentum"] = mom.to_dict()
-            # direction = momentum score blended with the beta-corridor fair value tilt
-            dir_score = float(np.clip(0.65 * mom.direction_score + 0.35 * ctx.direction_bias, -1, 1))
-            rec["direction_score"] = dir_score
-            if abs(dir_score) < 0.15:
-                rec["status"] = "NO_TRADE"; rec["reasons"].append(f"direction score {dir_score:+.2f} too weak (|s|<0.15)"); continue
-            direction = "BULLISH" if dir_score > 0 else "BEARISH"
-            want = "CALL" if direction == "BULLISH" else "PUT"
-            alpha = abs(dir_score)
+            t = self._evaluate(ticker, bucket, ctx, per_ticker)
+            if t is not None:
+                pending.append(t)
 
-            chain = self.broker.get_option_chain(ticker, cfg.dte_min, cfg.dte_max, strike_count=cfg.strike_count)
-            if not chain:
-                rec["status"] = "SKIP"; rec["reasons"].append("no 1-7 DTE chain"); continue
-            surface = ShortTenorVolSurface(chain, vix=ctx.vix, hist_vol_30d=hv30, hist_vol_90d=hv90)
-            pcr = self._put_call_ratio(chain)
-            signals = PredictiveOptionsSignal(surface).all_signals(pcr=pcr)
-            pred_adj, pred_notes = self.predictive_adjustment(signals, direction)
-            rec["predictive"] = {"adj": pred_adj, "signals": pred_notes, "pcr": pcr}
-
-            # Monte Carlo per DTE present in the chain — full-scan model at exactly that horizon
-            mc_by_dte: Dict[int, MCRead] = {}
-            for dte in sorted({q.dte for q in chain}):
-                mc_by_dte[dte] = self.monte_carlo(rets, spot, dte)
-            rec["monte_carlo"] = {d: m.to_dict() for d, m in mc_by_dte.items()}
-            passing_dtes = [d for d, m in mc_by_dte.items() if m.passed]
-            if not passing_dtes:
-                rec["status"] = "MC_REJECT"; rec["reasons"].extend(m.reason for m in mc_by_dte.values()); continue
-            # MC directional agreement — do not buy calls into a distribution skewed down
-            mc_dir_ok = all((mc_by_dte[d].paths_positive_pct >= 0.5) == (direction == "BULLISH") for d in passing_dtes)
-            if not mc_dir_ok:
-                rec["reasons"].append("MC path skew disagrees with momentum direction → alpha haircut 40%")
-                alpha *= 0.6
-
-            evals: List[ContractEval] = []
-            for q in chain:
-                if q.put_call != want or q.dte not in mc_by_dte or not mc_by_dte[q.dte].passed:
-                    continue
-                evals.append(self.evaluate_contract(q, spot, surface, mc_by_dte[q.dte], alpha, pred_adj))
-            evals.sort(key=lambda e: e.composite, reverse=True)
-            rec["top_contracts"] = [e.to_dict() for e in evals[:5]]
-            ok = [e for e in evals if not e.reject_reason]
-            if not ok:
-                rec["status"] = "NO_EDGE"
-                rec["reasons"].extend(sorted({e.reject_reason for e in evals})[:4] or ["no contracts in delta band"])
+        # ---- bucket back-fill (operator rule): when OPTIONS_HY / OPTIONS_DISTRESSED have no
+        # eligible name, fill the remainder from the S&P 400 / S&P 600 universe runs (even if the
+        # names are not HY / distressed by classification) rather than spilling room into IG.
+        eligible = {b for _, b, *_ in pending}
+        fills: Dict[str, List[str]] = {}
+        for bkt, source in (("OPTIONS_HY", "SP400"), ("OPTIONS_DISTRESSED", "SP600")):
+            if bkt in eligible or not self.backfill_candidates:
                 continue
-            best = ok[0]
-            structure = self.regime_structure(spot, surface, best.dte, direction)
-            rec["structure"] = structure
+            tried = 0
+            for t2 in self.backfill_candidates.get(source, []):
+                if t2 in per_ticker or tried >= self.cfg.backfill_max_tries:
+                    continue
+                tried += 1
+                t = self._evaluate(t2, bkt, ctx, per_ticker)
+                per_ticker[t2]["backfill"] = f"{bkt} ← {source}"
+                if t is not None:
+                    pending.append(t); fills.setdefault(bkt, []).append(t2); eligible.add(bkt)
+                    if len(fills[bkt]) >= self.cfg.backfill_names_per_bucket:
+                        break
+        self.last_backfill = fills
+
+
+        # ---- pass 2: size (bucket caps 10/10/5 honoured; empty buckets were back-filled above)
+        pending.sort(key=lambda t: -t[3].composite)          # strongest composite gets budget first
+        for ticker, bucket, rec, best, structure, chain, spot, mom, ctx, mc_by_dte, pred_adj, direction in pending:
             budget = self._bucket_budget(bucket, committed)
             if budget <= 0:
                 rec["status"] = "BUCKET_FULL"; rec["reasons"].append(f"{bucket} cap reached"); continue
@@ -723,10 +858,68 @@ class ShortDTEOptionsEngine:
             "as_of": date.today().isoformat(), "nav": self.nav, "market": ctx.to_dict(), "regime": self.regime,
             "universe": [t for t, _ in universe], "per_ticker": per_ticker,
             "intents": [i.to_dict() for i in intents], "ladder": ladder,
-            "committed_by_bucket": committed, "vega_used": vega_used,
+            "committed_by_bucket": committed, "vega_used": vega_used, "backfill": self.last_backfill,
             "caps": {"bucket": cfg.bucket_caps, "total": cfg.total_options_cap},
         }
         return {"intents": intents, "ladder": ladder, "context": ctx, "report": self.last_run}
+
+    # ------------------------------------------------------------------
+    # Extended tenor (8–30 DTE) — PROPOSAL ONLY, never auto-executed.
+    # Same pipeline (momentum ⊕ corridor direction → chain → BSM at that DTE → MC at that
+    # horizon → composite) but surfaced for the operator's explicit OK.
+    # ------------------------------------------------------------------
+    def extended_watch(self, universe: List[Tuple[str, str]], dte_min: int = 8, dte_max: int = 30,
+                       max_proposals: int = 5, min_composite: Optional[float] = None) -> List[Dict[str, Any]]:
+        cfg = self.cfg
+        floor = float(min_composite if min_composite is not None else max(cfg.min_composite, 0.60))
+        ctx = self.market_context()
+        props: List[Dict[str, Any]] = []
+        for ticker, bucket in universe:
+            try:
+                hist = self.broker.get_price_history(ticker, days=cfg.history_days)
+                close = np.asarray(hist.get("close", []), dtype=float)
+                if close.size < 30:
+                    continue
+                spot = float(self.broker.get_quote(ticker) or close[-1])
+                rets = np.diff(np.log(close))
+                hv30 = float(np.std(rets[-21:]) * math.sqrt(TRADING_DAYS)); hv90 = float(np.std(rets[-63:]) * math.sqrt(TRADING_DAYS))
+                mom = self.momentum_read(close, hist.get("high"), hist.get("low"))
+                w_m = 0.80 if mom.confirmed else 0.65
+                dir_score = float(np.clip(w_m * mom.direction_score + (1 - w_m) * ctx.direction_bias, -1, 1))
+                if abs(dir_score) < 0.15:
+                    continue
+                direction = "BULLISH" if dir_score > 0 else "BEARISH"; want = "CALL" if direction == "BULLISH" else "PUT"
+                chain = self.broker.get_option_chain(ticker, dte_min, dte_max, strike_count=cfg.strike_count)
+                if not chain:
+                    continue
+                surface = ShortTenorVolSurface(chain, vix=ctx.vix, hist_vol_30d=hv30, hist_vol_90d=hv90)
+                pred_adj, pred_notes = self.predictive_adjustment(PredictiveOptionsSignal(surface).all_signals(pcr=self._put_call_ratio(chain)), direction)
+                mc_by_dte = {d: self.monte_carlo(rets, spot, d) for d in sorted({q.dte for q in chain})}
+                evals = [self.evaluate_contract(q, spot, surface, mc_by_dte[q.dte], abs(dir_score), pred_adj)
+                         for q in chain if q.put_call == want and mc_by_dte[q.dte].passed]
+                ok = sorted([e for e in evals if not e.reject_reason and e.composite >= floor], key=lambda e: -e.composite)
+                if not ok:
+                    continue
+                best = ok[0]
+                structure = self.regime_structure(spot, surface, best.dte, direction)
+                wing = self._select_wing(chain, best) if structure.get("structure") == "VERTICAL" else None
+                mcr = mc_by_dte[best.dte]
+                props.append({
+                    "ticker": ticker, "bucket": bucket, "direction": direction, "direction_score": round(dir_score, 2),
+                    "structure": structure.get("structure", "SINGLE"), "put_call": best.put_call, "strike": best.strike,
+                    "wing_strike": getattr(wing, "strike", None), "expiry": best.expiry, "dte": best.dte,
+                    "mid": round(best.mid, 2), "ask": best.ask, "bsm_fair": round(best.fair_value, 2), "edge_bps": round(best.edge_bps),
+                    "bsm_iv": round(best.bsm_iv, 4), "surface_iv": round(best.surface_iv, 4), "composite": round(best.composite, 2),
+                    "mc_conf": round(mcr.confidence, 2), "mc_p_up": round(mcr.paths_positive_pct, 2), "mc_var95": round(mcr.var_95, 3),
+                    "p_itm": round(best.mc_p_itm, 2), "delta": round(best.bsm_greeks["delta"], 2), "gamma": round(best.bsm_greeks["gamma"], 4),
+                    "theta": round(best.bsm_greeks["theta"], 3), "vega": round(best.bsm_greeks["vega"], 3),
+                    "why": mom.notes[:3] + pred_notes[:2], "status": "PROPOSAL_ONLY — requires operator OK",
+                })
+            except Exception as e:  # noqa: BLE001
+                logger.debug("extended_watch %s: %s", ticker, e)
+        props.sort(key=lambda p: -p["composite"])
+        self.last_extended = props[:max_proposals]
+        return self.last_extended
 
     # ------------------------------------------------------------------
     def _select_wing(self, chain: List[Any], best: ContractEval):

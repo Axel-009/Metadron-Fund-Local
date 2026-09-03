@@ -224,7 +224,15 @@ _reg("macro_event_flagger",
 _reg("universe_tranche_scan",
      "engine.execution.universe_tranche_scan", "UniverseTrancheScanner",
      5, "EXECUTION", deps=("schwab_broker",),
-     desc="Universe scan as 3 SEPARATE tranches (S&P 500 → SmallCap 600 → remaining ~400) → concurrence vote → slate")
+     desc="Universe scan as 4 SEPARATE runs (SP500 → SP400 → SP600 → ETF_FI) → concurrence vote → slate")
+_reg("rotation_exits",
+     "engine.execution.rotation_exits", "RotationExitEngine",
+     5, "EXECUTION", deps=("universe_tranche_scan",),
+     desc="Phase 5 rotate-or-close before any add: 20% position drawdown or SELL signal in its universe run")
+_reg("gold_standard_report",
+     "engine.execution.gold_standard_report", "GoldStandardReporter",
+     5, "EXECUTION", deps=("l7_execution_surface", "universe_tranche_scan", "short_dte_options_engine"),
+     desc="Gold-standard VIEW 1 / VIEW 2 / TRANSACTION LOG / VIEW 3 renderer (every full scan, EOD recap, on-demand)")
 _reg("eod_allocation_council",
      "engine.execution.eod_allocation_council", "EODAllocationCouncil",
      5, "EXECUTION", deps=("l7_execution_surface",),

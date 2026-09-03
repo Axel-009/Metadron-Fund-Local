@@ -57,6 +57,7 @@ import json
 import logging
 import os
 import ssl
+import threading
 import time
 import uuid
 from dataclasses import dataclass, field
@@ -292,12 +293,36 @@ class OptionQuote:
 # ---------------------------------------------------------------------------
 # Broker
 # ---------------------------------------------------------------------------
+# Order policy (user mandate): MARKET orders, regular session, DAY duration — for equities,
+# ETFs, single-leg options and multi-leg spreads alike. Limit/net prices computed upstream are
+# kept only as the reference price for risk sizing, fill logging and slippage tracking.
+# Override only when explicitly requested: SCHWAB_ORDER_TYPE=LIMIT.
+ORDER_TYPE_POLICY = os.environ.get("SCHWAB_ORDER_TYPE", "MARKET").upper()
+ORDER_SESSION = "NORMAL"
+ORDER_DURATION = "DAY"
+
+
+def _apply_order_policy(payload: dict) -> dict:
+    """Force the payload onto the house policy: MARKET / NORMAL / DAY unless LIMIT was requested."""
+    payload["session"] = ORDER_SESSION
+    payload["duration"] = ORDER_DURATION
+    if ORDER_TYPE_POLICY != "LIMIT":
+        payload["orderType"] = "MARKET"
+        payload.pop("price", None)
+    return payload
+
+
 class SchwabBroker:
     """Charles Schwab execution + data broker implementing BrokerProtocol."""
 
     QUOTE_CACHE_TTL = float(_CFG_QUOTE_TTL or 5)
     CHAIN_CACHE_TTL = 20.0
-    HISTORY_CACHE_TTL = 300.0
+    HISTORY_CACHE_TTL = 1500.0      # daily candles: one pull per ticker per 25-min cycle, shared by all instances
+    # class-level caches: the SchwabAccountRouter runs three broker instances (ROTH/LLC/INDIVIDUAL);
+    # the tranche scan and the options engine must not re-pull the same history/quotes/chains.
+    _shared_quote_cache: Dict[str, Tuple[dict, float]] = {}
+    _shared_chain_cache: Dict[str, Tuple[List["OptionQuote"], float]] = {}
+    _shared_history_cache: Dict[str, Tuple[dict, float]] = {}
     ACCOUNT_CACHE_TTL = 15.0
     MAX_ORDER_NOTIONAL_PCT = 0.10      # broker-edge hard cap per order (10 % NAV)
 
@@ -338,9 +363,10 @@ class SchwabBroker:
         self._pending_slices: List[dict] = []
 
         # caches
-        self._quote_cache: Dict[str, Tuple[dict, float]] = {}
-        self._chain_cache: Dict[str, Tuple[List[OptionQuote], float]] = {}
-        self._history_cache: Dict[str, Tuple[dict, float]] = {}
+        self.last_chain_error = ""
+        self._quote_cache = SchwabBroker._shared_quote_cache
+        self._chain_cache = SchwabBroker._shared_chain_cache
+        self._history_cache = SchwabBroker._shared_history_cache
         self._account_cache: Tuple[Optional[dict], float] = (None, 0.0)
 
         # risk + performance
@@ -359,17 +385,57 @@ class SchwabBroker:
     # ------------------------------------------------------------------
     # HTTP plumbing
     # ------------------------------------------------------------------
-    def _request(self, method: str, url: str, *, params: dict | None = None, json_body: dict | None = None, retries: int = 2) -> "httpx.Response":
+    # Schwab market-data quota ≈ 120 requests / minute per app.  A class-level token bucket
+    # paces EVERY broker instance (the router runs three) so the 4 universe runs never trip 429;
+    # when Schwab still returns 429 we honour Retry-After (default 15 s) and retry instead of
+    # falling through with an empty run.
+    _RATE_PER_MIN = int(os.environ.get("SCHWAB_RATE_PER_MIN", "70"))
+    _MIN_GAP = 60.0 / max(1, _RATE_PER_MIN)          # even spacing → no sub-second bursts
+    _rate_lock = threading.Lock()
+    _rate_stamps: List[float] = []
+    _last_request_ts: float = 0.0
+    _cooldown_until: float = 0.0                       # set on 429: every instance pauses
+
+    @classmethod
+    def _pace(cls) -> None:
+        with cls._rate_lock:
+            now = time.monotonic()
+            if cls._cooldown_until > now:
+                time.sleep(cls._cooldown_until - now); now = time.monotonic()
+            gap = cls._MIN_GAP - (now - cls._last_request_ts)
+            if gap > 0:
+                time.sleep(gap); now = time.monotonic()
+            cls._rate_stamps[:] = [t for t in cls._rate_stamps if now - t < 60.0]
+            if len(cls._rate_stamps) >= cls._RATE_PER_MIN:
+                wait = 60.0 - (now - cls._rate_stamps[0]) + 0.05
+                if wait > 0:
+                    time.sleep(wait)
+            cls._last_request_ts = time.monotonic()
+            cls._rate_stamps.append(cls._last_request_ts)
+
+    @classmethod
+    def _global_backoff(cls, seconds: float) -> None:
+        """A 429 anywhere pauses ALL instances (Schwab's quota is per app, not per account)."""
+        with cls._rate_lock:
+            cls._cooldown_until = max(cls._cooldown_until, time.monotonic() + seconds)
+
+    def _request(self, method: str, url: str, *, params: dict | None = None, json_body: dict | None = None, retries: int = 4) -> "httpx.Response":
         if self._client is None:
             raise RuntimeError("httpx not installed — pip install httpx")
         last_exc: Optional[Exception] = None
         for attempt in range(retries + 1):
             headers = {"Accept": "application/json"}
             headers.update(self.auth.auth_headers())
+            self._pace()
             try:
                 r = self._client.request(method, url, params=params, json=json_body, headers=headers)
-            except Exception as e:  # network
+            except Exception as e:  # network / proxy-level errors
                 last_exc = e
+                if "429" in str(e) and attempt < retries:      # rate limit surfaced by the HTTPS proxy
+                    wait = min(15.0 * (attempt + 1), 90.0)
+                    logger.warning("Schwab 429 (proxy) on %s — backing off %.0fs (attempt %d/%d)", url.split("/v1/")[-1], wait, attempt + 1, retries)
+                    self._global_backoff(wait)
+                    continue
                 time.sleep(0.5 * (attempt + 1))
                 continue
             if r.status_code == 401 and self.auth.mode == "oauth" and attempt < retries:
@@ -379,7 +445,17 @@ class SchwabBroker:
                 except Exception as e:
                     last_exc = e
                     break
-            if r.status_code in (429, 500, 502, 503, 504) and attempt < retries:
+            if r.status_code == 429 and attempt < retries:
+                try:
+                    wait = float(r.headers.get("Retry-After") or 0) or 15.0 * (attempt + 1)
+                except ValueError:
+                    wait = 15.0 * (attempt + 1)
+                wait = min(wait, 90.0)
+                logger.warning("Schwab 429 on %s — backing off %.0fs (attempt %d/%d)", url.split("/v1/")[-1], wait, attempt + 1, retries)
+                self._global_backoff(wait)       # pause every instance, then retry this call
+                self._pace()
+                continue
+            if r.status_code in (500, 502, 503, 504) and attempt < retries:
                 time.sleep(1.0 * (attempt + 1))
                 continue
             return r
@@ -684,7 +760,9 @@ class SchwabBroker:
             data = self._get_json(f"{MARKET_BASE}/chains", params=params)
         except Exception as e:
             logger.warning("Schwab chain failed for %s: %s", underlying, e)
+            self.last_chain_error = f"{underlying}: {e}"
             return []
+        self.last_chain_error = ""
         und_px = float(data.get("underlyingPrice") or (data.get("underlying") or {}).get("last") or 0.0)
         quotes: List[OptionQuote] = []
         for map_key, pc in (("callExpDateMap", "CALL"), ("putExpDateMap", "PUT")):
@@ -771,7 +849,7 @@ class SchwabBroker:
         }
         if limit_price:
             payload["price"] = f"{limit_price:.2f}"
-        return self._submit(order, payload, px, "EQUITY")
+        return self._submit(order, _apply_order_policy(payload), px, "EQUITY")
 
     def place_twap_order(self, ticker: str, side: OrderSide, quantity: int, duration_minutes: int = 30,
                          signal_type: SignalType = SignalType.HOLD, limit_price: Optional[float] = None,
@@ -813,7 +891,8 @@ class SchwabBroker:
         reason: str = "",
     ) -> Order:
         """Single-leg option order. ``option_symbol`` is the Schwab OCC symbol
-        (e.g. ``"SPY   260910C00775000"``). Options are ALWAYS limit orders."""
+        (e.g. ``"SPY   260910C00775000"``). ``limit_price`` is the engine's fair/mid reference used
+        for sizing and slippage logging; the order itself goes out per house policy (MARKET, DAY, NORMAL)."""
         instruction = instruction.upper()
         if instruction not in OPTION_INSTRUCTIONS:
             raise ValueError(f"instruction must be one of {sorted(OPTION_INSTRUCTIONS)}")
@@ -838,7 +917,7 @@ class SchwabBroker:
                 "instrument": {"symbol": option_symbol, "assetType": "OPTION"},
             }],
         }
-        return self._submit(order, payload, float(limit_price), "OPTION")
+        return self._submit(order, _apply_order_policy(payload), float(limit_price), "OPTION")
 
     def place_option_spread(
         self,
@@ -878,7 +957,7 @@ class SchwabBroker:
                 for l in legs
             ],
         }
-        return self._submit(order, payload, abs(float(net_price)), "OPTION")
+        return self._submit(order, _apply_order_policy(payload), abs(float(net_price)), "OPTION")
 
     # ------------------------------------------------------------------
     # Submission core

@@ -32,7 +32,7 @@ except ImportError:
     MarketSimulator = None
     AgentType = None
     MarketAgent = None
-    logger.warning("MiroFish integration module unavailable — AgentSimEngine disabled")
+    logger.debug("MiroFish integration module unavailable — AgentSimEngine disabled")
 
 # Import data layer
 try:
@@ -40,7 +40,7 @@ try:
 except ImportError:
     get_adj_close = None
     get_volume = None
-    logger.warning("OpenBB data layer unavailable — AgentSimEngine will use defaults")
+    logger.debug("OpenBB data layer unavailable — AgentSimEngine will use defaults")
 
 
 @dataclass

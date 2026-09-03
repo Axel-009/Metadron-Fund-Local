@@ -34,7 +34,7 @@ try:
 except ImportError:
     MarketSimulator = None
     AgentType = None
-    logger.warning("MiroFish integration module unavailable — MonteCarloRiskEngine disabled")
+    logger.debug("MiroFish integration module unavailable — MonteCarloRiskEngine disabled")
 
 try:
     import importlib.util as _ilu

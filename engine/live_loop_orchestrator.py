@@ -3040,7 +3040,7 @@ class LiveLoopOrchestrator:
         intel = self.run_intelligence_phase(); pr.data["intelligence"] = intel.items_processed
         dec = self.run_decision_phase(); pr.data["approved"] = len(self._approved_trades)
         pr.errors += sig.errors + intel.errors + dec.errors
-        # 2b. universe scan in THREE separate tranches (S&P 500 → SmallCap 600 → remaining ~400),
+        # 2b. universe scan in SEPARATE tranches per allocation-guide run (SP500 → SP400 → SP600 → ETF_FI),
         #     each scored on its own distribution, then a concurrence vote builds the slate.
         tr = self.run_tranche_universe_scan(exec_engine)
         if tr is not None:
@@ -3278,6 +3278,40 @@ class LiveLoopOrchestrator:
 
     def get_council_markdown(self) -> str:
         return self._last_council_verdict.markdown() if self._last_council_verdict else "(no EOD council has run yet)"
+
+    # ── gold-standard report (VIEW 1 / VIEW 2 / TRANSACTION LOG / VIEW 3) ─────────
+    def _gold_context(self, recap: bool = False):
+        from engine.execution.gold_standard_report import collect_context
+        exec_engine = self._get("execution_engine")
+        orders = list(self._last_execution_orders)
+        if recap:
+            # EOD recap = every L7 order today (fills + dry-run), not just the last cycle
+            l7 = getattr(exec_engine, "l7", None)
+            if l7 is not None:
+                orders = [o.to_dict() if hasattr(o, "to_dict") else dict(o)
+                          for o in list(getattr(l7, "_filled_orders", [])) + list(getattr(l7, "_dry_run_orders", []))]
+        broker = getattr(exec_engine, "broker", None)
+        dd = None
+        if broker is not None and hasattr(broker, "portfolio_snapshot"):
+            try:
+                dd = broker.portfolio_snapshot().get("drawdown")
+            except Exception:  # noqa: BLE001
+                dd = None
+        vix = getattr(self._last_macro_snapshot, "vix", None)
+        return collect_context(exec_engine, tranche_result=self._last_tranche_result, options_report=self._last_options_report,
+                               orders=orders, exits=list(getattr(self, "_last_rotation_exits", []) or []), macro_flag=self._last_macro_flag,
+                               drawdown=dd, council=self._last_council_verdict, vix=vix,
+                               cycle_time_s=float(getattr(self, "_last_full_scan_seconds", 0.0) or 0.0))
+
+    def get_gold_standard_report(self) -> str:
+        """Operator prompt "gold standard report": current book + last cycle in the gold-standard layout."""
+        from engine.execution.gold_standard_report import render
+        return render(self._gold_context(recap=False))
+
+    def get_eod_recap(self) -> str:
+        """End-of-day recap: positions + all of today's transactions, same layout."""
+        from engine.execution.gold_standard_report import render
+        return render(self._gold_context(recap=True), recap=True)
 
     def _should_run_cadence(self, last_time: Optional[datetime], cadence_seconds: float) -> bool:
         """Check whether enough time has elapsed since last run."""

@@ -23,10 +23,10 @@ Drawdown rule (applies BEFORE every add, not only on monitoring ticks):
       (portfolio DD ≥20% → Cube kill-switch → margin breach).
 
 Configuration (env or explicit):
-    SCHWAB_ACCOUNT_ROTH=9565
-    SCHWAB_ACCOUNT_LLC=0514
+    SCHWAB_ACCOUNT_ROTH=0514
+    SCHWAB_ACCOUNT_LLC=9565
     SCHWAB_ACCOUNT_INDIVIDUAL=4806
-    SCHWAB_ACCOUNT_MANDATES='{"9565":"ROTH","0514":"LLC","4806":"INDIVIDUAL"}'  (alternative)
+    SCHWAB_ACCOUNT_MANDATES='{"0514":"ROTH","9565":"LLC","4806":"INDIVIDUAL"}'  (alternative)
 """
 from __future__ import annotations
 

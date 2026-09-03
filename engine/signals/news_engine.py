@@ -360,7 +360,7 @@ class NewsEngine:
                     continue
 
         except ImportError:
-            logger.warning("OpenBB not available for news fetching")
+            logger.debug("OpenBB not available for news fetching")
         except Exception as e:
             logger.error(f"News fetch error: {e}")
 

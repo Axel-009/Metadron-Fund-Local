@@ -209,12 +209,24 @@ class SchwabAccountRouter:
                 out[label] = round(s["options_headroom"] * s["drawdown"]["add_scale"], 2)
         return out
 
+    # ── fill order (operator rule) ──────────────────────────────────────────
+    #   1. INDIVIDUAL  — 100 % options: run the 1–7 DTE engine and fill it first
+    #   2. LLC         — equities + ETFs from the same universe runs
+    #   3. ROTH        — composite of both (25 % options / 75 % equities)
+    # `prefer(label)` pins the destination for a phase; mandate permission and
+    # headroom are still enforced, other accounts remain as fallbacks in priority order.
+    _preferred: Optional[str] = None
+
+    def prefer(self, label: Optional[str]) -> None:
+        self._preferred = label.upper() if label else None
+
     def _pick_account(self, product: str, ticker: str, notional: float) -> Tuple[Optional[str], str]:
         pdd = self.guard.check("PORTFOLIO", self.state.nav)
         if not pdd.adds_allowed:
             return None, pdd.directive
         key = "priority_options" if product == "OPTION" else "priority_equities"
-        cands = sorted((m for m in self.mandates.values() if m.permits(product, ticker)), key=lambda m: getattr(m, key))
+        cands = sorted((m for m in self.mandates.values() if m.permits(product, ticker)),
+                       key=lambda m: (0 if m.label == self._preferred else 1, getattr(m, key)))
         reasons = []
         for m in cands:
             snap = self.account_snapshot(m.label)
@@ -366,6 +378,10 @@ class SchwabAccountRouter:
 
     def get_option_chain(self, *a, **kw):
         return self.primary.get_option_chain(*a, **kw)
+
+    @property
+    def last_chain_error(self) -> str:
+        return getattr(self.primary, "last_chain_error", "")
 
     def refresh_prices(self):
         for b in self.brokers.values():
