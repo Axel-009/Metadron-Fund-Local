@@ -22,3 +22,19 @@ def test_cta_read_and_backfill_config():
     cfg = ShortDTEConfig()
     assert cfg.backfill_max_tries >= 1 and cfg.backfill_names_per_bucket >= 1
     assert eng.backfill_candidates == {} and eng.last_backfill == {}
+
+
+def test_tenor_preference_and_window():
+    from engine.execution.short_dte_options_engine import ShortDTEConfig
+    cfg = ShortDTEConfig()
+    assert cfg.dte_min == 1 and cfg.dte_max == 30 and cfg.tenor_pref_days == 7
+    # factor: 1.0 inside 7 DTE, floor at 30 DTE
+    def factor(dte):
+        if dte <= cfg.tenor_pref_days:
+            return 1.0
+        frac = min(1.0, (dte - cfg.tenor_pref_days) / (cfg.dte_max - cfg.tenor_pref_days))
+        return 1.0 - (1.0 - cfg.tenor_pref_floor) * frac
+    assert factor(1) == factor(7) == 1.0
+    assert 0.85 < factor(14) < 1.0
+    assert abs(factor(30) - cfg.tenor_pref_floor) < 1e-9
+    assert cfg.g9_options_delta == 0.20

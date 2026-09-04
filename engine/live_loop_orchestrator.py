@@ -776,7 +776,8 @@ class LiveLoopOrchestrator:
         if self._session in (MarketSession.MARKET_OPEN, MarketSession.INTRADAY) and \
                 self._should_run_cadence(self._last_full_scan_time, _FULL_SCAN_CADENCE):
             self._run_phase_safe(LoopPhase.SIGNALS, self.run_full_scan_rotation, result)
-            self._last_full_scan_time = now
+            # cadence counts from COMPLETION: 30 min after all trades / rotations of this pass are up
+            self._last_full_scan_time = datetime.now()
             self._last_signal_time = now
             self._last_intelligence_time = now
 

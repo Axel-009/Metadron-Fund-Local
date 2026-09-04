@@ -3,7 +3,7 @@
 Metadron sandbox run cycle — one 30-minute FULL-SCAN heartbeat, end to end.
 ==========================================================================
 
-    Schwab (data)  →  universe + allocation slate  →  ShortDTE options scan (1–7 DTE)
+    Schwab (data)  →  universe + allocation slate  →  ShortDTE options scan (1–30 DTE, shorter preferred)
                    →  20 % drawdown gate  →  hourly macro flag  →  L7 (DRY_RUN unless
                    SCHWAB_LIVE_ORDERS=true)  →  EOD council (if --close)  →  in-chat patch
 
@@ -103,6 +103,14 @@ def main() -> int:
     ap.add_argument("--gold", dest="gold", action="store_true", default=True)
     ap.add_argument("--no-gold", dest="gold", action="store_false")
     ap.add_argument("--recap", action="store_true", help="render the gold-standard output as the EOD recap")
+    ap.add_argument("--fill-per-run", dest="fill_per_run", action="store_true",
+                    default=os.environ.get("METADRON_FILL_PER_RUN", "1") == "1",
+                    help="fill each run's trades (INDIVIDUAL options → LLC equities → ROTH) right after that run's chains, then move to the next run")
+    ap.add_argument("--fill-at-end", dest="fill_per_run", action="store_false")
+    ap.add_argument("--start-from", default="", help="resume the tranche sequence at this run (e.g. SCAN_2_SP400); earlier runs are skipped")
+    ap.add_argument("--options-only", action="store_true", help="operator: NO equity fills this stage — scan → chain sweep → options (INDIVIDUAL → ROTH) only")
+    ap.add_argument("--only-run", default="", help="stage mode: run exactly this tranche (scan → equities → chains → options) and exit; "
+                                                 "used to keep each live stage inside the credential-proxy window")
     args = ap.parse_args()
     tickers = [t.strip().upper() for t in args.universe.split(",") if t.strip()]
 
@@ -182,6 +190,169 @@ def main() -> int:
             rules_ = AllocationRules()
             acct_snap = snap["accounts"] if hasattr(broker, "portfolio_snapshot") else {}
             run_no = {"i": 0}
+            per_run_orders: list = []          # every L7 order placed run-by-run (feeds the report / patch)
+            per_run_intents: list = []
+            filled_eq: dict = {}               # ticker → {account: $}
+            seeded: set = set()                # (account, ticker) holdings already counted into the sleeve ledger
+            sleeve_memo: dict = {}             # ticker → sleeve, remembered across runs for held names
+            filled_opt: set = set()            # option underlyings already submitted this cycle
+            run_used_ledger: dict = {}     # (account, run) → $ placed by that run today
+            sleeve_used: dict = {}             # (account, sleeve) → $ committed so far (locked-sleeve tracking)
+            opt_used: dict = {}                # account → option notional committed so far
+            # share of each LOCKED sleeve budget that each universe run may consume (Σ over runs = 1.0):
+            RUN_SLEEVE_SHARE = {
+                "SCAN_1_SP500":  {"IG_EQUITY": 1.00, "HY_EQUITY": 0.50},
+                "SCAN_2_SP400":  {"HY_EQUITY": 0.50, "DISTRESSED": 0.50},
+                "SCAN_3_SP600":  {"DISTRESSED": 0.50},
+                "SCAN_4_ETF_FI": {"TLTW": 1.00, "FIXED_INCOME": 1.00},
+            }
+            MIN_NAMES = {"DISTRESSED": 3}     # operator rule: the distressed sleeve carries at least 3 names
+            # operator 2026-09-04 (equities): FORGET the IG/HY/distressed buckets — budget per universe run as a share
+            # of the account's equity mandate, filled with the BEST names of that run in 5–10 % of ACCOUNT VALUE
+            # sleeves (strongest composite: momentum + RSI breakout + Sharpe/ensemble + 52w dislocation).
+            RUN_EQ_SHARE = {"SCAN_1_SP500": 0.40, "SCAN_2_SP400": 0.25, "SCAN_3_SP600": 0.20, "SCAN_4_ETF_FI": 0.15}
+            EQ_NAME_MIN, EQ_NAME_MAX, EQ_NAME_TARGET = 0.05, 0.10, 0.075     # of account NAV per name
+            # per-position options premium cap as a fraction of ACCOUNT NAV; default (None) = engine 10 %.
+            # operator 2026-09-04: Individual raised to 20 % so 7–30 DTE large-cap contracts fit a $5.7k account.
+            OPTION_POS_CAP = {"INDIVIDUAL": 0.20}
+            # operator 2026-09-04: Roth options ALWAYS come from RUN 2 & 3 (SP400 HY / SP600 distressed pools);
+            # in RUN 2/3 the chain sweep + INDIVIDUAL options go in BEFORE the equities, then LLC/Roth equities, then Roth options.
+            ROTH_OPTION_RUNS = {"SCAN_2_SP400", "SCAN_3_SP600"}
+            OPTIONS_FIRST_RUNS = {"SCAN_2_SP400", "SCAN_3_SP600"}
+            SLEEVE_PCT = {"IG_EQUITY": rules_.ig_equity_pct, "HY_EQUITY": rules_.hy_equity_pct, "DISTRESSED": rules_.distressed_equity_pct,
+                          "TLTW": rules_.tltw_cashflow_pct, "FIXED_INCOME": rules_.fi_macro_pct, "CVR": rules_.event_driven_cvr_pct}
+
+            def _fill_run_options(label: str, tr):
+                """Size THIS run's chain pool for one account and route each intent through L7 (market DAY)."""
+                a = acct_snap.get(label, {})
+                headroom = float(a.get("options_headroom", 0.0)) * add_scale * flag.options_add_scale - opt_used.get(label, 0.0)
+                if sd is None or headroom <= 0:
+                    _p(f"     {label}: no options headroom left (${headroom:,.0f})"); return
+                sd._pool_pending = [t for t in sd._pool_pending if t[0] not in filled_opt]
+                try:
+                    scan = sd.scan([], nav=headroom / 0.25, l7_nav=nav, account_nav=float(a.get("nav", 0.0)),
+                                   delta_used_usd=float(getattr(eng.l7, "_options_delta_exposure", 0.0) or 0.0), use_pool=True,
+                                   position_cap_pct=OPTION_POS_CAP.get(label))
+                except Exception as exc:  # noqa: BLE001
+                    _p(f"     {label}: options sizing failed: {exc}"); return
+                its = scan["intents"]
+                _p(f"     {label}: {len(its)} option intents on ${headroom:,.0f} headroom (regime {scan['context'].regime}, VIX {scan['context'].vix:.1f})")
+                for it in its:
+                    o = eng.l7_submit_option_intent(it, regime=getattr(sd, "regime", "NORMAL"))
+                    if not o:
+                        continue
+                    od = o.to_dict() if hasattr(o, "to_dict") else dict(o); od["account"] = label
+                    per_run_orders.append(od); per_run_intents.append(it)
+                    st = str(od.get("status")).split(".")[-1]
+                    _p(f"       {it.ticker:<6} {it.direction:<6} {it.put_call} {it.strike} {it.expiry} {it.dte}DTE ×{it.contracts} mkt≈${it.limit_price:.2f} "
+                       f"notional ${it.notional:,.0f} comp={it.composite:.2f} edge={it.edge_bps:+.0f}bp Δ${it.greeks.get('delta_exposure_usd', 0):+,.0f} {it.structure} → {st}"
+                       + ("" if "REJECT" not in st.upper() else f"  ← {str(od.get('reason') or od.get('broker_reason') or '')[:120]}"))
+                    if "REJECT" not in st.upper():
+                        opt_used[label] = opt_used.get(label, 0.0) + float(it.notional)
+                        filled_opt.add(it.ticker)
+
+            def _fill_run_equities(label: str, tr):
+                """This run's longs → LOCKED sleeves × this run's share × account equity mandate, ≤ G1 10 % NAV."""
+                a = acct_snap.get(label, {})
+                eq_pct = float(a.get("mandate", {}).get("equities_pct", 0.0))
+                if eq_pct <= 0 or not tr.top:
+                    _p(f"     {label}: no equities mandate" if eq_pct <= 0 else f"     {label}: run has no longs"); return
+                acct_nav_ = float(a.get("nav", 0.0))
+                base = acct_nav_ * eq_pct                      # equity mandate of THIS account
+                by_sleeve: dict = {}
+                # per-ACCOUNT held check (router keeps one SchwabBroker per account); never double-buy on relaunch
+                sub = getattr(broker, "brokers", {}).get(label) if hasattr(broker, "brokers") else broker
+                held_pos = getattr(getattr(sub, "state", None), "positions", {}) or {}
+                held_now = set(held_pos)
+                # seed the sleeve ledger with what this account ALREADY holds (relaunch / earlier heartbeat), so the
+                # locked sleeve budgets are net of existing positions rather than re-spent
+                sleeve_of_run = {c.ticker: c.sleeve for c in list(tr.top) + list(tr.candidates)}
+                for t_, p_ in held_pos.items():
+                    sl_ = sleeve_of_run.get(t_) or sleeve_memo.get(t_)
+                    if not sl_ or (label, t_) in seeded:
+                        continue
+                    sleeve_memo[t_] = sl_
+                    mv = abs(float(getattr(p_, "market_value", 0.0) or 0.0))
+                    sleeve_used[(label, sl_)] = sleeve_used.get((label, sl_), 0.0) + mv
+                    seeded.add((label, t_))
+                # ── run budget = account equity mandate × this run's share, net of what this run already put on
+                run_budget = base * RUN_EQ_SHARE.get(tr.name, 0.0) * add_scale * flag.equities_add_scale
+                run_used = sum(mv_ for (lb_, rn_), mv_ in run_used_ledger.items() if lb_ == label and rn_ == tr.name)
+                budget = max(0.0, run_budget - run_used)
+                if budget < EQ_NAME_MIN * acct_nav_:
+                    _p(f"     {label}: {tr.name} run budget {RUN_EQ_SHARE.get(tr.name, 0.0):.0%} of equity mandate = ${run_budget:,.0f} "
+                       f"already used (${run_used:,.0f}) — no room for a ≥ {EQ_NAME_MIN:.0%} sleeve"); return
+                # ── best of the run: composite score, breakout / dislocation tie-break; sleeves of 5–10 % of account NAV
+                def _rank(c):
+                    bonus = (0.05 if "break" in str(getattr(c, "breakout", "")).lower() else 0.0) \
+                          + (0.03 if 55 <= float(getattr(c, "rsi", 50.0)) <= 72 else 0.0) \
+                          + (0.02 if float(getattr(c, "pos_52w", 0.5)) < 0.85 else 0.0)     # room to run vs 52w high
+                    return -(float(c.score) + bonus)
+                cands = [c for c in sorted(tr.top, key=_rank) if c.signal == "BUY"
+                         and not filled_eq.get(c.ticker, {}).get(label) and c.ticker not in held_now]
+                skipped_held = [c.ticker for c in tr.top if c.ticker in held_now]
+                if skipped_held:
+                    _p(f"     {label}: already held — skip {', '.join(skipped_held)}")
+                n_names = max(1, min(len(cands), int(round(budget / (EQ_NAME_TARGET * acct_nav_)))))
+                per = min(EQ_NAME_MAX * acct_nav_, max(EQ_NAME_MIN * acct_nav_, budget / max(1, n_names)))
+                picks = cands[:n_names]
+                _p(f"     {label}: run budget ${run_budget:,.0f} ({RUN_EQ_SHARE.get(tr.name, 0.0):.0%} of ${base:,.0f} equity mandate), "
+                   f"used ${run_used:,.0f} → {len(picks)} sleeves × ${per:,.0f} ({per / acct_nav_:.1%} of account)")
+                rows = [(c.ticker, c.sleeve, per, c) for c in picks]
+                if not rows:
+                    _p(f"     {label}: no eligible BUY names left in this run"); return
+                qmap = broker.get_quotes([t for t, *_ in rows]) or {}
+                tot = 0.0
+                for t, sleeve, dollars, c in rows:
+                    q = qmap.get(t) if isinstance(qmap.get(t), dict) else {}
+                    px = float(q.get("last") or q.get("mark") or c.price or 0.0)
+                    qty = int(dollars // px) if px > 0 else 0
+                    if qty <= 0:
+                        continue
+                    o = eng.l7_submit(ticker=t, side="BUY", quantity=qty, signal_type="QUALITY_BUY", regime="NORMAL",
+                                      sector=(getattr(c, "sector", "") or sleeve),
+                                      reason=f"{label} {tr.name} run slate {sleeve} ${dollars:,.0f} α{c.raw_score:+.3f}")
+                    od = o if isinstance(o, dict) else o.to_dict(); od["alpha"] = c.raw_score; od["account"] = label
+                    per_run_orders.append(od)
+                    st = str(od.get("status")).split(".")[-1]
+                    fp = float(od.get("fill_price") or px)
+                    why = "" if "REJECT" not in st.upper() else f"  ← {str(od.get('reason') or od.get('reject_reason') or '')[:110]}"
+                    _p(f"       {t:<6} BUY {qty:>4} @ {fp:.2f} ${qty * fp:>9,.0f} [{sleeve}] α{c.raw_score:+.3f} → {st}{why}")
+                    if "REJECT" not in st.upper():
+                        tot += qty * fp
+                        sleeve_used[(label, sleeve)] = sleeve_used.get((label, sleeve), 0.0) + qty * fp
+                        run_used_ledger[(label, tr.name)] = run_used_ledger.get((label, tr.name), 0.0) + qty * fp
+                        filled_eq.setdefault(t, {})[label] = qty * fp
+                _p(f"     {label}: {tot:,.0f} filled this run │ run ledger " +
+                   ", ".join(f"{rn} ${v:,.0f}" for (lb, rn), v in run_used_ledger.items() if lb == label))
+
+            def _fill_run_eq(tr):
+                """Equities first (right after the run's proposed allocation): LLC → ROTH."""
+                if not dd["adds_allowed"]:
+                    _p("  ── FILLS SKIPPED: adds blocked by 20% drawdown rule"); return
+                mode = "LIVE" if getattr(broker, "live_orders", False) else "DRY_RUN"
+                _p(f"  ── FILL RUN {run_no['i']} ({tr.name}) [{mode}] EQUITIES — LLC → ROTH ──")
+                if hasattr(broker, "prefer"): broker.prefer("LLC")
+                _fill_run_equities("LLC", tr)
+                if hasattr(broker, "prefer"): broker.prefer("ROTH")
+                _fill_run_equities("ROTH", tr)
+                if hasattr(broker, "prefer"): broker.prefer(None)
+
+            def _fill_run(tr, accounts=("INDIVIDUAL", "ROTH")):
+                """Options after the tranche's chain sweep: INDIVIDUAL → ROTH (Roth only from RUN 2/3 pools)."""
+                if not dd["adds_allowed"]:
+                    _p("  ── FILLS SKIPPED: adds blocked by 20% drawdown rule"); return
+                mode = "LIVE" if getattr(broker, "live_orders", False) else "DRY_RUN"
+                accts = [a for a in accounts if not (a == "ROTH" and tr.name not in ROTH_OPTION_RUNS)]
+                if not accts:
+                    return
+                _p(f"  ── FILL RUN {run_no['i']} ({tr.name}) [{mode}] OPTIONS — {' → '.join(accts)} ──")
+                if "ROTH" in accounts and "ROTH" not in accts:
+                    _p("     ROTH: skipped — Roth options come from RUN 2 & 3 only (operator rule)")
+                for a in accts:
+                    if hasattr(broker, "prefer"): broker.prefer(a)
+                    _fill_run_options(a, tr)
+                if hasattr(broker, "prefer"): broker.prefer(None)
 
             def on_run(tr):
                 run_no["i"] += 1
@@ -195,16 +366,81 @@ def main() -> int:
                 _p(proposed_allocation(tr, nav, rules_, acct_snap, add_scale * flag.equities_add_scale))
                 Path("logs").mkdir(exist_ok=True)
                 Path(f"logs/run_{run_no['i']}_{tr.name}.txt").write_text(proposed_allocation(tr, nav, rules_, acct_snap, add_scale * flag.equities_add_scale))
+                options_first = tr.name in OPTIONS_FIRST_RUNS
+                if args.options_only:
+                    _p("  OPTIONS-ONLY stage (operator): equities dropped this stage — chain sweep → INDIVIDUAL → ROTH options")
+                if args.fill_per_run and not options_first and not args.options_only:
+                    try:
+                        _fill_run_eq(tr)          # RUN 1/4: equities first, then chains + options
+                    except Exception as exc:  # noqa: BLE001
+                        _p(f"  equity fill after {tr.name} failed: {exc}")
+                elif options_first:
+                    _p("  (RUN 2/3 order: chain sweep → INDIVIDUAL options → LLC/ROTH equities → ROTH options)")
+                # ── options chains for EVERY name of this tranche, right after its run (sequential: run 1 →
+                #    chains 1 → run 2 → chains 2 → …). Sized later, once all tranches are in and concurred.
+                try:
+                    from engine.execution.universe_tranche_scan import ConcurrenceResult as _CR
+                    bkt = _CR.TRANCHE_OPTIONS_BUCKET.get(tr.name, "OPTIONS_HY")
+                    by_t = {c.ticker: (c.options_bucket or bkt) for c in list(tr.top) + list(tr.candidates) + list(tr.sells)}
+                    uni = [(t, by_t.get(t, bkt)) for t in sorted(set(tr.universe_tickers) | set(by_t))]
+                    sm = sd.sweep_tranche(tr.name, uni)
+                    _p(f"  ── OPTIONS CHAINS RUN {run_no['i']} ({tr.name}): {sm['names']} names → {sm['chains']} chains pulled, "
+                       f"{sm['no_chain']} no listed options in window, {sm['illiquid']} illiquid, {sm['errors']} fetch errors, "
+                       f"{sm['passed']} PASS BSM/MC → contract found │ {sm['elapsed_s']:.0f}s")
+                    _p("     status: " + ", ".join(f"{k} {v}" for k, v in sm["status_hist"].items()))
+                    for j, t in enumerate(sm["top"], 1):
+                        _p(f"     {j}. {t['ticker']:<6} {t['direction']:<7} {t['structure']:<8} {t['put_call']} {t['strike']:g} "
+                           f"{t['dte']}DTE mid ${t['mid']:.2f} composite {t['composite']:.2f} edge {t['edge_bps']:+d}bp [{t['bucket']}]")
+                    if not sm["top"]:
+                        _p("     no contract in this tranche cleared composite ≥ 0.55 / MC / liquidity")
+                except Exception as exc:  # noqa: BLE001
+                    _p(f"  options chain sweep for {tr.name} failed: {exc}")
+                if args.fill_per_run:
+                    try:
+                        if args.options_only:
+                            _fill_run(tr)
+                        elif options_first:
+                            _fill_run(tr, accounts=("INDIVIDUAL",))
+                            _fill_run_eq(tr)
+                            _fill_run(tr, accounts=("ROTH",))
+                        else:
+                            _fill_run(tr)
+                    except Exception as exc:  # noqa: BLE001
+                        _p(f"  fill after {tr.name} failed: {exc}")
 
+            sd.reset_pool()
+            if args.only_run:
+                names_ = [n for n, _ in scanner.tranches]
+                if args.only_run in names_:
+                    run_no["i"] = names_.index(args.only_run)
+                    scanner.tranches = [(n, t) for n, t in scanner.tranches if n == args.only_run]
+                    _p(f"  STAGE MODE: {args.only_run} only (run {run_no['i'] + 1} of {len(names_)}) — concurrence/council run in the final stage")
+            if args.start_from:
+                names_ = [n for n, _ in scanner.tranches]
+                if args.start_from in names_:
+                    skipped = names_[: names_.index(args.start_from)]
+                    scanner.tranches = [(n, t) for n, t in scanner.tranches if n not in skipped]
+                    run_no["i"] = len(skipped)
+                    _p(f"  resuming at {args.start_from} — skipping {', '.join(skipped)} (already run/filled on the previous token)")
             tranche = scanner.run(corridor_bias=bias, on_run=on_run)
+            if args.only_run and args.only_run != "SCAN_4_ETF_FI":
+                _p(f"\n  STAGE {args.only_run} complete — equities and options for this tranche are placed; launch the next stage.")
+                _p(f"  positions now: {len(getattr(broker.state, 'positions', {}) or {})}  NAV ${broker.state.nav:,.0f}")
+                return 0
             _p(f"\n═══ CONCURRENCE (after RUN {run_no['i']}) → {len(tranche.final)} names ═══")
+            pool = getattr(sd, "_pool_runs", {}) or {}
+            if pool:
+                _p("  options pool for final sizing: " + " │ ".join(f"{k.split('_', 1)[-1]} {v['passed']}/{v['names']}" for k, v in pool.items())
+                   + f" → {sum(v['passed'] for v in pool.values())} contracts carried into allocation")
             _p("  " + ", ".join(f"{c.ticker}[{c.sleeve}] z{c.z_score:+.1f} {sum(c.votes.values())}/{len(c.votes) or 6}" for c in tranche.final))
             for note in getattr(tranche, "backfill_notes", []) or []:
                 _p(f"  LOCKED SLEEVE → {note}")
             if getattr(tranche, "dropped", None):
                 _p("  dropped: " + "; ".join(f"{t} ({w})" for t, w in list(tranche.dropped)[:8]))
             eq_slate = tranche.equity_slate()
-            opt_universe = tranche.options_universe()   # longs (calls) + run SELLs (puts) + core ETFs
+            opt_universe = tranche.options_universe()   # EVERY tranche name (longs, sells, shortlist) + core ETFs
+            by_run = tranche.options_universe_by_run()
+            _p("  options universe: " + ", ".join(f"{k} {len(v)}" for k, v in by_run.items()) + f" + core ETFs → {len(opt_universe)} names, chains pulled for all")
             sd.backfill_candidates = tranche.options_backfill()   # empty HY/Dist buckets ← SP400/SP600 names
         except Exception as exc:  # noqa: BLE001
             print(f"  tranche scan failed: {exc}")
@@ -268,14 +504,18 @@ def main() -> int:
 
     extended_proposals: list = []
 
-    def _submit_options(label: str, opt_headroom: float):
+    def _submit_options(label: str, opt_headroom: float, acct_nav: float = 0.0):
         """Run the 1–7 DTE engine sized to this account's options headroom and route every intent through L7."""
         nonlocal report
         if sd is None or opt_headroom <= 0 or not status["connected"]:
             _p(f"  {label}: options skipped (" + ("offline" if not status["connected"] else "no options headroom after mandate/DD/macro scaling") + ")")
             return [], []
         try:
-            scan = sd.scan(opt_universe, nav=opt_headroom / 0.25)      # engine caps 10/10/5 of nav → Σ ≤ headroom
+            # engine caps 10/10/5 of nav → Σ ≤ headroom; l7_nav = portfolio NAV for the G9 Σ|Δ$| ≤ 20 % budget
+            scan = sd.scan(opt_universe, nav=opt_headroom / 0.25, l7_nav=nav, account_nav=acct_nav,
+                           delta_used_usd=float(getattr(eng.l7, "_options_delta_exposure", 0.0) or 0.0),
+                           use_pool=tranche is not None,      # pass 1 already done per tranche → size the pool
+                           position_cap_pct=OPTION_POS_CAP.get(str(getattr(broker, "_preferred", "") or "").upper()))
         except Exception as exc:  # noqa: BLE001
             _p(f"  {label}: options scan failed: {exc}"); return [], []
         report = report or scan["report"]
@@ -286,7 +526,16 @@ def main() -> int:
         for bkt, names in bf.items():
             _p(f"    BUCKET BACK-FILL {bkt} had no eligible name → filled from {'SP400' if bkt == 'OPTIONS_HY' else 'SP600'}: {', '.join(names)}")
         if getattr(sd, "backfill_candidates", None) and not bf:
-            tried = [t for t, r in (scan.get("per_ticker") or scan["report"].get("per_ticker") or {}).items() if r.get("backfill")]
+            per_t = (scan.get("per_ticker") or scan["report"].get("per_ticker") or {})
+            # per-tranche chain coverage: every name in each run must have had its chain pulled
+            if tranche is not None:
+                for run_name, names in tranche.options_universe_by_run().items():
+                    st = [str(per_t.get(t, {}).get("status", "MISSING")) for t in names]
+                    no_chain = sum(1 for t in names if any("DTE chain" in r for r in per_t.get(t, {}).get("reasons", [])))
+                    err = sum(1 for x in st if x == "ERROR"); missing = sum(1 for x in st if x == "MISSING")
+                    ok = len(names) - no_chain - err - missing
+                    _p(f"    chains {run_name:<7} {len(names):>3} names → {ok} chains scanned, {no_chain} no listed options in window, {err} fetch errors, {missing} not reached")
+            tried = [t for t, r in per_t.items() if r.get("backfill")]
             if tried:
                 _p(f"    BUCKET BACK-FILL tried {len(tried)} SP400/SP600 names, none eligible: " + ", ".join(tried[:12]))
         out = []
@@ -299,12 +548,16 @@ def main() -> int:
                 _p(f"    {it.ticker:<6} {it.direction:<6} {it.put_call} {it.strike} {it.expiry} {it.dte}DTE ×{it.contracts} @ ${it.limit_price:.2f} "
                    f"notional ${it.notional:,.0f} comp={it.composite:.2f} edge={it.edge_bps:+.0f}bp Δ${it.greeks.get('delta_exposure_usd', 0):+,.0f} "
                    f"structure={struct} → {str(od.get('status')).split('.')[-1]}")
-        # Extended tenor (8–30 DTE) — proposal only, operator OK required, never auto-executed
-        try:
-            ext = sd.extended_watch(opt_universe)
-        except Exception as exc:  # noqa: BLE001
-            ext = []; _p(f"  {label}: extended-tenor scan failed: {exc}")
-        if ext:
+        # Extended tenor (dte_max+1 … 30 DTE) — proposal only; skipped when the auto window already covers 30 DTE
+        ext = []
+        if sd.cfg.dte_max < 30:
+            try:
+                ext = sd.extended_watch(opt_universe, dte_min=sd.cfg.dte_max + 1, dte_max=30)
+            except Exception as exc:  # noqa: BLE001
+                _p(f"  {label}: extended-tenor scan failed: {exc}")
+        if sd.cfg.dte_max >= 30:
+            pass
+        elif ext:
             _p(f"  {label}: EXTENDED TENOR 8–30 DTE — {len(ext)} attractive proposal(s), NOT executed (need your OK):")
             for pr in ext:
                 wing = f"/{pr['wing_strike']:g}" if pr.get("wing_strike") else ""
@@ -317,17 +570,75 @@ def main() -> int:
             _p(f"  {label}: extended tenor 8–30 DTE — no proposal clears the 0.60 composite bar")
         return out, its
 
+    filled_per_run = bool(args.fill_per_run and tranche is not None)
+    if filled_per_run:
+        orders += per_run_orders; intents += per_run_intents
+        acc = [o for o in per_run_orders if "REJECT" not in str(o.get("status", "")).upper()]
+        _p(f"\n═══ FILLS ALREADY PLACED RUN-BY-RUN: {len(acc)} accepted / {len(per_run_orders) - len(acc)} rejected by L7 ═══")
+        for label in ("INDIVIDUAL", "LLC", "ROTH"):
+            eq = sum(v[label] for v in filled_eq.values() if label in v)
+            _p(f"  {label:<10} options ${opt_used.get(label, 0.0):,.0f} │ equities ${eq:,.0f} │ " +
+               ", ".join(f"{sl} ${v:,.0f}" for (lb, sl), v in sleeve_used.items() if lb == label))
+        # minimum-names top-up (e.g. DISTRESSED ≥ 3) from the tranche candidates, SP600 first, then SP400, then SP500
+        for sleeve, need in MIN_NAMES.items():
+            sleeve_of = {c.ticker: c.sleeve for tr_ in tranche.tranches for c in list(tr_.top) + list(tr_.candidates)}
+            have = sorted({t for t in filled_eq if sleeve_of.get(t) == sleeve})
+            if len(have) >= need:
+                continue
+            order = ["SCAN_3_SP600", "SCAN_2_SP400", "SCAN_1_SP500"]
+            pool_c = []
+            for rn in order:
+                tr_ = next((x for x in tranche.tranches if x.name == rn), None)
+                if tr_ is None:
+                    continue
+                pool_c += sorted([c for c in list(tr_.top) + list(tr_.candidates) if c.ticker not in filled_eq and c.signal == "BUY"],
+                                 key=lambda c: (0 if c.sleeve == sleeve else 1, -c.score))
+            picks = pool_c[: need - len(have)]
+            _p(f"  MIN-NAMES {sleeve}: {len(have)} filled < {need} → topping up with " + (", ".join(f"{c.ticker}[{c.tranche}]" for c in picks) or "nothing eligible"))
+            for label in ("LLC", "ROTH"):
+                a = acct_snap.get(label, {}); eq_pct = float(a.get("mandate", {}).get("equities_pct", 0.0))
+                if eq_pct <= 0 or not picks:
+                    continue
+                base = float(a.get("nav", 0.0)) * eq_pct / 0.90
+                budget = max(0.0, base * SLEEVE_PCT.get(sleeve, 0.10) * add_scale * flag.equities_add_scale - sleeve_used.get((label, sleeve), 0.0))
+                per = min(0.10 * nav, budget / len(picks)) if budget > 0 else 0.0
+                if per <= 0:
+                    _p(f"     {label}: {sleeve} budget exhausted"); continue
+                if hasattr(broker, "prefer"): broker.prefer(label)
+                qmap = broker.get_quotes([c.ticker for c in picks]) or {}
+                for c in picks:
+                    q = qmap.get(c.ticker) if isinstance(qmap.get(c.ticker), dict) else {}
+                    px = float(q.get("last") or q.get("mark") or c.price or 0.0); qty = int(per // px) if px > 0 else 0
+                    if qty <= 0:
+                        continue
+                    o = eng.l7_submit(ticker=c.ticker, side="BUY", quantity=qty, signal_type="QUALITY_BUY", regime="NORMAL",
+                                      sector=(getattr(c, "sector", "") or sleeve),
+                                      reason=f"{label} min-names top-up {sleeve} from {c.tranche} ${per:,.0f}")
+                    od = o if isinstance(o, dict) else o.to_dict(); od["account"] = label; od["alpha"] = c.raw_score; orders.append(od)
+                    st = str(od.get("status")).split(".")[-1]; fp = float(od.get("fill_price") or px)
+                    _p(f"       {c.ticker:<6} BUY {qty:>4} @ {fp:.2f} ${qty * fp:>9,.0f} [{sleeve}] → {st}")
+                    if "REJECT" not in st.upper():
+                        sleeve_used[(label, sleeve)] = sleeve_used.get((label, sleeve), 0.0) + qty * fp
+                        filled_eq.setdefault(c.ticker, {})[label] = qty * fp
+                if hasattr(broker, "prefer"): broker.prefer(None)
+        _p("  concurrence review → rotation exits above; sleeves left empty are back-filled per the locked-sleeve rule on the next heartbeat")
+        if report is None and sd is not None:
+            report = getattr(sd, "last_run", None)
     if not dd["adds_allowed"]:
         _p("adds BLOCKED by 20% portfolio drawdown rule — rotate-or-close only")
+    elif filled_per_run:
+        pass
     else:
         # ── Phase A: INDIVIDUAL — fill with options first ──
         a = _acct("INDIVIDUAL")
         _p(f"\n═══ PHASE A · INDIVIDUAL …{a.get('mandate', {}).get('account_last4', '')}  (100% options)  NAV ${float(a.get('nav', 0)):,.0f}  "
            f"options headroom ${float(a.get('options_headroom', 0)):,.0f} ═══")
         if hasattr(broker, "prefer"): broker.prefer("INDIVIDUAL")
-        o_ind, i_ind = _submit_options("INDIVIDUAL", float(a.get("options_headroom", 0.0)) * scale)
+        o_ind, i_ind = _submit_options("INDIVIDUAL", float(a.get("options_headroom", 0.0)) * scale, float(a.get("nav", 0.0)))
         orders += o_ind; intents += i_ind
-        _p(f"  INDIVIDUAL result: {len(o_ind)} option orders, notional ${sum(i.notional for i in i_ind):,.0f}")
+        acc = [o for o in o_ind if "REJECT" not in str(o.get("status", "")).upper()]
+        _p(f"  INDIVIDUAL result: {len(acc)} option orders accepted ({len(o_ind) - len(acc)} rejected by L7), "
+           f"notional ${sum(i.notional for i in i_ind):,.0f}")
 
         # ── Phase B: LLC — equities + ETFs from the same universe runs ──
         b = _acct("LLC")
@@ -344,13 +655,14 @@ def main() -> int:
         r = _acct("ROTH")
         _p(f"\n═══ PHASE C · ROTH …{r.get('mandate', {}).get('account_last4', '')}  (composite 25% options / 75% equities)  NAV ${float(r.get('nav', 0)):,.0f} ═══")
         if hasattr(broker, "prefer"): broker.prefer("ROTH")
-        o_ro, i_ro = _submit_options("ROTH", float(r.get("options_headroom", 0.0)) * scale)
+        o_ro, i_ro = _submit_options("ROTH", float(r.get("options_headroom", 0.0)) * scale, float(r.get("nav", 0.0)))
         orders += o_ro; intents += i_ro
         rows_roth = _equity_rows(float(r.get("nav", 0.0)), float(r.get("mandate", {}).get("equities_pct", 0.75)))
         o_roe = _submit_equities("ROTH", rows_roth); orders += o_roe
         for od in o_roe:
             _p(f"    {od.get('ticker'):<6} BUY {od.get('quantity')} @ {float(od.get('fill_price') or 0):.2f} [{od.get('sector')}] → {str(od.get('status')).split('.')[-1]}")
-        _p(f"  ROTH result: {len(o_ro)} option orders (${sum(i.notional for i in i_ro):,.0f}) + {len(o_roe)} equity orders")
+        acc_ro = [o for o in o_ro if "REJECT" not in str(o.get("status", "")).upper()]
+        _p(f"  ROTH result: {len(acc_ro)} option orders accepted ({len(o_ro) - len(acc_ro)} rejected) (${sum(i.notional for i in i_ro):,.0f}) + {len(o_roe)} equity orders")
         if hasattr(broker, "prefer"): broker.prefer(None)
     _p(f"\nL7 orders this cycle: {len(orders)}  " + ", ".join(f"{o.get('account', '')}:{o.get('ticker')}:{str(o.get('status')).split('.')[-1]}" for o in orders[:16]))
 

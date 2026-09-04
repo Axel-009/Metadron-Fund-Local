@@ -91,7 +91,7 @@ class TrancheConfig:
     cvr_max_names: int = 3               # CVR sleeve: max live cash+CVR deal targets held
     cvr_event_scan: bool = os.environ.get("METADRON_CVR_SCAN", "1") != "0"   # news/8-K scan each concurrence
     shortlist_per_tranche: int = 40      # names that get daily candles after the quote screen
-    history_days: int = 90
+    history_days: int = 120      # aligned with the options engine so the shared history cache is hit, not re-pulled
     min_price: float = 5.0
     min_dollar_volume: float = 2_000_000.0
     top_per_tranche: int = 12            # names each tranche forwards to the concurrence vote
@@ -183,6 +183,7 @@ class TrancheResult:
     avg_alpha: float = 0.0
     sells: List[Candidate] = field(default_factory=list)   # strongest SELL / EXIT signals
     candidates: List[Candidate] = field(default_factory=list)  # every fully-scored name (for locked-sleeve backfill)
+    universe_tickers: List[str] = field(default_factory=list)  # EVERY name in the tranche that quoted (options chain sweep)
 
     @property
     def label(self) -> str:
@@ -278,28 +279,42 @@ class ConcurrenceResult:
                     ("XLF", "OPTIONS_IG"), ("XLV", "OPTIONS_IG"), ("GLD", "OPTIONS_IG"), ("TLT", "OPTIONS_IG"),
                     ("HYG", "OPTIONS_DISTRESSED"))
 
-    def options_universe(self, max_names: int = 30, longs: int = 12, shorts: int = 9) -> List[Tuple[str, str]]:
-        """(ticker, OPTIONS_* bucket) pairs for the 1–7 DTE scan.
+    def options_universe(self, max_names: Optional[int] = None, longs: int = 12, shorts: int = 9) -> List[Tuple[str, str]]:
+        """(ticker, OPTIONS_* bucket) pairs for the options scan — EVERY name each tranche surfaced.
 
-        Both sides of every run are handed to the engine — the strongest LONG concurrence names
-        (CALL candidates) AND each run's strongest SELL / EXIT names (PUT candidates) — plus the
-        liquid core ETFs.  The engine's own direction score (momentum ⊕ beta-corridor fair value)
-        decides call vs put, so when the corridor is BELOW fair value the put side is where the
-        momentum and corridor tilt agree.  Names without a 1–7 DTE chain are SKIPped by the engine.
+        Order matters (the engine sizes in composite order but scans everything): concurrence
+        longs first, then each run's SELL / EXIT names, then every remaining shortlisted candidate
+        of RUN 1 (SP500), RUN 2 (SP400), RUN 3 (SP600), RUN 4 (ETF/FI), then the liquid core ETFs.
+        The engine's direction score (momentum ⊕ CTA ⊕ beta-corridor) decides call vs put per name;
+        names without a chain in the DTE window are SKIPped with the reason recorded.
         """
         out: List[Tuple[str, str]] = []
         seen = set()
         def add(t, b):
             if t not in seen:
-                seen.add(t); out.append((t, b))
+                seen.add(t); out.append((t, b or "OPTIONS_HY"))
         for c in sorted([c for c in self.final if c.tranche != "LOCKED_SLEEVE"], key=lambda c: -abs(c.z_score))[:longs]:
             add(c.ticker, c.options_bucket)
         sell_pool = sorted([c for tr in self.tranches for c in tr.sells], key=lambda c: c.raw_score)
         for c in sell_pool[:shorts]:
-            add(c.ticker, c.options_bucket or "OPTIONS_HY")
+            add(c.ticker, c.options_bucket)
         for t, b in self.OPTIONS_CORE:
             add(t, b)
-        return out[:max_names]
+        for tr in self.tranches:                       # every shortlisted name, run by run
+            for c in list(tr.top) + list(tr.candidates) + list(tr.sells):
+                add(c.ticker, c.options_bucket)
+        for tr in self.tranches:                       # then EVERY remaining quoted name in the tranche
+            default_bucket = self.TRANCHE_OPTIONS_BUCKET.get(tr.name, "OPTIONS_HY")
+            for t in tr.universe_tickers:
+                add(t, default_bucket)
+        return out if max_names is None else out[:max_names]
+
+    TRANCHE_OPTIONS_BUCKET = {"SCAN_1_SP500": "OPTIONS_IG", "SCAN_2_SP400": "OPTIONS_HY",
+                              "SCAN_3_SP600": "OPTIONS_DISTRESSED", "SCAN_4_ETF_FI": "OPTIONS_IG"}
+
+    def options_universe_by_run(self) -> Dict[str, List[str]]:
+        """{run name: [every quoted ticker]} — for the per-tranche chain coverage print."""
+        return {tr.name: sorted(set(tr.universe_tickers) | {c.ticker for c in list(tr.top) + list(tr.candidates) + list(tr.sells)}) for tr in self.tranches}
 
     def options_backfill(self, per_run: int = 20) -> Dict[str, List[str]]:
         """Operator rule: when the HY / Distressed option buckets have no eligible name, the
@@ -421,7 +436,9 @@ class UniverseTrancheScanner:
             if not isinstance(q, dict):
                 rej("no_quote"); continue
             px = float(q.get("last") or q.get("mark") or 0.0)
-            vol = float(q.get("volume") or 0.0)
+            # liquidity on the larger of today's volume and the 10-day average → morning runs are not
+            # cut down by a session that is only minutes old
+            vol = max(float(q.get("volume") or 0.0), float(q.get("avg_volume_10d") or 0.0))
             if px < cfg.min_price:
                 rej("price<min"); continue
             if px * vol < cfg.min_dollar_volume:
@@ -490,7 +507,8 @@ class UniverseTrancheScanner:
         avg_alpha = float(np.mean([c.raw_score for c in scored])) if scored else 0.0
         res = TrancheResult(name=name, universe_size=len(tickers), quoted=len(quotes), screened=screened,
                             shortlisted=len(short), top=top, rejected=rejected, elapsed_s=time.monotonic() - t0,
-                            buy_n=buy_n, sell_n=sell_n, hold_n=hold_n, avg_alpha=avg_alpha, sells=sells, candidates=scored)
+                            buy_n=buy_n, sell_n=sell_n, hold_n=hold_n, avg_alpha=avg_alpha, sells=sells, candidates=scored,
+                            universe_tickers=[c.ticker for c in pre])
         logger.info("%s: %d universe → %d screened → %d shortlisted → top %d (%.0fs)", name, len(tickers), screened, len(short), len(top), res.elapsed_s)
         return res
 

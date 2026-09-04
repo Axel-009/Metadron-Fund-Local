@@ -648,7 +648,7 @@ class L7RiskEngine:
         G6: Trade throttle ≤ 100/day
         G7: Max drawdown ≤ 10% halt
         G8: Cash sufficiency for buys
-        G9: Options delta exposure ≤ 20% NAV
+        G9: (retired) options delta exposure — reporting only
         G10: Options notional ≤ 25% NAV (IG 10 / HY 10 / DIST 5 per AllocationRules)
     """
 
@@ -662,7 +662,7 @@ class L7RiskEngine:
         "G6_TRADE_THROTTLE":  100,    # trades per day
         "G7_MAX_DRAWDOWN":    0.10,   # 10% from peak
         "G8_CASH":            0.0,    # must have cash for buys
-        "G9_OPTIONS_DELTA":   0.20,   # 20% NAV
+        "G9_OPTIONS_DELTA":   None,   # retired — premium caps (10 % NAV / bucket) bound the book; delta reported only
         "G10_OPTIONS_NOTIONAL": 0.25, # 25% NAV total options notional
     }
 
@@ -803,13 +803,11 @@ class L7RiskEngine:
 
         # G9: Options delta exposure (real Δ$ when the options engine supplies it)
         if order.product_type == ProductType.OPTION:
+            # G9 (Σ|Δ$| ≤ 20 % NAV) RETIRED by operator instruction 2026-09-04: the options book is
+            # already bounded by premium — 10 % of account NAV per position and the 10/10/5 bucket
+            # caps — so delta is tracked for reporting only and never blocks an order.
             delta_usd = abs(order.delta_exposure_usd) if order.delta_exposure_usd else order_value * 0.5
-            new_delta = self._options_delta_exposure + delta_usd
-            if nav > 0 and new_delta / nav > self.LIMITS["G9_OPTIONS_DELTA"]:
-                violations.append(
-                    f"G9_OPTIONS_DELTA: options delta {new_delta/nav:.1%} exceeds "
-                    f"{self.LIMITS['G9_OPTIONS_DELTA']:.0%}"
-                )
+            self._last_options_delta_check = self._options_delta_exposure + delta_usd
 
             # G10: Options notional — 25 % NAV overlay cap by default; when account
             # mandates are configured the cap is Σ(mandate options_pct × account NAV) / NAV

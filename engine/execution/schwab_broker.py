@@ -302,6 +302,15 @@ ORDER_SESSION = "NORMAL"
 ORDER_DURATION = "DAY"
 
 
+def _ny_today() -> date:
+    """Exchange-calendar date (America/New_York)."""
+    try:
+        from zoneinfo import ZoneInfo
+        return datetime.now(ZoneInfo("America/New_York")).date()
+    except Exception:  # noqa: BLE001
+        return date.today()
+
+
 def _apply_order_policy(payload: dict) -> dict:
     """Force the payload onto the house policy: MARKET / NORMAL / DAY unless LIMIT was requested."""
     payload["session"] = ORDER_SESSION
@@ -316,7 +325,7 @@ class SchwabBroker:
     """Charles Schwab execution + data broker implementing BrokerProtocol."""
 
     QUOTE_CACHE_TTL = float(_CFG_QUOTE_TTL or 5)
-    CHAIN_CACHE_TTL = 20.0
+    CHAIN_CACHE_TTL = 900.0   # one chain sweep serves Individual + Roth phases in the same cycle
     HISTORY_CACHE_TTL = 1500.0      # daily candles: one pull per ticker per 25-min cycle, shared by all instances
     # class-level caches: the SchwabAccountRouter runs three broker instances (ROTH/LLC/INDIVIDUAL);
     # the tranche scan and the options engine must not re-pull the same history/quotes/chains.
@@ -368,6 +377,7 @@ class SchwabBroker:
         self._chain_cache = SchwabBroker._shared_chain_cache
         self._history_cache = SchwabBroker._shared_history_cache
         self._account_cache: Tuple[Optional[dict], float] = (None, 0.0)
+        SchwabBroker._load_disk_cache()
 
         # risk + performance
         self._risk_limiter = RiskLimiter(
@@ -389,12 +399,59 @@ class SchwabBroker:
     # paces EVERY broker instance (the router runs three) so the 4 universe runs never trip 429;
     # when Schwab still returns 429 we honour Retry-After (default 15 s) and retry instead of
     # falling through with an empty run.
-    _RATE_PER_MIN = int(os.environ.get("SCHWAB_RATE_PER_MIN", "70"))
+    _RATE_PER_MIN = int(os.environ.get("SCHWAB_RATE_PER_MIN", "60"))
+    _RATE_FLOOR = int(os.environ.get("SCHWAB_RATE_FLOOR", "40"))
+    _RATE_CEIL = int(os.environ.get("SCHWAB_RATE_CEIL", "60"))
     _MIN_GAP = 60.0 / max(1, _RATE_PER_MIN)          # even spacing → no sub-second bursts
+    _ok_streak = 0                                    # adaptive pacer: 429 → −20 %, 150 clean calls → +5 %
     _rate_lock = threading.Lock()
     _rate_stamps: List[float] = []
     _last_request_ts: float = 0.0
     _cooldown_until: float = 0.0                       # set on 429: every instance pauses
+
+    # ── disk-persisted market-data cache: a relaunched stage (token refresh, rule change, proxy window) re-uses the
+    #    chains / history the previous process already pulled instead of spending another 7 min of quota.
+    _DISK_CACHE = Path(os.environ.get("SCHWAB_CACHE_FILE", "logs/schwab_broker/mdcache.pkl"))
+    _disk_loaded = False
+    _disk_dirty = 0
+    _disk_saved_at = 0.0
+
+    @classmethod
+    def _load_disk_cache(cls) -> None:
+        if cls._disk_loaded or os.environ.get("SCHWAB_DISK_CACHE", "1") != "1":
+            return
+        cls._disk_loaded = True
+        try:
+            import pickle
+            if cls._DISK_CACHE.exists():
+                d = pickle.loads(cls._DISK_CACHE.read_bytes())
+                now = time.time()
+                for k, v in (d.get("chains") or {}).items():
+                    if now - v[1] < cls.CHAIN_CACHE_TTL and k not in cls._shared_chain_cache:
+                        cls._shared_chain_cache[k] = v
+                for k, v in (d.get("history") or {}).items():
+                    if now - v[1] < cls.HISTORY_CACHE_TTL and k not in cls._shared_history_cache:
+                        cls._shared_history_cache[k] = v
+                logger.info("Schwab disk cache loaded: %d chains, %d histories", len(cls._shared_chain_cache), len(cls._shared_history_cache))
+        except Exception as e:  # noqa: BLE001
+            logger.warning("Schwab disk cache load failed: %s", e)
+
+    @classmethod
+    def _save_disk_cache(cls, force: bool = False) -> None:
+        if os.environ.get("SCHWAB_DISK_CACHE", "1") != "1":
+            return
+        cls._disk_dirty += 1
+        if not force and (cls._disk_dirty < 25 and time.time() - cls._disk_saved_at < 30):
+            return
+        try:
+            import pickle
+            cls._DISK_CACHE.parent.mkdir(parents=True, exist_ok=True)
+            tmp = cls._DISK_CACHE.with_suffix(".tmp")
+            tmp.write_bytes(pickle.dumps({"chains": dict(cls._shared_chain_cache), "history": dict(cls._shared_history_cache)}))
+            tmp.replace(cls._DISK_CACHE)
+            cls._disk_dirty = 0; cls._disk_saved_at = time.time()
+        except Exception as e:  # noqa: BLE001
+            logger.warning("Schwab disk cache save failed: %s", e)
 
     @classmethod
     def _pace(cls) -> None:
@@ -415,9 +472,24 @@ class SchwabBroker:
 
     @classmethod
     def _global_backoff(cls, seconds: float) -> None:
-        """A 429 anywhere pauses ALL instances (Schwab's quota is per app, not per account)."""
+        """A 429 anywhere pauses ALL instances (Schwab's quota is per app, not per account)
+        and slows the shared pacer by 20 % (adaptive — the proxy and Schwab have different quotas)."""
         with cls._rate_lock:
             cls._cooldown_until = max(cls._cooldown_until, time.monotonic() + seconds)
+            cls._RATE_PER_MIN = max(cls._RATE_FLOOR, int(cls._RATE_PER_MIN * 0.8))
+            cls._MIN_GAP = 60.0 / max(1, cls._RATE_PER_MIN)
+            cls._ok_streak = 0
+            logger.info("Schwab pacer → %d req/min", cls._RATE_PER_MIN)
+
+    @classmethod
+    def _note_ok(cls) -> None:
+        """150 consecutive clean responses → speed the pacer up 5 % (bounded by SCHWAB_RATE_CEIL)."""
+        with cls._rate_lock:
+            cls._ok_streak += 1
+            if cls._ok_streak >= 150 and cls._RATE_PER_MIN < cls._RATE_CEIL:
+                cls._RATE_PER_MIN = min(cls._RATE_CEIL, int(cls._RATE_PER_MIN * 1.05) + 1)
+                cls._MIN_GAP = 60.0 / max(1, cls._RATE_PER_MIN)
+                cls._ok_streak = 0
 
     def _request(self, method: str, url: str, *, params: dict | None = None, json_body: dict | None = None, retries: int = 4) -> "httpx.Response":
         if self._client is None:
@@ -458,6 +530,8 @@ class SchwabBroker:
             if r.status_code in (500, 502, 503, 504) and attempt < retries:
                 time.sleep(1.0 * (attempt + 1))
                 continue
+            if r.status_code < 400:
+                self._note_ok()
             return r
         raise RuntimeError(f"Schwab request failed: {method} {url}: {last_exc}")
 
@@ -649,6 +723,7 @@ class SchwabBroker:
                         "ask_size": int(q.get("askSize") or 0),
                         "mark": float(q.get("mark") or 0.0),
                         "volume": int(q.get("totalVolume") or 0),
+                        "avg_volume_10d": int(((v.get("fundamental") or {}).get("avg10DaysVolume")) or 0),
                         "open": float(q.get("openPrice") or 0.0),
                         "high": float(q.get("highPrice") or 0.0),
                         "low": float(q.get("lowPrice") or 0.0),
@@ -716,6 +791,7 @@ class SchwabBroker:
             "dates": [datetime.fromtimestamp(c["datetime"] / 1000, tz=timezone.utc).date().isoformat() for c in candles],
         }
         self._history_cache[key] = (out, time.time())
+        SchwabBroker._save_disk_cache()
         return out
 
     def get_returns(self, ticker: str, days: int = 120) -> np.ndarray:
@@ -747,7 +823,7 @@ class SchwabBroker:
             return c[0]
         if not self._connected:
             return []
-        today = date.today()
+        today = _ny_today()          # exchange calendar date, not sandbox UTC
         params = {
             "symbol": underlying.upper(),
             "contractType": contract_type,
@@ -770,7 +846,14 @@ class SchwabBroker:
                 exp_date = exp_key.split(":")[0]
                 for strike_str, contracts in strikes.items():
                     for o in contracts:
-                        dte = int(o.get("daysToExpiration", 0) or 0)
+                        # calendar DTE from the expiry date vs the exchange date (America/New_York), so the
+                        # window is independent of the host clock / Schwab's daysToExpiration rounding
+                        try:
+                            dte = (date.fromisoformat(exp_date) - today).days
+                        except ValueError:
+                            dte = int(o.get("daysToExpiration", 0) or 0)
+                        if dte < dte_min or dte > dte_max:
+                            continue
                         if dte < dte_min or dte > dte_max:
                             continue
                         bid, ask = float(o.get("bid") or 0), float(o.get("ask") or 0)
@@ -789,6 +872,7 @@ class SchwabBroker:
                             underlying_price=und_px, in_the_money=bool(o.get("inTheMoney", False)),
                         ))
         self._chain_cache[key] = (quotes, time.time())
+        SchwabBroker._save_disk_cache()
         return quotes
 
     # ------------------------------------------------------------------
@@ -809,8 +893,13 @@ class SchwabBroker:
             self.sync_account()
         if nav > 0 and notional / nav > self.MAX_ORDER_NOTIONAL_PCT:
             return False, [f"broker-edge: order notional {notional/nav:.1%} > {self.MAX_ORDER_NOTIONAL_PCT:.0%} NAV"]
+        # Schwab positions carry the ASSET TYPE in `sector` (EQUITY / ETF / OPTIONS), not a GICS sector. Running the
+        # 30% sector-concentration check against an asset class would block any equities mandate above 30% invested;
+        # GICS sector concentration is enforced upstream by L7 gate G2, so only real sectors are checked here.
+        _asset_classes = {"", "EQUITY", "ETF", "OPTION", "OPTIONS", "COLLECTIVE_INVESTMENT", "MUTUAL_FUND", "FIXED_INCOME"}
+        sector_for_check = "" if (sector or "").upper() in _asset_classes else sector
         return self._risk_limiter.run_all_checks(
-            notional, ticker, sector, self.state.positions, nav, self._daily_pnl_today,
+            notional, ticker, sector_for_check, self.state.positions, nav, self._daily_pnl_today,
             self.state.gross_exposure, self.state.net_exposure,
         )
 

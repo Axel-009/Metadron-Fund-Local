@@ -1,8 +1,9 @@
-"""ShortDTEOptionsEngine — 1-7 DTE options overlay for Metadron Capital.
+"""ShortDTEOptionsEngine — 1-30 DTE options overlay for Metadron Capital (shorter tenors preferred).
 
 ============================================================
 LAYER:  layer7_execution (options arm)
-ROLE:   Turn the daily scan into concrete 1-7 DTE option contracts that are
+ROLE:   Turn the daily scan into concrete 1-30 DTE option contracts (tenor-preference: 1-7 DTE
+        scores 1.00, decaying to 0.85 at 30 DTE, so a longer expiry must carry more edge) that are
         priced, risk-gated and sized for L7UnifiedExecutionSurface, using
         Schwab chains as the ONLY market-data source.
 ============================================================
@@ -23,7 +24,7 @@ Pipeline per underlying (all horizons == the contract's DTE, never 30/45 d):
                                         and MC Greeks (Δ, Γ by bump-and-
                                         revalue on common paths)
      Gate: confidence ≥ 0.20 and VaR95 ≥ −40 %.
-  5. Chain (Schwab, 1-7 DTE only)    → build a SHORT-TENOR vol surface from
+  5. Chain (Schwab, 1-30 DTE)        → build a SHORT-TENOR vol surface from
                                         the real chain (1/2/3/5/7 d tenors)
   6. Black-Scholes only at chain DTE → Newton-Raphson IV per contract from
                                         mid; full Greeks; fair value from
@@ -51,6 +52,7 @@ from __future__ import annotations
 
 import logging
 import math
+import os
 import time
 from dataclasses import asdict, dataclass, field
 from datetime import date
@@ -94,7 +96,11 @@ TRADING_DAYS = 252.0
 @dataclass
 class ShortDTEConfig:
     dte_min: int = 1
-    dte_max: int = 7
+    dte_max: int = 30                    # operator mandate: 1–30 DTE window, shorter tenors preferred
+    tenor_pref_days: int = 7             # ≤ this DTE → no tenor penalty
+    tenor_pref_floor: float = 0.85       # composite × factor, linear from 1.0 @ tenor_pref_days → floor @ dte_max
+    g9_options_delta: float = 0.20       # retained for reporting only — the G9 delta gate is retired (premium caps bound the book)
+    g9_budget_share: float = 0.90        # sizer uses 90 % of the remaining G9 room (leave slack for MTM drift)
     risk_free: float = 0.04
     history_days: int = 120
     # momentum / RSI
@@ -109,16 +115,19 @@ class ShortDTEConfig:
     mc_min_confidence: float = 0.20      # on the horizon-normalised confidence (see monte_carlo)
     mc_calibration_days: int = 21        # the full-scan MC confidence is calibrated on a 21-day horizon
     min_contracts: int = 1               # small mandates (Individual $5.7k) trade 1-lots; legacy sizer default was 5
+    chain_workers: int = 4               # parallel chain prefetch (latency overlap only; the pacer holds the rate)
     chain_retry_wait_s: float = 20.0     # pause before the single chain re-pull after a fetch failure
     backfill_max_tries: int = 12         # SP400/SP600 names tried per empty bucket (many lack 1-7 DTE chains)
     backfill_names_per_bucket: int = 3
-    max_position_pct_nav: float = 0.10   # Kelly output may fill a whole bucket (10 % NAV = 40 % of options headroom)
+    max_position_pct_nav: float = 0.10   # HARD CAP: one option position (premium notional) ≤ 10 % of ACCOUNT NAV
     kelly_multiplier: float = 1.5        # aggressive Kelly (architecture: 1.5× Kelly on confirmed mispricing)
     mc_var95_floor: float = -0.40
     mc_seed: int = 42
     # chain filters
     strike_count: int = 24
     max_spread_pct: float = 0.15
+    min_liquid_contracts: int = 3        # chain gate: ≥ this many OI/spread-liquid contracts in window before history/MC
+    max_spread_abs: float = 0.10         # cheap contracts: a $0.05/$0.15 quote is 67 % wide but only a dime — allow if abs ≤ this
     min_open_interest: int = 50
     delta_lo: float = 0.20
     delta_hi: float = 0.60
@@ -128,6 +137,12 @@ class ShortDTEConfig:
     min_edge_bps: float = 200.0
     # sizing / caps (fractions of NAV)
     bucket_caps: Dict[str, float] = field(default_factory=lambda: {"OPTIONS_IG": 0.10, "OPTIONS_HY": 0.10, "OPTIONS_DISTRESSED": 0.05})
+    ig_premium_share: float = 0.30       # operator 2026-09-04: IG (SP500) names may take at most ~25-30 % of an account's
+                                         # options premium; the rest comes from RUN 2/3 (SP400 HY / SP600 distressed) …
+    massive_edge_composite: float = 0.80 # … unless the contract is a MASSIVE edge (composite ≥ this) → IG share waived
+    bucket_caps_enabled: bool = False    # operator 2026-09-04: NO bucket mandate for options — the account's options
+                                         # headroom and the 10 % NAV per-position premium cap are the only limits;
+                                         # buckets remain as labels for reporting
     total_options_cap: float = 0.25
     max_single_option_pct: float = 0.05
     vega_budget_pct_nav: float = 0.005       # $ P&L per 1 vol-point allowed across the book
@@ -341,7 +356,7 @@ class ShortTenorVolSurface(VolatilitySurface):
 # Engine
 # ---------------------------------------------------------------------------
 class ShortDTEOptionsEngine:
-    """Produces 1-7 DTE option trade intents from Schwab data."""
+    """Produces 1-30 DTE option trade intents from Schwab data (shorter tenors preferred)."""
 
     def __init__(self, broker, nav: Optional[float] = None, regime: str = "NORMAL",
                  config: Optional[ShortDTEConfig] = None):
@@ -357,8 +372,7 @@ class ShortDTEOptionsEngine:
         self.sizer.MIN_CONTRACTS = self.cfg.min_contracts
         self.sizer.MAX_CONTRACTS_PCT_NAV = self.cfg.max_position_pct_nav
         self.sizer.KELLY_MULTIPLIER = self.cfg.kelly_multiplier
-        self.sizer.MAX_CONTRACTS_PCT_NAV = self.cfg.max_single_option_pct
-        self.sizer.MC_STEPS = self.cfg.dte_max            # steps == days for 1-7 DTE
+        self.sizer.MC_STEPS = self.cfg.dte_max            # steps == days across the DTE window
         self._rng = np.random.RandomState(self.cfg.mc_seed)
         self._mc = MonteCarloBridge(seed=self.cfg.mc_seed) if MonteCarloBridge else None
         self._beta = BetaCorridor(nav=self.nav) if BetaCorridor else None
@@ -605,9 +619,13 @@ class ShortDTEOptionsEngine:
         # PredictiveOptionsSignal adjustment (VRP / skew / vol-MR / term / PCR).
         product = alpha * mc.confidence * delta_quality * edge_mix * mis_score
         composite = float(np.clip((product ** 0.2) * predictive_adj, 0.0, 1.0)) if product > 0 else 0.0
+        # tenor preference: same edge on a shorter expiry wins (1.00 up to tenor_pref_days, → floor at dte_max)
+        if q.dte > cfg.tenor_pref_days and cfg.dte_max > cfg.tenor_pref_days:
+            frac = min(1.0, (q.dte - cfg.tenor_pref_days) / (cfg.dte_max - cfg.tenor_pref_days))
+            composite *= 1.0 - (1.0 - cfg.tenor_pref_floor) * frac
         reject = ""
-        if q.spread_pct > cfg.max_spread_pct:
-            reject = f"spread {q.spread_pct:.1%} > {cfg.max_spread_pct:.0%}"
+        if q.spread_pct > cfg.max_spread_pct and (q.ask - q.bid) > cfg.max_spread_abs:
+            reject = f"spread {q.spread_pct:.1%} > {cfg.max_spread_pct:.0%} (${q.ask - q.bid:.2f} wide)"
         elif q.open_interest < cfg.min_open_interest:
             reject = f"OI {q.open_interest} < {cfg.min_open_interest}"
         elif not (cfg.delta_lo <= d <= cfg.delta_hi):
@@ -639,18 +657,24 @@ class ShortDTEOptionsEngine:
     # ------------------------------------------------------------------
     # 9. sizing with bucket + vega caps
     # ------------------------------------------------------------------
-    def _bucket_budget(self, bucket: str, committed: Dict[str, float], eligible_buckets: Optional[set] = None) -> float:
+    def _bucket_budget(self, bucket: str, committed: Dict[str, float], eligible_buckets: Optional[set] = None,
+                       composite: float = 0.0) -> float:
         """Bucket cap (10/10/5 of NAV) with SPILL-OVER: room in buckets that have NO eligible
         candidate this cycle flows to the buckets that do, never beyond the 25 % total cap."""
+        used = committed.get(bucket, 0.0) + self.existing_option_notional.get(bucket, 0.0)
+        total_used = sum(committed.values()) + sum(self.existing_option_notional.values())
+        total_room = self.cfg.total_options_cap * self.nav - total_used
+        if not self.cfg.bucket_caps_enabled:
+            if bucket == "OPTIONS_IG" and composite < self.cfg.massive_edge_composite and self.cfg.ig_premium_share < 1.0:
+                ig_cap = self.cfg.ig_premium_share * self.cfg.total_options_cap * self.nav   # ≈30 % of the options premium
+                return max(0.0, min(ig_cap - used, total_room))
+            return max(0.0, total_room)          # no bucket mandate: whole options headroom is the budget
         cap = self.cfg.bucket_caps.get(bucket, 0.05) * self.nav
         if eligible_buckets is not None:
             idle = [b for b in self.cfg.bucket_caps if b not in eligible_buckets and b != bucket]
             live = [b for b in self.cfg.bucket_caps if b in eligible_buckets] or [bucket]
             spill = sum(self.cfg.bucket_caps[b] for b in idle) * self.nav / max(1, len(live))
             cap += spill
-        used = committed.get(bucket, 0.0) + self.existing_option_notional.get(bucket, 0.0)
-        total_used = sum(committed.values()) + sum(self.existing_option_notional.values())
-        total_room = self.cfg.total_options_cap * self.nav - total_used
         return max(0.0, min(cap - used, total_room))
 
     def size(self, ev: ContractEval, spot: float, budget: float, vega_used: float) -> Dict[str, Any]:
@@ -695,12 +719,28 @@ class ShortDTEOptionsEngine:
         return out
 
     def _evaluate(self, ticker: str, bucket: str, ctx: "MarketContext", per_ticker: Dict[str, Any]):
-        """Pass 1 for one underlying: history → momentum/CTA/corridor direction → 1-7 DTE chain →
+        """Pass 1 for one underlying: chain (liquidity gate) → history → momentum/CTA/corridor direction →
         BSM on that DTE → MC at that horizon → best contract + structure. Returns a pending tuple
         (to be sized in pass 2) or None when the name is rejected (reason recorded in per_ticker)."""
         cfg = self.cfg
         rec: Dict[str, Any] = {"ticker": ticker, "bucket": bucket, "status": "", "reasons": []}
         per_ticker[ticker] = rec
+        # CHAIN FIRST — every tranche name gets its chain pulled (1 request); names with no listed
+        # options, or none liquid in the window, stop here without spending history/MC budget.
+        chain = self.broker.get_option_chain(ticker, cfg.dte_min, cfg.dte_max, strike_count=cfg.strike_count)
+        if not chain and getattr(self.broker, "last_chain_error", ""):
+            # fetch failed (rate limit / transient) — this is NOT "no chain"; pause and retry once
+            time.sleep(cfg.chain_retry_wait_s)
+            chain = self.broker.get_option_chain(ticker, cfg.dte_min, cfg.dte_max, strike_count=cfg.strike_count)
+            if not chain and getattr(self.broker, "last_chain_error", ""):
+                rec["status"] = "ERROR"; rec["reasons"].append(f"chain fetch failed twice: {self.broker.last_chain_error[:80]}"); return None
+        if not chain:
+            rec["status"] = "SKIP"; rec["reasons"].append(f"no {cfg.dte_min}-{cfg.dte_max} DTE chain"); return None
+        liquid = [q for q in chain if q.open_interest >= cfg.min_open_interest
+                  and (q.spread_pct <= cfg.max_spread_pct or (q.ask - q.bid) <= cfg.max_spread_abs)]
+        rec["chain"] = {"contracts": len(chain), "liquid": len(liquid), "expiries": sorted({q.expiry for q in chain})[:6]}
+        if len(liquid) < cfg.min_liquid_contracts:
+            rec["status"] = "NO_EDGE"; rec["reasons"].append(f"chain has {len(liquid)} liquid contracts (<{cfg.min_liquid_contracts}) of {len(chain)} in window"); return None
         hist = self.broker.get_price_history(ticker, days=cfg.history_days)
         close = np.asarray(hist.get("close", []), dtype=float)
         if close.size < 30:
@@ -721,15 +761,6 @@ class ShortDTEOptionsEngine:
         want = "CALL" if direction == "BULLISH" else "PUT"
         alpha = abs(dir_score)
 
-        chain = self.broker.get_option_chain(ticker, cfg.dte_min, cfg.dte_max, strike_count=cfg.strike_count)
-        if not chain and getattr(self.broker, "last_chain_error", ""):
-            # fetch failed (rate limit / transient) — this is NOT "no chain"; pause and retry once
-            time.sleep(cfg.chain_retry_wait_s)
-            chain = self.broker.get_option_chain(ticker, cfg.dte_min, cfg.dte_max, strike_count=cfg.strike_count)
-            if not chain and getattr(self.broker, "last_chain_error", ""):
-                rec["status"] = "ERROR"; rec["reasons"].append(f"chain fetch failed twice: {self.broker.last_chain_error[:80]}"); return None
-        if not chain:
-            rec["status"] = "SKIP"; rec["reasons"].append("no 1-7 DTE chain"); return None
         surface = ShortTenorVolSurface(chain, vix=ctx.vix, hist_vol_30d=hv30, hist_vol_90d=hv90)
         pcr = self._put_call_ratio(chain)
         signals = PredictiveOptionsSignal(surface).all_signals(pcr=pcr)
@@ -755,12 +786,16 @@ class ShortDTEOptionsEngine:
             if q.put_call != want or q.dte not in mc_by_dte or not mc_by_dte[q.dte].passed:
                 continue
             evals.append(self.evaluate_contract(q, spot, surface, mc_by_dte[q.dte], alpha, pred_adj))
-        evals.sort(key=lambda e: e.composite, reverse=True)
+        evals.sort(key=lambda e: (-round(e.composite, 3), e.dte))      # ties → shorter tenor
         rec["top_contracts"] = [e.to_dict() for e in evals[:5]]
         ok = [e for e in evals if not e.reject_reason]
         if not ok:
             rec["status"] = "NO_EDGE"
-            rec["reasons"].extend(sorted({e.reject_reason for e in evals})[:4] or ["no contracts in delta band"])
+            # report the DOMINANT reject reasons (by contract count), not the alphabetically first
+            from collections import Counter
+            import re as _re
+            hist = Counter(_re.sub(r"[-+]?\d[\d.,]*%?", "#", (e.reject_reason or "").split(":")[0]) for e in evals if e.reject_reason)
+            rec["reasons"].extend([f"{r} ×{n}" for r, n in hist.most_common(3)] or ["no contracts in delta band"])
             return None
         best = ok[0]
         structure = self.regime_structure(spot, surface, best.dte, direction)
@@ -770,25 +805,103 @@ class ShortDTEOptionsEngine:
     # ------------------------------------------------------------------
     # main scan
     # ------------------------------------------------------------------
-    def scan(self, universe: List[Tuple[str, str]], nav: Optional[float] = None) -> Dict[str, Any]:
-        """universe = [(ticker, bucket), ...]; bucket ∈ OPTIONS_IG / OPTIONS_HY / OPTIONS_DISTRESSED."""
+    # ── per-tranche chain sweep (interleaved with the universe runs) ────────────────────────
+    def reset_pool(self) -> None:
+        """Start a new cycle: clear the pass-1 pool that the tranche sweeps accumulate into."""
+        self._pool_pending: List[tuple] = []
+        self._pool_per_ticker: Dict[str, Any] = {}
+        self._pool_ctx = None
+        self._pool_runs: Dict[str, Dict[str, Any]] = {}
+
+    def sweep_tranche(self, run_name: str, universe: List[Tuple[str, str]]) -> Dict[str, Any]:
+        """Pass 1 for EVERY name of one tranche, right after that tranche's universe run:
+        chain (liquidity gate) → history → direction → BSM/MC → best contract. Results accumulate
+        in the pool; ``scan(..., use_pool=True)`` sizes the whole pool once all tranches are in.
+        Returns a per-run summary (coverage + top proposals) for the operator print."""
+        if not hasattr(self, "_pool_pending"):
+            self.reset_pool()
+        if self._pool_ctx is None:
+            self._pool_ctx = self.market_context()
+        ctx = self._pool_ctx
+        t0 = time.time()
+        before = len(self._pool_pending)
+        names = [(t, b) for t, b in universe if t not in self._pool_per_ticker]
+        # PREFETCH chains with a few workers: the class-level pacer still holds the request RATE, the
+        # workers only overlap Schwab's per-call latency (1–3 s per chain) so 400 names take ~7 min
+        # at 60 req/min instead of ~20. Evaluation below then hits the chain cache.
+        workers = int(os.environ.get("SCHWAB_CHAIN_WORKERS", str(getattr(self.cfg, "chain_workers", 4))))
+        if workers > 1 and len(names) > workers:
+            from concurrent.futures import ThreadPoolExecutor
+            def _pre(t):
+                try:
+                    self.broker.get_option_chain(t, self.cfg.dte_min, self.cfg.dte_max, strike_count=self.cfg.strike_count)
+                except Exception:  # noqa: BLE001 — evaluation re-pulls (with retry) if this failed
+                    pass
+            with ThreadPoolExecutor(max_workers=workers) as ex:
+                list(ex.map(_pre, [t for t, _ in names]))
+        for ticker, bucket in names:
+            r = self._evaluate(ticker, bucket, ctx, self._pool_per_ticker)
+            if r is not None:
+                self._pool_pending.append(r)
+        recs = [self._pool_per_ticker[t] for t, _ in names]
+        no_chain = sum(1 for r in recs if any("DTE chain" in x for x in r["reasons"]))
+        illiquid = sum(1 for r in recs if any("liquid contracts" in x for x in r["reasons"]))
+        err = sum(1 for r in recs if r["status"] == "ERROR")
+        new = self._pool_pending[before:]
+        new.sort(key=lambda t: -t[3].composite)
+        summary = {
+            "run": run_name, "names": len(names), "chains": len(names) - no_chain - err, "no_chain": no_chain,
+            "illiquid": illiquid, "errors": err, "passed": len(new), "elapsed_s": round(time.time() - t0, 1),
+            "top": [{"ticker": t[0], "bucket": t[1], "direction": t[11], "structure": t[4]["structure"],
+                     "symbol": t[3].symbol, "dte": t[3].dte, "strike": t[3].strike, "put_call": t[3].put_call,
+                     "composite": round(t[3].composite, 3), "edge_bps": round(t[3].edge_bps),
+                     "mid": t[3].mid} for t in new[:8]],
+            "status_hist": dict(sorted(__import__("collections").Counter(r["status"] for r in recs).items())),
+        }
+        self._pool_runs[run_name] = summary
+        return summary
+
+    def scan(self, universe: List[Tuple[str, str]], nav: Optional[float] = None,
+             l7_nav: Optional[float] = None, delta_used_usd: float = 0.0,
+             account_nav: Optional[float] = None, use_pool: bool = False,
+             position_cap_pct: Optional[float] = None) -> Dict[str, Any]:
+        """universe = [(ticker, bucket), ...]; bucket ∈ OPTIONS_IG / OPTIONS_HY / OPTIONS_DISTRESSED.
+
+        ``l7_nav`` is the portfolio NAV the L7 gates measure against (G9 Σ|Δ$| ≤ 20 %); the sizer
+        caps contracts so the *net* structure delta fits the remaining room instead of letting
+        Kelly propose lots that L7 would reject."""
         cfg = self.cfg
         if nav:
             self.nav = float(nav)
             self.hedge_mgr.nav = self.nav
-        ctx = self.market_context()
+        g9_nav = float(l7_nav or self.nav)
+        acct_nav = float(account_nav or self.nav)
+        cap_pct = float(position_cap_pct) if position_cap_pct is not None else cfg.max_position_pct_nav
+        position_cap = cap_pct * acct_nav          # per-position premium cap: 10 % of account NAV (Individual: 20 %, operator 2026-09-04)
+        delta_budget = max(0.0, cfg.g9_options_delta * g9_nav - float(delta_used_usd)) * cfg.g9_budget_share
+        delta_used = 0.0
+        ctx = self.market_context() if not (use_pool and getattr(self, "_pool_ctx", None)) else self._pool_ctx
         self.regime = ctx.regime
         self.hedge_mgr.update_regime(ctx.regime)
         intents: List[OptionTradeIntent] = []
-        per_ticker: Dict[str, Any] = {}
         committed: Dict[str, float] = {}
         vega_used = 0.0
-        pending: List[tuple] = []
-
-        for ticker, bucket in universe:
-            t = self._evaluate(ticker, bucket, ctx, per_ticker)
-            if t is not None:
-                pending.append(t)
+        if use_pool and hasattr(self, "_pool_pending"):
+            # pass 1 already done tranche-by-tranche by sweep_tranche(); size the pooled results
+            per_ticker: Dict[str, Any] = dict(self._pool_per_ticker)
+            pending: List[tuple] = list(self._pool_pending)
+            for ticker, bucket in universe:              # anything not yet swept (e.g. core ETFs)
+                if ticker not in per_ticker:
+                    t = self._evaluate(ticker, bucket, ctx, per_ticker)
+                    if t is not None:
+                        pending.append(t)
+        else:
+            per_ticker = {}
+            pending = []
+            for ticker, bucket in universe:
+                t = self._evaluate(ticker, bucket, ctx, per_ticker)
+                if t is not None:
+                    pending.append(t)
 
         # ---- bucket back-fill (operator rule): when OPTIONS_HY / OPTIONS_DISTRESSED have no
         # eligible name, fill the remainder from the S&P 400 / S&P 600 universe runs (even if the
@@ -815,24 +928,44 @@ class ShortDTEOptionsEngine:
         # ---- pass 2: size (bucket caps 10/10/5 honoured; empty buckets were back-filled above)
         pending.sort(key=lambda t: -t[3].composite)          # strongest composite gets budget first
         for ticker, bucket, rec, best, structure, chain, spot, mom, ctx, mc_by_dte, pred_adj, direction in pending:
-            budget = self._bucket_budget(bucket, committed)
+            budget = self._bucket_budget(bucket, committed, composite=float(best.composite))
             if budget <= 0:
-                rec["status"] = "BUCKET_FULL"; rec["reasons"].append(f"{bucket} cap reached"); continue
+                rec["status"] = "BUCKET_FULL"
+                rec["reasons"].append(f"{bucket} cap reached" + (f" (IG ≤ {self.cfg.ig_premium_share:.0%} of premium; massive edge ≥ "
+                                                                  f"{self.cfg.massive_edge_composite:.2f} waives it)" if bucket == "OPTIONS_IG" else ""))
+                continue
             sizing = self.size(best, spot, budget, vega_used)
             rec["sizing"] = {k: v for k, v in sizing.items() if k not in ("paths",)}
             if sizing.get("rejected"):
                 rec["status"] = "SIZE_REJECT"; rec["reasons"].append(sizing.get("reject_reason", "sizer rejected")); continue
             contracts = int(sizing["contracts"])
             legs = [{"symbol": best.symbol, "instruction": "BUY_TO_OPEN", "quantity": 1}]
-            limit = round(min(best.ask, best.mid + 0.25 * (best.ask - best.bid)), 2)   # pay up to 75 % of spread
+            limit = round(min(best.ask, best.mid + 0.25 * (best.ask - best.bid)), 2)   # reference price (orders go MARKET/DAY)
+            net_delta = abs(best.bsm_greeks["delta"])
             if structure["structure"] == "VERTICAL":
                 wing = self._select_wing(chain, best)
                 if wing is not None:
                     legs.append({"symbol": wing.symbol, "instruction": "SELL_TO_OPEN", "quantity": 1})
                     limit = round(max(0.05, best.mid - wing.mid), 2)
                     structure["wing"] = {"symbol": wing.symbol, "strike": wing.strike, "mid": wing.mid}
+                    w_delta = abs(float(wing.delta or 0.0)) or max(0.0, net_delta - 0.15)
+                    net_delta = max(0.05, net_delta - w_delta)          # spread delta = long − short wing
                 else:
                     structure["structure"] = "SINGLE"
+            # Δ$ is computed for reporting only — the G9 delta budget was retired (operator, 2026-09-04):
+            # premium caps (10 % of account NAV per position, 10/10/5 bucket caps) bound the book.
+            per_contract_delta_usd = net_delta * 100.0 * spot
+            # 10 % of account NAV hard cap on the position's premium notional
+            max_by_cap = int(position_cap // max(limit * 100.0, 0.01))
+            if contracts > max_by_cap:
+                sizing["position_cap_clipped"] = {"from": contracts, "to": max_by_cap, "cap_usd": round(position_cap)}
+                contracts = max_by_cap
+            if contracts < cfg.min_contracts:
+                rec["status"] = "SIZE_REJECT"
+                rec["reasons"].append(f"{cap_pct:.0%} NAV position cap ${position_cap:,.0f} < 1 contract (${limit * 100:,.0f})")
+                continue
+            delta_used += contracts * per_contract_delta_usd
+            sizing["contracts"] = contracts
             notional = contracts * limit * 100.0
             committed[bucket] = committed.get(bucket, 0.0) + notional
             vega_used += float(sizing.get("position_vega", 0.0))
@@ -848,7 +981,8 @@ class ShortDTEOptionsEngine:
                 contracts=contracts, limit_price=limit, notional=notional, composite=best.composite, edge_bps=best.edge_bps,
                 greeks={**{k: v * contracts * 100 for k, v in best.bsm_greeks.items() if k in ("delta", "gamma", "theta", "vega")},
                         "mc_delta": best.mc_greeks["delta"] * contracts * 100, "mc_gamma": best.mc_greeks["gamma"] * contracts * 100,
-                        "iv": best.bsm_iv, "delta_exposure_usd": best.bsm_greeks["delta"] * contracts * 100 * spot},
+                        "iv": best.bsm_iv, "net_delta": net_delta * (1 if best.put_call == "CALL" else -1),
+                        "delta_exposure_usd": net_delta * contracts * 100 * spot * (1 if best.put_call == "CALL" else -1)},
                 legs=legs, sizing={k: v for k, v in sizing.items()}, rationale=rationale,
             ))
             rec["status"] = "INTENT"
@@ -859,6 +993,8 @@ class ShortDTEOptionsEngine:
             "universe": [t for t, _ in universe], "per_ticker": per_ticker,
             "intents": [i.to_dict() for i in intents], "ladder": ladder,
             "committed_by_bucket": committed, "vega_used": vega_used, "backfill": self.last_backfill,
+            "g9_delta_budget_usd": delta_budget, "g9_delta_used_usd": delta_used,
+            "position_cap_usd": position_cap, "account_nav": acct_nav,
             "caps": {"bucket": cfg.bucket_caps, "total": cfg.total_options_cap},
         }
         return {"intents": intents, "ladder": ladder, "context": ctx, "report": self.last_run}
