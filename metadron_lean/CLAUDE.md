@@ -132,7 +132,7 @@ are logged until the options engine is ported (build step 6). Min trade 0.5% NAV
 
 The theme-crash playbook above is ONE instance of a general framework that agents must understand:
 
-1. **Market map** (`market_map.py`): 26 sub-sectors tagged CYCLICAL / SECULAR / DEFENSIVE, their role in
+1. **Market map** (`market_map.py`): 25 sub-sectors tagged CYCLICAL / SECULAR / DEFENSIVE, their role in
    value chains (AI: platforms → chip design → semi equipment → regional foundries → memory → networking →
    data centers → power/grid; debt-funded neoclouds and capex-heavy pivots; at-risk low-end SaaS and
    labor-intensive services), ETF proxies, owner example tickers, and sensitivities (priors, re-estimated
