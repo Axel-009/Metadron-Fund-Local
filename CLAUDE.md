@@ -345,8 +345,8 @@ Deploy 95% of NAV + leverage. Only 5% remains as dry powder.
 | Check | Limit | Where |
 |-------|-------|-------|
 | Spread | Equity/ETF ≤ 30 bps · Option ≤ 10% of mid (no quote = skip) · Futures ≤ 5 bps | DecisionMatrix |
-| MC VaR95 (1-day) | ≤ 1.5% NAV with the trade added (size scaled down to fit) | DecisionMatrix + L7 G11 |
-| MC CVaR95 (1-day) | ≤ 2.5% NAV | DecisionMatrix + L7 G11 |
+| MC VaR95 (1-day) | legacy engine: ≤ 1.5% NAV whole book — SUPERSEDED by the split risk budget (regime ceiling on beta + 2.5% alpha budget), see Risk budget | DecisionMatrix + L7 G11 |
+| MC CVaR95 (1-day) | legacy: ≤ 2.5% NAV — new: ≤ 1.5 × regime VaR ceiling | DecisionMatrix + L7 G11 |
 | MC P(profit) | Equity/ETF/Future ≥ 52% · Long option ≥ 25% · Short option ≥ 65%, and expected P&L > 0 (hedges exempt) | DecisionMatrix |
 | Kelly | Full (1×) Kelly × vol adj, capped at 20% NAV; option whose 1-contract premium exceeds the cap → exactly 1 contract (still must pass MC) | DecisionMatrix |
 | ML agreement (overrides) | ≥ 8 of 10 MLVoteEnsemble tiers agree | ConvictionOverride |
@@ -407,7 +407,52 @@ Vol-normalisation: 15% thesis standard
 VaR ≤ $0.30M (95%/1-day) on $20M NAV
 ```
 
-### Smart Beta — corridor derivation (canonical, owner-approved)
+### Smart Beta v2 — CURRENT definition (owner-approved; code: `metadron_lean/corridor.py`)
+
+Chart: `docs/charts/corridor_v2.png` (script: `docs/charts/corridor_v2.py`).
+
+```
+L(Rm, σm) = k · s(Rm) · (Rm − rf) / σm²          long market-beta leverage, capped at 4.5x
+
+Rm     annualised S&P 500 return (expected)          rf  risk-free rate = 4%
+σm     current annualised market volatility           k   share of full Kelly = 1.0 (parameter)
+t      = clip((Rm − 7%) / 5%, 0, 1)
+s(Rm)  = 3t² − 2t³                                   corridor participation (smooth 0 → 1)
+γ(Rm)  = ds/dRm = 6t(1 − t) / 5%                     corridor gamma — flattened bell,
+                                                     peak 0.30 per 1% at 9.5%, area 1
+(Rm − rf)/σm²                                        "gamma market": vol-adjusted full Kelly
+```
+
+| Zone | Rm (annualised S&P) | Long beta |
+|------|---------------------|-----------|
+| DEFENSIVE | < 7% (bear / weak market) | **0** — only shorts / hedges |
+| DYNAMIC | 7% – 12% | smooth ramp, k · s · (Rm − 4%)/σ² |
+| ROTATION | > 12% | full vol-adjusted Kelly + active sector rotation, up to the 4.5x cap |
+
+Leverage (k = 1): σ 15% → 0.43 / 1.22 / 2.79 / 3.56 at Rm 8.5 / 9.5 / 11 / 12%, 4.44 at 14%, 4.5 cap
+from ≈14.1%; σ 20% → 2.00 at 12%, 3.00 at 16%; σ 25% → 1.28 at 12%. Rising volatility shrinks
+leverage by 1/σ², so the book de-risks itself in volatile tapes without exiting.
+Rebalance only when |ΔL| > 0.05. Delivery: Micro E-mini S&P futures (MES) — 4.5x is not reachable with
+Reg-T stock margin (≈2x); SPY is the ≤2x alternative. Extra leverage above 12% may come from long calls
+when implied vol ≤ realised (delta efficiency Ω = Δ·S/premium), else futures / call spreads.
+
+### Risk budget (owner-approved; code: `metadron_lean/risk_budget.py`) — replaces "VaR ≤ 1.5% NAV"
+
+A single 1.5% 1-day VaR on the whole book caps equity leverage at 0.97x at σ 15% (0.72x at 20%) and
+blocks most small/mid caps — superseded. Under vol-adjusted Kelly, beta VaR = 1.645·k·s·Sharpe/√252
+(falls as σ rises), so VaR is a regime ceiling, not the sizing tool.
+
+| Layer | Rule |
+|-------|------|
+| 1 Sizing | corridor k-Kelly leverage above |
+| 2 Regime VaR ceiling on market-beta risk (1-day 95%) | TRENDING 7.0% · RANGE 4.5% · STRESS 2.25% · CRASH 1.0% → leverage ceiling = VaR / (1.645·σm/√252). TRENDING 7.0% = the VaR of 4.5x at σ 15%, so the owner's max is reachable |
+| 3 Stock-specific (alpha) VaR budget, 1-day 95% | **2.5% of NAV** (parameter) on idiosyncratic risk after removing market beta; per-name ≤ 0.5% NAV (≈ 9.7% weight at 50% vol); sizing ∝ 1/vol; same-sector names correlated 0.3; long options count at premium (defined risk); trades scaled down to fit, not rejected |
+| 4 Hard stops | gross ≤ 4.5x; CVaR95 ≤ 1.5 × regime ceiling; drawdown −4% trim (halve), −8% close all but hedges |
+
+Diversified small/mid-cap books fit easily: 40 names × 2.5% at 45% vol → 0.74%; 20 × 5% → 1.04%;
+the budget binds only on concentration (10 × 10% at 50% vol → 1.64%; 5 × 20% → 2.32%).
+
+### Smart Beta v1 — corridor derivation (superseded by v2, kept for reference)
 
 Chart: `docs/charts/beta_gamma_smooth.png` (script: `docs/charts/beta_gamma_smooth.py`).
 
