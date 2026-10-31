@@ -407,6 +407,107 @@ Vol-normalisation: 15% thesis standard
 VaR ≤ $0.30M (95%/1-day) on $20M NAV
 ```
 
+### Smart Beta — full corridor logic (Merton / Brownian derivation)
+
+The corridor is a Merton continuous-time portfolio rule. Under geometric Brownian
+motion dS/S = μ dt + σ dW, the optimal risky fraction for risk aversion γ is
+
+```
+f* = (μ − h) / (γ σ²)          μ = Rm (market drift), h = hurdle, σ = 15% thesis vol
+```
+
+The hard-coded constants in beta_corridor.py are exactly this formula with
+γ ≈ 4.89 and h ≈ 7.32% (reverse-engineered — the original Dataset-1 derivation is
+not in the repo; confirm the source of h):
+
+| Rm | f* = (Rm − h)/(γσ²) | f* × 4.7 | full Kelly (Rm − h)/σ² |
+|----|---------------------|----------|-------------------------|
+| 7%  (R_LOW)  | −0.029 | −0.136 = BETA_INV | −0.142 |
+| 9.5%         |  0.198 |  0.931            |  0.969 |
+| 12% (R_HIGH) |  0.425 |  2.00 = BETA_MAX  |  2.080 |
+
+So:
+- **0.425 and −0.029 are the γ-scaled (risk-aversion-scaled) Merton fractions at the
+  corridor edges, not betas.** Naming them `base_beta` in code is a misnomer.
+- **EXECUTION_MULTIPLIER 4.7 ≈ γ (4.89)** — it undoes the risk aversion, so the final
+  target ≈ 0.96 × full-Kelly leverage (μ−h)/σ². "Gamma corridor" = the Rm range
+  7–12% over which this leverage ramps from the hedge floor to full throttle;
+  slope = 1/(γσ²) ≈ 9.08 exposure per unit of Rm.
+- **Vol scaling:** Merton implies (σ_std/σ)² (inverse variance); the code uses the
+  linear σ_std/σ. Open design decision — choose one and document it.
+
+Target exposure each cycle (single function, used everywhere):
+
+```
+Rm_adj  = realised SPY drift + macro adj (GMTF tension, HMM regime probs) + Kronos index forecast
+f*      = clip((Rm_adj − h)/(γ σ_std²), −0.029, 0.425)
+β*      = f* × 4.7 × vol_scale(σ_m) × vol-regime multiplier
+β*      = clip(β*, BETA_INV, min(regime cap — or burst cap when momentum confirms, vol cap))
+L*      = min(regime max_leverage, β* / beta of the selected book)   ← gross leverage budget
+sleeves = L* split by Kelly risk-adjusted alpha, within sleeve caps
+overlay = SPY / index options close the residual net-beta gap (β* − book beta)
+```
+
+Known defects to fix in the LEAN build: AlphaBetaUnleashed calls a non-existent
+`compute_target_beta` and always uses a fallback that saturates at 2.0 near Rm≈7.4%;
+its output is reported, never executed; sleeve deployment ignores the corridor
+(NAV × 95% × risk-profile multiplier); the TRENDING cap 0.65 makes Rm 8.8–12% inert;
+beta burst is never applied. The constants are duplicated in 3 places — consolidate.
+
+## Target Architecture — LEAN / QuantConnect migration (agreed design)
+
+Stack: QuantConnect cloud (LEAN, dashboard, backtests, live node) → IBKR (paper now,
+live later; QC data for signals, IBKR for execution + cross-check). Agents: Claude
+Managed Agents (Anthropic Console = agent dashboard). Readable control room: Obsidian
+vault in this repo (agents write notes; Dataview tables; graph view). Kept from the
+engine: beta corridor, options engine, Markov HMM, GMTF, MetadronCube, pattern
+recognition, security analysis, ML ensemble, decision gates, MC gate, protection,
+event hedges. Added: Kronos (forecasting). Reference only: freqtrade (GPLv3 — copy
+design, never code): FreqAI-style retraining, protections, dry-run first, chat control.
+
+1. **Forecasting → reallocation.** Kronos + walk-forward ML give per-name return and
+   vol forecasts → (a) alpha model expected return, (b) forecast vol in Kelly, vol
+   scaling and the MC gate, (c) index forecast into Rm_adj → β*, L*. Rebalance only
+   when a weight or the beta gap moves > 0.05 (gamma throttle).
+2. **Fundamentals → selection.** SecurityAnalysisEngine (CAPE/ERP/max P/E top-down;
+   Graham number, NCAV, MoS ≥ 33%, ROIC−WACC, DuPont, owner earnings, 8-test grade,
+   5-method IV bottom-up) + ML quality tier + credit score → Fundamentals gate (40%,
+   must pass). Data: QC Morningstar fundamentals + SEC filings.
+3. **Universe data.** QC point-in-time S&P 1500 universe (daily refresh); prices/options
+   from QC, cross-checked vs IBKR; macro from FRED. "Data health" chart: names scanned
+   vs expected, stale/missing data, failed cross-checks, skipped chains → alerts.
+4. **Position monitoring.** QC live dashboard; IBKR app/TWS (independent check); daily
+   reconciliation by the risk-officer agent; Obsidian daily note per position (why
+   held, gate scores, drawdown, protection, upcoming events/hedges); phone alerts; Jarvis.
+5. **Profitability gaps.** (a) live paper P&L vs backtest expectation; (b) per-model
+   logged forecasts scored (hit rate, IC) + weekly ablation backtests — zero
+   contribution 4 weeks → down-weight then remove; (c) per-agent scorecard (accuracy,
+   P&L of approved changes, cost, rejection rate) → DIRECTOR…RECRUIT, demote/pause.
+6. **Dynamic tilt under hard caps.** Adaptive layer (gate/tier weights, corridor slope
+   within band, Kelly vol adj, thresholds) retuned weekly by walk-forward optimisation
+   inside fixed min/max, adopted only if it beats current out of sample; regime shifts it
+   too. Hard caps (VaR95 1.5%, CVaR 2.5%, position 20%, regime leverage/beta caps,
+   drawdown stops −6/−10% position, −4/−8% portfolio, daily-loss breaker) live in a
+   locked config — owner-only changes; agents can only propose.
+7. **ML models.** All free/open source, run inside the QC algorithm: walk-forward alpha
+   (linear + XGBoost, core), 4-classifier quality tier (NB, GBM, RF, XGBoost), HMM,
+   Kronos-small (PyTorch; fine-tuned monthly off-platform, weights in QC Object
+   Store). The first ablation decides which survive.
+8. **Macro ↔ micro.** Macro (GMTF, HMM, Fed liquidity, curve, credit) sets regime, Rm_adj,
+   β*, leverage budget, sector and sleeve weights → micro (fundamentals, ML, Kronos,
+   patterns, events) picks names inside that budget → decision matrix needs both
+   (Fundamentals 40 / Flow 20 / Macro 20 / Momentum 20) → Kelly size capped by regime
+   and VaR → corridor overlay closes the beta gap. Macro can shrink/veto; micro cannot
+   override a macro cap.
+9. **Capital structure.** New monitor for every held/universe name: HY/IG OAS level +
+   change (FRED ICE BofA series), debt/EBITDA, interest coverage, 1–3y maturity wall,
+   FCF vs capex burn, leases (filings), new facilities / private credit / secured debt
+   (8-K, events agent), Merton equity-implied default probability and credit spread vs
+   market spread. Deteriorating structure → Fundamentals-gate penalty or block, tighter
+   protection, event tail hedge. Issuer-level bond/CDS data = paid vendor, only if the
+   free signals prove out in backtests. (Current "credit_spread" is an HY−IG ETF
+   volatility difference, not a spread — replace.)
+
 ## Key Commands
 
 ```bash
