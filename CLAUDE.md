@@ -416,9 +416,10 @@ motion dS/S = μ dt + σ dW, the optimal risky fraction for risk aversion γ is
 f* = (μ − h) / (γ σ²)          μ = Rm (market drift), h = hurdle, σ = 15% thesis vol
 ```
 
-The hard-coded constants in beta_corridor.py are exactly this formula with
-γ ≈ 4.89 and h ≈ 7.32% (reverse-engineered — the original Dataset-1 derivation is
-not in the repo; confirm the source of h):
+−0.029 and 0.425 are this formula evaluated at the S&P 500 historical earnings-return
+range, Rm = 7% and Rm = 12% (owner-confirmed). Solving those two points gives
+γ ≈ 4.89 (slope) and h ≈ 7.32% (zero-crossing; h slightly above 7% is why the floor
+is −0.029, not 0). The original source of h is not in the repo — confirm it:
 
 | Rm | f* = (Rm − h)/(γσ²) | f* × 4.7 | full Kelly (Rm − h)/σ² |
 |----|---------------------|----------|-------------------------|
