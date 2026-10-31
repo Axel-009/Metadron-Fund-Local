@@ -1,0 +1,10 @@
+{
+    "algorithm-language": "Python",
+    "description": "Metadron Capital - clean LEAN build. Step 1: smart-beta corridor overlay on SPY.",
+    "parameters": {
+        "vol_mode": "linear",
+        "leverage_cap": "2.0",
+        "rm_lookback": "252",
+        "rm_smoothing": "0.10"
+    }
+}
