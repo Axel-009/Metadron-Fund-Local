@@ -3,7 +3,7 @@ import sys
 
 import pytest
 
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "algorithm"))
 import risk_budget as r  # noqa: E402
 from risk_budget import AlphaPosition as P  # noqa: E402
 
