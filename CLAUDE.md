@@ -407,53 +407,76 @@ Vol-normalisation: 15% thesis standard
 VaR ≤ $0.30M (95%/1-day) on $20M NAV
 ```
 
-### Smart Beta — full corridor logic (Merton / Brownian derivation)
+### Smart Beta — corridor derivation (canonical, owner-approved)
 
-The corridor is a Merton continuous-time portfolio rule. Under geometric Brownian
-motion dS/S = μ dt + σ dW, the optimal risky fraction for risk aversion γ is
+Chart: `docs/charts/beta_gamma_smooth.png` (script: `docs/charts/beta_gamma_smooth.py`).
 
-```
-f* = (μ − h) / (γ σ²)          μ = Rm (market drift), h = hurdle, σ = 15% thesis vol
-```
+**Labels (use these names everywhere — code, docs, dashboards):**
 
-−0.029 and 0.425 are this formula evaluated at the S&P 500 historical earnings-return
-range, Rm = 7% and Rm = 12% (owner-confirmed). Solving those two points gives
-γ ≈ 4.89 (slope) and h ≈ 7.32% (zero-crossing; h slightly above 7% is why the floor
-is −0.029, not 0). The original source of h is not in the repo — confirm it:
+| Symbol | Name | Meaning |
+|--------|------|---------|
+| Rm | expected market return | expected annual S&P 500 return; the corridor is Rm ∈ [7%, 12%] (S&P historical earnings range) |
+| β(Rm) | corridor beta | target exposure identifier, a smooth S-curve in Rm |
+| β_L, β_H | corridor floor / ceiling | β_L = −0.029 at Rm = 7%, β_H = 0.425 at Rm = 12% |
+| Δβ | corridor span | β_H − β_L = 0.454 |
+| γ(Rm) | corridor gamma | **γ = dβ/dRm**, the rate at which beta changes with Rm (as option gamma is the slope of delta). A flattened bell. |
+| λ | risk aversion | the Merton/CRRA coefficient (NOT called gamma, to avoid the clash with corridor gamma) |
+| h | hurdle | Rm at which β = 0 |
+| σ_std | standard volatility | 15% thesis standard |
+| M | execution multiplier | 4.7 — converts β into portfolio leverage |
 
-| Rm | f* = (Rm − h)/(γσ²) | f* × 4.7 | full Kelly (Rm − h)/σ² |
-|----|---------------------|----------|-------------------------|
-| 7%  (R_LOW)  | −0.029 | −0.136 = BETA_INV | −0.142 |
-| 9.5%         |  0.198 |  0.931            |  0.969 |
-| 12% (R_HIGH) |  0.425 |  2.00 = BETA_MAX  |  2.080 |
-
-So:
-- **0.425 and −0.029 are the γ-scaled (risk-aversion-scaled) Merton fractions at the
-  corridor edges, not betas.** Naming them `base_beta` in code is a misnomer.
-- **EXECUTION_MULTIPLIER 4.7 ≈ γ (4.89)** — it undoes the risk aversion, so the final
-  target ≈ 0.96 × full-Kelly leverage (μ−h)/σ². "Gamma corridor" = the Rm range
-  7–12% over which this leverage ramps from the hedge floor to full throttle;
-  slope = 1/(γσ²) ≈ 9.08 exposure per unit of Rm.
-- **Vol scaling:** Merton implies (σ_std/σ)² (inverse variance); the code uses the
-  linear σ_std/σ. Open design decision — choose one and document it.
-
-Target exposure each cycle (single function, used everywhere):
+**1. Endpoints (Merton, Brownian motion).** Under dS/S = μ dt + σ dW a CRRA investor holds
+β = (Rm − h)/(λσ²). The two corridor endpoints pin λσ² and h:
 
 ```
-Rm_adj  = realised SPY drift + macro adj (GMTF tension, HMM regime probs) + Kronos index forecast
-f*      = clip((Rm_adj − h)/(γ σ_std²), −0.029, 0.425)
-β*      = f* × 4.7 × vol_scale(σ_m) × vol-regime multiplier
-β*      = clip(β*, BETA_INV, min(regime cap — or burst cap when momentum confirms, vol cap))
-L*      = min(regime max_leverage, β* / beta of the selected book)   ← gross leverage budget
-sleeves = L* split by Kelly risk-adjusted alpha, within sleeve caps
-overlay = SPY / index options close the residual net-beta gap (β* − book beta)
+λσ² = (12% − 7%) / (β_H − β_L) = 0.05 / 0.454 = 0.1101   → λ ≈ 4.89 at σ = 15%
+h   = 7% − β_L · λσ²          = 7% + 0.029 × 0.1101 = 7.32%
+check: β(7%) = (0.07 − 0.0732)/0.1101 = −0.029 ; β(12%) = (0.12 − 0.0732)/0.1101 = 0.425
 ```
+Only the product λσ² is identified (λ = 0.1101/σ²: 7.65 at 12%, 4.89 at 15%, 3.40 at 18%,
+2.75 at 20%). Equivalently β = 1/λ ≈ 20% of full Kelly at σ = 15%.
 
-Known defects to fix in the LEAN build: AlphaBetaUnleashed calls a non-existent
-`compute_target_beta` and always uses a fallback that saturates at 2.0 near Rm≈7.4%;
-its output is reported, never executed; sleeve deployment ignores the corridor
-(NAV × 95% × risk-profile multiplier); the TRENDING cap 0.65 makes Rm 8.8–12% inert;
-beta burst is never applied. The constants are duplicated in 3 places — consolidate.
+**2. Smooth beta curve (the shape).** Inside the corridor β follows a smoothstep S-curve; outside
+it is flat:
+
+```
+t     = clip((Rm − 7%) / 5%, 0, 1)
+β(Rm) = β_L + Δβ · (3t² − 2t³)
+```
+Values: β(7%) = −0.029, β(9.5%) = 0.198, β(12%) = 0.425; flat beyond both edges.
+
+**3. Corridor gamma (the flattened bell).**
+
+```
+γ(Rm) = dβ/dRm = Δβ · 6t(1 − t) / 5%      for 7% < Rm < 12%,  0 outside
+```
+- zero at and beyond 7% and 12% (exposure stops changing at the corridor edges)
+- peak at Rm = 9.5%: γ_max = 1.5 · Δβ / 5% = 13.62 per unit Rm = **0.136 per 1% of Rm**
+- area under γ over the corridor = Δβ = **0.454**
+- the old linear ramp has a flat-box gamma of 0.091 per 1% with jumps at 7% and 12% —
+  superseded by the smooth curve.
+
+**4. From beta to leverage.**
+
+```
+leverage(Rm) = β(Rm) × M × vol_scale(σ_m)      M = 4.7
+             → −0.136 at Rm ≤ 7% (hedge floor, BETA_INV) … 2.00 at Rm ≥ 12% (BETA_MAX)
+vol_scale    = σ_std / σ_m  (current, linear)   or  (σ_std / σ_m)²  (Merton-consistent) — OPEN
+```
+Then: regime cap (or burst cap when momentum confirms) → hard caps (VaR95 ≤ 1.5% NAV,
+gross-leverage gate). M ≈ λ, so leverage ≈ full Kelly at σ = 15%; at higher true volatility a
+fixed M = 4.7 is over-Kelly (full-Kelly leverage at 12%: 2.08 at σ 15%, 1.44 at 18%, 1.17 at 20%).
+
+**5. Inputs each cycle.** Rm_adj = realised SPY drift + macro adjustment (GMTF tension, HMM regime
+probabilities) + Kronos index forecast → β(Rm_adj), γ(Rm_adj) → leverage budget L* (gross, split
+across sleeves by Kelly risk-adjusted alpha within sleeve caps) → SPY / index-option overlay closes
+the residual net-beta gap. Rebalance only when |Δβ| > 0.05 (throttle).
+
+**Known defects in the legacy engine (fixed in the LEAN build):** linear ramp instead of the smooth
+curve; constants duplicated in 3 places; AlphaBetaUnleashed calls a non-existent method and uses a
+fallback that saturates at 2.0 near Rm ≈ 7.4%, and its output is never executed; sleeve deployment
+ignores the corridor; TRENDING cap 0.65 makes the top of the corridor inert; beta burst never applied.
+ARCHITECTURE_DNA.md's "linear(0 → BETA_MAX)" description is wrong.
 
 ## Target Architecture — LEAN / QuantConnect migration (agreed design)
 

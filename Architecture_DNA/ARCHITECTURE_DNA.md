@@ -457,12 +457,14 @@ VOL_STANDARD = 0.15 (thesis standard 15%)
 VaR ≤ $0.30M (95%/1-day) on $20M NAV
 ```
 
-#### Corridor Function (piecewise linear)
+#### Corridor Function (smooth beta curve — canonical definition in CLAUDE.md "Smart Beta")
 ```
-Rm < R_LOW  → β = BETA_INV (short bias / hedge)
-R_LOW ≤ Rm ≤ R_HIGH → β = linear(0 → BETA_MAX)
-Rm > R_HIGH → β = BETA_MAX (full throttle)
+t        = clip((Rm − 7%) / 5%, 0, 1)
+β(Rm)    = −0.029 + 0.454 · (3t² − 2t³)          (−0.029 at 7%, 0.198 at 9.5%, 0.425 at 12%)
+γ(Rm)    = dβ/dRm = 0.454 · 6t(1 − t) / 5%       (flattened bell, peak 0.136 per 1% at 9.5%)
+leverage = β × 4.7 × vol_scale                   (−0.136 … 2.00)
 ```
+Endpoints from Merton: β = (Rm − h)/(λσ²), λσ² = 0.1101, h = 7.32% (λ ≈ 4.89 at σ = 15%).
 
 #### Vol Regime Classifier
 | Regime | Percentile | β Multiplier | β Cap |
