@@ -8,8 +8,13 @@ from corridor import (
 )
 from risk_budget import beta_cap, hard_stops, daily_var, check_alpha_trade, AlphaPosition
 from rotation import (
-    THEMES, DEFENSIVES, ESCALATION_SLEEVE, build_plan, escalation_score, theme_index, realised_vol as name_vol,
+    THEMES, DEFENSIVES, ESCALATION_SLEEVE, THEME_SUBSECTOR, build_plan, escalation_score, theme_index,
+    realised_vol as name_vol,
 )
+import json
+from macro_regime import factor_states, diagnose, market_bias, stock_bond_regime
+from sector_rotation import evaluate, scenarios_from_json, summary
+from market_map import CYCLICAL, SECULAR, DEFENSIVE
 
 
 class MetadronCorridor(QCAlgorithm):
@@ -65,7 +70,7 @@ class MetadronCorridor(QCAlgorithm):
         # Theme / defensive / escalation names + escalation inputs
         tickers = sorted({t for v in THEMES.values() for t in v} | {t for v in DEFENSIVES.values() for t in v}
                          | set(ESCALATION_SLEEVE["refiners"]) | set(ESCALATION_SLEEVE["oil_option_underlyings"])
-                         | {"GLD"})
+                         | {"GLD", "TLT", "HYG", "LQD"})
         self.rot_symbols = {}
         for t in tickers:
             try:
@@ -193,6 +198,70 @@ class MetadronCorridor(QCAlgorithm):
         except Exception:
             return []
 
+    def _store_read(self, key):
+        try:
+            if self.object_store.contains_key(key):
+                return self.object_store.read(key)
+        except Exception:
+            pass
+        return None
+
+    def run_sector_view(self, zone, prices, spy_closes, esc, vix, plan):
+        """Trader framework: macro question tree + scenarios → sub-sector edge / downside / tilts."""
+        readings = {}
+        raw = self._store_read("metadron/macro_inputs.json")       # written by the macro agent (FRED)
+        if raw:
+            try:
+                readings.update({k: float(v) for k, v in json.loads(raw).items() if isinstance(v, (int, float))})
+            except Exception as exc:
+                self.debug(f"macro_inputs.json unreadable: {exc}")
+        readings.setdefault("escalation", esc)
+        if vix is not None:
+            readings.setdefault("vix", vix)
+        hyg, lqd = prices.get("HYG"), prices.get("LQD")
+        if hyg and lqd and len(hyg) > 22 and len(lqd) > 22:
+            rel = (hyg[-1] / hyg[-22]) - (lqd[-1] / lqd[-22])
+            readings.setdefault("hy_oas_change_1m", -rel / 4.0)      # proxy: HY-vs-IG return / duration
+        uso = prices.get("USO")
+        if uso and len(uso) > 22:
+            readings.setdefault("commodities_21d", uso[-1] / uso[-22] - 1)
+        scen_raw = self._store_read("metadron/scenarios.json")      # written by the macro agent / owner
+        scenarios = None
+        if scen_raw:
+            try:
+                scenarios = scenarios_from_json(scen_raw)
+            except Exception as exc:
+                self.debug(f"scenarios.json unreadable: {exc}")
+
+        factors = factor_states(readings)
+        findings = diagnose(readings)
+        bias = market_bias(factors, zone)
+        sb = stock_bond_regime(spy_closes, prices.get("TLT", []))
+        themes = {THEME_SUBSECTOR[t.theme]: t.state for t in plan.themes if t.theme in THEME_SUBSECTOR}
+        views = evaluate(factors, scenarios=scenarios, findings=findings, theme_states=themes, bias=bias["bias"])
+
+        mix = {CYCLICAL: 0.0, SECULAR: 0.0, DEFENSIVE: 0.0}
+        for v in views:
+            mix[v.nature] += v.weight
+        self.plot("Market view", "bias score", bias["score"])
+        self.plot("Market view", "stock-bond corr", sb["corr"] if sb["corr"] is not None else 0.0)
+        for n, w in mix.items():
+            self.plot("Equity mix", n.lower(), w)
+
+        report = {"time": str(self.time), "zone": zone, "bias": bias, "stock_bond": sb,
+                  "findings": [f.__dict__ for f in findings], "factors": factors, **summary(views, 8)}
+        try:
+            self.object_store.save("metadron/sector_views.json", json.dumps(report, default=str))
+        except Exception:
+            pass
+        top = ", ".join(f"{v.subsector} {v.weight:.0%}" for v in views if v.weight > 0.05)
+        sig = (bias["bias"], tuple(sorted(v.subsector for v in views if v.weight > 0.05)))
+        last_t = getattr(self, "last_view_time", None)
+        if sig != getattr(self, "last_view_sig", None) and (
+                last_t is None or not hasattr(self.time, "__sub__") or (self.time - last_t).days >= 5):
+            self.last_view_sig, self.last_view_time = sig, self.time
+            self.debug(f"VIEW {bias['bias']} ({bias['score']:+.2f}) hedge={sb['hedge']} | {top}")
+
     def run_rotation(self, zone: str, spy_closes):
         prices = {t: c for t, sym in self.rot_symbols.items() if len(c := self._closes(sym)) > 21}
         nav = max(self.portfolio.total_portfolio_value, 1.0)
@@ -205,6 +274,7 @@ class MetadronCorridor(QCAlgorithm):
         esc = escalation_score(oil=prices.get("USO"), gold=prices.get("GLD"),
                                defense_idx=defense or None, spy=spy_closes, vix=vix)
         plan = build_plan(zone, prices, spy_closes, holdings, escalation=esc)
+        self.run_sector_view(zone, prices, spy_closes, esc, vix, plan)
 
         code = {"NORMAL": 0, "STRESS": 1, "CRASH": 2}
         for ts in plan.themes:

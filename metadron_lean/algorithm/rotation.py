@@ -39,6 +39,10 @@ THEMES: Dict[str, List[str]] = {
     "AI_CREDIT_HUBS": ["CRWV", "NBIS"],         # AI infra financed with heavy debt / private credit
     "AI_OVERSPEND": ["IREN", "HIVE"],           # capex over-spenders
 }
+THEME_SUBSECTOR = {            # theme → market_map sub-sector (feeds sector_rotation theme states)
+    "AI_CREDIT_HUBS": "AI_NEOCLOUD_CREDIT",
+    "AI_OVERSPEND": "AI_HOSTING_PIVOT",
+}
 DEFENSIVES: Dict[str, List[str]] = {
     "DEFENSE": ["LMT", "NOC", "RTX", "GD"],
     "HEALTHCARE": ["LLY", "JNJ", "MRK", "ABBV"],
@@ -69,7 +73,7 @@ OIL_CALL_PREMIUM = 0.010          # total premium for oil calls
 REFINER_WEIGHT = 0.03             # total weight across refiners
 LEAPS_PREMIUM_PER_NAME = 0.005
 LEAPS_MIN_DTE = 270
-LEAPS_MIN_DISCOUNT = 0.30         # price ≥ 30% below its 252-day high
+LEAPS_MIN_DISCOUNT = 0.18         # price ≥ 18% below its 252-day high (owner)
 LEAPS_RICH_IV_RATIO = 1.3         # IV / RV above this → call spread instead of outright
 STRADDLE_PREMIUM_PER_NAME = 0.003
 STRADDLE_MAX_NAMES = 3

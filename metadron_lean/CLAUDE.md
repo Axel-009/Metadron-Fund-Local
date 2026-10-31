@@ -10,7 +10,8 @@ disagrees with this file, THIS file wins; e.g. its corridor section was linear a
 ## Layout
 
 ```
-algorithm/              QuantConnect LEAN algorithm (main.py, corridor.py, risk_budget.py, config.json)
+algorithm/              QuantConnect LEAN algorithm (main, corridor, risk_budget, rotation, market_map, macro_regime, sector_rotation)
+agents/                 agent knowledge: market_reasoning.md (trader framework + scenario JSON schema)
 engine/                 Intelligence engine (extracted from the legacy monorepo, package paths unchanged)
   data/ signals/ ml/    universe, macro (GMTF, HMM), cube, security analysis, distress, events, CVR, patterns, ML
   allocation/           AllocationEngine + universe scan — THE allocation reference
@@ -26,7 +27,7 @@ vendor/                 Kronos, LEAN, OpenJarvis — full source copies, pinned 
 jarvis/                 Jarvis setup guide + dashboard page
 governance/ config/     credit classification, repo/heartbeat config
 docs/                   architecture DNA, corridor charts
-tests/                  228 tests (legacy engine suite + new algorithm tests)
+tests/                  238 tests (legacy engine suite + new algorithm tests)
 scripts/update_vendor.sh  re-sync vendored repos to upstream
 ```
 
@@ -118,7 +119,7 @@ Paradigm (Oct–Nov): SPY > 12% at max leverage while AI names with heavy debt /
 3. **ESCALATION** posture (score ≥ 0.5): long oil calls (USO/XLE, 1% NAV premium, ~60 DTE) + refiners
    (e.g. VLO, MPC, ≥ 1.5% each). Score = mean of: oil +10%/21d, gold +5%/21d, defense beats SPY by 5 pts/21d,
    VIX ≥ 25; an events-agent flag overrides.
-4. **HARVEST** the drawdown: LEAPS calls (≥ 270 DTE, 0.5% NAV premium) on crashed names ≥ 30% below their
+4. **HARVEST** the drawdown: LEAPS calls (≥ 270 DTE, 0.5% NAV premium) on crashed names ≥ 18% below their
    1-year high that pass the solvency check (Merton PD ≤ 5%, interest coverage ≥ 2; unknown = no LEAPS);
    call spreads instead when IV/RV > 1.3. Short-dated straddles (7–30 DTE, 0.3% NAV, max 3) where realised
    vol ≥ 1.1 × implied or an event is within 14 days.
@@ -126,6 +127,31 @@ Paradigm (Oct–Nov): SPY > 12% at max leverage while AI names with heavy debt /
 Tickers are owner-supplied configuration (THEMES / DEFENSIVES in rotation.py), not recommendations.
 Equity legs trade only with `rotation_trading=true` (default false: plan plotted + logged); option legs
 are logged until the options engine is ported (build step 6). Min trade 0.5% NAV (no churn).
+
+### Trader framework → sub-sector rotation (owner-approved; code: `algorithm/market_map.py`, `macro_regime.py`, `sector_rotation.py`; agent guide: `agents/market_reasoning.md`)
+
+The theme-crash playbook above is ONE instance of a general framework that agents must understand:
+
+1. **Market map** (`market_map.py`): 26 sub-sectors tagged CYCLICAL / SECULAR / DEFENSIVE, their role in
+   value chains (AI: platforms → chip design → semi equipment → regional foundries → memory → networking →
+   data centers → power/grid; debt-funded neoclouds and capex-heavy pivots; at-risk low-end SaaS and
+   labor-intensive services), ETF proxies, owner example tickers, and sensitivities (priors, re-estimated
+   weekly) to 12 factors: GROWTH, INFLATION, LABOR, WAGES, PRODUCTIVITY, RATES, LIQUIDITY, CREDIT,
+   GEOPOLITICS, SENTIMENT, AI_CAPEX, COMMODITIES.
+2. **Macro question tree** (`macro_regime.diagnose`): inflation within mandate? → economy hot (data vs
+   expectation)? → labor tight? → gapping? → room for stimulus? → productivity? → real wages? (productivity ↑
+   + wages flat + employment retained ⇒ AI_SUBSTITUTION) → liquidity? → corporate bonds (HY OAS +35 bp/1m ⇒
+   CREDIT_STRESS)? → geopolitics (ESCALATION)? → sentiment (EUPHORIA / CAPITULATION)? Each tag moves named
+   sub-sectors (IMPLICATION_EFFECTS). Also: stock–bond correlation regime (negative ⇒ Treasuries hedge;
+   positive ⇒ commodities / gold / cash) and market bias BULLISH / NEUTRAL / BEARISH.
+3. **Scenarios** (`sector_rotation`): base / up / down what-ifs with probabilities and factor shocks, written
+   by the macro agent or the owner to ObjectStore `metadron/scenarios.json`; macro readings (FRED) to
+   `metadron/macro_inputs.json`. Score = sensitivities × factors + implications + 0.5 × fundamentals
+   (revisions, revenue, legal fights) + theme state (STRESS −0.3, CRASH −0.8). **Edge** = probability-weighted
+   score; **downside** = worst scenario. Equity-sleeve mix by bias (cyclical / secular / defensive):
+   BULLISH 40/45/15, NEUTRAL 30/40/30, BEARISH 15/30/55; within each, weight ∝ max(edge − 0.5·max(−downside,0), 0).
+4. Output each day: plots (*Market view*, *Equity mix*) and ObjectStore `metadron/sector_views.json`
+   (factors, findings, overweight / avoid with drivers, edge and downside) for agents, Jarvis and Obsidian.
 
 ### Smart Beta v1 — corridor derivation (superseded by v2, kept for reference)
 
