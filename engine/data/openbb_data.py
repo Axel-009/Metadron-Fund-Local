@@ -969,6 +969,31 @@ def get_economic_calendar(
     return pd.DataFrame()
 
 
+def get_earnings_calendar(
+    start: Optional[str] = None,
+    end: Optional[str] = None,
+    provider: str = "fmp",
+) -> pd.DataFrame:
+    """Upcoming earnings dates via OpenBB (columns include symbol + report_date).
+
+    Used by the event tail hedge to find positions with earnings before the
+    hedge horizon. Returns an empty frame when OpenBB is unavailable.
+    """
+    if not _openbb_available:
+        return pd.DataFrame()
+    try:
+        kwargs = {"provider": provider}
+        if start:
+            kwargs["start_date"] = start
+        if end:
+            kwargs["end_date"] = end
+        result = _obb.equity.calendar.earnings(**kwargs)
+        return _obbject_to_dataframe(result)
+    except Exception as e:
+        logger.debug(f"Earnings calendar fetch failed: {e}")
+    return pd.DataFrame()
+
+
 # ═══════════════════════════════════════════════════════════════════════════
 # EQUITY QUOTE — bid/ask/volume via OpenBB (FMP provider)
 # ═══════════════════════════════════════════════════════════════════════════

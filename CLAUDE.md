@@ -141,6 +141,9 @@ Metadron-Capital/                        ← Master monorepo (Layer 0: Hub)
 │   │       ├── deep_trading_features.py ← Deep trading feature engineering
 │   │       ├── kserve_adapter.py        ← KServe ML model serving adapter
 │   │       └── markov_regime_bridge.py ← hmmlearn HMM → MetadronCube RegimeEngine
+│   ├── risk/                            ← Risk models
+│   │   ├── monte_carlo_risk.py          ← Research MC (per-ticker VaR/CVaR/tails) → calibrates the gate
+│   │   └── portfolio_mc_gate.py         ← Shared pre-trade MC gate: 1-day VaR95 ≤ 1.5% NAV, CVaR95 ≤ 2.5% NAV, P(profit) per instrument
 │   ├── portfolio/                       ← L4: Portfolio construction
 │   │   └── beta_corridor.py            ← Beta corridor 7–12% + vol-normalisation
 │   ├── execution/                       ← L5: Execution + L7 HFT routing
@@ -148,12 +151,14 @@ Metadron-Capital/                        ← Master monorepo (Layer 0: Hub)
 │   │   ├── alpaca_broker.py            ← Live broker via Alpaca API (paper/production)
 │   │   ├── tradier_broker.py           ← Live broker via Tradier API (legacy, sandbox/production)
 │   │   ├── execution_engine.py         ← Full pipeline orchestrator + ML vote ensemble (broker_type="paper"|"alpaca"|"tradier")
-│   │   ├── decision_matrix.py          ← 6-gate trade approval + Kelly sizing + ABU beta
+│   │   ├── decision_matrix.py          ← 4-gate approval + spread + Monte Carlo VaR/CVaR/P(profit) checks + full-Kelly sizing (1-contract option exception) + ABU beta
+│   │   ├── position_protection.py      ← Drawdown protection on live positions + option expiry closes (every heartbeat)
+│   │   ├── event_tail_hedge.py         ← Protective puts/calls ahead of earnings / binary events
 │   │   ├── options_engine.py           ← Black-Scholes, Greeks, vol surface, θ+Γ optimizer
 │   │   ├── conviction_override.py       ← 3-tier conviction override system
 │   │   ├── exchange_core_engine.py     ← L7 LMAX Disruptor ring buffer order matching (Python)
 │   │   ├── wondertrader_engine.py      ← L7 CTA trend-following + HFT micro-price + TWAP/VWAP
-│   │   └── l7_unified_execution_surface.py ← L7 fused execution arm (all products → Tradier + paper log)
+│   │   └── l7_unified_execution_surface.py ← L7 fused execution arm (all products → Tradier + paper log); G11 = Monte Carlo VaR gate; position-reducing orders exempt from G1–G10
 │   ├── live_loop_orchestrator.py       ← End-to-end continuous live loop (ingestion → execution → learning)
 │   │   # L7 HFT Execution arm:
 │   │   # quant_strategy_executor.py  → 12 independent technical strategies (Stage 6.5)
@@ -334,6 +339,19 @@ AgentLearningWrapper:
 | Cash (Dry Powder) | 5% | — | Never deployed, buying power reserve |
 
 Deploy 95% of NAV + leverage. Only 5% remains as dry powder.
+
+### Pre-Trade Risk Checks (after the 4 gates)
+
+| Check | Limit | Where |
+|-------|-------|-------|
+| Spread | Equity/ETF ≤ 30 bps · Option ≤ 10% of mid (no quote = skip) · Futures ≤ 5 bps | DecisionMatrix |
+| MC VaR95 (1-day) | ≤ 1.5% NAV with the trade added (size scaled down to fit) | DecisionMatrix + L7 G11 |
+| MC CVaR95 (1-day) | ≤ 2.5% NAV | DecisionMatrix + L7 G11 |
+| MC P(profit) | Equity/ETF/Future ≥ 52% · Long option ≥ 25% · Short option ≥ 65%, and expected P&L > 0 (hedges exempt) | DecisionMatrix |
+| Kelly | Full (1×) Kelly × vol adj, capped at 20% NAV; option whose 1-contract premium exceeds the cap → exactly 1 contract (still must pass MC) | DecisionMatrix |
+| ML agreement (overrides) | ≥ 8 of 10 MLVoteEnsemble tiers agree | ConvictionOverride |
+
+GMTF tension percentile and Gaussian-HMM regime probabilities feed the MACRO_REGIME gate (MacroEngine snapshot → `DecisionMatrix.update_macro_context`).
 
 ### 4-Gate Entry Logic
 

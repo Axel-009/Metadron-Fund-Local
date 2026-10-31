@@ -41,7 +41,13 @@ logger = logging.getLogger(__name__)
 # hmmlearn from local source or installed package
 MARKOV_MODEL_DIR = Path(__file__).parent.parent.parent.parent / "repos" / "markov-model"
 
-from hmmlearn.hmm import GaussianHMM
+try:
+    from hmmlearn.hmm import GaussianHMM
+    HMM_AVAILABLE = True
+except Exception:  # rule 8 — degrade to threshold regimes, never crash
+    GaussianHMM = None
+    HMM_AVAILABLE = False
+    logger.warning("hmmlearn not installed — MarkovRegimeBridge uses threshold fallback")
 
 
 # CubeRegime mapping (must match engine/signals/macro_engine.py)
@@ -96,7 +102,7 @@ class MarkovRegimeBridge:
             covariance_type=covariance_type,
             n_iter=n_iter,
             random_state=random_state,
-        )
+        ) if GaussianHMM is not None else None
         logger.info(f"MarkovRegimeBridge initialized (n_regimes={n_regimes})")
 
     def fit(self, returns: np.ndarray, volatility: np.ndarray,
@@ -140,6 +146,8 @@ class MarkovRegimeBridge:
         if len(X) < 50:
             logger.warning(f"Insufficient data for HMM fitting ({len(X)} obs)")
             return {"error": "insufficient data", "n_obs": len(X)}
+        if self._model is None:
+            return {"error": "hmmlearn unavailable", "n_obs": len(X)}
 
         try:
             self._model.fit(X)
@@ -215,6 +223,51 @@ class MarkovRegimeBridge:
                 confidence=0.5,
                 metadata={"method": "threshold_fallback"},
             )
+
+    @property
+    def fitted(self) -> bool:
+        return self._fitted
+
+    def predict_regime_sequence(self, X: np.ndarray) -> RegimePrediction:
+        """Predict the CURRENT regime from a recent observation sequence.
+
+        Uses the forward-backward posterior of the last row, so the HMM's
+        transition dynamics (state persistence) are used — unlike
+        predict_regime(), which scores one isolated observation.
+
+        X: (T, n_features) in the same column order used by fit().
+        """
+        X = np.asarray(X, dtype=float)
+        if X.ndim != 2 or len(X) == 0:
+            return RegimePrediction(regime="RANGE", confidence=0.3,
+                                    metadata={"error": "empty sequence"})
+        X = X[~np.any(np.isnan(X), axis=1)]
+        if not self._fitted or self._model is None or len(X) == 0:
+            last = X[-1] if len(X) else [0.0, 0.0]
+            regime = self._threshold_regime(float(last[0]), float(last[1]))
+            return RegimePrediction(regime=regime, regime_index=REGIME_NAMES.index(regime),
+                                    confidence=0.5, metadata={"method": "threshold_fallback"})
+        try:
+            post = self._model.predict_proba(X)[-1]
+            regime_probs = [0.0] * 4
+            for state_idx, prob in enumerate(post):
+                regime = self._state_map.get(state_idx, "RANGE")
+                regime_probs[REGIME_NAMES.index(regime) if regime in REGIME_NAMES else 1] += float(prob)
+            best = int(np.argmax(regime_probs))
+            return RegimePrediction(
+                regime=REGIME_NAMES[best], regime_index=best,
+                confidence=float(regime_probs[best]),
+                state_probabilities=regime_probs,
+                transition_matrix=self._model.transmat_,
+                log_likelihood=float(self._model.score(X)),
+                metadata={"method": "hmm_sequence", "n_obs": int(len(X))},
+            )
+        except Exception as e:
+            logger.warning(f"HMM sequence prediction failed: {e}")
+            last = X[-1]
+            regime = self._threshold_regime(float(last[0]), float(last[1]))
+            return RegimePrediction(regime=regime, regime_index=REGIME_NAMES.index(regime),
+                                    confidence=0.5, metadata={"method": "threshold_fallback"})
 
     def get_transition_matrix(self) -> Optional[np.ndarray]:
         """Get the learned transition probability matrix.

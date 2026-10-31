@@ -59,9 +59,9 @@ except ImportError:
 # Constants
 # ---------------------------------------------------------------------------
 SIGNAL_STRENGTH_THRESHOLD = 2.5       # Standard deviations
-ML_CONSENSUS_THRESHOLD = 0.80         # 80% agreement (4/5 tiers)
-ML_TIER_COUNT = 5                     # Total ML tiers in ensemble
-MIN_ML_AGREEMENT = 4                  # Minimum tiers that must agree
+ML_CONSENSUS_THRESHOLD = 0.80         # 80% agreement (8/10 tiers)
+ML_TIER_COUNT = 10                    # MLVoteEnsemble tiers T1..T10
+MIN_ML_AGREEMENT = 8                  # Minimum tiers that must agree (abstentions don't count)
 LIQUIDITY_FLOOR_USD = 10_000_000      # $10M average daily volume
 EARNINGS_BLACKOUT_DAYS = 5            # Trading days before earnings
 CORRELATION_CAP = 0.70                # Max correlation to existing positions
@@ -370,7 +370,11 @@ class OverridePerformance:
 # Eligibility Gate Evaluators
 # ---------------------------------------------------------------------------
 class EligibilityGates:
-    """Evaluates all 8 eligibility gates for conviction override."""
+    """Evaluates all 8 eligibility gates for conviction override.
+
+    (These 8 override-eligibility gates are separate from the DecisionMatrix
+    4-gate entry logic.)
+    """
 
     def __init__(self):
         self._gate_names = {
@@ -397,7 +401,7 @@ class EligibilityGates:
         correlation_to_portfolio: float = 0.0,
         portfolio_drawdown: float = 0.0,
     ) -> list:
-        """Run all 4-gates and return list of GateEvaluation."""
+        """Run all 8 eligibility gates and return list of GateEvaluation."""
         now = datetime.now().isoformat()
         gates = []
 
@@ -447,7 +451,13 @@ class EligibilityGates:
     def _gate_ml_consensus(
         self, ml_votes: dict, direction: SignalDirection, ts: str
     ) -> GateEvaluation:
-        """Gate 2: ML consensus must be > 80% (4/5 tiers agree)."""
+        """Gate 2: ML consensus — at least MIN_ML_AGREEMENT (8) of the
+        ML_TIER_COUNT (10) MLVoteEnsemble tiers must agree with the direction.
+
+        The denominator is always the full 10 tiers: a tier that is missing
+        or votes 0 (abstains) counts as NOT agreeing, so a partial vote dict
+        cannot inflate consensus.
+        """
         gate = GateEvaluation(
             gate_number=2,
             gate_name="ml_consensus",
@@ -460,8 +470,8 @@ class EligibilityGates:
             gate.value = 0.0
             return gate
 
-        total_tiers = len(ml_votes)
-        if total_tiers == 0:
+        total_tiers = max(len(ml_votes), ML_TIER_COUNT)
+        if len(ml_votes) == 0:
             gate.result = GateResult.FAIL
             gate.detail = "Empty ML vote dict"
             gate.value = 0.0
@@ -476,12 +486,13 @@ class EligibilityGates:
         consensus = agreeing / total_tiers
         gate.value = consensus
 
-        if consensus >= ML_CONSENSUS_THRESHOLD:
+        if agreeing >= MIN_ML_AGREEMENT and consensus >= ML_CONSENSUS_THRESHOLD:
             gate.result = GateResult.PASS
             gate.detail = f"ML consensus {consensus:.0%} ({agreeing}/{total_tiers} tiers agree)"
         else:
             gate.result = GateResult.FAIL
-            gate.detail = f"ML consensus {consensus:.0%} below {ML_CONSENSUS_THRESHOLD:.0%} ({agreeing}/{total_tiers})"
+            gate.detail = (f"ML consensus {consensus:.0%} ({agreeing}/{total_tiers}) below "
+                           f"{MIN_ML_AGREEMENT}/{ML_TIER_COUNT} tiers")
         return gate
 
     def _gate_macro_alignment(
@@ -646,7 +657,7 @@ class TierClassifier:
     ) -> Optional[ConvictionTier]:
         """Classify into CONTROLLED, AGGRESSIVE, or MAXIMUM tier.
 
-        All 4-gates must pass. Tier is determined by signal strength
+        All 8 eligibility gates must pass. Tier is determined by signal strength
         and ML consensus thresholds.
         """
         if gates_passed < gates_total:
@@ -877,7 +888,7 @@ class OverrideManager:
     ) -> OverrideDecision:
         """Evaluate whether a signal qualifies for conviction override.
 
-        Runs all 4-gates, classifies tier, computes override size,
+        Runs all 8 eligibility gates, classifies tier, computes override size,
         and logs the decision.
         """
         decision = OverrideDecision(
@@ -901,7 +912,7 @@ class OverrideManager:
         )
         effective_correlation = max(correlation, override_corr)
 
-        # Run all 4-gates
+        # Run all 8 eligibility gates
         gates = self._gates.evaluate_all(
             ticker=ticker,
             direction=direction,
@@ -1096,8 +1107,9 @@ class OverrideManager:
                 del self._active_overrides[oid]
                 affected.append(override)
                 self._performance.stopped_out += 1
-            elif drawdown >= DRAWDOWN_REDUCTION_THRESHOLD:
-                # Soft reduction: cut position by 50%
+            elif drawdown >= DRAWDOWN_REDUCTION_THRESHOLD and override.reduction_count == 0:
+                # Soft reduction: cut position by 50% — ONCE per override
+                # (previously this halved the position again on every call)
                 reduction_factor = 0.5
                 old_size = override.position_size
                 override.position_size *= reduction_factor

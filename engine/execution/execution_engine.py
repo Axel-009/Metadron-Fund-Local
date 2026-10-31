@@ -638,7 +638,7 @@ class VoteResult:
 
 
 class MLVoteEnsemble:
-    """5-tier vote ensemble. Each tier votes ±1. Pure numpy.
+    """10-tier vote ensemble (T1_neural … T10_credit_quality). Each tier votes ±1. Pure numpy.
 
     Enhanced with deep trading features and adaptive weighting.
     """
@@ -1931,7 +1931,16 @@ class ExecutionEngine:
         t0 = datetime.now()
         try:
             from .decision_matrix import DecisionMatrix, AlphaBetaUnleashed
-            decision_mx = DecisionMatrix()
+            dm_nav = float(self.broker.compute_nav())
+            decision_mx = DecisionMatrix(nav=dm_nav, regime=cube_out.regime.value)
+            # GMTF + HMM (MacroEngine snapshot) → MACRO_REGIME gate
+            decision_mx.update_macro_context(macro_snap)
+            # Live book → Monte Carlo VaR/CVaR gate
+            try:
+                decision_mx.set_positions(self.broker.get_all_positions(), nav=dm_nav)
+            except Exception as e:
+                logger.warning("DecisionMatrix: could not load positions into MC gate: %s", e)
+            self._dm_vote_cache = {}
             proposals = []
             for ticker, weight in alpha_out.optimal_weights.items():
                 if weight < 0.01:
@@ -1942,26 +1951,58 @@ class ExecutionEngine:
                 if hasattr(self.ensemble, '_credit_scores') and self.ensemble._credit_scores:
                     cq_data = self.ensemble._credit_scores.get(ticker, {})
                     cq_score = cq_data.get("credit_quality_score", 0.5)
+                # 10-tier ML votes for the gates (cached for Stage 7)
+                tier_votes = {}
+                try:
+                    rets = get_returns(ticker, start=(
+                        pd.Timestamp.now() - pd.Timedelta(days=300)
+                    ).strftime("%Y-%m-%d"))
+                    if isinstance(rets, pd.DataFrame) and not rets.empty:
+                        v = self.ensemble.vote(ticker, rets.iloc[:, 0], alpha_signal=sig)
+                        tier_votes = dict(v.votes)
+                        self._dm_vote_cache[ticker] = (v, rets.iloc[:, 0])
+                except Exception as e:
+                    logger.debug("DecisionMatrix: vote for %s unavailable: %s", ticker, e)
+                try:
+                    price = float(self.broker._get_current_price(ticker))
+                except Exception:
+                    price = 0.0
+                alpha = sig.alpha_pred if sig else 0.0
                 proposals.append({
                     "ticker": ticker,
+                    "side": "long" if alpha >= 0 else "short",
                     "weight": weight,
-                    "alpha": sig.alpha_pred if sig else 0.0,
+                    "alpha_signal": alpha,
                     "quality_tier": sig.quality_tier if sig else "D",
+                    "sharpe": sig.sharpe_estimate if sig else 0.0,
+                    "volatility": (sig.vol if sig and sig.vol else 0.20),
+                    "momentum_5d": (sig.momentum_1m / 4.0) if sig else 0.0,
+                    "momentum_20d": sig.momentum_1m if sig else 0.0,
+                    "price": price if price > 0 else 1.0,
                     "regime": cube_out.regime.value,
-                    "conviction": weight * 2,
-                    "adv_ratio": 0.01,
                     "credit_quality_score": cq_score,
+                    "ml_tier_votes": tier_votes,
                 })
             dm_results = decision_mx.evaluate_batch(proposals)
             approved = [r for r in dm_results if r.get("approved", False)]
+            self._dm_sizing = {r["ticker"]: r.get("sizing", {}) for r in approved}
             result["stages"]["decision_matrix"] = {
                 "total_proposals": len(proposals),
                 "approved": len(approved),
                 "rejected": len(proposals) - len(approved),
                 "top_scores": [
-                    {"ticker": r["ticker"], "score": round(r.get("composite_score", 0), 4)}
+                    {"ticker": r["ticker"], "score": round(r.get("composite_score", 0), 4),
+                     "mc_var95": (r.get("mc_risk") or {}).get("var95_post"),
+                     "mc_prob_profit": (r.get("mc_risk") or {}).get("prob_profit")}
                     for r in dm_results[:5]
                 ],
+                "rejections": {r["ticker"]: r.get("rejection_reasons", [])[:3]
+                               for r in dm_results if not r.get("approved")},
+                "gmtf_score": getattr(macro_snap, "gmtf_score", None),
+                "gmtf_source": getattr(macro_snap, "gmtf_source", None),
+                "hmm_regime": getattr(macro_snap, "hmm_regime", None),
+                "mc_book_risk": (decision_mx.mc_gate.book_risk(dm_nav)
+                                 if decision_mx.mc_gate is not None else {}),
             }
             # Override alpha weights with decision matrix approved set
             dm_approved_tickers = {r["ticker"] for r in approved}
@@ -2114,24 +2155,26 @@ class ExecutionEngine:
             if weight < 0.01:
                 continue
 
-            # Get returns for voting
-            try:
-                rets = get_returns(ticker, start=(
-                    pd.Timestamp.now() - pd.Timedelta(days=300)
-                ).strftime("%Y-%m-%d"))
-                if isinstance(rets, pd.DataFrame) and not rets.empty:
-                    ticker_rets = rets.iloc[:, 0]
-                else:
+            # Vote (reuse the Stage 5.5 DecisionMatrix vote when available)
+            cached = getattr(self, "_dm_vote_cache", {}).get(ticker)
+            if cached is not None:
+                vote, ticker_rets = cached
+            else:
+                try:
+                    rets = get_returns(ticker, start=(
+                        pd.Timestamp.now() - pd.Timedelta(days=300)
+                    ).strftime("%Y-%m-%d"))
+                    if isinstance(rets, pd.DataFrame) and not rets.empty:
+                        ticker_rets = rets.iloc[:, 0]
+                    else:
+                        continue
+                except Exception as e:
+                    logger.warning("ML voting: get_returns failed for ticker=%s: %s", ticker, e)
                     continue
-            except Exception as e:
-                logger.warning("ML voting: get_returns failed for ticker=%s: %s", ticker, e)
-                continue
-
-            # Vote
-            vote = self.ensemble.vote(
-                ticker, ticker_rets,
-                alpha_signal=alpha_map.get(ticker),
-            )
+                vote = self.ensemble.vote(
+                    ticker, ticker_rets,
+                    alpha_signal=alpha_map.get(ticker),
+                )
 
             # Get allocation
             current_pos = self.broker.get_position(ticker)
@@ -2159,6 +2202,15 @@ class ExecutionEngine:
                 if allocation["quantity"] != original_qty:
                     logger.info(f"[{ticker}] HFT size adj: {original_qty}→{allocation['quantity']} "
                                 f"(mult={hft_mult:.2f})")
+
+            # DecisionMatrix full-Kelly + Monte Carlo VaR size is a ceiling on
+            # new buys (sells/exits are never capped by it).
+            dm_size = getattr(self, "_dm_sizing", {}).get(ticker, {})
+            dm_units = int(dm_size.get("adjusted_shares", 0) or 0)
+            if (dm_units > 0 and allocation.get("side") == OrderSide.BUY
+                    and allocation["quantity"] > dm_units):
+                logger.info(f"[{ticker}] DM Kelly/MC cap: {allocation['quantity']}→{dm_units}")
+                allocation["quantity"] = dm_units
 
             if allocation["side"] is None or allocation["quantity"] <= 0:
                 continue

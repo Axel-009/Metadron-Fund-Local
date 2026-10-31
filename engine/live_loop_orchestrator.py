@@ -73,6 +73,32 @@ except ImportError:
     DecisionMatrix = None
 
 try:
+    from .execution.position_protection import PositionProtection
+except ImportError:
+    PositionProtection = None
+
+try:
+    from .execution.event_tail_hedge import EventTailHedger, earnings_events_from_calendar
+except ImportError:
+    EventTailHedger = None
+    earnings_events_from_calendar = None
+
+try:
+    from .execution.conviction_override import OverrideManager
+except ImportError:
+    OverrideManager = None
+
+try:
+    from .risk.portfolio_mc_gate import get_shared_mc_gate
+except ImportError:
+    get_shared_mc_gate = None
+
+try:
+    from .risk.monte_carlo_risk import MonteCarloRiskEngine
+except ImportError:
+    MonteCarloRiskEngine = None
+
+try:
     from .allocation.allocation_engine import (
         AllocationEngine, AllocationRules, ScanSignal as AllocationScanSignal,
         BetaCorridorLevel as AllocBetaCorridorLevel,
@@ -319,6 +345,7 @@ class PhaseResult:
     data: dict = field(default_factory=dict)
     error: str = ""
     items_processed: int = 0
+    errors: List[str] = field(default_factory=list)
 
 
 @dataclass
@@ -544,7 +571,11 @@ class LiveLoopOrchestrator:
             ("metadron_cube", lambda: MetadronCube() if MetadronCube else None),
             ("security_analysis", lambda: SecurityAnalysisEngine() if SecurityAnalysisEngine else None),
             ("alpha_optimizer", lambda: AlphaOptimizer() if AlphaOptimizer else None),
-            ("decision_matrix", lambda: DecisionMatrix() if DecisionMatrix else None),
+            ("decision_matrix", lambda: DecisionMatrix(nav=self._initial_nav) if DecisionMatrix else None),
+            ("position_protection", lambda: PositionProtection() if PositionProtection else None),
+            ("event_hedger", lambda: EventTailHedger() if EventTailHedger else None),
+            ("conviction_override", lambda: OverrideManager(nav=self._initial_nav) if OverrideManager else None),
+            ("monte_carlo_risk", lambda: MonteCarloRiskEngine(n_simulations=500) if MonteCarloRiskEngine else None),
             ("allocation_engine", lambda: AllocationEngine() if AllocationEngine else None),
             ("universe_scan", lambda: FullUniverseScan(
                 allocation_engine=self._components.get("allocation_engine"),
@@ -741,6 +772,8 @@ class LiveLoopOrchestrator:
             logger.warning("KILL SWITCH ACTIVE — skipping execution phases")
             # Still run monitoring + learning for awareness
             result.risk_level = RiskLevel.KILL_SWITCH.value
+            # Protective exits are risk-reducing, so they still run
+            self._run_protection_safe(result)
             self._run_phase_safe(LoopPhase.LEARNING, self.run_learning_phase, result)
             self._run_phase_safe(LoopPhase.MONITORING, self.run_monitoring_phase, result)
             result.total_duration_ms = (time.monotonic() - t_start) * 1000
@@ -749,6 +782,11 @@ class LiveLoopOrchestrator:
 
         # Phase 1: DATA (every tick)
         self._run_phase_safe(LoopPhase.DATA, self.run_data_phase, result)
+
+        # Phase 1.5: PROTECTION (every tick) — drawdown protection on current
+        # positions, option expiries, conviction-override expiry/drawdown,
+        # and event tail hedges (earnings etc.)
+        self._run_protection_safe(result)
 
         # Phase 2: SIGNALS (1-min cadence)
         if self._should_run_cadence(self._last_signal_time, _SIGNAL_CADENCE):
@@ -938,7 +976,15 @@ class LiveLoopOrchestrator:
                 self._last_macro_snapshot = snap
                 ta["macro_regime"] = snap.regime.value if hasattr(snap, "regime") else str(snap)
                 ta["macro_vix"] = getattr(snap, "vix", 0.0)
+                ta["gmtf_score"] = round(float(getattr(snap, "gmtf_score", 0.0)), 4)
+                ta["gmtf_source"] = getattr(snap, "gmtf_source", "none")
+                ta["hmm_regime"] = getattr(snap, "hmm_regime", None)
+                ta["hmm_confidence"] = round(float(getattr(snap, "hmm_confidence", 0.0)), 3)
                 ta["signals"] += 1
+                # GMTF + HMM → DecisionMatrix MACRO_REGIME gate
+                dm_ctx = self._get("decision_matrix")
+                if dm_ctx is not None and hasattr(dm_ctx, "update_macro_context"):
+                    dm_ctx.update_macro_context(snap)
                 logger.info("Track A — Macro regime: %s  VIX: %.1f", ta["macro_regime"], ta["macro_vix"])
             except Exception as exc:
                 ta["macro_error"] = str(exc)
@@ -1436,6 +1482,36 @@ class LiveLoopOrchestrator:
                 pr.data["agent_error"] = str(exc)
                 logger.warning("SectorBots error: %s", exc)
 
+        # Monte Carlo risk research (hourly) → calibrates the shared MC gate
+        # used by DecisionMatrix and L7 gate G11
+        mcr = self._get("monte_carlo_risk")
+        last_mc = getattr(self, "_last_mc_research", None)
+        if mcr is not None and get_shared_mc_gate is not None and (
+                last_mc is None or (datetime.now() - last_mc).total_seconds() >= 3600):
+            try:
+                broker = self._get_broker()
+                nav = self._get_live_nav()
+                book = {}
+                if broker is not None:
+                    for tkr, pos in broker.get_all_positions().items():
+                        mv = float(getattr(pos, "market_value", 0.0) or 0.0)
+                        if mv:
+                            book[tkr] = mv
+                # also research the current alpha candidates (pre-trade calibration)
+                for sig in (getattr(self._last_alpha_output, "signals", []) or [])[:20]:
+                    t = getattr(sig, "ticker", "")
+                    if t and t not in book:
+                        book[t] = nav * 0.05
+                if book:
+                    report = mcr.compute_portfolio_risk(positions=book, portfolio_value=nav)
+                    n_cal = get_shared_mc_gate().ingest_research(report)
+                    pr.data["mc_research_calibrated"] = n_cal
+                    pr.data["mc_research_var95"] = round(float(getattr(report, "total_var_95", 0.0)), 2)
+                self._last_mc_research = datetime.now()
+            except Exception as exc:
+                pr.data["mc_research_error"] = str(exc)
+                logger.warning("MonteCarloRisk research failed: %s", exc)
+
         pr.items_processed = items
         pr.duration_ms = (time.monotonic() - t0) * 1000
         pr.success = True
@@ -1548,6 +1624,14 @@ class LiveLoopOrchestrator:
                 macro_snap = self._last_macro_snapshot
                 regime_str = str(getattr(macro_snap, "regime", "TRENDING")) if macro_snap else "TRENDING"
 
+                # Step 0 — live book + NAV into the DM Monte Carlo gate
+                broker = self._get_broker()
+                if broker is not None and hasattr(dm, "set_positions"):
+                    try:
+                        dm.set_positions(broker.get_all_positions(), nav=live_nav)
+                    except Exception as exc:
+                        logger.debug("DM set_positions failed: %s", exc)
+
                 # Step 1 — collect DecisionMatrix-approved signals
                 dm_approved_signals = []
                 for sig in signals[:30]:
@@ -1556,10 +1640,17 @@ class LiveLoopOrchestrator:
                         continue
                     try:
                         if hasattr(dm, "evaluate"):
+                            px = None
+                            if broker is not None and hasattr(broker, "_get_current_price"):
+                                try:
+                                    px = float(broker._get_current_price(ticker)) or None
+                                except Exception:
+                                    px = None
                             decision = dm.evaluate(
                                 signal=sig,
                                 cube_output=cube_out,
                                 macro_snapshot=macro_snap,
+                                price=px,
                             )
                         elif hasattr(dm, "score"):
                             decision = dm.score(sig)
@@ -1622,7 +1713,7 @@ class LiveLoopOrchestrator:
                             for pos in slate.positions:
                                 self._approved_trades.append({
                                     "ticker": pos.ticker,
-                                    "signal": _decision_map.get(pos.ticker),
+                                    "signal": next((s for t, s, _ in dm_approved_signals if t == pos.ticker), None),
                                     "decision": _decision_map.get(pos.ticker),
                                     "dollar_amount": pos.dollar_amount,
                                     "position_size": pos.position_size,
@@ -1724,6 +1815,117 @@ class LiveLoopOrchestrator:
         pr.success = True
         return pr
 
+    def _get_broker(self):
+        exec_engine = self._get("execution_engine")
+        if exec_engine is None:
+            return None
+        return getattr(exec_engine, "broker", None) or getattr(exec_engine, "_broker", None)
+
+    def _run_protection_safe(self, result) -> None:
+        try:
+            pr = self.run_protection_phase()
+            if isinstance(getattr(result, "phases", None), dict):
+                result.phases["protection"] = pr
+        except Exception as exc:
+            logger.warning("Protection phase failed: %s", exc)
+
+    def run_protection_phase(self) -> PhaseResult:
+        """Drawdown protection + expiries + event tail hedges on the live book."""
+        pr = PhaseResult(phase="protection", timestamp=datetime.now().isoformat())
+        t0 = time.monotonic()
+        broker = self._get_broker()
+        exec_engine = self._get("execution_engine")
+        if broker is None or exec_engine is None:
+            pr.data["skipped"] = "no broker"
+            pr.success = True
+            return pr
+        try:
+            positions = broker.get_all_positions()
+            nav = float(broker.compute_nav()) if hasattr(broker, "compute_nav") else self._get_live_nav()
+        except Exception as exc:
+            pr.errors.append(f"book: {exc}")
+            return pr
+        regime = str(getattr(self._last_macro_snapshot, "regime", "TRENDING")) if self._last_macro_snapshot else "TRENDING"
+
+        # 1) drawdown protection + expiries (+ conviction overrides)
+        prot = self._get("position_protection")
+        hedger = self._get("event_hedger")
+        if prot is not None:
+            if hedger is not None:
+                prot.hedge_tickers = {o.occ_symbol for o in getattr(hedger, "last_orders", [])}
+            actions = prot.evaluate(positions, nav, override_manager=self._get("conviction_override"))
+            pr.data["protection_actions"] = [a.to_dict() for a in actions]
+            for a in actions:
+                if a.action not in ("CLOSE", "REDUCE") or a.quantity <= 0:
+                    continue
+                try:
+                    exec_engine.l7_submit(
+                        ticker=a.ticker, side=a.side, quantity=a.quantity,
+                        signal_type="HOLD", regime=regime,
+                        product_type="OPTION" if a.is_option else None,
+                        reason=f"PROTECTION {a.rule}: {a.reason}",
+                    )
+                except Exception as exc:
+                    pr.errors.append(f"{a.ticker}: {exc}")
+
+        # 2) event tail hedges (earnings / binary events within the window)
+        if hedger is not None:
+            try:
+                events = list(self._collect_upcoming_events(positions))
+                vols = {}
+                for t in positions:
+                    st = getattr(self._last_alpha_output, "signals", []) if self._last_alpha_output else []
+                    for sig in st:
+                        if getattr(sig, "ticker", "") == t and getattr(sig, "vol", 0):
+                            vols[t] = float(sig.vol)
+                orders = hedger.build(positions, nav, events, vols=vols)
+                pr.data["event_hedges"] = [o.to_dict() for o in orders]
+                for o in orders:
+                    try:
+                        exec_engine.l7_submit(
+                            ticker=o.underlying, side="BUY", quantity=o.contracts,
+                            signal_type="HOLD", regime=regime, product_type="OPTION",
+                            option_type=o.option_type, strike=o.strike, expiry=o.expiry,
+                            limit_price=round(o.est_premium, 2),
+                            reason=f"EVENT TAIL HEDGE: {o.reason}", is_hedge=True,
+                            min_size_exception=(o.contracts == 1),
+                        )
+                    except Exception as exc:
+                        pr.errors.append(f"hedge {o.underlying}: {exc}")
+            except Exception as exc:
+                pr.errors.append(f"event hedger: {exc}")
+
+        pr.duration_ms = (time.monotonic() - t0) * 1000
+        pr.success = not pr.errors
+        return pr
+
+    def _collect_upcoming_events(self, positions: dict):
+        """Upcoming events for held tickers: OpenBB earnings calendar (cached
+        hourly) + forward-dated catalysts in the EventDrivenEngine catalog."""
+        now = datetime.now()
+        cache = getattr(self, "_earnings_cache", None)
+        if cache is None or (now - cache[0]).total_seconds() > 3600:
+            cal_events = []
+            try:
+                from .data.openbb_data import get_earnings_calendar
+                df = get_earnings_calendar(start=now.strftime("%Y-%m-%d"),
+                                           end=(now + timedelta(days=10)).strftime("%Y-%m-%d"))
+                if earnings_events_from_calendar is not None:
+                    cal_events = earnings_events_from_calendar(df)
+            except Exception as exc:
+                logger.debug("Earnings calendar unavailable: %s", exc)
+            self._earnings_cache = (now, cal_events)
+        held = {t.upper() for t in positions}
+        for ev in self._earnings_cache[1]:
+            if ev["ticker"] in held:
+                yield ev
+        ede = self._get("event_driven")
+        for ev in getattr(ede, "events", []) or []:
+            d = ev.get("event_date") or ev.get("expected_date") or ev.get("date")
+            if d and str(ev.get("ticker", "")).upper() in held:
+                yield {"ticker": ev["ticker"], "date": str(d)[:10],
+                       "type": getattr(ev.get("type"), "value", ev.get("type", "CATALYST"))}
+
     def run_execution_phase(self) -> PhaseResult:
         """Phase 5: Order execution.
 
@@ -1769,10 +1971,17 @@ class LiveLoopOrchestrator:
                     if not ticker:
                         continue
 
-                    # Determine side + quantity from signal
+                    # Determine side + quantity: DecisionMatrix Kelly/MC sizing
+                    # when present, else the legacy weight-based quantity.
                     alpha_pred = getattr(signal, "alpha_pred", 0.0)
                     weight = getattr(signal, "weight", 0.0)
-                    qty = max(1, int(abs(weight) * 100)) if weight != 0 else 1
+                    dec = trade.get("decision") if isinstance(trade.get("decision"), dict) else {}
+                    sizing = dec.get("sizing") or {}
+                    min_exc = bool(sizing.get("cap_exception", False))
+                    if int(sizing.get("adjusted_shares", 0) or 0) > 0:
+                        qty = int(sizing["adjusted_shares"])
+                    else:
+                        qty = max(1, int(abs(weight) * 100)) if weight != 0 else 1
 
                     if trade_type == "options":
                         side = "BUY" if alpha_pred >= 0 else "SELL"
@@ -1780,6 +1989,7 @@ class LiveLoopOrchestrator:
                             ticker=ticker, side=side, quantity=qty,
                             signal_type=getattr(signal, "signal_type", "HOLD"),
                             regime=regime, product_type="OPTION",
+                            min_size_exception=min_exc,
                         )
                     elif trade_type == "beta_hedge":
                         action = getattr(signal, "action", "HOLD")

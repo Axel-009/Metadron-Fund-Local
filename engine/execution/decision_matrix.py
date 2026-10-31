@@ -17,10 +17,25 @@ AlphaBetaUnleashed (Dataset 1) — 1-minute cadence beta management:
     target_beta = corridor_fn(Rm_adjusted) * 4.7 * vol_adj
     MES_hedge_beta = target_beta - sleeve_beta
 
-KellySizer — aggressive Kelly criterion position sizing.
+Hard risk checks applied to every trade that passes the 4 gates:
+    5. SPREAD           Asset-aware bid/ask limit (equity/ETF bps, option % of mid,
+                        futures bps). Options without a two-sided quote are skipped.
+    6. MONTE CARLO      PortfolioMCGate: 1-day portfolio VaR95 ≤ 1.5% NAV and
+                        CVaR95 ≤ 2.5% NAV with the trade added (size scaled down
+                        until it fits), plus per-instrument P(profit) and
+                        positive expected P&L over the holding horizon.
+
+GMTF + HMM: the MACRO_REGIME gate blends the MetadronCube regime with the
+fitted Gaussian-HMM regime probabilities and the GMTF monetary-tension score
+(see MacroEngine), when the proposal/snapshot carries them.
+
+KellySizer — full (1×) Kelly criterion position sizing, with a 1-contract
+minimum exception for options whose single-contract premium exceeds the
+position cap.
 """
 
 import logging
+import math
 import numpy as np
 from dataclasses import dataclass, field
 from typing import Optional, Dict, List, Tuple
@@ -31,6 +46,19 @@ from ..portfolio.beta_corridor import (
     EXECUTION_MULTIPLIER, BETA_MAX, BETA_INV,
     R_LOW, R_HIGH, ALPHA as CORRIDOR_ALPHA, VOL_STANDARD,
 )
+
+try:
+    from ..risk.portfolio_mc_gate import (
+        PortfolioMCGate, get_shared_mc_gate,
+        MC_VAR95_MAX, MC_CVAR95_MAX, MC_PROB_PROFIT_MIN,
+    )
+except Exception:  # pragma: no cover — degraded mode, rule 8
+    PortfolioMCGate = None
+    get_shared_mc_gate = None
+    MC_VAR95_MAX = 0.015
+    MC_CVAR95_MAX = 0.025
+    MC_PROB_PROFIT_MIN = {"EQUITY": 0.52, "ETF": 0.52, "FUTURE": 0.52,
+                          "OPTION_LONG": 0.25, "OPTION_SHORT": 0.65}
 
 logger = logging.getLogger("metadron.decision.decision_matrix")
 
@@ -46,8 +74,17 @@ MAX_SECTOR_PCT = 0.35                 # 35% max sector
 MAX_LEVERAGE = 3.0                    # Regime-dependent cap
 CORRELATION_LIMIT = 0.80              # Reject if corr > 0.80 with existing
 MIN_COMPOSITE_SCORE = 0.55            # Minimum composite to approve (raised from 0.45 — more gate scrutiny)
-ADV_MIN_RATIO = 0.01                  # Trade size < 1% of ADV
-SPREAD_MAX_BPS = 30.0                 # Max acceptable spread
+
+# Bid/ask spread limits (hard check). Basis points do not work for options:
+# a $0.05-wide quote on a $0.50 option is 1,000 bps but perfectly tradeable,
+# so options are judged on spread as a fraction of the mid price.
+SPREAD_MAX_BPS = 30.0                 # Equities / ETFs: (ask-bid)/mid ≤ 30 bps
+OPTION_SPREAD_MAX_PCT = 0.10          # Options: (ask-bid)/mid ≤ 10%
+FUTURE_SPREAD_MAX_BPS = 5.0           # Futures: ≤ 5 bps (≈1-2 ticks on index futures)
+
+# Kelly sizing
+KELLY_MULTIPLIER = 1.0                # Full (1×) Kelly
+CONTRACT_MULTIPLIER = 100             # Equity option contract size
 
 # Gate definitions
 GATE_CONFIGS = {
@@ -57,9 +94,22 @@ GATE_CONFIGS = {
     "MOMENTUM":            {"weight": 0.20, "threshold": 0.35},
 }
 
-# MC risk bounds
-MC_VAR95_MAX = 0.05           # 5% max VaR95 for portfolio
-MC_PROB_PROFIT_MIN = 0.40     # Must have >= 40% profit probability
+# MLVoteEnsemble — 10 tiers. Canonical keys are exactly what
+# MLVoteEnsemble.vote() emits (engine/execution/execution_engine.py).
+ML_TIER_KEYS = (
+    "T1_neural", "T2_momentum", "T3_vol_regime", "T4_monte_carlo", "T5_quality",
+    "T6_social", "T7_distress", "T8_event", "T9_cvr", "T10_credit_quality",
+)
+# Older aliases some callers still send → canonical key
+_ML_TIER_ALIASES = {
+    "T6_miro": "T6_social", "T7_distressed": "T7_distress",
+    "T10_credit": "T10_credit_quality",
+}
+
+# MC risk bounds are defined in engine/risk/portfolio_mc_gate.py (imported above):
+#   MC_VAR95_MAX = 1.5% NAV (1-day), MC_CVAR95_MAX = 2.5% NAV (1-day),
+#   MC_PROB_PROFIT_MIN per instrument (equity/ETF/future 52%, long option 25%,
+#   short option 65%) plus expected P&L > 0.
 
 # Quality tier -> score mapping (from AlphaOptimizer)
 QUALITY_TIER_SCORES = {
@@ -108,68 +158,52 @@ class DecisionGate:
 # KellySizer
 # ---------------------------------------------------------------------------
 class KellySizer:
-    """Kelly criterion position sizing with half-Kelly multiplier.
+    """Full (1×) Kelly criterion position sizing.
 
     Standard Kelly: f* = (p * b - q) / b
         p = win probability
         b = win/loss ratio
         q = 1 - p
 
-    Capped at MAX_SINGLE_POSITION_PCT of NAV.
+    Sizing = f* × KELLY_MULTIPLIER (1.0) × vol adjustment, capped at
+    MAX_SINGLE_POSITION_PCT of NAV.
+
+    1-contract exception (options only): when one contract's premium
+    (premium × 100) is larger than the capped dollar budget, the size would
+    round down to 0 contracts. If Kelly is positive (there is an edge), the
+    size is set to exactly 1 contract instead and ``cap_exception`` is
+    flagged. It is never more than 1 contract, and the trade still has to
+    pass the Monte Carlo VaR/CVaR gate.
     """
 
     def __init__(self, max_position_pct: float = MAX_SINGLE_POSITION_PCT,
-                 default_multiplier: float = 1.5):
+                 default_multiplier: float = KELLY_MULTIPLIER):
         self.max_position_pct = max_position_pct
         self.default_multiplier = default_multiplier
         self._sizing_history: List[dict] = []
 
     @staticmethod
     def kelly_fraction(win_prob: float, win_loss_ratio: float) -> float:
-        """Compute standard Kelly fraction.
-
-        Parameters
-        ----------
-        win_prob : float
-            Probability of winning (0-1).
-        win_loss_ratio : float
-            Average win / average loss (positive).
-
-        Returns
-        -------
-        float
-            Kelly fraction (can be negative => don't trade).
-        """
+        """Compute standard Kelly fraction (0 when there is no edge)."""
         if win_loss_ratio <= 0:
             return 0.0
         q = 1.0 - win_prob
         f = (win_prob * win_loss_ratio - q) / win_loss_ratio
         return max(f, 0.0)
 
-    def aggressive_kelly(self, kelly_f: float,
-                         multiplier: float = None) -> float:
-        """Scale Kelly fraction aggressively for 95%+ alpha pursuit.
-
-        Parameters
-        ----------
-        kelly_f : float
-            Standard Kelly fraction.
-        multiplier : float, optional
-            Scaling factor (default 1.5x).
-
-        Returns
-        -------
-        float
-            Aggressive Kelly fraction, capped at max_position_pct.
-        """
+    def full_kelly(self, kelly_f: float, multiplier: float = None) -> float:
+        """Kelly fraction × multiplier (default 1.0 = full Kelly), capped."""
         if multiplier is None:
             multiplier = self.default_multiplier
-        aggressive = kelly_f * multiplier
-        return min(aggressive, self.max_position_pct)
+        return min(kelly_f * multiplier, self.max_position_pct)
+
+    # Backward-compatible name (was 1.5× "aggressive" Kelly; now 1×)
+    aggressive_kelly = full_kelly
 
     def compute_size(self, nav: float, conviction: float,
-                     volatility: float, price: float = 1.0) -> dict:
-        """Compute position size in shares and dollar amount.
+                     volatility: float, price: float = 1.0,
+                     contract_multiplier: int = 1) -> dict:
+        """Compute position size in units (shares or contracts).
 
         Parameters
         ----------
@@ -178,56 +212,62 @@ class KellySizer:
         conviction : float
             Conviction score (0-1) used as win_prob proxy.
         volatility : float
-            Annualised volatility of the instrument.
+            Annualised volatility of the instrument (underlying for options).
         price : float
-            Current price per share.
+            Price per share, or option premium per share for options.
+        contract_multiplier : int
+            1 for shares/ETFs, 100 for equity options.
 
         Returns
         -------
         dict
-            keys: kelly_f, aggressive_f, dollar_amount, shares,
-                  pct_of_nav, vol_scaled
+            kelly_f, full_kelly_f, final_fraction, dollar_amount, shares
+            (units), contracts, unit_cost, pct_of_nav, cap_exception.
         """
-        # Win probability from conviction; win/loss from inverse vol
         win_prob = np.clip(conviction, 0.01, 0.99)
         vol_daily = volatility / np.sqrt(TRADING_DAYS) if volatility > 0 else 0.01
-        # Win/loss ratio: higher for lower vol instruments
         win_loss_ratio = max(1.0 / (vol_daily * 10.0), 0.5)
 
         kelly_f = self.kelly_fraction(win_prob, win_loss_ratio)
-        agg_f = self.aggressive_kelly(kelly_f)
+        full_f = self.full_kelly(kelly_f)
 
-        # Vol-scale: reduce size when vol is high
         vol_adj = VOL_STANDARD / max(volatility, 0.01)
         vol_adj = np.clip(vol_adj, 0.3, 2.0)
-        final_f = agg_f * vol_adj
+        final_f = min(full_f * vol_adj, self.max_position_pct)
 
-        # Cap at max position
-        final_f = min(final_f, self.max_position_pct)
-
-        dollar_amount = nav * final_f
-        shares = int(dollar_amount / price) if price > 0 else 0
-        dollar_amount = shares * price  # round to whole shares
+        unit_cost = price * max(contract_multiplier, 1)
+        budget = nav * final_f
+        units = int(budget / unit_cost) if unit_cost > 0 else 0
+        cap_exception = False
+        if units == 0 and contract_multiplier > 1 and kelly_f > 0 and unit_cost > 0:
+            units = 1                      # 1-contract minimum exception
+            cap_exception = True
+        dollar_amount = units * unit_cost
 
         result = {
             "kelly_f": round(kelly_f, 6),
-            "aggressive_f": round(agg_f, 6),
-            "vol_adjustment": round(vol_adj, 4),
-            "final_fraction": round(final_f, 6),
+            "full_kelly_f": round(full_f, 6),
+            "aggressive_f": round(full_f, 6),   # legacy key
+            "vol_adjustment": round(float(vol_adj), 4),
+            "final_fraction": round(float(final_f), 6),
             "dollar_amount": round(dollar_amount, 2),
-            "shares": shares,
-            "pct_of_nav": round(final_f * 100, 2),
+            "shares": units,
+            "contracts": units if contract_multiplier > 1 else 0,
+            "unit_cost": round(unit_cost, 4),
+            "pct_of_nav": round((dollar_amount / nav * 100) if nav > 0 else 0.0, 2),
             "price": price,
+            "cap_exception": cap_exception,
         }
+        if cap_exception:
+            result["cap_exception_note"] = (
+                f"1 contract (${unit_cost:,.2f}) exceeds the "
+                f"{final_f:.2%} NAV cap (${budget:,.2f}); minimum-1-contract exception"
+            )
         self._sizing_history.append({
             "timestamp": datetime.now().isoformat(),
             **result,
         })
         return result
-
-    def half_kelly(self, kelly_f: float) -> float:
-        """Conservative half-Kelly for uncertain environments."""
-        return min(kelly_f * 0.5, self.max_position_pct)
 
     def get_history(self) -> List[dict]:
         """Return sizing history."""
@@ -442,7 +482,7 @@ class DecisionMatrix:
 
     Combines all upstream signals (AlphaOptimizer, MetadronCube, MacroEngine,
     ML ensemble) into a unified execution decision.  Each trade must pass
-    through six weighted gates.  Composite score determines approval and
+    through four weighted gates, then the spread + Monte Carlo risk checks.  Composite score determines approval and
     priority ranking.
 
     Parameters
@@ -460,7 +500,9 @@ class DecisionMatrix:
     def __init__(self, nav: float = 1_000.0,
                  regime: str = "RANGE",
                  max_leverage: float = MAX_LEVERAGE,
-                 min_composite: float = MIN_COMPOSITE_SCORE):
+                 min_composite: float = MIN_COMPOSITE_SCORE,
+                 mc_gate: Optional["PortfolioMCGate"] = None,
+                 enforce_risk_checks: bool = True):
         self.nav = nav
         self.regime = regime.upper()
         self.max_leverage = max_leverage
@@ -469,6 +511,22 @@ class DecisionMatrix:
         # Sub-components
         self.kelly_sizer = KellySizer()
         self.alpha_beta = AlphaBetaUnleashed()
+
+        # Hard risk checks (spread + Monte Carlo) after the 4 gates
+        self.enforce_risk_checks = enforce_risk_checks
+        if mc_gate is not None:
+            self.mc_gate = mc_gate
+        elif get_shared_mc_gate is not None:
+            self.mc_gate = get_shared_mc_gate()
+        else:
+            self.mc_gate = None
+
+        # Macro context: GMTF tension + HMM regime probabilities
+        # (pushed by update_macro_context() from the MacroEngine snapshot)
+        self._gmtf_score: Optional[float] = None
+        self._hmm_regime: Optional[str] = None
+        self._hmm_probs: Optional[Dict[str, float]] = None
+        self._hmm_confidence: float = 0.0
 
         # Portfolio state tracking
         self._current_var: float = 0.0
@@ -510,13 +568,13 @@ class DecisionMatrix:
         edge_score = np.clip(edge_bps / 50.0, 0.0, 1.0)
         credit_score = np.clip(credit_quality, 0.0, 1.0)
 
-        # MLVoteEnsemble tiers: T1 Neural, T5 Quality, T7 Distressed, T9 CVR, T10 Credit
-        tier_votes = proposal.get("ml_tier_votes", {})
+        # MLVoteEnsemble tiers: T1 Neural, T5 Quality, T7 Distress, T9 CVR, T10 Credit Quality
+        tier_votes = self._tier_votes(proposal)
         t1 = np.clip((tier_votes.get("T1_neural", 0) + 1) / 2.0, 0, 1)
         t5 = np.clip((tier_votes.get("T5_quality", 0) + 1) / 2.0, 0, 1)
-        t7 = np.clip((tier_votes.get("T7_distressed", 0) + 1) / 2.0, 0, 1)
+        t7 = np.clip((tier_votes.get("T7_distress", 0) + 1) / 2.0, 0, 1)
         t9 = np.clip((tier_votes.get("T9_cvr", 0) + 1) / 2.0, 0, 1)
-        t10 = np.clip((tier_votes.get("T10_credit", 0) + 1) / 2.0, 0, 1)
+        t10 = np.clip((tier_votes.get("T10_credit_quality", 0) + 1) / 2.0, 0, 1)
         ensemble_score = (t1 * 0.20 + t5 * 0.30 + t7 * 0.15 + t9 * 0.15 + t10 * 0.20)
 
         # Regime quality modifier: stricter in STRESS/CRASH
@@ -538,7 +596,7 @@ class DecisionMatrix:
         """Gate 2 (20%): Flow/Headlines — ETF flow, news sentiment, sector rotation.
 
         MLVoteEnsemble tiers feeding this gate:
-            T6 MiroMomentum (News+AgentSim), T8 EventDriven
+            T6 Social (MiroFish agent sim + news), T8 EventDriven
         """
         cfg = GATE_CONFIGS["FLOW_HEADLINES"]
         gate = DecisionGate(
@@ -552,9 +610,9 @@ class DecisionMatrix:
         etf_flow = proposal.get("etf_flow_score", 0.5)
         sector_rotation = proposal.get("sector_rotation_score", 0.5)
 
-        # MLVoteEnsemble tiers: T6 MiroMomentum, T8 EventDriven
-        tier_votes = proposal.get("ml_tier_votes", {})
-        t6 = np.clip((tier_votes.get("T6_miro", 0) + 1) / 2.0, 0, 1)
+        # MLVoteEnsemble tiers: T6 Social, T8 EventDriven
+        tier_votes = self._tier_votes(proposal)
+        t6 = np.clip((tier_votes.get("T6_social", 0) + 1) / 2.0, 0, 1)
         t8 = np.clip((tier_votes.get("T8_event", 0) + 1) / 2.0, 0, 1)
         ensemble_score = t6 * 0.60 + t8 * 0.40
 
@@ -582,8 +640,30 @@ class DecisionMatrix:
         )
 
         side = proposal.get("side", "long").lower()
+        side = "short" if side in ("short", "sell", "sell_short") else "long"
         regime_scores = REGIME_ALIGNMENT_MAP.get(self.regime, {"long": 0.5, "short": 0.5})
-        direction_score = regime_scores.get(side, 0.5)
+        cube_direction = regime_scores.get(side, 0.5)
+
+        # HMM: probability-weighted alignment across the 4 fitted regimes.
+        hmm_probs = proposal.get("hmm_probs") or self._hmm_probs
+        hmm_direction = None
+        if hmm_probs:
+            tot = sum(float(p) for p in hmm_probs.values()) or 1.0
+            hmm_direction = sum(
+                float(p) / tot * REGIME_ALIGNMENT_MAP.get(str(r).upper(), {"long": 0.5, "short": 0.5})[side]
+                for r, p in hmm_probs.items()
+            )
+            direction_score = 0.5 * cube_direction + 0.5 * hmm_direction
+        else:
+            direction_score = cube_direction
+
+        # GMTF: monetary tension 0 (easy) … 1 (extreme tension).
+        # High tension penalises new longs, supports shorts/hedges.
+        gmtf = proposal.get("gmtf_score", self._gmtf_score)
+        gmtf_score = None
+        if gmtf is not None:
+            g = float(np.clip(gmtf, 0.0, 1.0))
+            gmtf_score = (1.0 - g) if side == "long" else g
 
         position_pct = proposal.get("position_pct", 0.05)
         position_vol = proposal.get("volatility", 0.20)
@@ -600,14 +680,22 @@ class DecisionMatrix:
             dd_score = max(0.0, 1.0 - (self._current_drawdown - 0.10) / 0.15)
 
         # MLVoteEnsemble tiers: T3 VolRegime, T4 MonteCarlo
-        tier_votes = proposal.get("ml_tier_votes", {})
+        tier_votes = self._tier_votes(proposal)
         t3 = np.clip((tier_votes.get("T3_vol_regime", 0) + 1) / 2.0, 0, 1)
         t4 = np.clip((tier_votes.get("T4_monte_carlo", 0) + 1) / 2.0, 0, 1)
         ensemble_score = t3 * 0.50 + t4 * 0.50
 
-        gate.score = (0.30 * direction_score + 0.20 * var_score +
-                      0.15 * dd_score + 0.35 * ensemble_score)
-        gate.details = (f"Regime={self.regime} Dir={side}={direction_score:.2f} "
+        if gmtf_score is None:
+            gate.score = (0.30 * direction_score + 0.20 * var_score +
+                          0.15 * dd_score + 0.35 * ensemble_score)
+        else:
+            gate.score = (0.25 * direction_score + 0.15 * gmtf_score +
+                          0.15 * var_score + 0.15 * dd_score + 0.30 * ensemble_score)
+        hmm_txt = (f" HMM={self._hmm_regime or 'probs'}:{hmm_direction:.2f}"
+                   if hmm_direction is not None else " HMM=n/a")
+        gmtf_txt = f" GMTF={float(gmtf):.2f}" if gmtf is not None else " GMTF=n/a"
+        gate.details = (f"Regime={self.regime} Dir={side}={direction_score:.2f}"
+                        f"{hmm_txt}{gmtf_txt} "
                         f"VaR={total_var:.4f} DD={self._current_drawdown:.2%} "
                         f"T3+T4={ensemble_score:.2f}")
         gate.evaluate()
@@ -661,7 +749,7 @@ class DecisionMatrix:
         mom_score = np.clip((mom + 0.05) / 0.10, 0.0, 1.0)
 
         # MLVoteEnsemble tiers: T1 Neural (direction), T2 Momentum
-        tier_votes = proposal.get("ml_tier_votes", {})
+        tier_votes = self._tier_votes(proposal)
         t1 = np.clip((tier_votes.get("T1_neural", 0) + 1) / 2.0, 0, 1)
         t2 = np.clip((tier_votes.get("T2_momentum", 0) + 1) / 2.0, 0, 1)
         ensemble_score = t1 * 0.40 + t2 * 0.60
@@ -738,6 +826,48 @@ class DecisionMatrix:
                 rejection_reasons.append(
                     f"{g.gate_name}: {g.score:.3f} < {g.pass_threshold:.3f}")
 
+        # -- Hard risk checks on gate-approved trades -------------------------
+        spread_info: dict = {}
+        sizing: dict = {}
+        mc_info: dict = {}
+        if approved and self.enforce_risk_checks:
+            spread_ok, spread_info = self.check_spread(trade_proposal)
+            if not spread_ok:
+                approved = False
+                rejection_reasons.append(spread_info.get("detail", "SPREAD: failed"))
+
+        if approved and self.enforce_risk_checks:
+            sizing_input = dict(trade_proposal)
+            sizing_input["composite_score"] = composite
+            sizing = self.get_position_sizing(sizing_input)
+            units = int(sizing.get("adjusted_shares", 0))
+            if units <= 0:
+                approved = False
+                if sizing.get("kelly_f", 0) > 0:
+                    rejection_reasons.append(
+                        f"SIZING: 1 unit (${sizing.get('unit_cost', 0):,.2f}) exceeds the "
+                        f"position cap at NAV ${self.nav:,.0f}")
+                else:
+                    rejection_reasons.append("SIZING: Kelly size is 0 (no edge)")
+            elif self.mc_gate is not None:
+                mc_trade = dict(trade_proposal)
+                if spread_info.get("spread_frac") is not None:
+                    mc_trade["spread_frac"] = spread_info["spread_frac"]
+                if self._is_option(trade_proposal):
+                    mc_trade.setdefault("premium", sizing.get("price", 0.0))
+                fitted, mc_res = self.mc_gate.size_to_fit(mc_trade, units, self.nav, min_units=1)
+                mc_info = mc_res.to_dict()
+                if fitted <= 0:
+                    approved = False
+                    rejection_reasons.extend(mc_res.reasons or ["MC: rejected"])
+                elif fitted < units:
+                    unit_cost = sizing.get("unit_cost", sizing.get("price", 0.0))
+                    sizing["mc_scaled_from"] = units
+                    sizing["adjusted_shares"] = fitted
+                    sizing["adjusted_dollars"] = round(fitted * unit_cost, 2)
+                    if self._is_option(trade_proposal):
+                        sizing["contracts"] = fitted
+
         if approved:
             self._approved_count += 1
         else:
@@ -751,6 +881,9 @@ class DecisionMatrix:
             "gate_results": gates,
             "gate_scores": {g.gate_name: round(g.score, 4) for g in gates},
             "rejection_reasons": rejection_reasons,
+            "spread_check": spread_info,
+            "sizing": sizing,
+            "mc_risk": mc_info,
             "timestamp": datetime.now().isoformat(),
         }
 
@@ -763,6 +896,126 @@ class DecisionMatrix:
         })
 
         return result
+
+    # -- Hard risk checks ------------------------------------------------------
+    @staticmethod
+    def _is_option(proposal: dict) -> bool:
+        it = str(proposal.get("instrument_type", proposal.get("instrument", ""))).upper()
+        return it in ("OPTION", "OPTIONS")
+
+    @staticmethod
+    def _instrument(proposal: dict) -> str:
+        it = str(proposal.get("instrument_type", proposal.get("instrument", "EQUITY"))).upper()
+        if it in ("OPTION", "OPTIONS"):
+            return "OPTION"
+        if it in ("FUTURE", "FUTURES"):
+            return "FUTURE"
+        return "ETF" if it == "ETF" else "EQUITY"
+
+    def check_spread(self, proposal: dict) -> Tuple[bool, dict]:
+        """Asset-aware bid/ask spread check.
+
+        Uses bid/ask when present, else ``spread_bps`` (equity/futures) or
+        ``spread_pct`` (options, fraction of mid).
+            EQUITY / ETF : ≤ SPREAD_MAX_BPS (30 bps)
+            OPTION       : ≤ OPTION_SPREAD_MAX_PCT (10% of mid); a missing or
+                           one-sided quote is rejected ("partial data = skip")
+            FUTURE       : ≤ FUTURE_SPREAD_MAX_BPS (5 bps)
+        Equities/ETFs/futures without any quote data pass but are flagged
+        ``verified=False``.
+        """
+        inst = self._instrument(proposal)
+        bid = proposal.get("bid")
+        ask = proposal.get("ask")
+        frac = None
+        if bid is not None and ask is not None:
+            try:
+                bid, ask = float(bid), float(ask)
+            except (TypeError, ValueError):
+                bid = ask = None
+            if bid is not None and bid > 0 and ask >= bid:
+                mid = 0.5 * (bid + ask)
+                frac = (ask - bid) / mid if mid > 0 else None
+            elif inst == "OPTION":
+                return False, {"instrument": inst, "verified": False,
+                               "detail": f"SPREAD: one-sided/invalid option quote bid={bid} ask={ask}"}
+        if frac is None:
+            if inst == "OPTION" and proposal.get("spread_pct") is not None:
+                frac = float(proposal["spread_pct"])
+            elif proposal.get("spread_bps") is not None and inst != "OPTION":
+                frac = float(proposal["spread_bps"]) / 10_000.0
+
+        if inst == "OPTION":
+            limit = OPTION_SPREAD_MAX_PCT
+        elif inst == "FUTURE":
+            limit = FUTURE_SPREAD_MAX_BPS / 10_000.0
+        else:
+            limit = SPREAD_MAX_BPS / 10_000.0
+
+        if frac is None:
+            if inst == "OPTION":
+                return False, {"instrument": inst, "verified": False,
+                               "detail": "SPREAD: no option quote — skipped"}
+            return True, {"instrument": inst, "verified": False, "limit": limit,
+                          "detail": "SPREAD: no quote data (unverified)"}
+
+        ok = frac <= limit
+        unit = "%" if inst == "OPTION" else "bps"
+        shown = (f"{frac:.1%}" if unit == "%" else f"{frac * 1e4:.1f}bps")
+        shown_lim = (f"{limit:.0%}" if unit == "%" else f"{limit * 1e4:.0f}bps")
+        return ok, {
+            "instrument": inst, "verified": True, "spread_frac": frac, "limit": limit,
+            "detail": (f"SPREAD: {shown} ≤ {shown_lim}" if ok
+                       else f"SPREAD: {shown} > {shown_lim} limit ({inst})"),
+        }
+
+    @staticmethod
+    def _tier_votes(proposal: dict) -> Dict[str, float]:
+        """ML tier votes keyed by the canonical 10-tier names (aliases mapped)."""
+        raw = proposal.get("ml_tier_votes") or {}
+        votes: Dict[str, float] = {}
+        for k, v in raw.items():
+            votes[_ML_TIER_ALIASES.get(k, k)] = v
+        return votes
+
+    # -- Context from upstream engines -------------------------------------------
+    def update_macro_context(self, macro_snapshot=None, gmtf_score: Optional[float] = None,
+                             hmm_regime: Optional[str] = None,
+                             hmm_probs: Optional[Dict[str, float]] = None,
+                             hmm_confidence: Optional[float] = None):
+        """Push GMTF + HMM state (from MacroEngine) into the MACRO_REGIME gate."""
+        if macro_snapshot is not None:
+            src = getattr(macro_snapshot, "gmtf_source", "")
+            if gmtf_score is None and src == "gmtf":
+                gmtf_score = getattr(macro_snapshot, "gmtf_score", None)
+            hmm_regime = hmm_regime or getattr(macro_snapshot, "hmm_regime", None)
+            hmm_probs = hmm_probs or getattr(macro_snapshot, "hmm_probs", None)
+            if hmm_confidence is None:
+                hmm_confidence = getattr(macro_snapshot, "hmm_confidence", None)
+        if gmtf_score is not None:
+            self._gmtf_score = float(gmtf_score)
+        if hmm_probs:
+            self._hmm_probs = dict(hmm_probs)
+            self._hmm_regime = hmm_regime
+            self._hmm_confidence = float(hmm_confidence or 0.0)
+
+    def set_positions(self, positions: dict, nav: Optional[float] = None):
+        """Load the live book into the Monte Carlo gate."""
+        if nav is not None:
+            self.nav = nav
+        if self.mc_gate is not None:
+            self.mc_gate.set_holdings_from_positions(positions, self.nav)
+
+    def evaluate(self, signal=None, cube_output=None, macro_snapshot=None,
+                 **extra) -> dict:
+        """Adapter used by the live loop: AlphaSignal + context → evaluate_trade."""
+        if cube_output is not None and getattr(cube_output, "regime", None) is not None:
+            reg = cube_output.regime
+            self.update_regime(getattr(reg, "value", str(reg)))
+        if macro_snapshot is not None:
+            self.update_macro_context(macro_snapshot)
+        proposal = signal_to_proposal(signal, **extra)
+        return self.evaluate_trade(proposal)
 
     def evaluate_batch(self, proposals: List[dict]) -> List[dict]:
         """Evaluate multiple trade proposals and rank by composite score.
@@ -812,15 +1065,26 @@ class DecisionMatrix:
             nav = self.nav
 
         conviction = approved_trade.get("composite_score", 0.5)
-        volatility = approved_trade.get("volatility", 0.20)
-        price = approved_trade.get("price", 1.0)
+        volatility = approved_trade.get("volatility", 0.20) or 0.20
+        is_option = self._is_option(approved_trade)
+        if is_option:
+            # price = option premium per share; 1 contract = premium × 100
+            price = float(approved_trade.get("premium", approved_trade.get("price", 0.0)) or 0.0)
+            if price <= 0 and approved_trade.get("bid") and approved_trade.get("ask"):
+                price = 0.5 * (float(approved_trade["bid"]) + float(approved_trade["ask"]))
+            multiplier = CONTRACT_MULTIPLIER
+        else:
+            price = float(approved_trade.get("price", 1.0) or 1.0)
+            multiplier = 1
 
         sizing = self.kelly_sizer.compute_size(
             nav=nav,
             conviction=conviction,
             volatility=volatility,
             price=price,
+            contract_multiplier=multiplier,
         )
+        unit_cost = price * multiplier
 
         # Apply conviction tier multiplier
         conviction_tier = approved_trade.get("conviction_tier", "NONE")
@@ -831,16 +1095,26 @@ class DecisionMatrix:
         tier_mult = tier_multipliers.get(conviction_tier, 1.0)
 
         adjusted_shares = int(sizing["shares"] * tier_mult)
-        adjusted_dollars = adjusted_shares * price
+        adjusted_dollars = adjusted_shares * unit_cost
 
-        # Ensure we don't exceed max position
+        # Ensure we don't exceed max position (1-contract exception survives)
         max_dollars = nav * MAX_SINGLE_POSITION_PCT
         if adjusted_dollars > max_dollars:
-            adjusted_dollars = max_dollars
-            adjusted_shares = int(adjusted_dollars / price) if price > 0 else 0
+            adjusted_shares = int(max_dollars / unit_cost) if unit_cost > 0 else 0
+            if adjusted_shares == 0 and is_option and sizing.get("kelly_f", 0) > 0:
+                adjusted_shares = 1
+                sizing["cap_exception"] = True
+                sizing.setdefault(
+                    "cap_exception_note",
+                    f"1 contract (${unit_cost:,.2f}) exceeds the "
+                    f"{MAX_SINGLE_POSITION_PCT:.0%} NAV cap; minimum-1-contract exception")
+            adjusted_dollars = adjusted_shares * unit_cost
 
         sizing["adjusted_shares"] = adjusted_shares
         sizing["adjusted_dollars"] = round(adjusted_dollars, 2)
+        if is_option:
+            sizing["contracts"] = adjusted_shares
+        sizing["instrument"] = "OPTION" if is_option else "EQUITY"
         sizing["conviction_tier"] = conviction_tier
         sizing["tier_multiplier"] = tier_mult
         sizing["ticker"] = approved_trade.get("ticker", "UNKNOWN")
@@ -1020,20 +1294,20 @@ class DecisionMatrix:
             lines.append("")
             lines.append("  APPROVED TRADES (by composite score):")
             lines.append(f"  {'#':>3}  {'Ticker':<8} {'Side':<6} {'Score':>7}  "
-                         f"{'Alpha':>7} {'Regime':>7} {'Risk':>7} "
-                         f"{'Conv':>7} {'Mom':>7} {'Liq':>7}")
+                         f"{'Fund':>7} {'Flow':>7} {'Macro':>7} "
+                         f"{'Mom':>7} {'VaR95':>7} {'P(win)':>7}")
             lines.append("  " + "-" * 74)
             for i, r in enumerate(approved, 1):
                 gs = r.get("gate_scores", {})
                 lines.append(
                     f"  {i:>3}  {r['ticker']:<8} {r['side']:<6} "
                     f"{r['composite_score']:>7.3f}  "
-                    f"{gs.get('ALPHA_QUALITY', 0):>7.3f} "
-                    f"{gs.get('REGIME_ALIGNMENT', 0):>7.3f} "
-                    f"{gs.get('RISK_BUDGET', 0):>7.3f} "
-                    f"{gs.get('CONVICTION_SCORE', 0):>7.3f} "
-                    f"{gs.get('MOMENTUM_CONFIRM', 0):>7.3f} "
-                    f"{gs.get('LIQUIDITY_CHECK', 0):>7.3f}"
+                    f"{gs.get('FUNDAMENTALS', 0):>7.3f} "
+                    f"{gs.get('FLOW_HEADLINES', 0):>7.3f} "
+                    f"{gs.get('MACRO_REGIME', 0):>7.3f} "
+                    f"{gs.get('MOMENTUM', 0):>7.3f} "
+                    f"{(r.get('mc_risk') or {}).get('var95_post', 0):>7.2%} "
+                    f"{(r.get('mc_risk') or {}).get('prob_profit', 0):>7.0%}"
                 )
 
         # Rejected trades
@@ -1121,6 +1395,33 @@ class DecisionMatrix:
 # ---------------------------------------------------------------------------
 # Standalone helpers
 # ---------------------------------------------------------------------------
+def signal_to_proposal(signal=None, **extra) -> dict:
+    """Build a DecisionMatrix proposal from an AlphaSignal-like object or dict."""
+    if isinstance(signal, dict):
+        p = dict(signal)
+    else:
+        p = {}
+        if signal is not None:
+            alpha = float(getattr(signal, "alpha_pred", 0.0) or 0.0)
+            p = {
+                "ticker": getattr(signal, "ticker", "UNKNOWN"),
+                "side": "long" if alpha >= 0 else "short",
+                "alpha_signal": alpha,
+                "quality_tier": getattr(signal, "quality_tier", "D"),
+                "sharpe": float(getattr(signal, "sharpe_estimate", 0.0) or 0.0),
+                "momentum_5d": float(getattr(signal, "momentum_1m", 0.0) or 0.0) / 4.0,
+                "momentum_20d": float(getattr(signal, "momentum_1m", 0.0) or 0.0),
+                "volatility": float(getattr(signal, "vol", 0.0) or 0.0) or 0.20,
+                "weight": float(getattr(signal, "weight", 0.0) or 0.0),
+            }
+    # legacy key aliases used by older callers
+    if "alpha_signal" not in p and "alpha" in p:
+        p["alpha_signal"] = p["alpha"]
+    p.update({k: v for k, v in extra.items() if v is not None})
+    p.setdefault("side", "long")
+    return p
+
+
 def build_trade_proposal(ticker: str, side: str = "long",
                          sharpe: float = 0.0,
                          quality_tier: str = "D",
@@ -1215,10 +1516,10 @@ def _self_test():
     ks = KellySizer()
     kf = ks.kelly_fraction(0.60, 2.0)
     akf = ks.aggressive_kelly(kf)
-    sz = ks.compute_size(nav=1_000, conviction=0.75, volatility=0.20, price=150.0)
+    sz = ks.compute_size(nav=100_000, conviction=0.75, volatility=0.20, price=150.0)
     print(f"\n  Kelly fraction (p=0.60, b=2.0): {kf:.4f}")
-    print(f"  Aggressive Kelly (1.5x):        {akf:.4f}")
-    print(f"  Size for $1k NAV, 75% conv:     {sz['shares']} shares "
+    print(f"  Full Kelly (1.0x):              {akf:.4f}")
+    print(f"  Size for $100k NAV, 75% conv:     {sz['shares']} shares "
           f"(${sz['dollar_amount']:,.2f})")
 
     # 2. AlphaBetaUnleashed
@@ -1230,7 +1531,7 @@ def _self_test():
           f"({hedge['urgency']})")
 
     # 3. DecisionMatrix — single trade
-    dm = DecisionMatrix(nav=1_000, regime="TRENDING")
+    dm = DecisionMatrix(nav=100_000, regime="TRENDING")
     strong_trade = build_trade_proposal(
         ticker="NVDA", side="long",
         sharpe=2.5, quality_tier="A", alpha_signal=0.05, edge_bps=35,
@@ -1279,13 +1580,13 @@ def _self_test():
         adv=3_000_000, spread_bps=2.0, market_cap=3e12, price=400.0,
         sector="Technology",
     )]
-    results, report = batch_evaluate(batch, nav=1_000, regime="TRENDING")
+    results, report = batch_evaluate(batch, nav=100_000, regime="TRENDING")
     print(report)
 
     # 6. Position sizing
     for r in results:
         if r["approved"]:
-            sizing = dm.get_position_sizing(r, nav=1_000)
+            sizing = dm.get_position_sizing(r, nav=100_000)
             print(f"\n  Sizing for {sizing['ticker']}: "
                   f"{sizing['adjusted_shares']} shares "
                   f"(${sizing['adjusted_dollars']:,.2f})")

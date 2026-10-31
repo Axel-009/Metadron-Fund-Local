@@ -1474,17 +1474,38 @@ class InvestmentPlatformOrchestrator:
             except Exception as e:
                 logger.debug("BetaCorridor: %s", e)
 
-        # Step 9: Monte Carlo risk check
+        # Step 9: Monte Carlo risk (research) → shared PortfolioMCGate
+        # The research run calibrates per-ticker vol + tail thickness; the same
+        # gate is then used by DecisionMatrix (pre-trade) and L7 gate G11.
         if self.monte_carlo_risk:
             try:
-                risk_report = self.monte_carlo_risk.simulate_portfolio(
-                    tickers=self._universe[:30],
-                    num_simulations=5000,
+                positions: dict = {}
+                nav = 0.0
+                broker = getattr(self.execution_engine, "broker", None)
+                if broker is not None:
+                    nav = float(broker.compute_nav())
+                    for tkr, pos in broker.get_all_positions().items():
+                        mv = float(getattr(pos, "market_value", 0.0) or 0.0)
+                        if mv:
+                            positions[tkr] = mv
+                if not positions:
+                    # No live book: research the top of the universe equal-weight
+                    universe = list(self._universe[:30])
+                    nav = nav or 1_000_000.0
+                    positions = {t: nav / max(len(universe), 1) for t in universe}
+                risk_report = self.monte_carlo_risk.compute_portfolio_risk(
+                    positions=positions, portfolio_value=nav or sum(abs(v) for v in positions.values()),
                 )
-                logger.info("MonteCarloRisk: completed %d sims", 5000)
                 signals['monte_carlo_risk'] = risk_report
+                try:
+                    from engine.risk.portfolio_mc_gate import get_shared_mc_gate
+                    n_cal = get_shared_mc_gate().ingest_research(risk_report)
+                    logger.info("MonteCarloRisk: %d positions researched, %d calibrated into MC gate",
+                                len(positions), n_cal)
+                except Exception as e:
+                    logger.warning("MC gate calibration failed: %s", e)
             except Exception as e:
-                logger.debug("MonteCarloRisk: %s", e)
+                logger.warning("MonteCarloRisk failed: %s", e)
 
         # Step 10: Options pricing (if options engine available)
         if self.options_engine:

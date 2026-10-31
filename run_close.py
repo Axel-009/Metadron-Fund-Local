@@ -166,9 +166,13 @@ def main():
 
     # Conviction Override audit
     try:
-        from engine.execution.conviction_override import ConvictionOverrideManager
-        override_mgr = ConvictionOverrideManager()
-        print(override_mgr.print_audit_trail())
+        from engine.execution.conviction_override import OverrideManager
+        override_mgr = OverrideManager()
+        expired = override_mgr.check_expiries()
+        summary = override_mgr.get_summary()
+        print(f"  Conviction overrides: {summary}")
+        if expired:
+            print(f"  Expired today: {[o.ticker for o in expired]}")
         print()
     except Exception as e:
         print(f"  Conviction override: {e}")

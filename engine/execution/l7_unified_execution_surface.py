@@ -103,6 +103,22 @@ logger = logging.getLogger("metadron.execution.l7")
 # Enums
 # ---------------------------------------------------------------------------
 
+try:
+    from ..risk.portfolio_mc_gate import get_shared_mc_gate as _get_mc_gate
+except Exception:  # degraded mode — G11 skipped
+    _get_mc_gate = None
+
+
+def _dte_from_expiry(expiry: str) -> float:
+    """Calendar days to an expiry 'YYYY-MM-DD' (7 if unknown)."""
+    try:
+        from datetime import date as _date
+        y, m, d = (int(x) for x in str(expiry)[:10].split("-"))
+        return float(max((_date(y, m, d) - _date.today()).days, 0))
+    except Exception:
+        return 7.0
+
+
 class ProductType(str, Enum):
     """Tradeable product types routed through L7."""
     EQUITY = "EQUITY"
@@ -148,6 +164,9 @@ class L7Order:
     expiry: str = ""           # YYYY-MM-DD
     # Futures-specific
     contract: str = ""         # ES, NQ, VX, ZN, etc.
+    # Risk flags
+    min_size_exception: bool = False   # 1-contract minimum exception (premium > position cap)
+    is_hedge: bool = False             # protective/tail hedge order
     # Execution results
     fill_price: float = 0.0
     fill_quantity: int = 0
@@ -187,6 +206,7 @@ class L7Order:
             "timing_cost_bps": self.timing_cost_bps,
             "option_type": self.option_type, "strike": self.strike,
             "expiry": self.expiry, "contract": self.contract,
+            "min_size_exception": self.min_size_exception, "is_hedge": self.is_hedge,
         }
 
 
@@ -638,6 +658,13 @@ class L7RiskEngine:
         G8: Cash sufficiency for buys
         G9: Options delta exposure ≤ 20% NAV (new)
         G10: Futures notional ≤ 50% NAV (new)
+        G11: Monte Carlo portfolio 1-day VaR95 ≤ 1.5% NAV and CVaR95 ≤ 2.5% NAV
+             with the order added (shared PortfolioMCGate; risk-reducing
+             orders always pass)
+
+    A 1-contract option order flagged ``min_size_exception`` (single-contract
+    premium above the position cap) is exempt from G1 only; it must still
+    pass G11.
     """
 
     # Gate limits
@@ -652,6 +679,8 @@ class L7RiskEngine:
         "G8_CASH":            0.0,    # must have cash for buys
         "G9_OPTIONS_DELTA":   0.20,   # 20% NAV
         "G10_FUTURES_NOTIONAL": 0.50, # 50% NAV
+        "G11_MC_VAR95":       0.015,  # 1.5% NAV 1-day (PortfolioMCGate)
+        "G11_MC_CVAR95":      0.025,  # 2.5% NAV 1-day
     }
 
     def __init__(self, initial_nav: float = 1_000.0):
@@ -669,6 +698,7 @@ class L7RiskEngine:
         # Options/futures specific
         self._options_delta_exposure: float = 0.0
         self._futures_notional: float = 0.0
+        self._last_mc_check: dict = {}
 
     def reset_daily(self, nav: float):
         """Reset daily counters at market open."""
@@ -698,6 +728,16 @@ class L7RiskEngine:
         if today != self._last_reset_date:
             self.reset_daily(nav)
 
+        # Position-reducing orders (stops, drawdown protection, expiry closes)
+        # must never be blocked by the loss / drawdown / leverage gates that
+        # exist to stop NEW risk — otherwise a 3% down day would lock the
+        # book and prevent the exits that cut the loss.
+        held = positions.get(order.ticker) if positions else None
+        held_qty = int(getattr(held, "quantity", 0) or 0) if held is not None else 0
+        if ((order.side == "SELL" and held_qty > 0 and order.quantity <= held_qty) or
+                (order.side == "COVER" and held_qty < 0 and order.quantity <= abs(held_qty))):
+            return True, []
+
         # G1: Single position limit
         if nav > 0:
             existing_value = 0.0
@@ -706,7 +746,9 @@ class L7RiskEngine:
                 existing_value = abs(getattr(pos, 'market_value', 0) or
                                     getattr(pos, 'quantity', 0) * getattr(pos, 'current_price', 0))
             new_pct = (existing_value + order_value) / nav
-            if new_pct > self.LIMITS["G1_POSITION"]:
+            exempt = (order.min_size_exception and order.quantity == 1
+                      and order.product_type == ProductType.OPTION)
+            if new_pct > self.LIMITS["G1_POSITION"] and not exempt:
                 violations.append(
                     f"G1_POSITION: {order.ticker} would be {new_pct:.1%} of NAV "
                     f"(limit {self.LIMITS['G1_POSITION']:.0%})"
@@ -783,6 +825,31 @@ class L7RiskEngine:
                     f"G10_FUTURES_NOTIONAL: futures {new_notional/nav:.1%} exceeds "
                     f"{self.LIMITS['G10_FUTURES_NOTIONAL']:.0%}"
                 )
+
+        # G11: Monte Carlo portfolio VaR / CVaR with the order added
+        if _get_mc_gate is not None and nav > 0 and order.quantity > 0:
+            try:
+                gate = _get_mc_gate()
+                gate.set_holdings_from_positions(positions, nav)
+                opt_fields = {}
+                if order.product_type == ProductType.OPTION:
+                    opt_fields = {
+                        "option_type": (order.option_type or "CALL").lower(),
+                        "strike": order.strike,
+                        "underlying_price": order.arrival_price or order.strike,
+                        "dte": _dte_from_expiry(order.expiry),
+                    }
+                ptype = order.product_type.value if isinstance(order.product_type, ProductType) else str(order.product_type)
+                mc = gate.check_order(
+                    order.ticker, order.side, order.quantity,
+                    order.limit_price or order.arrival_price or 100.0, nav,
+                    product_type="OPTION" if ptype == "OPTION" else ptype, **opt_fields,
+                )
+                self._last_mc_check = mc.to_dict()
+                if not mc.passed:
+                    violations.append("G11_MC: " + "; ".join(mc.reasons))
+            except Exception as exc:  # never let the risk model crash execution
+                logger.warning("G11 MC check unavailable: %s", exc)
 
         if violations:
             self._gate_violations.append({
@@ -1470,6 +1537,8 @@ class L7UnifiedExecutionSurface:
         daily_vol: float = 0.02,
         kill_switch: bool = False,
         reason: str = "",
+        min_size_exception: bool = False,
+        is_hedge: bool = False,
     ) -> L7Order:
         """Submit a unified order through the L7 execution surface.
 
@@ -1491,6 +1560,7 @@ class L7UnifiedExecutionSurface:
             signal_type=signal_type, limit_price=limit_price,
             option_type=option_type, strike=strike, expiry=expiry,
             contract=contract, reason=reason,
+            min_size_exception=min_size_exception, is_hedge=is_hedge,
         )
 
         # 1. Research-only guard

@@ -113,6 +113,16 @@ class MacroSnapshot:
     gmtf_score: float = 0.0
     money_velocity_signal: float = 0.0
     cube_regime: CubeRegime = CubeRegime.RANGE
+    # GMTF provenance: "gmtf" = real 4-gamma tension percentile (0..1);
+    # "liquidity_proxy" = fallback liquidity score; "none" = not computed
+    gmtf_source: str = "none"
+    gmtf_raw: float = 0.0
+    gmtf_gammas: dict = field(default_factory=dict)
+    gmtf_currencies: list = field(default_factory=list)
+    # Gaussian-HMM regime (MarkovRegimeBridge), fitted on SPY/VIX/credit
+    hmm_regime: Optional[str] = None
+    hmm_confidence: float = 0.0
+    hmm_probs: dict = field(default_factory=dict)
 
 
 @dataclass
@@ -181,14 +191,18 @@ def compute_gmtf(
     currencies = SDR_WEIGHTS.index.tolist()
     dates = m2.index
 
-    # GDP growth proxy
-    gdp_growth = gdp.pct_change().fillna(0.0001)
+    # Year-over-year growth on the monthly panel (1-period change if the
+    # history is too short). Levels must NOT be fed to the liquidity gamma:
+    # it compares M2 growth with 2× GDP growth.
+    lag = 12 if len(m2) > 24 else 1
+    gdp_growth = gdp.pct_change(lag).fillna(0.0001)
+    m2_growth = m2.pct_change(lag).fillna(0.0)
 
     # Base impact: theta
     base_theta = (m2 / gdp) * (1 + unemp) * gdp_growth
 
     # Non-linear triggers
-    gl, gfx, gw, gs = compute_gammas(m2, gdp_growth, unemp, fx, rates)
+    gl, gfx, gw, gs = compute_gammas(m2_growth, gdp_growth, unemp, fx, rates)
 
     # Apply multipliers
     triggered_theta = base_theta * gl * gw
@@ -217,6 +231,59 @@ def compute_gmtf(
         gamma_wage=float(gw.mean().mean()) if hasattr(gw, "mean") else 1.0,
         gamma_reserve=float(gs.mean()) if hasattr(gs, "mean") else 1.0,
     )
+
+
+# FRED series per SDR currency: (M2/M3 money, real GDP, unemployment %, 3M rate %)
+GMTF_FRED_SERIES = {
+    "USD": ("M2SL", "GDPC1", "UNRATE", "TB3MS"),
+    "EUR": ("MABMM301EZM189S", "CLVMNACSCAB1GQEA19", "LRHUTTTTEZM156S", "IR3TIB01EZM156N"),
+    "JPY": ("MABMM301JPM189S", "JPNRGDPEXP", "LRUN64TTJPM156S", "IR3TIB01JPM156N"),
+    "GBP": ("MABMM301GBM189S", "NGDPRSAXDCGBQ", "LRHUTTTTGBM156S", "IR3TIB01GBM156N"),
+    "CNY": ("MYAGM2CNM189N", "CHNGDPNQDSMEI", "LRUN64TTCNQ156S", "IR3TIB01CNM156N"),
+}
+
+
+def build_gmtf_inputs(start: str = "2005-01-01", fetch=None) -> Optional[dict]:
+    """Assemble the monthly GMTF input panel from FRED (via OpenBB).
+
+    Money and GDP are indexed to 1.0 at the start of each currency's history
+    (so ratios are comparable across currencies); unemployment and rates are
+    converted from percent to decimals. A currency is included only if all
+    four series are available. Returns None when USD cannot be built.
+    """
+    if fetch is None:
+        try:
+            from ..data.openbb_data import get_fred_series as fetch
+        except Exception:
+            return None
+    cols: dict = {"m2": {}, "gdp": {}, "unemp": {}, "rates": {}}
+    for ccy, ids in GMTF_FRED_SERIES.items():
+        try:
+            df = fetch(list(ids), start=start)
+        except Exception as exc:
+            logger.debug("GMTF fetch %s failed: %s", ccy, exc)
+            continue
+        if df is None or getattr(df, "empty", True) or not all(i in df.columns for i in ids):
+            continue
+        df.index = pd.to_datetime(df.index)
+        monthly = df[list(ids)].resample("ME").last().ffill().dropna()
+        if len(monthly) < 24:
+            continue
+        money, gdp, unemp, rate = (monthly[i] for i in ids)
+        cols["m2"][ccy] = money / money.iloc[0]
+        cols["gdp"][ccy] = gdp / gdp.iloc[0]
+        cols["unemp"][ccy] = unemp / 100.0
+        cols["rates"][ccy] = rate / 100.0
+    if "USD" not in cols["m2"]:
+        return None
+    frames = {k: pd.DataFrame(v).dropna() for k, v in cols.items()}
+    idx = frames["m2"].index
+    for k in frames:
+        idx = idx.intersection(frames[k].index)
+    frames = {k: v.loc[idx] for k, v in frames.items()}
+    # No reliable monthly reserve-share series → reserve gamma uses its 57% default
+    frames["fx"] = pd.DataFrame(index=idx)
+    return frames
 
 
 # ---------------------------------------------------------------------------
@@ -1926,6 +1993,10 @@ class FedReserveIntegration:
         self._fed_assets: float = fed_assets or live.get("assets", self._DEFAULT_ASSETS)
         self._rrp: float = rrp or live.get("rrp", self._DEFAULT_RRP)
         self._tga: float = tga or live.get("tga", self._DEFAULT_TGA)
+        self._prev_net_liquidity: float = self._compute_raw_net_liquidity()
+        self._net_liquidity: float = self._prev_net_liquidity
+        self._liquidity_impulse: float = 0.0
+        self._history: list[dict] = []
 
     @staticmethod
     def _fetch_live_fed_data() -> dict:
@@ -1970,10 +2041,6 @@ class FedReserveIntegration:
         except Exception as e:
             logger.debug("Fed live data fetch failed: %s — using defaults", e)
         return result
-        self._prev_net_liquidity: float = self._compute_raw_net_liquidity()
-        self._net_liquidity: float = self._prev_net_liquidity
-        self._liquidity_impulse: float = 0.0
-        self._history: list[dict] = []
 
     def _compute_raw_net_liquidity(self) -> float:
         """Internal: compute net liquidity from current state."""
@@ -2100,6 +2167,12 @@ class MacroEngine:
         self._credit_monitor = CreditPulseMonitor()
         self._feature_builder = MacroFeatureBuilder()
         self._macro_data: Optional[pd.DataFrame] = None
+        # GMTF (monthly FRED data → recompute at most once per day)
+        self._gmtf_output: Optional[GMTFOutput] = None
+        self._gmtf_date = None
+        # Gaussian HMM regime model (refit once per day)
+        self._hmm = None
+        self._hmm_fit_date = None
 
     def analyze(self, lookback_days: int = 252) -> MacroSnapshot:
         """Run full macro analysis using OpenBB data."""
@@ -2159,6 +2232,12 @@ class MacroEngine:
             # --- Enhanced analysis ---
             # Money velocity
             self._compute_money_velocity(macro, snapshot)
+
+            # GMTF — Global Monetary Tension Framework (4 gammas, FRED data)
+            self._compute_gmtf(snapshot)
+
+            # HMM regime (fitted Gaussian HMM on SPY / VIX / credit)
+            self._compute_hmm_regime(macro, snapshot)
 
             # Credit pulse
             self._compute_credit_pulse(macro)
@@ -2307,10 +2386,86 @@ class MacroEngine:
                 yield_spread=snapshot.yield_spread,
             )
             snapshot.money_velocity_signal = self._money_velocity.velocity_change
+            # Fallback only — replaced by the real GMTF in _compute_gmtf()
             snapshot.gmtf_score = liq_score / 100.0  # Normalise to 0-1
+            snapshot.gmtf_source = "liquidity_proxy"
 
         except Exception:
             pass
+
+    def _compute_gmtf(self, snapshot: MacroSnapshot, inputs: Optional[dict] = None) -> None:
+        """Run the real GMTF and put its tension percentile on the snapshot.
+
+        gmtf_score = percentile rank (0..1) of today's smoothed SDR-weighted
+        tension within its own history: 0 = loosest, 1 = tightest on record.
+        Leaves the liquidity-proxy value in place (gmtf_source stays
+        "liquidity_proxy") when FRED data is unavailable.
+        """
+        try:
+            today = pd.Timestamp.now().normalize()
+            out = self._gmtf_output if (inputs is None and self._gmtf_date == today) else None
+            if out is None:
+                inputs = inputs if inputs is not None else build_gmtf_inputs()
+                if not inputs:
+                    return
+                out = compute_gmtf(inputs["m2"], inputs["gdp"], inputs["unemp"],
+                                   inputs["fx"], inputs["rates"])
+                out.ctv_ratios = None
+                self._gmtf_output, self._gmtf_date = out, today
+                self._gmtf_currencies = list(inputs["m2"].columns)
+            series = out.gmtf_smoothed.replace([np.inf, -np.inf], np.nan).dropna()
+            if len(series) < 12:
+                return
+            latest = float(series.iloc[-1])
+            snapshot.gmtf_raw = latest
+            snapshot.gmtf_score = float((series <= latest).mean())
+            snapshot.gmtf_source = "gmtf"
+            snapshot.gmtf_currencies = list(getattr(self, "_gmtf_currencies", []))
+            snapshot.gmtf_gammas = {
+                "liquidity": round(out.gamma_liquidity, 4),
+                "fx_shock": round(out.gamma_fx, 4),
+                "wage": round(out.gamma_wage, 4),
+                "reserve": round(out.gamma_reserve, 4),
+            }
+        except Exception as exc:
+            logger.warning("GMTF computation failed (liquidity proxy kept): %s", exc)
+
+    def _compute_hmm_regime(self, macro: pd.DataFrame, snapshot: MacroSnapshot) -> None:
+        """Fit (daily) and apply the Gaussian HMM regime model."""
+        try:
+            if "S&P 500" not in macro.columns:
+                return
+            from ..ml.bridges.markov_regime_bridge import MarkovRegimeBridge, REGIME_NAMES
+            X = self._hmm_features(macro)
+            if X is None or len(X) < 60:
+                return
+            today = pd.Timestamp.now().normalize()
+            if self._hmm is None or self._hmm_fit_date != today or not self._hmm.fitted:
+                bridge = MarkovRegimeBridge(n_regimes=4)
+                cols = [X[:, i] for i in range(X.shape[1])]
+                fit = bridge.fit(cols[0], cols[1], vix=cols[2] if X.shape[1] > 2 else None)
+                if "error" in fit:
+                    logger.debug("HMM fit skipped: %s", fit["error"])
+                self._hmm, self._hmm_fit_date = bridge, today
+            pred = self._hmm.predict_regime_sequence(X[-60:])
+            snapshot.hmm_regime = pred.regime
+            snapshot.hmm_confidence = float(pred.confidence)
+            snapshot.hmm_probs = {r: round(float(p), 4)
+                                  for r, p in zip(REGIME_NAMES, pred.state_probabilities)}
+        except Exception as exc:
+            logger.warning("HMM regime failed: %s", exc)
+
+    @staticmethod
+    def _hmm_features(macro: pd.DataFrame) -> Optional[np.ndarray]:
+        """[daily return, 20d realised vol (daily), VIX/100] rows, NaNs dropped."""
+        spy = macro["S&P 500"].astype(float)
+        ret = spy.pct_change()
+        vol = ret.rolling(20).std()
+        feats = [ret, vol]
+        if "VIX" in macro.columns:
+            feats.append(macro["VIX"].astype(float) / 100.0)
+        df = pd.concat(feats, axis=1).dropna()
+        return df.values if len(df) else None
 
     def _compute_credit_pulse(self, macro: pd.DataFrame) -> None:
         """Run credit pulse monitor on latest data."""
