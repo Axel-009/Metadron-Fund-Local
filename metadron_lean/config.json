@@ -1,9 +1,9 @@
 {
     "algorithm-language": "Python",
-    "description": "Metadron Capital - clean LEAN build. Step 1: smart-beta corridor overlay on SPY.",
+    "description": "Metadron Capital - clean LEAN build. Step 2a: smart-beta corridor v2 (rf 4%, 0 below 7%, Kelly ramp, 4.5x cap) on MES futures.",
     "parameters": {
-        "vol_mode": "linear",
-        "leverage_cap": "2.0",
+        "kelly_fraction": "1.0",
+        "beta_instrument": "MES",
         "rm_lookback": "252",
         "rm_smoothing": "0.10"
     }

@@ -1,16 +1,30 @@
-"""Smart-beta corridor — canonical implementation.
+"""Smart-beta corridor — canonical implementation (v2, owner-approved).
 
-Definition (see CLAUDE.md "Smart Beta — corridor derivation"):
+Leverage on market beta (see CLAUDE.md "Smart Beta"):
 
-    t        = clip((Rm − R_LOW) / (R_HIGH − R_LOW), 0, 1)
-    β(Rm)    = BETA_LOW + SPAN · (3t² − 2t³)                smooth S-curve
-    γ(Rm)    = dβ/dRm = SPAN · 6t(1 − t) / (R_HIGH − R_LOW) flattened bell (corridor gamma)
-    leverage = β · EXECUTION_MULTIPLIER · vol_scale(σ_m)
+    L(Rm, σm) = k · s(Rm) · (Rm − rf) / σm²          capped at MAX_GROSS_LEVERAGE (4.5)
 
-Endpoints come from the Merton rule β = (Rm − h)/(λσ²) evaluated at the corridor edges:
-λσ² = 0.1101, h = 7.32% (λ ≈ 4.89 at σ = 15%).
+    Rm    expected annualised S&P 500 return
+    rf    risk-free rate (4%)
+    σm    current annualised market volatility
+    k     share of full Kelly (1.0 = full Kelly)
+    s(Rm) corridor participation weight, a smoothstep:
+              t = clip((Rm − 7%) / 5%, 0, 1),   s = 3t² − 2t³
+    (Rm − rf)/σm²   the "gamma market": volatility-adjusted full-Kelly leverage
 
-Pure Python + math only, so the same file runs in QuantConnect, locally and in tests.
+Zones:
+    Rm < 7%      DEFENSIVE  s = 0  → no long market beta (shorts / hedges only)
+    7% ≤ Rm ≤ 12% DYNAMIC   s rises 0 → 1 smoothly → leverage ramps in
+    Rm > 12%     ROTATION   s = 1  → full vol-adjusted Kelly leverage + active rotation,
+                            up to the 4.5x gross cap
+
+Corridor gamma (the flattened bell) = ds/dRm = 6t(1 − t)/5%: zero outside the corridor,
+peak 30 per unit Rm (0.30 per 1%) at 9.5%, area 1.
+
+Legacy (v1) identifiers β = −0.029 … 0.425 (Merton with λσ² = 0.1101, h = 7.32%) are kept
+below for reference only — they no longer drive leverage.
+
+Pure Python + math only: runs unchanged on QuantConnect, locally and in tests.
 """
 
 from __future__ import annotations
@@ -19,82 +33,92 @@ import math
 from dataclasses import dataclass
 
 # --- corridor constants (single source of truth) -----------------------------
-R_LOW = 0.07                     # S&P 500 historical earnings-return floor
+R_LOW = 0.07                     # S&P 500 historical earnings-return floor (annualised)
 R_HIGH = 0.12                    # ... ceiling
-BETA_LOW = -0.029                # β at R_LOW
-BETA_HIGH = 0.425                # β at R_HIGH
-SPAN = BETA_HIGH - BETA_LOW      # 0.454
-EXECUTION_MULTIPLIER = 4.7       # β → leverage
-SIGMA_STD = 0.15                 # thesis standard volatility
+RISK_FREE = 0.04                 # hurdle for the gamma market
+KELLY_FRACTION = 1.0             # k — share of full Kelly
+MAX_GROSS_LEVERAGE = 4.5         # owner-set hard cap
+SIGMA_STD = 0.15                 # thesis standard volatility (reference / charts)
 THROTTLE = 0.05                  # rebalance only if |Δleverage| exceeds this
+MIN_SIGMA = 0.05                 # floor on σm to avoid division blow-ups
 
-# Merton parameters implied by the endpoints
-LAMBDA_SIGMA2 = (R_HIGH - R_LOW) / SPAN               # 0.1101
-HURDLE = R_LOW - BETA_LOW * LAMBDA_SIGMA2             # 0.0732
+ZONE_DEFENSIVE = "DEFENSIVE"     # Rm < 7%
+ZONE_DYNAMIC = "DYNAMIC"         # 7% ≤ Rm ≤ 12%
+ZONE_ROTATION = "ROTATION"       # Rm > 12%
 
-
-def risk_aversion(sigma: float = SIGMA_STD) -> float:
-    """λ implied by the corridor for a given volatility (only λσ² is identified)."""
-    return LAMBDA_SIGMA2 / (sigma * sigma)
+# --- legacy v1 identifiers (reference only) ----------------------------------
+LEGACY_BETA_LOW = -0.029
+LEGACY_BETA_HIGH = 0.425
+LEGACY_LAMBDA_SIGMA2 = (R_HIGH - R_LOW) / (LEGACY_BETA_HIGH - LEGACY_BETA_LOW)   # 0.1101
+LEGACY_HURDLE = R_LOW - LEGACY_BETA_LOW * LEGACY_LAMBDA_SIGMA2                    # 0.0732
 
 
 def _t(rm: float) -> float:
     return min(max((rm - R_LOW) / (R_HIGH - R_LOW), 0.0), 1.0)
 
 
-def corridor_beta(rm: float) -> float:
-    """Smooth corridor beta β(Rm): −0.029 at ≤7%, 0.198 at 9.5%, 0.425 at ≥12%."""
+def participation(rm: float) -> float:
+    """Corridor participation weight s(Rm): 0 below 7%, smooth S-curve, 1 above 12%."""
     t = _t(rm)
-    return BETA_LOW + SPAN * (3 * t * t - 2 * t * t * t)
+    return 3 * t * t - 2 * t * t * t
 
 
 def corridor_gamma(rm: float) -> float:
-    """Corridor gamma γ = dβ/dRm per unit of Rm (peak 13.62 at 9.5%; ×0.01 for 'per 1%')."""
+    """Corridor gamma ds/dRm per unit of Rm — the flattened bell (peak 30 at 9.5%, area 1)."""
     if rm <= R_LOW or rm >= R_HIGH:
         return 0.0
     t = _t(rm)
-    return SPAN * 6 * t * (1 - t) / (R_HIGH - R_LOW)
+    return 6 * t * (1 - t) / (R_HIGH - R_LOW)
 
 
-def vol_scale(sigma_market: float, mode: str = "linear",
-              lo: float = 0.25, hi: float = 2.0) -> float:
-    """Volatility scaling of leverage. 'linear' = σ_std/σ_m (legacy); 'squared' = Merton-consistent."""
-    ratio = SIGMA_STD / max(sigma_market, 0.01)
-    scale = ratio * ratio if mode == "squared" else ratio
-    return min(max(scale, lo), hi)
+def gamma_market(rm: float, sigma_market: float, rf: float = RISK_FREE) -> float:
+    """Volatility-adjusted full-Kelly leverage (Rm − rf)/σm² (can be negative)."""
+    s = max(sigma_market, MIN_SIGMA)
+    return (rm - rf) / (s * s)
+
+
+def zone(rm: float) -> str:
+    if rm < R_LOW:
+        return ZONE_DEFENSIVE
+    if rm > R_HIGH:
+        return ZONE_ROTATION
+    return ZONE_DYNAMIC
 
 
 @dataclass
 class CorridorState:
     rm: float
-    beta: float
-    gamma: float
-    vol_scale: float
-    leverage_raw: float
+    sigma: float
+    zone: str
+    participation: float
+    gamma: float               # ds/dRm (per unit Rm)
+    kelly: float               # (Rm − rf)/σ²
+    leverage_raw: float        # k · s · kelly
     cap: float
-    leverage: float
-    position: str          # BELOW / WITHIN / ABOVE
+    leverage: float            # final long-beta leverage after caps (≥ 0)
+    leverage_slope: float      # dL/dRm at the current point (per unit Rm)
 
     def to_dict(self) -> dict:
         return {k: (round(v, 6) if isinstance(v, float) else v) for k, v in self.__dict__.items()}
 
 
-def target_leverage(rm: float, sigma_market: float, cap: float = 2.0,
-                    floor: float = BETA_LOW * EXECUTION_MULTIPLIER,
-                    vol_mode: str = "linear") -> CorridorState:
-    """Full corridor evaluation: β, γ and capped leverage for the current Rm and volatility.
+def target_leverage(rm: float, sigma_market: float, k: float = KELLY_FRACTION,
+                    cap: float = MAX_GROSS_LEVERAGE, rf: float = RISK_FREE) -> CorridorState:
+    """Long market-beta leverage for the current Rm and volatility.
 
-    cap   — the binding upper limit (regime cap / burst cap / hard gross-leverage cap, whichever
-            is lowest — chosen by the caller).
-    floor — the hedge floor (default −0.136 = β_L × 4.7).
+    cap — the binding ceiling chosen by the caller: min(MAX_GROSS_LEVERAGE, regime cap,
+    regime-VaR-implied leverage). Leverage is never negative here: below 7% the corridor
+    holds no long beta; short exposure is a separate decision (hedges / alpha shorts).
     """
-    b = corridor_beta(rm)
+    cap = min(cap, MAX_GROSS_LEVERAGE)
+    s = participation(rm)
     g = corridor_gamma(rm)
-    vs = vol_scale(sigma_market, vol_mode)
-    raw = b * EXECUTION_MULTIPLIER * vs
-    lev = min(max(raw, floor), cap)
-    pos = "BELOW" if rm < R_LOW else ("ABOVE" if rm > R_HIGH else "WITHIN")
-    return CorridorState(rm, b, g, vs, raw, cap, lev, pos)
+    kel = gamma_market(rm, sigma_market, rf)
+    raw = k * s * kel
+    lev = min(max(raw, 0.0), cap)
+    sig = max(sigma_market, MIN_SIGMA)
+    slope = 0.0 if (raw <= 0 or raw >= cap) else k * (g * kel + s / (sig * sig))
+    return CorridorState(rm, sigma_market, zone(rm), s, g, kel, raw, cap, lev, slope)
 
 
 def should_rebalance(current_leverage: float, target: float, throttle: float = THROTTLE) -> bool:
@@ -117,3 +141,8 @@ def realised_vol(closes: list[float], periods_per_year: int = 252) -> float:
     m = sum(rets) / len(rets)
     var = sum((r - m) ** 2 for r in rets) / (len(rets) - 1)
     return math.sqrt(var * periods_per_year)
+
+
+def legacy_beta(rm: float) -> float:
+    """v1 identifier curve −0.029 … 0.425 (reference only; not used for sizing)."""
+    return LEGACY_BETA_LOW + (LEGACY_BETA_HIGH - LEGACY_BETA_LOW) * participation(rm)

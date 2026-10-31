@@ -8,57 +8,65 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 import corridor as c  # noqa: E402
 
 
-def test_endpoints_and_midpoint():
-    assert c.corridor_beta(0.07) == pytest.approx(-0.029)
-    assert c.corridor_beta(0.12) == pytest.approx(0.425)
-    assert c.corridor_beta(0.095) == pytest.approx(-0.029 + 0.454 / 2)   # 0.198
-    assert c.corridor_beta(0.03) == pytest.approx(-0.029)                 # flat below
-    assert c.corridor_beta(0.20) == pytest.approx(0.425)                  # flat above
+def test_zones_and_participation():
+    assert c.participation(0.05) == 0.0 and c.zone(0.05) == c.ZONE_DEFENSIVE
+    assert c.participation(0.07) == 0.0
+    assert c.participation(0.095) == pytest.approx(0.5) and c.zone(0.095) == c.ZONE_DYNAMIC
+    assert c.participation(0.12) == pytest.approx(1.0)
+    assert c.participation(0.20) == 1.0 and c.zone(0.20) == c.ZONE_ROTATION
 
 
-def test_merton_parameters():
-    assert c.LAMBDA_SIGMA2 == pytest.approx(0.1101, abs=1e-4)
-    assert c.HURDLE == pytest.approx(0.0732, abs=1e-4)
-    assert c.risk_aversion(0.15) == pytest.approx(4.89, abs=0.01)
-    assert c.risk_aversion(0.20) == pytest.approx(2.75, abs=0.01)
+def test_zero_long_beta_below_7pct_even_in_low_vol():
+    for rm in (-0.30, 0.0, 0.05, 0.0699):
+        assert c.target_leverage(rm, 0.10).leverage == 0.0
+    # bear market: negative Kelly never becomes a long position
+    assert c.target_leverage(-0.20, 0.35).leverage == 0.0
 
 
-def test_gamma_is_flattened_bell():
+def test_dynamic_zone_matches_design_table():
+    # full Kelly, σ = 15%: 8.5% → 0.43, 9.5% → 1.22, 11% → 2.79, 12% → 3.56
+    for rm, exp in ((0.085, 0.43), (0.095, 1.22), (0.11, 2.79), (0.12, 3.56)):
+        assert c.target_leverage(rm, 0.15).leverage == pytest.approx(exp, abs=0.01)
+    # half Kelly halves it
+    assert c.target_leverage(0.12, 0.15, k=0.5).leverage == pytest.approx(1.78, abs=0.01)
+
+
+def test_rotation_zone_vol_adjusted_and_capped_at_4_5():
+    s15 = c.target_leverage(0.14, 0.15)
+    assert s15.leverage == pytest.approx(4.44, abs=0.01)
+    assert c.target_leverage(0.16, 0.15).leverage == pytest.approx(4.5)       # hits the cap
+    assert c.target_leverage(0.16, 0.20).leverage == pytest.approx(3.00, abs=0.01)
+    assert c.target_leverage(0.16, 0.25).leverage == pytest.approx(1.92, abs=0.01)
+    assert c.target_leverage(0.30, 0.10, cap=10).leverage == pytest.approx(4.5)  # hard cap wins
+
+
+def test_caller_cap_binds():
+    assert c.target_leverage(0.12, 0.15, cap=1.0).leverage == pytest.approx(1.0)
+
+
+def test_corridor_gamma_bell():
     assert c.corridor_gamma(0.07) == 0.0 and c.corridor_gamma(0.12) == 0.0
-    assert c.corridor_gamma(0.05) == 0.0 and c.corridor_gamma(0.15) == 0.0
-    peak = c.corridor_gamma(0.095)
-    assert peak * 0.01 == pytest.approx(0.136, abs=1e-3)                  # per 1% of Rm
-    assert c.corridor_gamma(0.08) < peak and c.corridor_gamma(0.11) < peak
-    assert c.corridor_gamma(0.08) == pytest.approx(c.corridor_gamma(0.11))  # symmetric
-
-
-def test_gamma_integrates_to_span_and_is_derivative():
-    n = 20000
-    h = (c.R_HIGH - c.R_LOW) / n
-    area = sum(c.corridor_gamma(c.R_LOW + (i + 0.5) * h) * h for i in range(n))
-    assert area == pytest.approx(c.SPAN, rel=1e-6)
+    assert c.corridor_gamma(0.095) == pytest.approx(30.0)          # 0.30 per 1%
+    assert c.corridor_gamma(0.08) == pytest.approx(c.corridor_gamma(0.11))
+    n, h = 20000, 0.05 / 20000
+    area = sum(c.corridor_gamma(0.07 + (i + 0.5) * h) * h for i in range(n))
+    assert area == pytest.approx(1.0, rel=1e-6)
     x, e = 0.0912, 1e-7
-    numeric = (c.corridor_beta(x + e) - c.corridor_beta(x - e)) / (2 * e)
-    assert numeric == pytest.approx(c.corridor_gamma(x), rel=1e-5)
+    assert (c.participation(x + e) - c.participation(x - e)) / (2 * e) == pytest.approx(
+        c.corridor_gamma(x), rel=1e-5)
 
 
-def test_leverage_mapping_and_caps():
-    s = c.target_leverage(0.12, 0.15, cap=5.0)
-    assert s.leverage == pytest.approx(0.425 * 4.7)                       # 2.0
-    s = c.target_leverage(0.05, 0.15)
-    assert s.leverage == pytest.approx(-0.029 * 4.7)                      # −0.136 floor
-    assert s.position == "BELOW"
-    s = c.target_leverage(0.12, 0.15, cap=0.65)
-    assert s.leverage == pytest.approx(0.65)                              # regime cap binds
-    hi_vol = c.target_leverage(0.11, 0.30, cap=5.0)
-    assert hi_vol.leverage < c.target_leverage(0.11, 0.15, cap=5.0).leverage
+def test_leverage_slope_is_derivative():
+    x, e, sig = 0.105, 1e-7, 0.18
+    num = (c.target_leverage(x + e, sig).leverage - c.target_leverage(x - e, sig).leverage) / (2 * e)
+    assert num == pytest.approx(c.target_leverage(x, sig).leverage_slope, rel=1e-4)
 
 
-def test_vol_scale_modes():
-    assert c.vol_scale(0.15) == pytest.approx(1.0)
-    assert c.vol_scale(0.30, "linear") == pytest.approx(0.5)
-    assert c.vol_scale(0.30, "squared") == pytest.approx(0.25)
-    assert c.vol_scale(0.01) == 2.0                                       # clipped
+def test_legacy_identifiers_preserved():
+    assert c.legacy_beta(0.07) == pytest.approx(-0.029)
+    assert c.legacy_beta(0.12) == pytest.approx(0.425)
+    assert c.LEGACY_LAMBDA_SIGMA2 == pytest.approx(0.1101, abs=1e-4)
+    assert c.LEGACY_HURDLE == pytest.approx(0.0732, abs=1e-4)
 
 
 def test_throttle_and_estimators():
