@@ -51,9 +51,24 @@ def regime_leverage_ceiling(regime: str, sigma_market: float) -> float:
     return min(ceiling / per_unit, MAX_GROSS_LEVERAGE)
 
 
-def beta_cap(regime: str, sigma_market: float, regime_beta_cap: Optional[float] = None) -> float:
-    """Binding cap for corridor leverage: min(4.5x, regime VaR ceiling, optional regime cap)."""
-    cap = regime_leverage_ceiling(regime, sigma_market)
+STRESS_REGIMES = ("STRESS", "CRASH")
+NO_DOUBLE_SIZING_RM = 0.12      # Rm above the corridor ceiling (ROTATION zone)
+
+
+def beta_cap(regime: str, sigma_market: float, regime_beta_cap: Optional[float] = None,
+             rm: Optional[float] = None) -> float:
+    """Binding cap for corridor leverage: min(4.5x, regime VaR ceiling, optional regime cap).
+
+    No double sizing (owner rule): when the market itself is strong (Rm > 12%, ROTATION zone)
+    but the regime reads STRESS/CRASH — typically a sector/theme crash or a post-crash rebound —
+    the regime VaR ceiling is NOT applied on top of Kelly. Kelly's 1/σ² already sizes for the
+    volatility; only the 4.5x hard cap (and an explicit regime_beta_cap) remain. The crash is
+    handled by rotation (algorithm/rotation.py), not by cutting market beta twice.
+    """
+    if rm is not None and rm > NO_DOUBLE_SIZING_RM and str(regime).upper() in STRESS_REGIMES:
+        cap = MAX_GROSS_LEVERAGE
+    else:
+        cap = regime_leverage_ceiling(regime, sigma_market)
     if regime_beta_cap is not None:
         cap = min(cap, regime_beta_cap)
     return max(cap, 0.0)

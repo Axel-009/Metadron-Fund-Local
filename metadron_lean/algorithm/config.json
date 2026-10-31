@@ -5,6 +5,7 @@
         "kelly_fraction": "1.0",
         "beta_instrument": "MES",
         "rm_lookback": "252",
-        "rm_smoothing": "0.10"
+        "rm_smoothing": "0.10",
+        "rotation_trading": "false"
     }
 }

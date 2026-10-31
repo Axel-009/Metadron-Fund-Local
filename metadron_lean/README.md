@@ -11,14 +11,14 @@ Kronos / LEAN / OpenJarvis, Jarvis, docs and tests. Nothing here depends on the 
 
 ```bash
 pip install -r requirements.txt
-python3 -m pytest tests -q          # 218 tests
+python3 -m pytest tests -q          # 228 tests
 ```
 
 ## What is where
 
 | Folder | Contents |
 |--------|----------|
-| `algorithm/` | QuantConnect algorithm: `main.py` (MES futures corridor overlay), `corridor.py` (v2), `risk_budget.py` |
+| `algorithm/` | QuantConnect algorithm: `main.py` (MES corridor overlay + theme monitor), `corridor.py` (v2), `risk_budget.py`, `rotation.py` (theme-crash rotation) |
 | `engine/` | 168 engine modules: macro (GMTF, HMM), MetadronCube, security analysis, distress, events, CVR, patterns, ML, decision matrix, options, protection, tail hedges, allocation, risk, API, agents, monitoring |
 | `core/` | Original platform core: cyclical vs secular decomposition, money velocity |
 | `intelligence_platform/` | Research integrations the engine loads (MiroFish, QLIB, distress models, ai-hedgefund, quant-trading, qstrader, plugins, Air-LLM, …) |
@@ -34,6 +34,7 @@ python3 -m pytest tests -q          # 218 tests
 |------|-------|--------|
 | 1–2a | Corridor v2 (rf 4%, 0 below 7%, Kelly ramp, 4.5x cap), split risk budget, MES delivery | done |
 | — | Full extraction into this standalone repo | done |
+| 2a+ | No double sizing above Rm 12% + theme-crash rotation (cut / defensives / escalation / LEAPS / straddles) | done |
 | 2b | HMM regime + GMTF + forward Rm estimate wired into `algorithm/` | next |
 | 3 | Universe + fundamentals (S&P 1500, Morningstar) + security analysis in the algorithm | |
 | 4 | Alpha: walk-forward ML, quality tiers, pattern recognition, Kronos | |
@@ -44,7 +45,7 @@ python3 -m pytest tests -q          # 218 tests
 ## Run on QuantConnect
 
 1. Create a Python project on quantconnect.com (or `lean cloud push` with the LEAN CLI).
-2. Copy `algorithm/main.py`, `corridor.py`, `risk_budget.py`, `config.json`.
+2. Copy `algorithm/main.py`, `corridor.py`, `risk_budget.py`, `rotation.py`, `config.json`.
 3. Backtest — charts: *Rm vs corridor*, *Corridor*, *Leverage*, *Risk*.
 4. Parameters: `kelly_fraction` (1.0), `beta_instrument` (`MES` or `SPY` ≤ 2x).
 

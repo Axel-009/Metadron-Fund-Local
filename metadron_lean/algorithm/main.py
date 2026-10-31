@@ -6,7 +6,10 @@ from corridor import (
     target_leverage, should_rebalance, annualised_drift, realised_vol,
     R_LOW, R_HIGH, RISK_FREE, MAX_GROSS_LEVERAGE,
 )
-from risk_budget import beta_cap, hard_stops, daily_var
+from risk_budget import beta_cap, hard_stops, daily_var, check_alpha_trade, AlphaPosition
+from rotation import (
+    THEMES, DEFENSIVES, ESCALATION_SLEEVE, build_plan, escalation_score, theme_index, realised_vol as name_vol,
+)
 
 
 class MetadronCorridor(QCAlgorithm):
@@ -22,8 +25,14 @@ class MetadronCorridor(QCAlgorithm):
         hard stops: drawdown −4% trim (halve), −8% flat
     Market beta is delivered with Micro E-mini S&P 500 futures (default) or SPY (≤ 2x Reg-T).
 
+    Theme-crash rotation (rotation.py): daily theme states (e.g. AI credit hubs / over-spenders),
+    geopolitical-escalation score and a rotation plan — cut crashed-theme longs, rotate into
+    defensives, escalation posture (oil calls, refiners), harvest the drawdown (LEAPS on solvent
+    names, straddles). Market beta is NOT cut twice: above Rm 12% a STRESS/CRASH regime does not
+    apply its VaR ceiling on top of Kelly.
+
     Parameters: kelly_fraction (1.0), beta_instrument (MES | SPY), rm_lookback (252),
-                rm_smoothing (0.10)
+                rm_smoothing (0.10), rotation_trading (false — plan is plotted/logged only)
     """
 
     def initialize(self):
@@ -35,6 +44,7 @@ class MetadronCorridor(QCAlgorithm):
         self.instrument = self.get_parameter("beta_instrument", "MES").upper()
         self.rm_lookback = int(self.get_parameter("rm_lookback", 252))
         self.rm_smoothing = float(self.get_parameter("rm_smoothing", 0.10))
+        self.rotation_trading = str(self.get_parameter("rotation_trading", "false")).lower() == "true"
 
         # Signal source: SPY (index proxy) for Rm and σm
         spy = self.add_equity("SPY", Resolution.DAILY)
@@ -51,6 +61,22 @@ class MetadronCorridor(QCAlgorithm):
             self.future.set_leverage(MAX_GROSS_LEVERAGE + 0.5)
         else:
             self.future = None
+
+        # Theme / defensive / escalation names + escalation inputs
+        tickers = sorted({t for v in THEMES.values() for t in v} | {t for v in DEFENSIVES.values() for t in v}
+                         | set(ESCALATION_SLEEVE["refiners"]) | set(ESCALATION_SLEEVE["oil_option_underlyings"])
+                         | {"GLD"})
+        self.rot_symbols = {}
+        for t in tickers:
+            try:
+                self.rot_symbols[t] = self.add_equity(t, Resolution.DAILY).symbol
+            except Exception as exc:          # unknown / not-yet-listed ticker → skip
+                self.debug(f"rotation: cannot add {t}: {exc}")
+        try:
+            self.vix = self.add_index("VIX", Resolution.DAILY).symbol
+        except Exception:
+            self.vix = None
+        self.last_plan_sig = None
 
         self.rm_ewma = None
         self.current_leverage = 0.0
@@ -115,7 +141,7 @@ class MetadronCorridor(QCAlgorithm):
             self.rm_smoothing * drift + (1 - self.rm_smoothing) * self.rm_ewma)
         sigma = realised_vol(closes[-64:])
         regime = self.placeholder_regime(sigma)
-        cap = beta_cap(regime, sigma)
+        cap = beta_cap(regime, sigma, rm=self.rm_ewma)     # no double sizing above Rm 12%
 
         state = target_leverage(self.rm_ewma, sigma, k=self.k, cap=cap)
         target = state.leverage
@@ -154,3 +180,57 @@ class MetadronCorridor(QCAlgorithm):
         self.plot("Risk", "realised vol %", sigma * 100)
         self.plot("Risk", "beta VaR95 1d %", daily_var(actual, sigma) * 100)
         self.plot("Risk", "drawdown %", (1 - nav / self.peak_nav) * 100)
+
+        self.run_rotation(state.zone, closes)
+
+    # ------------------------------------------------------------------
+    def _closes(self, symbol, n=260):
+        try:
+            h = self.history(symbol, n, Resolution.DAILY)
+            if h is None or h.empty or "close" not in h.columns:
+                return []
+            return [float(x) for x in h["close"].values]
+        except Exception:
+            return []
+
+    def run_rotation(self, zone: str, spy_closes):
+        prices = {t: c for t, sym in self.rot_symbols.items() if len(c := self._closes(sym)) > 21}
+        nav = max(self.portfolio.total_portfolio_value, 1.0)
+        holdings = {t: self.portfolio[sym].holdings_value / nav for t, sym in self.rot_symbols.items()}
+        vix = None
+        if self.vix is not None:
+            v = self._closes(self.vix, 5)
+            vix = v[-1] if v else None
+        defense = theme_index(prices, DEFENSIVES["DEFENSE"])
+        esc = escalation_score(oil=prices.get("USO"), gold=prices.get("GLD"),
+                               defense_idx=defense or None, spy=spy_closes, vix=vix)
+        plan = build_plan(zone, prices, spy_closes, holdings, escalation=esc)
+
+        code = {"NORMAL": 0, "STRESS": 1, "CRASH": 2}
+        for ts in plan.themes:
+            self.plot("Themes", f"{ts.theme} state", code[ts.state])
+            self.plot("Themes", f"{ts.theme} drawdown %", ts.drawdown * 100)
+        self.plot("Themes", "escalation score", esc)
+
+        sig = tuple((a.kind, a.ticker, round(a.target_weight, 3)) for a in plan.actions)
+        if sig != self.last_plan_sig:
+            self.last_plan_sig = sig
+            for a in plan.actions:
+                self.debug(f"ROTATION {a.kind} {a.ticker} w={a.target_weight:.3f} "
+                           f"premium={a.premium:.3%} dte={a.dte} — {a.reason}")
+
+        if not self.rotation_trading:
+            return
+        book = [AlphaPosition(t, w, name_vol(prices.get(t, []), 20) or 0.4)
+                for t, w in holdings.items() if abs(w) > 1e-6]
+        for a in plan.actions:
+            if a.kind not in ("CUT", "ROTATE", "ESCALATION_EQUITY") or a.ticker not in self.rot_symbols:
+                continue                      # option legs: options engine (build step 6)
+            target = a.target_weight
+            if target > holdings.get(a.ticker, 0.0):
+                vol = name_vol(prices.get(a.ticker, []), 20) or 0.4
+                chk = check_alpha_trade(book, AlphaPosition(a.ticker, target - holdings.get(a.ticker, 0.0), vol))
+                target = holdings.get(a.ticker, 0.0) + chk.max_weight_allowed
+            if abs(target - holdings.get(a.ticker, 0.0)) < 0.005:      # skip < 0.5% NAV changes (no churn)
+                continue
+            self.set_holdings(self.rot_symbols[a.ticker], target, tag=f"ROTATION {a.kind}: {a.reason}")

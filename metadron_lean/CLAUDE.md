@@ -26,7 +26,7 @@ vendor/                 Kronos, LEAN, OpenJarvis — full source copies, pinned 
 jarvis/                 Jarvis setup guide + dashboard page
 governance/ config/     credit classification, repo/heartbeat config
 docs/                   architecture DNA, corridor charts
-tests/                  218 tests (legacy engine suite + new algorithm tests)
+tests/                  228 tests (legacy engine suite + new algorithm tests)
 scripts/update_vendor.sh  re-sync vendored repos to upstream
 ```
 
@@ -94,9 +94,38 @@ blocks most small/mid caps — superseded. Under vol-adjusted Kelly, beta VaR = 
 | 2 Regime VaR ceiling on market-beta risk (1-day 95%) | TRENDING 7.0% · RANGE 4.5% · STRESS 2.25% · CRASH 1.0% → leverage ceiling = VaR / (1.645·σm/√252). TRENDING 7.0% = the VaR of 4.5x at σ 15%, so the owner's max is reachable |
 | 3 Stock-specific (alpha) VaR budget, 1-day 95% | **2.5% of NAV** (parameter) on idiosyncratic risk after removing market beta; per-name ≤ 0.5% NAV (≈ 9.7% weight at 50% vol); sizing ∝ 1/vol; same-sector names correlated 0.3; long options count at premium (defined risk); trades scaled down to fit, not rejected |
 | 4 Hard stops | gross ≤ 4.5x; CVaR95 ≤ 1.5 × regime ceiling; drawdown −4% trim (halve), −8% close all but hedges |
+| No double sizing | When Rm > 12% (ROTATION) and the regime reads STRESS/CRASH, the regime VaR ceiling is NOT applied on top of Kelly — Kelly's 1/σ² already sizes for volatility; only the 4.5x cap remains. A crash *inside* a strong market is handled by theme rotation, not by cutting market beta twice. |
 
 Diversified small/mid-cap books fit easily: 40 names × 2.5% at 45% vol → 0.74%; 20 × 5% → 1.04%;
 the budget binds only on concentration (10 × 10% at 50% vol → 1.64%; 5 × 20% → 2.32%).
+
+### Four levels of "crash" + theme rotation (owner-approved; code: `algorithm/rotation.py`)
+
+| Level | Detected by | Response |
+|-------|-------------|----------|
+| MARKET | S&P regime + Rm (corridor) | sizes market beta (MES overlay) |
+| THEME | equal-weight theme index ≥ 30% below its 63-day high AND ≥ 15 pts under SPY over 21d = CRASH (≥ 15% / ≥ 8 pts = STRESS) | rotation playbook below — market beta untouched |
+| POSITION | one holding's own drawdown | position protection (stops / trims) |
+| PORTFOLIO | NAV drawdown | hard stops (−4% trim, −8% close) |
+
+Paradigm (Oct–Nov): SPY > 12% at max leverage while AI names with heavy debt / private-credit exposure
+(e.g. CRWV, NBIS) and capex over-spenders (e.g. IREN, HIVE) crash. Playbook — all equity sizes pass the
+2.5% stock-specific VaR budget; targets are idempotent (re-running daily never compounds):
+
+1. **CUT** crashed-theme longs to 0 (CRASH) or ≤ 2% NAV per name (STRESS).
+2. **ROTATE** freed weight into defensives: defense (e.g. LMT, NOC, RTX, GD) 60% when the geopolitical-
+   escalation score ≥ 0.5, else 25%; the rest to healthcare (e.g. LLY, JNJ, MRK, ABBV).
+3. **ESCALATION** posture (score ≥ 0.5): long oil calls (USO/XLE, 1% NAV premium, ~60 DTE) + refiners
+   (e.g. VLO, MPC, ≥ 1.5% each). Score = mean of: oil +10%/21d, gold +5%/21d, defense beats SPY by 5 pts/21d,
+   VIX ≥ 25; an events-agent flag overrides.
+4. **HARVEST** the drawdown: LEAPS calls (≥ 270 DTE, 0.5% NAV premium) on crashed names ≥ 30% below their
+   1-year high that pass the solvency check (Merton PD ≤ 5%, interest coverage ≥ 2; unknown = no LEAPS);
+   call spreads instead when IV/RV > 1.3. Short-dated straddles (7–30 DTE, 0.3% NAV, max 3) where realised
+   vol ≥ 1.1 × implied or an event is within 14 days.
+
+Tickers are owner-supplied configuration (THEMES / DEFENSIVES in rotation.py), not recommendations.
+Equity legs trade only with `rotation_trading=true` (default false: plan plotted + logged); option legs
+are logged until the options engine is ported (build step 6). Min trade 0.5% NAV (no churn).
 
 ### Smart Beta v1 — corridor derivation (superseded by v2, kept for reference)
 
