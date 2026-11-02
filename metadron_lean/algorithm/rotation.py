@@ -14,17 +14,18 @@ Response, all sized inside the 2.5% stock-specific VaR budget (risk_budget.check
 
     1. EXIT / CUT   longs in the crashed theme (CRASH → 0, STRESS → cap 2% NAV per name). Market
                     beta untouched. Targets are idempotent: re-running the plan daily never compounds.
-    2. ROTATE       freed equity weight into defensives — defense (e.g. LMT) weighted up when the
-                    geopolitical-escalation score is high, healthcare (e.g. LLY) otherwise.
+    2. ROTATE       freed equity weight into the 11 GICS sectors (Select Sector SPDR ETFs, sectors.py),
+                    chosen by the research (sub-sector edges) and the regime — top 3 sectors ∝ score;
+                    no positive score → Health Care / Staples / Utilities.
     3. ESCALATION   predictive posture when escalation is likely: long oil via call options
-                    (premium budget) + refiners (e.g. VLO).
+                    (premium budget) + Energy sector ETF (XLE).
     4. HARVEST      benefit from the drawdown:
                       - discounted LEAPS calls on crashed names that are still SOLVENT
                         (capital-structure check passes) — call SPREADS when implied vol is rich;
                       - short-dated straddles where realised vol > implied vol or an event is near.
 
-Tickers in THEMES / DEFENSIVES are configuration examples supplied by the owner, not
-recommendations; agents may propose changes, the owner approves (CLAUDE.md design rule 3).
+Tickers in THEMES are configuration examples supplied by the owner, not recommendations;
+DEFENSIVES["DEFENSE"] is only the escalation-signal basket (defense vs SPY), never traded here; agents may propose changes, the owner approves (CLAUDE.md design rule 3).
 Pure Python + math.
 """
 
@@ -43,13 +44,12 @@ THEME_SUBSECTOR = {            # theme → market_map sub-sector (feeds sector_r
     "AI_CREDIT_HUBS": "AI_NEOCLOUD_CREDIT",
     "AI_OVERSPEND": "AI_HOSTING_PIVOT",
 }
-DEFENSIVES: Dict[str, List[str]] = {
+DEFENSIVES: Dict[str, List[str]] = {          # escalation SIGNAL basket only (not traded by rotation)
     "DEFENSE": ["LMT", "NOC", "RTX", "GD"],
-    "HEALTHCARE": ["LLY", "JNJ", "MRK", "ABBV"],
 }
 ESCALATION_SLEEVE = {
     "oil_option_underlyings": ["USO", "XLE"],   # long calls
-    "refiners": ["VLO", "MPC"],
+    "energy_sector": ["XLE"],                    # GICS Energy sector ETF
 }
 
 # Theme crash thresholds (equal-weight theme index)
@@ -67,10 +67,8 @@ ESC_VIX = 25.0
 ESCALATION_THRESHOLD = 0.5
 
 # Budgets (fractions of NAV)
-DEFENSE_SHARE_ESCALATION = 0.60   # share of freed weight to defense when escalating …
-DEFENSE_SHARE_CALM = 0.25         # … otherwise
 OIL_CALL_PREMIUM = 0.010          # total premium for oil calls
-REFINER_WEIGHT = 0.03             # total weight across refiners
+ENERGY_WEIGHT = 0.03              # minimum Energy-sector (XLE) weight while escalating
 LEAPS_PREMIUM_PER_NAME = 0.005
 LEAPS_MIN_DTE = 270
 LEAPS_MIN_DISCOUNT = 0.18         # price ≥ 18% below its 252-day high (owner)
@@ -208,7 +206,7 @@ def build_plan(market_zone: str,
                implied_vol: Optional[Dict[str, float]] = None,
                days_to_event: Optional[Dict[str, int]] = None,
                themes: Optional[Dict[str, List[str]]] = None,
-               defensives: Optional[Dict[str, List[str]]] = None) -> RotationPlan:
+               sector_scores: Optional[Dict[str, float]] = None) -> RotationPlan:
     """Rotation plan for the equity / options sleeves. Market beta is NOT changed here.
 
     holdings: {ticker: current equity weight (fraction of NAV)}.
@@ -216,7 +214,6 @@ def build_plan(market_zone: str,
     stock-specific VaR budget (risk_budget.check_alpha_trade) and the decision gates.
     """
     themes = themes or THEMES
-    defensives = defensives or DEFENSIVES
     cap_structure = cap_structure or {}
     implied_vol = implied_vol or {}
     days_to_event = days_to_event or {}
@@ -239,16 +236,13 @@ def build_plan(market_zone: str,
     if not any(ts.state != "NORMAL" for ts in states):
         return RotationPlan(market_zone, escalation, states, actions)
 
-    # 2. rotate freed weight into defensives (equal weight within each basket)
+    # 2. rotate freed weight into the best GICS sectors (research + regime scores)
     if freed > 0:
-        d_share = DEFENSE_SHARE_ESCALATION if escalation >= ESCALATION_THRESHOLD else DEFENSE_SHARE_CALM
-        split = {"DEFENSE": d_share, "HEALTHCARE": 1 - d_share}
-        for basket, share in split.items():
-            names = [t for t in defensives.get(basket, []) if t in prices] or defensives.get(basket, [])
-            for t in names:
-                add = freed * share / max(len(names), 1)
-                actions.append(RotationAction("ROTATE", t, target_weight=holdings.get(t, 0.0) + add,
-                                              reason=f"defensive rotation ({basket}, escalation {escalation:.2f})"))
+        from sectors import rotation_weights, GICS
+        for etf, add in rotation_weights(sector_scores or {}, freed).items():
+            actions.append(RotationAction("ROTATE", etf, target_weight=holdings.get(etf, 0.0) + add,
+                                          reason=f"GICS rotation → {GICS[etf][0]} "
+                                                 f"(score {(sector_scores or {}).get(etf, 0.0):+.2f})"))
 
     # 3. escalation posture
     if escalation >= ESCALATION_THRESHOLD:
@@ -256,11 +250,11 @@ def build_plan(market_zone: str,
         for t in und:
             actions.append(RotationAction("ESCALATION_CALLS", t, premium=OIL_CALL_PREMIUM / len(und), dte=60,
                                           reason=f"long oil calls — escalation {escalation:.2f}"))
-        ref = ESCALATION_SLEEVE["refiners"]
-        for t in ref:
+        for t in ESCALATION_SLEEVE["energy_sector"]:
+            already = sum(a.target_weight for a in actions if a.kind == "ROTATE" and a.ticker == t)
             actions.append(RotationAction("ESCALATION_EQUITY", t,
-                                          target_weight=max(holdings.get(t, 0.0), REFINER_WEIGHT / len(ref)),
-                                          reason="refiner exposure — escalation"))
+                                          target_weight=max(holdings.get(t, 0.0), already, ENERGY_WEIGHT),
+                                          reason="Energy sector exposure — escalation"))
 
     # 4. harvest the drawdown
     straddles = []

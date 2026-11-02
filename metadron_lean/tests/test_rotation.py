@@ -4,7 +4,8 @@ import sys
 import pytest
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "algorithm"))
-import rotation as rot  # noqa: E402
+import rotation as rot
+import sectors as sec  # noqa: E402
 import risk_budget as rb  # noqa: E402
 import corridor as c  # noqa: E402
 
@@ -61,30 +62,34 @@ def test_theme_crash_detected_while_market_strong(paradigm):
 
 def test_plan_cuts_rotates_and_hedges(paradigm):
     spy, prices = paradigm
-    holdings = {"CRWV": 0.06, "NBIS": 0.04, "IREN": 0.03, "LMT": 0.01}
+    holdings = {"CRWV": 0.06, "NBIS": 0.04, "IREN": 0.03, "XLV": 0.01}
     oil = path(70, 0.006, 60)                                  # oil +~43% in 60d
     esc = rot.escalation_score(oil=oil, vix=27.0)
     assert esc >= rot.ESCALATION_THRESHOLD
-    plan = rot.build_plan("ROTATION", prices, spy, holdings, escalation=esc)
+    scores = sec.sector_scores({"HEALTHCARE_PHARMA": 0.4, "DEFENSE": 0.5, "AI_NEOCLOUD_CREDIT": -0.6},
+                               regime="RANGE", escalation=esc, crashing_subsectors=["AI_NEOCLOUD_CREDIT"])
+    plan = rot.build_plan("ROTATION", prices, spy, holdings, escalation=esc, sector_scores=scores)
     kinds = {a.kind for a in plan.actions}
     assert {"CUT", "ROTATE", "ESCALATION_CALLS", "ESCALATION_EQUITY"} <= kinds
     cuts = {a.ticker: a.target_weight for a in plan.actions if a.kind == "CUT"}
     assert cuts == {"CRWV": 0.0, "NBIS": 0.0, "IREN": 0.0}
     rot_w = {a.ticker: a.target_weight for a in plan.actions if a.kind == "ROTATE"}
-    freed = 0.13
-    added = sum(rot_w.values()) - 0.01                         # LMT already held 1%
-    assert added == pytest.approx(freed)
-    defense = sum(rot_w[t] for t in ("LMT", "NOC", "RTX", "GD")) - 0.01
-    assert defense == pytest.approx(freed * rot.DEFENSE_SHARE_ESCALATION)
-    assert any(a.ticker == "VLO" for a in plan.actions)
+    assert set(rot_w) <= set(sec.SECTOR_ETFS) and len(rot_w) <= sec.ROTATION_TOP   # only GICS sector ETFs
+    assert sum(rot_w.values()) - 0.01 == pytest.approx(0.13)  # XLV already held 1%
+    assert {"XLI", "XLV", "XLE"} == set(rot_w)                # research + escalation pick the sectors
+    assert "XLK" not in rot_w                                  # the crashing theme's sector is penalised
+    assert any(a.kind == "ESCALATION_EQUITY" and a.ticker == "XLE" for a in plan.actions)
 
 
-def test_calm_rotation_tilts_to_healthcare(paradigm):
+def test_rotation_falls_back_to_defensive_sectors(paradigm):
     spy, prices = paradigm
-    plan = rot.build_plan("ROTATION", prices, spy, {"CRWV": 0.10}, escalation=0.0)
+    scores = sec.sector_scores({}, regime="STRESS", bias="BEARISH")
+    assert max(scores, key=scores.get) in ("XLE", "XLV", "XLP", "XLU")
+    plan = rot.build_plan("ROTATION", prices, spy, {"CRWV": 0.10}, escalation=0.0)   # no scores → fallback
     rot_w = {a.ticker: a.target_weight for a in plan.actions if a.kind == "ROTATE"}
-    assert sum(rot_w[t] for t in ("LLY", "JNJ", "MRK", "ABBV")) == pytest.approx(0.10 * 0.75)
+    assert rot_w == pytest.approx({e: 0.10 / 3 for e in sec.DEFENSIVE_FALLBACK})
     assert not any(a.kind.startswith("ESCALATION") for a in plan.actions)
+    assert sec.rotation_weights({"XLK": 0.2, "XLF": 0.1, "XLU": -0.1}, 0.06) == pytest.approx({"XLK": 0.04, "XLF": 0.02})
 
 
 def test_leaps_only_on_solvent_crashed_names(paradigm):

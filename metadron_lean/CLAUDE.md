@@ -10,8 +10,14 @@ disagrees with this file, THIS file wins; e.g. its corridor section was linear a
 ## Layout
 
 ```
-algorithm/              QuantConnect LEAN algorithm (main, corridor, risk_budget, regime, forward_rm, fundamentals, universe, rotation, market_map, macro_regime, sector_rotation)
-agents/                 market_reasoning.md (trader framework + scenario schema), macro_agent.py (FRED → macro_inputs.json, Claude → scenarios.json)
+algorithm/              QuantConnect LEAN algorithm: main (heartbeat + wiring), corridor, risk_budget, regime, forward_rm,
+                        fundamentals, universe, decision, alpha, options, protection, schedule, sectors, rotation,
+                        market_map, macro_regime, sector_rotation
+agents/                 market_reasoning.md, roster.yaml, llm.py, qc_api.py, macro_agent, events_agent, kronos_agent,
+                        risk_officer, vault_sync, qc_deploy (all run by GitHub Actions; propose-only)
+vault/                  Obsidian control room (Dashboard + generated Daily / Positions / Risk notes)
+.github/workflows/      tests, deploy-to-QuantConnect, agents pre-market / post-close, Kronos weekly
+SETUP.md                one-afternoon setup + hosting (QuantConnect cloud + GitHub Actions + Obsidian)
 engine/                 Intelligence engine (extracted from the legacy monorepo, package paths unchanged)
   data/ signals/ ml/    universe, macro (GMTF, HMM), cube, security analysis, distress, events, CVR, patterns, ML
   allocation/           AllocationEngine + universe scan — THE allocation reference
@@ -27,7 +33,7 @@ vendor/                 Kronos, LEAN, OpenJarvis — full source copies, pinned 
 jarvis/                 Jarvis setup guide + dashboard page
 governance/ config/     credit classification, repo/heartbeat config
 docs/                   architecture DNA, corridor charts
-tests/                  260 tests (legacy engine suite + new algorithm tests)
+tests/                  278 tests (legacy engine suite + new algorithm tests)
 scripts/update_vendor.sh  re-sync vendored repos to upstream
 ```
 
@@ -40,7 +46,7 @@ python3 docs/charts/corridor_v2.py            # regenerate the corridor chart
 pm2 start ecosystem.config.cjs                # engine API + Jarvis + model servers
 scripts/update_vendor.sh                      # update Kronos / LEAN / OpenJarvis
 ```
-QuantConnect: create a Python project, copy `algorithm/*.py` + `config.json`, backtest.
+QuantConnect: see SETUP.md (GitHub Actions pushes `algorithm/` and starts backtests; going live is one owner click).
 
 ## Design rules
 
@@ -114,19 +120,21 @@ Paradigm (Oct–Nov): SPY > 12% at max leverage while AI names with heavy debt /
 2.5% stock-specific VaR budget; targets are idempotent (re-running daily never compounds):
 
 1. **CUT** crashed-theme longs to 0 (CRASH) or ≤ 2% NAV per name (STRESS).
-2. **ROTATE** freed weight into defensives: defense (e.g. LMT, NOC, RTX, GD) 60% when the geopolitical-
-   escalation score ≥ 0.5, else 25%; the rest to healthcare (e.g. LLY, JNJ, MRK, ABBV).
-3. **ESCALATION** posture (score ≥ 0.5): long oil calls (USO/XLE, 1% NAV premium, ~60 DTE) + refiners
-   (e.g. VLO, MPC, ≥ 1.5% each). Score = mean of: oil +10%/21d, gold +5%/21d, defense beats SPY by 5 pts/21d,
+2. **ROTATE** freed weight into the **11 GICS sectors** (Select Sector SPDR ETFs, `algorithm/sectors.py`) — owner
+   rule: no hand-picked defensives. Sector score = mean edge of its sub-sectors (research) + regime tilt
+   (STRESS/CRASH: defensives +0.30, cyclicals −0.20; TRENDING: cyclicals/growth +0.10) + bias tilt + escalation
+   (Energy +0.30, Industrials +0.15) − 0.50 for the crashing theme's own sector; top 3 sectors ∝ score, none
+   positive → Health Care / Staples / Utilities.
+3. **ESCALATION** posture (score ≥ 0.5): long oil calls (USO/XLE, 1% NAV premium, ~60 DTE) + Energy sector (XLE ≥ 3%). Score = mean of: oil +10%/21d, gold +5%/21d, defense beats SPY by 5 pts/21d,
    VIX ≥ 25; an events-agent flag overrides.
 4. **HARVEST** the drawdown: LEAPS calls (≥ 270 DTE, 0.5% NAV premium) on crashed names ≥ 18% below their
    1-year high that pass the solvency check (Merton PD ≤ 5%, interest coverage ≥ 2; unknown = no LEAPS);
    call spreads instead when IV/RV > 1.3. Short-dated straddles (7–30 DTE, 0.3% NAV, max 3) where realised
    vol ≥ 1.1 × implied or an event is within 14 days.
 
-Tickers are owner-supplied configuration (THEMES / DEFENSIVES in rotation.py), not recommendations.
-Equity legs trade only with `rotation_trading=true` (default false: plan plotted + logged); option legs
-are logged until the options engine is ported (build step 6). Min trade 0.5% NAV (no churn).
+Theme tickers are owner-supplied configuration (THEMES in rotation.py), not recommendations; the defense basket
+is only the escalation signal. `rotation_trading=true` (default) trades the equity legs; option legs go through
+the options engine. Targets are idempotent (equities and options); min trade 0.5% NAV (no churn).
 
 ### Trader framework → sub-sector rotation (owner-approved; code: `algorithm/market_map.py`, `macro_regime.py`, `sector_rotation.py`; agent guide: `agents/market_reasoning.md`)
 
@@ -218,6 +226,58 @@ view as its `fundamentals` input. Outputs: charts *Data health* (members vs 1500
 gate passes, shortlist; alert below 90% coverage or > 20% missing) and *Valuation*; ObjectStore
 `metadron/universe_scores.json` (top 100 with full analysis + reasons, theme watch list). Shortlisted names
 are subscribed for step 5; nothing is traded from the shortlist yet.
+
+### Intraday heartbeat (code: `algorithm/schedule.py`) — trades where liquidity is deepest
+
+| ET | Job |
+|----|-----|
+| 09:31 | risk-open: hard stops + position protection only (no entries in the opening auction noise) |
+| 09:50 | research: regime, forward Rm, corridor L, sector view, GICS scores, theme plan, decision matrix, option plans |
+| 10:00 | core: MES overlay; equities trade 40% of each delta |
+| 10:15 → 10:45 · 14:15 → 14:45 | options windows: subscribe candidates, then limit orders at mid + 0.3 × half-spread (option spreads are widest at the open and into the close) |
+| every 30 min 10:00–15:30 | risk: daily-loss breaker (−3% → no entries, overlay halved), position stops, option exits, event hedges |
+| 15:30 | expiry: close options ≤ 2 DTE, beta true-up |
+| 15:45 | closing auction: the remaining 60% of equity deltas as market-on-close (deepest print of the day) |
+
+### Decision matrix, sizing, overlay (code: `algorithm/decision.py`, `main.py`) — full Kelly (owner)
+
+Gates: Fundamentals 40% (must pass) · Flow 20% (dollar-volume trend + 21d strength vs SPY) · Macro 20% (sub-sector
+edge + regime fit of the name's nature; < 0.3 vetoes) · Momentum 20% (12-1, trend, chart patterns). Trade when
+composite ≥ 0.55, spread ≤ 30 bps, P(profit over 21d) ≥ 52% with α > 0. Expected alpha α = composite-implied
+0.40·(c − 0.5) blended with the models by their scorecard weights. Size = **full Kelly** α/σε² (k = 1), ≤ 20% NAV,
+sleeve budgets (IG 40 · options 25 premium · ETF 10 · HY 10 · distressed 10 · cash 5), then scaled into the 2.5%
+stock-specific VaR budget. ETF sleeve = stock–bond hedge (Treasuries / gold+commodities / gold+cash), 5% normally,
+10% in STRESS/CRASH or BEARISH. **MES overlay = corridor L − Σ wᵢβᵢ** (so below Rm 7% the sleeves are beta-hedged
+to zero), scaled so book CVaR95 ≤ 1.5 × regime VaR ceiling, halved by the breaker, then portfolio hard stops
+(−4% halve, −8% flat; re-armed after 5 days flat).
+
+### Options, protection, tail hedges (code: `algorithm/options.py`, `protection.py`)
+
+Black-Scholes pricing / greeks / implied vol; contract = closest |Δ| to target inside the DTE window with spread
+≤ 10% of mid. Gate under the real-world drift: P(profit at expiry) ≥ 25% and expected P&L > 0 (hedges and straddles
+exempt). Size = Kelly on premium within the 25% options sleeve; **1-contract exception**: if one contract costs more
+than the Kelly budget it buys exactly 1 contract when it passes the gate and costs ≤ 2% NAV. Uses: escalation oil
+calls, LEAPS / LEAPS call spreads on solvent crashed names, straddles, alpha calls on the 5 strongest names only
+when implied ≤ realised vol, event tail hedges (≥ 3% positions with an event ≤ 5 days: ~30Δ put, ≤ 0.3% NAV).
+One open position per (ticker, kind, side). Protection: position −6% from peak → trim half (once per peak), −10% →
+close; long options close at ≤ 2 DTE, −50% premium stop (not LEAPS), LEAPS rolled under 90 DTE; hedges and
+straddles closed after the event.
+
+### Alpha models (code: `algorithm/alpha.py`) — free / open source, inside the algorithm
+
+Walk-forward 21-day return model (ridge + gradient boosting, weekly samples, refit every 4 weeks), 4-classifier
+quality ensemble (Gaussian NB, gradient boosting, random forest, XGBoost) for P(top tercile), chart patterns
+(52-week breakout on volume, golden cross, oversold bounce, 200-day breakdown), Kronos forecasts (CPU, weekly,
+`agents/kronos_agent.py`). Scorecard: rank IC per model on matured forecasts; weight ∝ max(IC, 0); unproven
+models start at 0; IC ≤ 0 four periods running → 0 (ablation rule).
+
+### Agents, reconciliation, hosting (code: `agents/`, `.github/workflows/`, `vault/`; setup: `SETUP.md`)
+
+Roster (`agents/roster.yaml`, all propose-only, Claude via `agents/llm.py` with server-side refusal fallback):
+macro-analyst (FRED + GMTF + scenarios) and events-analyst (SEC 8-K flags → gate penalties, earnings dates →
+hedges/straddles, escalation flag) pre-market; forecaster (Kronos) weekly; risk-officer (QuantConnect vs IBKR Flex
+reconciliation + risk checks) and journalist (Obsidian notes) post-close. Hosting is GitHub Actions + QuantConnect
+cloud: no server; a failed job e-mails the owner; going live with a new version is one owner click.
 
 ### Smart Beta v1 — corridor derivation (superseded by v2, kept for reference)
 

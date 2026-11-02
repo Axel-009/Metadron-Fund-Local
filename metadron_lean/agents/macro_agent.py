@@ -30,14 +30,11 @@ Optional extras an agent or the owner may add to the file: earnings_yield, escal
 from __future__ import annotations
 
 import argparse
-import base64
 import datetime as dt
-import hashlib
 import json
 import math
 import os
 import sys
-import time
 import urllib.parse
 import urllib.request
 from typing import Callable, Dict, List, Optional, Tuple
@@ -173,29 +170,17 @@ def build_prompt(readings: Dict[str, float]) -> str:
     return ("Today's readings (decimals):\n" + json.dumps(readings, indent=2, sort_keys=True)
             + "\n\nFactor states [-1, +1]:\n" + json.dumps({k: round(v, 3) for k, v in factors.items()}, indent=2)
             + "\n\nQuestion tree:\n" + "\n".join(lines)
-            + "\n\nWrite 2–4 scenarios (base / up / down) for the next 1–3 months following the framework. "
+            + "\n\nSearch today's news for anything the data cannot see (policy intent, consensus expectations, "
+              "geopolitics, credit events). Then write 2–4 scenarios (base / up / down) for the next 1–3 months following the framework. "
               "Reply with ONLY the JSON object in the scenario schema (source \"macro-agent\", as_of today).")
 
 
 def generate_scenarios(readings: Dict[str, float], model: str = DEFAULT_MODEL) -> Optional[str]:
-    try:
-        import anthropic
-    except Exception:
-        print("[macro-agent] anthropic SDK missing — no scenarios", file=sys.stderr)
-        return None
-    if not os.environ.get("ANTHROPIC_API_KEY"):
-        return None
+    """Claude writes base / up / down scenarios following agents/market_reasoning.md; validated before use."""
+    import llm
     with open(os.path.join(HERE, "market_reasoning.md"), encoding="utf-8") as fh:
         framework = fh.read()
-    try:
-        msg = anthropic.Anthropic().messages.create(
-            model=model, max_tokens=4000, system=framework,
-            messages=[{"role": "user", "content": build_prompt(readings)}])
-        text = "".join(b.text for b in msg.content if getattr(b, "type", "") == "text")
-    except Exception as exc:
-        print(f"[macro-agent] Claude call failed: {exc}", file=sys.stderr)
-        return None
-    return validate_scenarios(text)
+    return validate_scenarios(llm.ask(framework, build_prompt(readings), web_search=True) or "")
 
 
 def validate_scenarios(text: str) -> Optional[str]:
@@ -217,28 +202,8 @@ def validate_scenarios(text: str) -> Optional[str]:
 
 # ---------------------------------------------------------------------------- QuantConnect ObjectStore
 def qc_upload(key: str, payload: str) -> bool:
-    """POST to the QC REST API object/set (needs QC_USER_ID, QC_API_TOKEN, QC_ORG_ID and network access)."""
-    uid, token, org = (os.environ.get(k) for k in ("QC_USER_ID", "QC_API_TOKEN", "QC_ORG_ID"))
-    if not (uid and token and org):
-        return False
-    ts = str(int(time.time()))
-    hashed = hashlib.sha256(f"{token}:{ts}".encode()).hexdigest()
-    auth = base64.b64encode(f"{uid}:{hashed}".encode()).decode()
-    boundary = "----metadron" + ts
-    body = (f"--{boundary}\r\nContent-Disposition: form-data; name=\"organizationId\"\r\n\r\n{org}\r\n"
-            f"--{boundary}\r\nContent-Disposition: form-data; name=\"key\"\r\n\r\n{key}\r\n"
-            f"--{boundary}\r\nContent-Disposition: form-data; name=\"objectData\"; filename=\"data.json\"\r\n"
-            f"Content-Type: application/json\r\n\r\n{payload}\r\n--{boundary}--\r\n").encode()
-    req = urllib.request.Request("https://www.quantconnect.com/api/v2/object/set", data=body, method="POST",
-                                 headers={"Authorization": f"Basic {auth}", "Timestamp": ts,
-                                          "Content-Type": f"multipart/form-data; boundary={boundary}"})
-    try:
-        with urllib.request.urlopen(req, timeout=30) as r:
-            ok = bool(json.load(r).get("success"))
-    except Exception as exc:
-        print(f"[macro-agent] QC upload {key} failed: {exc}", file=sys.stderr)
-        return False
-    return ok
+    import qc_api
+    return qc_api.object_set(key, payload)
 
 
 # ---------------------------------------------------------------------------- main

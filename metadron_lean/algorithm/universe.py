@@ -10,8 +10,8 @@
                  → Morningstar industry / industry-group code → Morningstar sector code.
     shortlist    names that pass the Fundamentals gate, ranked by gate score + macro tilt
                  (sub-sector edge from sector_rotation), split by sleeve in the allocation ratios
-                 IG 40 : HY 10 : DISTRESSED 10. Macro vetoes: a sub-sector with zero weight and negative
-                 edge contributes no names (macro can shrink / veto; micro cannot override).
+                 IG 40 : HY 10 : DISTRESSED 10. Macro vetoes: a sub-sector with zero weight and edge < −0.15
+                 contributes no names (macro can shrink / veto; micro cannot override).
 """
 
 from __future__ import annotations
@@ -32,6 +32,7 @@ SHORTLIST_N = 60
 SLEEVE_MIX = {"IG": 40, "HY": 10, "DISTRESSED": 10}
 MACRO_TILT = 0.25            # rank = gate_score + 0.25 × clip(sub-sector edge, −1, 1)
 VOL_WINDOW = 63
+MACRO_VETO_EDGE = -0.15     # veto only clearly negative sub-sectors with zero weight
 
 # Morningstar sector codes → default sub-sector (market_map)
 SECTOR_TO_SUBSECTOR = {
@@ -233,7 +234,7 @@ def shortlist(scores: dict, subsector_views: Optional[Dict[str, dict]] = None, n
         if not s.gate_pass:
             continue
         v = views.get(s.subsector)
-        if v is not None and v.get("weight", 1.0) <= 0 and v.get("edge", 0.0) < 0:
+        if v is not None and v.get("weight", 1.0) <= 0 and v.get("edge", 0.0) < MACRO_VETO_EDGE:
             out.vetoed.append(t)
             continue
         edge = max(-1.0, min(1.0, v.get("edge", 0.0))) if v else 0.0

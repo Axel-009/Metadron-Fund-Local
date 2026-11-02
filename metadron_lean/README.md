@@ -11,14 +11,16 @@ Kronos / LEAN / OpenJarvis, Jarvis, docs and tests. Nothing here depends on the 
 
 ```bash
 pip install -r requirements.txt
-python3 -m pytest tests -q          # 260 tests
+python3 -m pytest tests -q          # 278 tests
 ```
 
 ## What is where
 
 | Folder | Contents |
 |--------|----------|
-| `algorithm/` | QuantConnect algorithm: `main.py` (MES corridor overlay + theme monitor), `corridor.py` (v2), `risk_budget.py` (+ beta burst), `regime.py` (HMM), `forward_rm.py`, `universe.py` + `fundamentals.py` (S&P 1500, Graham-Dodd, capital structure, gate), `rotation.py` (theme-crash rotation), `market_map.py` + `macro_regime.py` + `sector_rotation.py` (trader framework → sub-sector tilts) |
+| `algorithm/` | QuantConnect algorithm: `main.py` (intraday heartbeat + wiring), corridor, risk budget, HMM regime, forward Rm, universe + fundamentals, decision matrix, alpha models, options, protection, GICS sectors, theme rotation, trader framework |
+| `agents/` | Propose-only agents run by GitHub Actions: macro, events, Kronos, risk officer, vault journalist, QuantConnect deploy (`roster.yaml`) |
+| `vault/` | Obsidian control room: Dashboard + generated Daily / Positions / Risk / Universe / Market notes |
 | `engine/` | 168 engine modules: macro (GMTF, HMM), MetadronCube, security analysis, distress, events, CVR, patterns, ML, decision matrix, options, protection, tail hedges, allocation, risk, API, agents, monitoring |
 | `core/` | Original platform core: cyclical vs secular decomposition, money velocity |
 | `intelligence_platform/` | Research integrations the engine loads (MiroFish, QLIB, distress models, ai-hedgefund, quant-trading, qstrader, plugins, Air-LLM, …) |
@@ -32,25 +34,19 @@ python3 -m pytest tests -q          # 260 tests
 
 | Step | Scope | Status |
 |------|-------|--------|
-| 1–2a | Corridor v2 (rf 4%, 0 below 7%, Kelly ramp, 4.5x cap), split risk budget, MES delivery | done |
-| — | Full extraction into this standalone repo | done |
-| 2a+ | No double sizing above Rm 12% + theme-crash rotation (cut / defensives / escalation / LEAPS / straddles) | done |
-| 2a++ | Trader framework: market map, macro question tree, stock–bond regime, scenario-weighted sub-sector tilts, agent guide (`agents/market_reasoning.md`) | done |
-| 2b | HMM regime (absolute labels), forward Rm (anchor + shrunk trend + regime + GMTF + Kronos slot), beta burst, macro agent (`agents/macro_agent.py`) | done |
-| 3 | S&P 1500 point-in-time universe, Morningstar adapter, Graham-Dodd top-down + bottom-up, capital structure (Altman Z, Merton PD, coverage), Fundamentals gate, sleeve shortlist with macro tilt / veto, data health | done |
-| 2c/3b | First real QuantConnect backtest + macro agent live run; verify Morningstar field paths and industry codes | needs owner setup |
-| 4 | Alpha: walk-forward ML, quality tiers, pattern recognition, Kronos | next |
-| 5 | Decision matrix in the algorithm (4 gates, spread, MC gate, Kelly + 1-contract rule) | |
-| 6 | Options engine, position protection, event tail hedges, capital-structure monitor | |
-| 7 | Data-health, reconciliation, Managed Agents roster, Jarvis front desk, Obsidian vault | |
+| 1–2b | Corridor v2, risk budget, MES delivery, no double sizing, theme rotation, trader framework, HMM regime, forward Rm, beta burst, macro agent | done |
+| 3 | S&P 1500 universe, Morningstar adapter, Graham-Dodd analysis, capital structure, Fundamentals gate, shortlist | done |
+| 3+ | Theme rotation into the 11 GICS sectors (research + regime scored); intraday liquidity heartbeat | done |
+| 4 | Alpha: walk-forward ML, quality ensemble, chart patterns, Kronos (CPU), model scorecard | done |
+| 5 | Decision matrix: 4 gates, spread, P(profit), full Kelly, sleeves, alpha VaR, MES overlay = L − sleeve beta | done |
+| 6 | Options engine (BS, IV, selection, 1-contract exception), protection, event tail hedges, expiries | done |
+| 7 | Agents (events, risk officer, journalist, forecaster), reconciliation, Obsidian vault, GitHub Actions hosting | done |
+| next | First real QuantConnect backtest + paper live (owner setup, `SETUP.md`); Kronos fine-tuning on GPU (later) | owner |
 
-## Run on QuantConnect
+## Run it
 
-1. Create a Python project on quantconnect.com (or `lean cloud push` with the LEAN CLI).
-2. Copy all of `algorithm/` (`main.py`, `corridor.py`, `risk_budget.py`, `regime.py`, `forward_rm.py`, `fundamentals.py`, `universe.py`, `rotation.py`, `market_map.py`, `macro_regime.py`, `sector_rotation.py`, `config.json`).
-3. Backtest — charts: *Rm vs corridor*, *Regime*, *Corridor*, *Leverage*, *Risk*, *Themes*, *Market view*, *Equity mix*, *Data health*, *Valuation*.
-5. Daily before the open: `python3 agents/macro_agent.py` (uploads `macro_inputs.json` + `scenarios.json`).
-4. Parameters: `kelly_fraction` (1.0), `beta_instrument` (`MES` or `SPY` ≤ 2x), `universe_mode` (`sp1500` | `fundamental`), `fundamental_refresh_days` (5), `shortlist_size` (60).
+Follow **`SETUP.md`** (one afternoon): GitHub repo + secrets → the deploy workflow pushes `algorithm/` to
+QuantConnect and backtests it → one click *Deploy Live* on the IBKR paper account → Obsidian opens `vault/`.
 
 ## Licenses
 
