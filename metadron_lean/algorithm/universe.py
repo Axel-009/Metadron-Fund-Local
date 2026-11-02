@@ -9,7 +9,8 @@
     sub-sector   owner examples in market_map → override file (ObjectStore metadron/subsector_map.json)
                  → Morningstar industry / industry-group code → Morningstar sector code.
     shortlist    names that pass the Fundamentals gate, ranked by gate score + macro tilt
-                 (sub-sector edge from sector_rotation), split by sleeve in the allocation ratios
+                 (sub-sector edge), slots per sleeve split across the 11 GICS sectors by the sector budgets
+                 (sectors.py), split by sleeve in the allocation ratios
                  IG 40 : HY 10 : DISTRESSED 10. Macro vetoes: a sub-sector with zero weight and edge < −0.15
                  contributes no names (macro can shrink / veto; micro cannot override).
 """
@@ -225,11 +226,13 @@ class Shortlist:
 
 
 def shortlist(scores: dict, subsector_views: Optional[Dict[str, dict]] = None, n: int = SHORTLIST_N,
-              held: Iterable[str] = ()) -> Shortlist:
-    """scores: {ticker: fundamentals.Score}; subsector_views: {subsector: {"edge", "weight"}}."""
+              held: Iterable[str] = (), sector_budget: Optional[Dict[str, float]] = None) -> Shortlist:
+    """scores: {ticker: fundamentals.Score}; subsector_views: {subsector: {"edge", "weight"}};
+    sector_budget: {GICS sector: share} — each sleeve's slots are split across sectors in proportion, so the
+    favoured sectors get enough single-name candidates (rest filled by best rank)."""
     views = subsector_views or {}
     out = Shortlist(by_sleeve={k: [] for k in SLEEVE_MIX})
-    ranked: Dict[str, List[Tuple[float, str]]] = {k: [] for k in SLEEVE_MIX}
+    ranked: Dict[str, List[Tuple[float, str, str]]] = {k: [] for k in SLEEVE_MIX}
     for t, s in scores.items():
         if not s.gate_pass:
             continue
@@ -240,11 +243,20 @@ def shortlist(scores: dict, subsector_views: Optional[Dict[str, dict]] = None, n
         edge = max(-1.0, min(1.0, v.get("edge", 0.0))) if v else 0.0
         r = s.gate_score + MACRO_TILT * edge
         out.rank[t] = r
-        ranked.setdefault(s.capital.sleeve, []).append((r, t))
+        ranked.setdefault(s.capital.sleeve, []).append((r, t, s.sector))
     total = sum(SLEEVE_MIX.values())
     for sleeve, share in SLEEVE_MIX.items():
         k = max(1, round(n * share / total))
-        picks = [t for _, t in sorted(ranked.get(sleeve, []), reverse=True)[:k]]
+        cands = sorted(ranked.get(sleeve, []), reverse=True)
+        picks: List[str] = []
+        if sector_budget:
+            for sec, w in sorted(sector_budget.items(), key=lambda x: -x[1]):
+                slots = int(round(k * w))
+                if w > 0 and slots == 0:
+                    slots = 1
+                picks += [t for _, t, sc in cands if sc == sec and t not in picks][:slots]
+            picks = picks[:k]
+        picks += [t for _, t, _ in cands if t not in picks][:k - len(picks)]
         out.by_sleeve[sleeve] = picks
         out.names.extend(picks)
     for t in held:                       # always keep held names in the data feed

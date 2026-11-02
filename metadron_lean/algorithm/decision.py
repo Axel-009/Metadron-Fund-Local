@@ -8,9 +8,15 @@
     expected alpha μα       blend of the composite-implied alpha and the model forecasts (alpha.py, IC-weighted)
     pre-trade checks        spread ≤ 30 bps (equity / ETF; no quote → skip check in backtests that lack quotes),
                             P(profit over HORIZON) ≥ 52% with μα > 0 (normal, idiosyncratic vol)
-    sizing                  full Kelly on idiosyncratic risk: w = k · μα / σε² (k = 1), capped at 20% NAV per name
-                            and at the sleeve budget; then risk_budget.check_alpha_trade scales it to fit the
-                            2.5% stock-specific VaR budget and the 0.5% per-name VaR cap (scaled, not rejected).
+    sizing                  full Kelly on idiosyncratic risk: w = k · μα / σε² (k = 1), capped at 20% NAV per name;
+                            then each (sleeve × GICS sector) bucket: sleeve budget × sector budget (sectors.py),
+                            unused sector room spilled to the other sectors' names still below Kelly; then
+                            risk_budget.check_alpha_trade scales into the 2.5% stock-specific VaR budget and the
+                            0.5% per-name VaR cap (scaled, not rejected).
+    allocation              engine/allocation/allocation_engine.py (THE reference): IG 40 · HY 10 · distressed 10 ·
+                            event/CVR 10 single names; TLTW/cash-flow ETFs 15 · FI/macro 5; margin 8; money market 2
+                            (hard floor); options overlay 25% delta-notional (IG 10 · HY 10 · distressed 5).
+                            If futures + options margin > 8% NAV, IG drops to 35%.
 Market beta of the sleeves is netted by the MES overlay (main.py): futures = corridor L − Σ wᵢβᵢ.
 """
 
@@ -31,8 +37,17 @@ MAX_POSITION = 0.20
 KELLY_FRACTION = 1.0            # owner: full Kelly
 MIN_IDIO_VOL = 0.10
 
-# Sleeve budgets (fractions of NAV, gross) — allocation reference
-SLEEVES = {"IG": 0.40, "OPTIONS": 0.25, "ETF": 0.10, "HY": 0.10, "DISTRESSED": 0.10, "CASH": 0.05}
+# Allocation buckets (fractions of NAV) — engine/allocation/allocation_engine.py AllocationRules
+SLEEVES = {"IG": 0.40, "HY": 0.10, "DISTRESSED": 0.10, "EVENT": 0.10,          # single names (+ their options)
+           "CASHFLOW": 0.15, "FI_MACRO": 0.05,                                  # ETFs (TLTW / income, commodities; bonds)
+           "MARGIN": 0.08, "MONEY_MARKET": 0.02}                               # never deployed in positions
+EQUITY_SLEEVES = ("IG", "HY", "DISTRESSED", "EVENT")
+OPTION_NOTIONAL = {"IG": 0.10, "HY": 0.10, "DISTRESSED": 0.05, "EVENT": 0.10}  # delta-notional caps (EVENT → IG cap)
+OPTIONS_TOTAL = 0.25
+MARGIN_LIMIT = 0.08
+IG_CUT_ON_MARGIN = 0.05
+SECTOR_MAX = 0.30               # = sectors.MAX_SECTOR: no GICS sector above 30% of a sleeve
+MES_MARGIN_RATE = 0.07           # initial margin ≈ 7% of MES notional (check with IBKR; parameter)
 NATURE_REGIME_FIT = {        # how well each nature fits the regime (0..1)
     "TRENDING": {"CYCLICAL": 0.8, "SECULAR": 0.8, "DEFENSIVE": 0.4},
     "RANGE": {"CYCLICAL": 0.5, "SECULAR": 0.6, "DEFENSIVE": 0.6},
@@ -110,6 +125,7 @@ class Decision:
     target: float = 0.0
     approved: bool = False
     reasons: List[str] = field(default_factory=list)
+    sector: str = ""
 
 
 def decide(ticker: str, sleeve: str, fund_pass: bool, fund_score: float, px: List[float], vol: List[float],
@@ -145,21 +161,58 @@ def decide(ticker: str, sleeve: str, fund_pass: bool, fund_score: float, px: Lis
     return d
 
 
-def fit_sleeves(decisions: List[Decision], sleeve_caps: Optional[Dict[str, float]] = None) -> None:
-    """Scale targets so each sleeve's gross stays within its budget (proportional)."""
-    caps = sleeve_caps or SLEEVES
+def sleeve_caps(margin_used: float = 0.0) -> Dict[str, float]:
+    """Bucket caps with the repo's hard rule: margin above 8% NAV → IG 40% → 35%."""
+    caps = dict(SLEEVES)
+    if margin_used > MARGIN_LIMIT:
+        caps["IG"] = SLEEVES["IG"] - IG_CUT_ON_MARGIN
+    return caps
+
+
+def fit_sleeves(decisions: List[Decision], caps: Optional[Dict[str, float]] = None,
+                sector_budget: Optional[Dict[str, float]] = None) -> None:
+    """Fit Kelly targets into (sleeve × GICS sector) buckets, spilling unused sector room to other names.
+
+    Each decision needs .sector (GICS); with no sector_budget only the sleeve cap applies."""
+    caps = caps or SLEEVES
     by: Dict[str, List[Decision]] = {}
     for d in decisions:
         by.setdefault(d.sleeve, []).append(d)
     for sleeve, ds in by.items():
-        tot = sum(d.target for d in ds)
-        cap = caps.get(sleeve, 0.0)
-        if tot > cap > 0:
-            for d in ds:
-                d.target *= cap / tot
-        elif cap <= 0:
+        cap = caps.get(sleeve, 0.0) if sleeve in EQUITY_SLEEVES else 0.0
+        if cap <= 0:
             for d in ds:
                 d.target = 0.0
+            continue
+        want = {id(d): d.target for d in ds}
+        if sector_budget:
+            groups: Dict[str, List[Decision]] = {}
+            for d in ds:
+                groups.setdefault(getattr(d, "sector", ""), []).append(d)
+            for sec, g in groups.items():
+                room = cap * sector_budget.get(sec, 0.0)
+                tot = sum(d.target for d in g)
+                if tot > room:
+                    for d in g:
+                        d.target = d.target * room / tot if tot > 0 else 0.0
+            # spill: room left by sectors without enough candidates goes to favoured sectors that still want
+            # more (below Kelly), never taking any sector above SECTOR_MAX of the sleeve
+            leftover = cap - sum(d.target for d in ds)
+            for sec, g in sorted(groups.items(), key=lambda kv: -sector_budget.get(kv[0], 0.0)):
+                if leftover <= 1e-9 or sector_budget.get(sec, 0.0) <= 0:
+                    continue
+                deficit = sum(want[id(d)] - d.target for d in g)
+                headroom = cap * SECTOR_MAX - sum(d.target for d in g)
+                add = min(leftover, deficit, max(headroom, 0.0))
+                if add <= 0 or deficit <= 0:
+                    continue
+                for d in g:
+                    d.target += add * (want[id(d)] - d.target) / deficit
+                leftover -= add
+        tot = sum(d.target for d in ds)
+        if tot > cap:
+            for d in ds:
+                d.target *= cap / tot
 
 
 def book_beta(weights: Dict[str, float], betas: Dict[str, float]) -> float:

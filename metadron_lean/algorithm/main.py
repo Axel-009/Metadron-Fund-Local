@@ -19,14 +19,17 @@ from rotation import (THEMES, DEFENSIVES, ESCALATION_SLEEVE, THEME_SUBSECTOR, bu
 from macro_regime import factor_states, diagnose, market_bias, stock_bond_regime
 from sector_rotation import evaluate, scenarios_from_json, summary
 from market_map import CYCLICAL, SECULAR, DEFENSIVE, SUBSECTORS
-from sectors import SECTOR_ETFS, GICS, sector_scores
+from sectors import SECTORS, sector_scores, sector_budgets, rotation_sectors, SECTOR_ETF_FALLBACK
 import schedule as hb
 import decision as dm
 import options as op
 import protection as pr
 import alpha as al
 
-ETF_SLEEVE = {"TREASURIES": ["TLT", "IEF"], "COMMODITIES/GOLD": ["GLD", "DBC"], "GOLD/CASH": ["GLD", "SHY"]}
+# ETF buckets (allocation_engine: TLTW/cash-flow 15%, FI/macro 5%) — the only ETFs held as positions
+CASHFLOW_ETFS = {"income": ["TLTW", "JEPI", "JEPQ", "DIVO"], "commodities": ["GLD", "DBC"]}
+FI_ETFS = {"TREASURIES": ["TLT", "IEF"], "OTHER": ["SHY"]}
+ALL_ETFS = {t for v in list(CASHFLOW_ETFS.values()) + list(FI_ETFS.values()) for t in v}
 MIN_TRADE = 0.005
 STOP_COOLDOWN_DAYS = 5          # after a −8% close-out, stay flat 5 days, then re-arm at the new NAV
 
@@ -40,7 +43,8 @@ class MetadronCorridor(QCAlgorithm):
         15:45 closing auction (remaining equity deltas, market-on-close)
 
     Research (09:50): HMM regime → forward Rm → corridor leverage L (full Kelly, 4.5x, regime ceiling, burst)
-        → macro question tree + scenarios → sub-sector edges → GICS sector scores → theme rotation plan
+        → macro question tree + scenarios → sub-sector edges → 11 GICS sector scores + budgets (bullish / bearish
+        reasoning; crashed themes marked down) → theme plan (cut crashed names, destination sectors)
         → decision matrix on the fundamentals shortlist (4 gates, spread, P(profit), full Kelly, sleeves,
         2.5% alpha VaR) → MES = L − Σ wᵢβᵢ (CVaR-capped, breaker-halved) → option plans.
     Parameters: kelly_fraction (1.0), beta_instrument (MES|SPY), rm_lookback, rm_smoothing, rotation_trading,
@@ -77,9 +81,8 @@ class MetadronCorridor(QCAlgorithm):
         else:
             self.future = None
 
-        tickers = sorted({t for v in THEMES.values() for t in v} | set(DEFENSIVES["DEFENSE"]) | set(SECTOR_ETFS)
-                         | set(ESCALATION_SLEEVE["oil_option_underlyings"])
-                         | {t for v in ETF_SLEEVE.values() for t in v} | {"HYG", "LQD", "USO"})
+        tickers = sorted({t for v in THEMES.values() for t in v} | set(DEFENSIVES["DEFENSE"])
+                         | set(ESCALATION_SLEEVE["oil_option_underlyings"]) | ALL_ETFS | {"HYG", "LQD"})
         self.rot_symbols = {}
         for t in tickers:
             try:
@@ -94,7 +97,7 @@ class MetadronCorridor(QCAlgorithm):
             self.vix = None
 
         self.rm_ewma, self.regime_model = None, RegimeModel()
-        self.last_views, self.last_plan_sig, self.sector_score = {}, None, {}
+        self.last_views, self.last_plan_sig, self.sector_score, self.sector_budget = {}, None, {}, {}
         self.sym_of = {}
         self._init_universe()
         self.wf, self.quality, self.scorecard = al.WalkForward(), al.QualityEnsemble(), al.Scorecard()
@@ -195,7 +198,8 @@ class MetadronCorridor(QCAlgorithm):
                 scores[t] = sc
         self.scores = scores
         held = [kv.key.value for kv in self.portfolio if kv.value.invested and kv.value.type == SecurityType.EQUITY]
-        sl = shortlist({t: s for t, s in scores.items() if t not in extra}, self.last_views, self.shortlist_n, held)
+        sl = shortlist({t: s for t, s in scores.items() if t not in extra}, self.last_views, self.shortlist_n, held,
+                       self.sector_budget or None)
         sym_of = {t: sym for t, (sym, _) in rows.items()}
         self.sym_of.update(sym_of)
         self.selected = [sym_of[t] for t in sl.names if t in sym_of]
@@ -380,6 +384,7 @@ class MetadronCorridor(QCAlgorithm):
         bias = self.run_sector_view(state.zone, prices, closes, esc, vix, states, macro)
         crashing = [THEME_SUBSECTOR[s.theme] for s in states if s.state != "NORMAL" and s.theme in THEME_SUBSECTOR]
         self.sector_score = sector_scores({k: v["edge"] for k, v in self.last_views.items()}, reg.regime, bias, esc, crashing)
+        self.sector_budget = sector_budgets(self.sector_score)
         nav = self._nav()
         holdings = {t: self._weight(s) for t, s in self.rot_symbols.items()}
         plan = build_plan(state.zone, prices, closes, holdings, escalation=esc,
@@ -388,13 +393,15 @@ class MetadronCorridor(QCAlgorithm):
         self._log_plan(plan, esc)
 
         # decision matrix on the shortlist
+        margin_used = abs(self.current_leverage) * dm.MES_MARGIN_RATE
+        self.caps = dm.sleeve_caps(margin_used)                 # repo hard rule: margin > 8% → IG 35%
         self.decisions = self._decide(closes, reg.regime, ev, kron)
         targets = {t: d.target for t, d in self.decisions.items() if d.approved}
-        if self.rotation_trading:
-            for a in plan.actions:
-                if a.kind in ("CUT", "ROTATE", "ESCALATION_EQUITY"):
+        if self.rotation_trading:                               # crashed-theme names are cut; the freed weight
+            for a in plan.actions:                              # flows through the sector budgets into single names
+                if a.kind == "CUT":
                     targets[a.ticker] = a.target_weight
-        targets.update(self._etf_sleeve(prices, closes, reg.regime, bias))
+        targets.update(self._etf_sleeve(prices, closes))
         targets = self._fit_alpha_budget(targets, prices)
         for t, s in list(self.sym_of.items()) + list(self.rot_symbols.items()):      # exit what is no longer wanted
             if t not in targets and self.portfolio[s].invested and self.portfolio[s].quantity > 0 \
@@ -463,17 +470,31 @@ class MetadronCorridor(QCAlgorithm):
                           view.get("edge"), nature, regime, model_alpha, mw, patt,
                           dm.spread_bps(getattr(sec, "bid_price", None), getattr(sec, "ask_price", None)))
             d.features = feats
+            d.sector = s.sector
+            catalyst = 0 <= ev["days"].get(t, 99) <= 21 or any("1.01" in f for f in ev["flags"].get(t, []))
+            if d.approved and catalyst and s.capital.sleeve != "DISTRESSED":
+                d.sleeve = "EVENT"                              # event-driven bucket (10%)
             out[t] = d
-        dm.fit_sleeves(list(out.values()))
+        dm.fit_sleeves(list(out.values()), getattr(self, "caps", None), self.sector_budget or None)
         return out
 
-    def _etf_sleeve(self, prices, spy_closes, regime, bias):
+    def _etf_sleeve(self, prices, spy_closes):
+        """TLTW / cash-flow 15% (income ETFs; commodities when bonds stop hedging) + FI / macro 5% (bonds)."""
         sb = stock_bond_regime(spy_closes, prices.get("TLT", []))
-        size = dm.SLEEVES["ETF"] * (1.0 if regime in ("STRESS", "CRASH") or bias == "BEARISH" else 0.5)
-        names = [t for t in ETF_SLEEVE.get(sb["hedge"], ETF_SLEEVE["GOLD/CASH"]) if t in self.rot_symbols]
-        out = {t: size / len(names) for t in names} if names else {}
-        for t in {x for v in ETF_SLEEVE.values() for x in v} - set(out):
-            out.setdefault(t, 0.0)
+        live = lambda names: [t for t in names if len(prices.get(t, [])) > 21]   # listed with history
+        income, comm = live(CASHFLOW_ETFS["income"]), live(CASHFLOW_ETFS["commodities"])
+        comm_share = {"COMMODITIES/GOLD": 0.5, "GOLD/CASH": 1 / 3}.get(sb["hedge"], 0.0)
+        if not income:
+            comm_share = 1.0
+        out = {t: 0.0 for t in ALL_ETFS}
+        cf = self.caps.get("CASHFLOW", dm.SLEEVES["CASHFLOW"])
+        for names, share in ((income, 1 - comm_share), (comm, comm_share)):
+            for t in names:
+                out[t] = cf * share / len(names)
+        fi = live(FI_ETFS["TREASURIES"] if sb["hedge"] == "TREASURIES" else FI_ETFS["OTHER"]) or live(FI_ETFS["TREASURIES"])
+        for t in fi:
+            out[t] = self.caps.get("FI_MACRO", dm.SLEEVES["FI_MACRO"]) / len(fi)
+        self.state_etf = {"hedge": sb["hedge"], "cashflow": {t: w for t, w in out.items() if w}}
         return out
 
     def _fit_alpha_budget(self, targets, prices):
@@ -484,7 +505,7 @@ class MetadronCorridor(QCAlgorithm):
                 out[t] = 0.0
                 continue
             d = self.decisions.get(t)
-            etf = t in GICS or t in {x for v in ETF_SLEEVE.values() for x in v}
+            etf = t in ALL_ETFS
             vol = d.idio_vol if d else (name_vol(prices.get(t, []), 63) or 0.25) * (0.4 if etf else 1.0)
             chk = check_alpha_trade(book, AlphaPosition(t, w, vol, getattr(self.scores.get(t), "subsector", "")))
             out[t] = chk.max_weight_allowed
@@ -579,12 +600,33 @@ class MetadronCorridor(QCAlgorithm):
                     self.hedged.discard(sym.value)
 
     # ------------------------------------------------------------------ options
+    def _sleeve_of(self, ticker):
+        d = self.decisions.get(ticker)
+        if d is not None:
+            return d.sleeve
+        sc = self.scores.get(ticker)
+        return sc.capital.sleeve if sc is not None else "IG"
+
     def _option_plans(self, plan, ev, kron):
+        """Options on SINGLE NAMES: rotation calls into the favoured GICS sectors, escalation calls on the best
+        Energy names, LEAPS / straddles on crashed names, alpha calls on the strongest names."""
         plans = []
+        approved = sorted((d for d in self.decisions.values() if d.approved), key=lambda d: -d.composite)
+        by_sector = {}
+        for d in approved:
+            by_sector.setdefault(d.sector, []).append(d)
         for a in plan.actions:
-            if a.kind == "ESCALATION_CALLS":
-                plans.append(dict(kind=a.kind, ticker=a.ticker, call=True, delta=0.4, dte=(45, 75), budget=a.premium,
-                                  mu=0.3, reason=a.reason))
+            if a.kind == "ROTATE":                       # a theme crashed: calls on the best names of the destination sectors
+                for d in by_sector.get(a.ticker, [])[:2]:
+                    plans.append(dict(kind="ROTATION_CALL", ticker=d.ticker, call=True, delta=0.5, dte=(45, 120),
+                                      budget=None, mu=d.mu_alpha + 0.04, rv=d.idio_vol, iv_max=1.25,
+                                      reason=f"rotation into {a.ticker}: composite {d.composite:.2f}"))
+            elif a.kind == "ESCALATION_CALLS":
+                names = [d.ticker for d in by_sector.get(a.ticker, [])[:2]] or \
+                        [SECTOR_ETF_FALLBACK.get(a.ticker, "XLE")]
+                for t in names:
+                    plans.append(dict(kind=a.kind, ticker=t, call=True, delta=0.4, dte=(45, 75),
+                                      budget=a.premium / len(names), mu=0.3, reason=a.reason))
             elif a.kind in ("LEAPS", "LEAPS_SPREAD"):
                 plans.append(dict(kind=a.kind, ticker=a.ticker, call=True, delta=0.6, dte=(270, 540), budget=a.premium,
                                   mu=0.25, reason=a.reason, short_delta=0.3 if a.kind == "LEAPS_SPREAD" else None))
@@ -592,15 +634,23 @@ class MetadronCorridor(QCAlgorithm):
                 for call in (True, False):
                     plans.append(dict(kind="STRADDLE", ticker=a.ticker, call=call, delta=0.5, dte=(7, 30),
                                       budget=a.premium / 2, mu=0.0, reason=a.reason, straddle=True))
-        ranked = sorted((d for d in self.decisions.values() if d.approved), key=lambda d: -d.composite)[:5]
-        for d in ranked:                                   # alpha calls on the strongest names
+        for d in approved[:5]:                           # alpha calls: only when implied ≤ realised (cheap convexity)
             plans.append(dict(kind="ALPHA_CALL", ticker=d.ticker, call=True, delta=0.6, dte=(30, 90),
-                              budget=None, mu=d.mu_alpha + 0.04, reason=f"top composite {d.composite:.2f}",
-                              rv=d.idio_vol))
+                              budget=None, mu=d.mu_alpha + 0.04, rv=d.idio_vol, iv_max=1.0,
+                              reason=f"top composite {d.composite:.2f} ({d.sector})"))
+        for p in plans:
+            p["sleeve"] = self._sleeve_of(p["ticker"])
         return plans
 
-    def _premium_open(self):
-        return sum(max(self.portfolio[s].holdings_value, 0.0) for s in self.option_book) / self._nav()
+    def _option_notional(self, sleeve=None):
+        """Open long-option delta-notional as a fraction of NAV (hedges excluded), total or per sleeve."""
+        tot = 0.0
+        for sym, m in self.option_book.items():
+            if m["kind"] in ("HEDGE", "SPREAD_SHORT") or self.portfolio[sym].quantity == 0:
+                continue
+            if sleeve is None or m.get("sleeve") == sleeve:
+                tot += m.get("notional", 0.0)
+        return tot / self._nav()
 
     def options_select(self):
         if self.is_warming_up or not self.option_plans:
@@ -651,16 +701,19 @@ class MetadronCorridor(QCAlgorithm):
             q = pick.quote
             T = q.dte / 365
             rv = p.get("rv") or name_vol(self._closes(und, 64), 63) or pick.iv
-            if p["kind"] == "ALPHA_CALL" and pick.iv > rv:
-                continue                                   # only when implied ≤ realised (cheap convexity)
+            if p.get("iv_max") is not None and pick.iv > p["iv_max"] * rv:
+                continue                                   # alpha / rotation calls only when implied vol is not rich
             prob, pnl = op.real_world(S, q.strike, T, max(rv, 0.05), q.mid, p["mu"], p["call"])
             if p.get("straddle") or p["kind"] == "HEDGE":
                 prob, pnl = max(prob, op.P_PROFIT_LONG), max(pnl, 1e-6)   # hedges / vol trades exempt from P(profit)
             budget = p["budget"] if p["budget"] is not None else op.kelly_option_fraction(prob, pnl, q.mid)
-            room = dm.SLEEVES["OPTIONS"] - self._premium_open()
-            if room <= 0:
-                break
-            n = op.contracts(min(budget, room), nav, q.mid, prob, pnl)
+            n = op.contracts(budget, nav, q.mid, prob, pnl)
+            notional_1 = abs(pick.delta) * S * op.MULTIPLIER
+            if p["kind"] != "HEDGE":                       # delta-notional caps: per credit sleeve + 25% total
+                sleeve = p.get("sleeve", "IG")
+                room = min(dm.OPTION_NOTIONAL.get(sleeve, dm.OPTION_NOTIONAL["IG"]) - self._option_notional(sleeve),
+                           dm.OPTIONS_TOTAL - self._option_notional())
+                n = min(n, int(max(room, 0.0) * nav // max(notional_1, 1e-9)))
             if n <= 0:
                 continue
             half = (q.ask - q.bid) / 2
@@ -668,7 +721,7 @@ class MetadronCorridor(QCAlgorithm):
             self.limit_order(q.symbol, n, limit, tag=f"{p['kind']} {p['ticker']} Δ{pick.delta:.2f} IV {pick.iv:.0%} "
                                                       f"P(profit) {prob:.0%}: {p['reason']}")
             self.option_book[q.symbol] = dict(kind=p["kind"], ticker=p["ticker"], entry_dte=q.dte, cost=q.mid * n * 100,
-                                              call=p["call"])
+                                              call=p["call"], sleeve=p.get("sleeve", "IG"), notional=notional_1 * n)
             if p.get("short_delta"):
                 short = op.select([x for x in quotes if x.dte == q.dte and x.strike > q.strike], S, True,
                                   p["short_delta"], q.dte, q.dte)
@@ -765,7 +818,9 @@ class MetadronCorridor(QCAlgorithm):
         self.plot("Risk", "realised vol %", sigma * 100)
         self.plot("Risk", "beta VaR95 1d %", daily_var(actual, sigma) * 100)
         self.plot("Risk", "drawdown %", (1 - nav / self.peak_nav) * 100)
-        self.plot("Risk", "options premium % NAV", self._premium_open() * 100)
+        self.plot("Risk", "options delta-notional % NAV", self._option_notional() * 100)
+        for sec, w in sorted(self.sector_budget.items(), key=lambda x: -x[1])[:5]:
+            self.plot("Sector budgets", sec, w)
         n_app = sum(1 for d in self.decisions.values() if d.approved)
         self.plot("Decisions", "approved", n_app)
         self.plot("Decisions", "candidates", len(self.decisions))
@@ -789,7 +844,9 @@ class MetadronCorridor(QCAlgorithm):
                       "credit_tier": getattr(getattr(self.scores.get(t), "capital", None), "credit_tier", None),
                       "peak": st.peak if st else None, "option": self.option_book.get(sym, {}).get("kind")}
         report = {"time": str(self.time), "nav": nav, "state": self.state, "breaker": self.breaker_on,
-                  "sector_scores": self.sector_score, "positions": pos, "targets": self.targets,
+                  "sector_scores": self.sector_score, "sector_budget": self.sector_budget,
+                  "etf_buckets": getattr(self, "state_etf", {}), "bucket_caps": getattr(self, "caps", {}),
+                  "positions": pos, "targets": self.targets,
                   "model_scorecard": self.scorecard.report(), "model_weights": self.scorecard.weights(),
                   "option_plans": [{k: v for k, v in p.items() if k != "rv"} for p in self.option_plans]}
         try:

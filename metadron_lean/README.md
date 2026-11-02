@@ -11,7 +11,7 @@ Kronos / LEAN / OpenJarvis, Jarvis, docs and tests. Nothing here depends on the 
 
 ```bash
 pip install -r requirements.txt
-python3 -m pytest tests -q          # 278 tests
+python3 -m pytest tests -q          # 279 tests
 ```
 
 ## What is where
@@ -36,7 +36,7 @@ python3 -m pytest tests -q          # 278 tests
 |------|-------|--------|
 | 1–2b | Corridor v2, risk budget, MES delivery, no double sizing, theme rotation, trader framework, HMM regime, forward Rm, beta burst, macro agent | done |
 | 3 | S&P 1500 universe, Morningstar adapter, Graham-Dodd analysis, capital structure, Fundamentals gate, shortlist | done |
-| 3+ | Theme rotation into the 11 GICS sectors (research + regime scored); intraday liquidity heartbeat | done |
+| 3+ | Rotation across the 11 GICS sectors into single stocks + options (research, regime, bullish/bearish budgets); repo allocation buckets; intraday liquidity heartbeat | done |
 | 4 | Alpha: walk-forward ML, quality ensemble, chart patterns, Kronos (CPU), model scorecard | done |
 | 5 | Decision matrix: 4 gates, spread, P(profit), full Kelly, sleeves, alpha VaR, MES overlay = L − sleeve beta | done |
 | 6 | Options engine (BS, IV, selection, 1-contract exception), protection, event tail hedges, expiries | done |

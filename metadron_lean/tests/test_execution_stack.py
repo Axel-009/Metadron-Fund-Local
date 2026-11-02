@@ -83,13 +83,32 @@ def test_decision_full_kelly_and_vetoes():
     assert dm.spread_bps(99.9, 100.1) == pytest.approx(20.0)
 
 
-def test_sleeve_budgets_scale_targets():
-    ds = [dm.Decision(f"T{i}", "HY", {}, 0.7, target=0.05) for i in range(4)]
-    ds.append(dm.Decision("IG1", "IG", {}, 0.7, target=0.10))
-    dm.fit_sleeves(ds)
-    assert sum(d.target for d in ds if d.sleeve == "HY") == pytest.approx(dm.SLEEVES["HY"])
-    assert ds[-1].target == pytest.approx(0.10)
+def _d(t, sleeve, sector, target):
+    d = dm.Decision(t, sleeve, {}, 0.7, target=target)
+    d.sector = sector
+    return d
+
+
+def test_allocation_matches_repo_buckets():
+    assert dm.SLEEVES == {"IG": 0.40, "HY": 0.10, "DISTRESSED": 0.10, "EVENT": 0.10, "CASHFLOW": 0.15,
+                          "FI_MACRO": 0.05, "MARGIN": 0.08, "MONEY_MARKET": 0.02}
     assert sum(dm.SLEEVES.values()) == pytest.approx(1.0)
+    assert sum(dm.OPTION_NOTIONAL[k] for k in ("IG", "HY", "DISTRESSED")) == pytest.approx(dm.OPTIONS_TOTAL)
+    assert dm.sleeve_caps(0.05)["IG"] == 0.40 and dm.sleeve_caps(0.12)["IG"] == pytest.approx(0.35)
+
+
+def test_sleeves_fill_by_gics_sector_budget_with_spill():
+    budget = {"Health Care": 0.2, "Utilities": 0.3, "Energy": 0.3, "Materials": 0.2}   # as sector_budgets makes them
+    ds = [_d(f"H{i}", "IG", "Health Care", 0.10) for i in range(4)]      # wants 40%; room 8%, spill up to 12%
+    ds += [_d("U1", "IG", "Utilities", 0.05)]                           # wants 5%, room 12%
+    ds += [_d("T1", "IG", "Information Technology", 0.10)]              # sector with zero budget
+    ds += [_d(f"Y{i}", "HY", "Energy", 0.05) for i in range(4)]
+    dm.fit_sleeves(ds, dm.SLEEVES, budget)
+    hc = sum(d.target for d in ds if d.sector == "Health Care")
+    assert hc == pytest.approx(0.40 * dm.SECTOR_MAX)                    # unused room spilled, stopped at 30% of the sleeve
+    assert next(d for d in ds if d.ticker == "U1").target == pytest.approx(0.05)
+    assert next(d for d in ds if d.ticker == "T1").target == 0.0        # unfavoured sector gets nothing
+    assert sum(d.target for d in ds if d.sleeve == "HY") <= 0.10 + 1e-9
     beta, idio = dm.beta_and_idio(gbm(300, 0.1, 0.2, 5), gbm(300, 0.1, 0.15, 6))
     assert idio > 0.1
 
@@ -166,4 +185,4 @@ def test_heartbeat_windows_are_liquid():
     for m in sc.OPTIONS_SELECT + sc.OPTIONS_EXECUTE:
         assert 45 <= m <= 360                                                   # never in the first 45 or last 30 minutes
     assert sc.risk_minutes()[0] == 30 and sc.risk_minutes()[-1] == 360
-    assert len(sec.SECTOR_ETFS) == 11
+    assert len(sec.SECTORS) == 11

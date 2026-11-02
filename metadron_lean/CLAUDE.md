@@ -33,7 +33,7 @@ vendor/                 Kronos, LEAN, OpenJarvis — full source copies, pinned 
 jarvis/                 Jarvis setup guide + dashboard page
 governance/ config/     credit classification, repo/heartbeat config
 docs/                   architecture DNA, corridor charts
-tests/                  278 tests (legacy engine suite + new algorithm tests)
+tests/                  279 tests (legacy engine suite + new algorithm tests)
 scripts/update_vendor.sh  re-sync vendored repos to upstream
 ```
 
@@ -120,12 +120,17 @@ Paradigm (Oct–Nov): SPY > 12% at max leverage while AI names with heavy debt /
 2.5% stock-specific VaR budget; targets are idempotent (re-running daily never compounds):
 
 1. **CUT** crashed-theme longs to 0 (CRASH) or ≤ 2% NAV per name (STRESS).
-2. **ROTATE** freed weight into the **11 GICS sectors** (Select Sector SPDR ETFs, `algorithm/sectors.py`) — owner
-   rule: no hand-picked defensives. Sector score = mean edge of its sub-sectors (research) + regime tilt
-   (STRESS/CRASH: defensives +0.30, cyclicals −0.20; TRENDING: cyclicals/growth +0.10) + bias tilt + escalation
-   (Energy +0.30, Industrials +0.15) − 0.50 for the crashing theme's own sector; top 3 sectors ∝ score, none
-   positive → Health Care / Staples / Utilities.
-3. **ESCALATION** posture (score ≥ 0.5): long oil calls (USO/XLE, 1% NAV premium, ~60 DTE) + Energy sector (XLE ≥ 3%). Score = mean of: oil +10%/21d, gold +5%/21d, defense beats SPY by 5 pts/21d,
+2. **ROTATE** through the **11 GICS sectors** (`algorithm/sectors.py`) into **single stocks and their options** —
+   never sector ETFs (owner rule). The equity book is split across the sectors every day by the research: sector
+   score = mean edge of its sub-sectors + regime tilt (STRESS/CRASH: defensives +0.30, cyclicals −0.20, growth −0.10;
+   TRENDING: cyclicals/growth +0.10) + bullish/bearish bias tilt + escalation (Energy +0.30, Industrials +0.15)
+   − 0.50 for the crashed theme's own sector → sector budget ∝ max(score + 0.10, 0), each active sector 3–30% of a
+   sleeve (none positive → Health Care / Staples / Utilities). The universe shortlist gives each sector candidate
+   slots in proportion; the decision matrix fills each (sleeve × sector) bucket with single names; the plan names
+   the top 3 destination sectors and buys rotation calls on their 2 best names (IV ≤ 1.25 × RV). Budgets are
+   recomputed from state, so rotation is idempotent.
+3. **ESCALATION** posture (score ≥ 0.5): Energy sector tilt in the budgets + long calls on the 2 best Energy single
+   names (1% NAV premium, ~60 DTE; USO/XLE only if no Energy name qualifies). Score = mean of: oil +10%/21d, gold +5%/21d, defense beats SPY by 5 pts/21d,
    VIX ≥ 25; an events-agent flag overrides.
 4. **HARVEST** the drawdown: LEAPS calls (≥ 270 DTE, 0.5% NAV premium) on crashed names ≥ 18% below their
    1-year high that pass the solvency check (Merton PD ≤ 5%, interest coverage ≥ 2; unknown = no LEAPS);
@@ -245,9 +250,11 @@ Gates: Fundamentals 40% (must pass) · Flow 20% (dollar-volume trend + 21d stren
 edge + regime fit of the name's nature; < 0.3 vetoes) · Momentum 20% (12-1, trend, chart patterns). Trade when
 composite ≥ 0.55, spread ≤ 30 bps, P(profit over 21d) ≥ 52% with α > 0. Expected alpha α = composite-implied
 0.40·(c − 0.5) blended with the models by their scorecard weights. Size = **full Kelly** α/σε² (k = 1), ≤ 20% NAV,
-sleeve budgets (IG 40 · options 25 premium · ETF 10 · HY 10 · distressed 10 · cash 5), then scaled into the 2.5%
-stock-specific VaR budget. ETF sleeve = stock–bond hedge (Treasuries / gold+commodities / gold+cash), 5% normally,
-10% in STRESS/CRASH or BEARISH. **MES overlay = corridor L − Σ wᵢβᵢ** (so below Rm 7% the sleeves are beta-hedged
+then the allocation buckets (below), each single-name sleeve split across the GICS sector budgets (unused sector
+room spills to favoured sectors up to 30% of the sleeve), then scaled into the 2.5% stock-specific VaR budget.
+Names with a catalyst (event ≤ 21 days or an 8-K material agreement) go to the EVENT bucket. ETF buckets:
+TLTW / cash-flow 15% (income ETFs TLTW, JEPI, JEPQ, DIVO; GLD/DBC take ½ when stocks and bonds move together, ⅓ in
+GOLD/CASH) and FI / macro 5% (TLT/IEF when bonds hedge, else SHY). **MES overlay = corridor L − Σ wᵢβᵢ** (so below Rm 7% the sleeves are beta-hedged
 to zero), scaled so book CVaR95 ≤ 1.5 × regime VaR ceiling, halved by the breaker, then portfolio hard stops
 (−4% halve, −8% flat; re-armed after 5 days flat).
 
@@ -255,7 +262,8 @@ to zero), scaled so book CVaR95 ≤ 1.5 × regime VaR ceiling, halved by the bre
 
 Black-Scholes pricing / greeks / implied vol; contract = closest |Δ| to target inside the DTE window with spread
 ≤ 10% of mid. Gate under the real-world drift: P(profit at expiry) ≥ 25% and expected P&L > 0 (hedges and straddles
-exempt). Size = Kelly on premium within the 25% options sleeve; **1-contract exception**: if one contract costs more
+exempt). Size = Kelly on premium, capped by delta-notional per credit sleeve (IG 10 · HY 10 · distressed 5, 25%
+total; hedges excluded); **1-contract exception**: if one contract costs more
 than the Kelly budget it buys exactly 1 contract when it passes the gate and costs ≤ 2% NAV. Uses: escalation oil
 calls, LEAPS / LEAPS call spreads on solvent crashed names, straddles, alpha calls on the 5 strongest names only
 when implied ≤ realised vol, event tail hedges (≥ 3% positions with an event ≤ 5 days: ~30Δ put, ≤ 0.3% NAV).
@@ -406,7 +414,23 @@ design, never code): FreqAI-style retraining, protections, dry-run first, chat c
 
 ## Allocation reference
 
-Code: `engine/allocation/allocation_engine.py` (+ `universe_scan.py`). Sleeves:
+Code: `engine/allocation/allocation_engine.py` (`AllocationRules`) — THE reference; the algorithm uses these buckets
+(`algorithm/decision.py` SLEEVES):
+
+| Bucket | % NAV | Instruments |
+|--------|-------|-------------|
+| IG equities | 40 (35 when margin > 8%) | single names, credit tier A/B, split across GICS sector budgets |
+| HY equities | 10 | single names, C/D |
+| Distressed equity | 10 | single names, E/F recovery plays |
+| Event-driven / CVR | 10 | single names with catalysts |
+| TLTW / cash-flow ETFs | 15 | income ETFs (+ GLD/DBC when bonds stop hedging) |
+| FI / macro | 5 | TLT / IEF / SHY |
+| Margin | 8 | initial margin for options + MES futures |
+| Money market | 2 | hard floor, never deployed |
+| Options overlay | 25 delta-notional | IG 10 · HY 10 · distressed 5, on the single names |
+| Futures | corridor | MES overlay = corridor L − sleeve beta (owner-approved v2 corridor supersedes the code's 15% futures note) |
+
+Older summary table (pre-code, superseded where it differs):
 
 
 | Sleeve | Allocation | Credit Tier | Notes |

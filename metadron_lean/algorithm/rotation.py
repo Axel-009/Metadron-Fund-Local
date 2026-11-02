@@ -14,11 +14,12 @@ Response, all sized inside the 2.5% stock-specific VaR budget (risk_budget.check
 
     1. EXIT / CUT   longs in the crashed theme (CRASH → 0, STRESS → cap 2% NAV per name). Market
                     beta untouched. Targets are idempotent: re-running the plan daily never compounds.
-    2. ROTATE       freed equity weight into the 11 GICS sectors (Select Sector SPDR ETFs, sectors.py),
-                    chosen by the research (sub-sector edges) and the regime — top 3 sectors ∝ score;
-                    no positive score → Health Care / Staples / Utilities.
-    3. ESCALATION   predictive posture when escalation is likely: long oil via call options
-                    (premium budget) + Energy sector ETF (XLE).
+    2. ROTATE       the equity book is allocated across the 11 GICS sectors by the research + regime
+                    (sectors.py): the crashed theme's sector is marked down, the sectors favoured by the
+                    bullish / bearish reasoning get the budget, and the decision matrix fills it with SINGLE
+                    STOCKS (and options on them). The plan names the top destination sectors.
+    3. ESCALATION   predictive posture when escalation is likely: Energy sector tilt (sector scores) + long
+                    calls on the best Energy single names (USO / XLE only if no Energy name qualifies).
     4. HARVEST      benefit from the drawdown:
                       - discounted LEAPS calls on crashed names that are still SOLVENT
                         (capital-structure check passes) — call SPREADS when implied vol is rich;
@@ -48,8 +49,8 @@ DEFENSIVES: Dict[str, List[str]] = {          # escalation SIGNAL basket only (n
     "DEFENSE": ["LMT", "NOC", "RTX", "GD"],
 }
 ESCALATION_SLEEVE = {
-    "oil_option_underlyings": ["USO", "XLE"],   # long calls
-    "energy_sector": ["XLE"],                    # GICS Energy sector ETF
+    "oil_option_underlyings": ["USO", "XLE"],   # fallback call underlyings when no Energy single name qualifies
+    "sector": "Energy",                          # escalation calls go to the best Energy single names
 }
 
 # Theme crash thresholds (equal-weight theme index)
@@ -67,8 +68,7 @@ ESC_VIX = 25.0
 ESCALATION_THRESHOLD = 0.5
 
 # Budgets (fractions of NAV)
-OIL_CALL_PREMIUM = 0.010          # total premium for oil calls
-ENERGY_WEIGHT = 0.03              # minimum Energy-sector (XLE) weight while escalating
+OIL_CALL_PREMIUM = 0.010          # total premium for escalation (energy) calls
 LEAPS_PREMIUM_PER_NAME = 0.005
 LEAPS_MIN_DTE = 270
 LEAPS_MIN_DISCOUNT = 0.18         # price ≥ 18% below its 252-day high (owner)
@@ -174,7 +174,7 @@ def is_solvent(cap_structure: Optional[dict]) -> bool:
 # --- plan -------------------------------------------------------------------------
 @dataclass
 class RotationAction:
-    kind: str               # CUT | ROTATE | ESCALATION_CALLS | ESCALATION_EQUITY | LEAPS | LEAPS_SPREAD | STRADDLE
+    kind: str               # CUT | ROTATE (ticker = GICS sector) | ESCALATION_CALLS (ticker = sector) | LEAPS | LEAPS_SPREAD | STRADDLE
     ticker: str
     target_weight: float = 0.0      # equity weight (fraction of NAV), or 0 for options
     premium: float = 0.0            # option premium budget (fraction of NAV)
@@ -236,25 +236,20 @@ def build_plan(market_zone: str,
     if not any(ts.state != "NORMAL" for ts in states):
         return RotationPlan(market_zone, escalation, states, actions)
 
-    # 2. rotate freed weight into the best GICS sectors (research + regime scores)
-    if freed > 0:
-        from sectors import rotation_weights, GICS
-        for etf, add in rotation_weights(sector_scores or {}, freed).items():
-            actions.append(RotationAction("ROTATE", etf, target_weight=holdings.get(etf, 0.0) + add,
-                                          reason=f"GICS rotation → {GICS[etf][0]} "
-                                                 f"(score {(sector_scores or {}).get(etf, 0.0):+.2f})"))
+    # 2. rotation destinations: the best GICS sectors (budgets come from sectors.sector_budgets every day)
+    from sectors import rotation_sectors, sector_budgets
+    budgets = sector_budgets(sector_scores or {})
+    for sec in rotation_sectors(sector_scores or {}):
+        actions.append(RotationAction("ROTATE", sec, target_weight=budgets.get(sec, 0.0),
+                                      reason=f"GICS rotation → {sec} single names "
+                                             f"(score {(sector_scores or {}).get(sec, 0.0):+.2f}, "
+                                             f"budget {budgets.get(sec, 0.0):.0%} of each equity sleeve; "
+                                             f"freed {freed:.1%} NAV)"))
 
     # 3. escalation posture
     if escalation >= ESCALATION_THRESHOLD:
-        und = ESCALATION_SLEEVE["oil_option_underlyings"]
-        for t in und:
-            actions.append(RotationAction("ESCALATION_CALLS", t, premium=OIL_CALL_PREMIUM / len(und), dte=60,
-                                          reason=f"long oil calls — escalation {escalation:.2f}"))
-        for t in ESCALATION_SLEEVE["energy_sector"]:
-            already = sum(a.target_weight for a in actions if a.kind == "ROTATE" and a.ticker == t)
-            actions.append(RotationAction("ESCALATION_EQUITY", t,
-                                          target_weight=max(holdings.get(t, 0.0), already, ENERGY_WEIGHT),
-                                          reason="Energy sector exposure — escalation"))
+        actions.append(RotationAction("ESCALATION_CALLS", ESCALATION_SLEEVE["sector"], premium=OIL_CALL_PREMIUM,
+                                      dte=60, reason=f"long calls on the best Energy names — escalation {escalation:.2f}"))
 
     # 4. harvest the drawdown
     straddles = []
