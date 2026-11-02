@@ -1,11 +1,14 @@
 {
     "algorithm-language": "Python",
-    "description": "Metadron Capital - clean LEAN build. Step 2a: smart-beta corridor v2 (rf 4%, 0 below 7%, Kelly ramp, 4.5x cap) on MES futures.",
+    "description": "Metadron Capital - clean LEAN build. Steps 2-3: smart-beta corridor v2 on MES, HMM regime, forward Rm, theme rotation, trader framework, S&P 1500 fundamentals universe.",
     "parameters": {
         "kelly_fraction": "1.0",
         "beta_instrument": "MES",
         "rm_lookback": "252",
         "rm_smoothing": "0.10",
-        "rotation_trading": "false"
+        "rotation_trading": "false",
+        "universe_mode": "sp1500",
+        "fundamental_refresh_days": "5",
+        "shortlist_size": "60"
     }
 }

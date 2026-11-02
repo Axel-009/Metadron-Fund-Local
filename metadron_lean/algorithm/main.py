@@ -9,6 +9,9 @@ from corridor import (
 from risk_budget import beta_cap, hard_stops, daily_var, check_alpha_trade, AlphaPosition, momentum_confirms
 from regime import RegimeModel, REGIMES
 from forward_rm import estimate as forward_rm
+from fundamentals import top_down, analyze, cap_structure_map
+from universe import (SP1500_ETFS, EXPECTED_MEMBERS, SECTOR_TYPE, extract, subsector_for, passes_liquidity,
+                      passes_fallback, shortlist, EpsHistory, PriceBuffer, SHORTLIST_N)
 from rotation import (
     THEMES, DEFENSIVES, ESCALATION_SLEEVE, THEME_SUBSECTOR, build_plan, escalation_score, theme_index,
     realised_vol as name_vol,
@@ -28,6 +31,12 @@ class MetadronCorridor(QCAlgorithm):
                   + Σ P(regime)·drift + GMTF tension + Kronos (when the macro agent supplies them)
         σm      = 63-day realised volatility
         cap     = min(4.5x, regime VaR ceiling × beta burst when momentum confirms)
+
+    Universe (step 3): point-in-time S&P 1500 (IVV + IJH + IJR constituents) → Morningstar fundamentals →
+    Graham-Dodd security analysis + capital structure → Fundamentals gate → shortlist by sleeve
+    (IG / HY / DISTRESSED) tilted by the sub-sector view. Rescored every `fundamental_refresh_days`;
+    the aggregate earnings yield anchors forward Rm; Merton PD / coverage feed the LEAPS solvency check.
+    Shortlisted names are subscribed for the decision matrix (step 5) — not traded yet.
         L       = k · s(Rm) · (Rm − 4%)/σm²   → 0 below 7%, ramp 7–12%, full Kelly above 12%
         hard stops: drawdown −4% trim (halve), −8% flat
     Market beta is delivered with Micro E-mini S&P 500 futures (default) or SPY (≤ 2x Reg-T).
@@ -52,6 +61,9 @@ class MetadronCorridor(QCAlgorithm):
         self.rm_lookback = int(self.get_parameter("rm_lookback", 252))
         self.rm_smoothing = float(self.get_parameter("rm_smoothing", 0.10))
         self.rotation_trading = str(self.get_parameter("rotation_trading", "false")).lower() == "true"
+        self.universe_mode = str(self.get_parameter("universe_mode", "sp1500")).lower()
+        self.refresh_days = int(self.get_parameter("fundamental_refresh_days", 5))
+        self.shortlist_n = int(self.get_parameter("shortlist_size", SHORTLIST_N))
 
         # Signal source: SPY (index proxy) for Rm and σm
         spy = self.add_equity("SPY", Resolution.DAILY)
@@ -87,6 +99,8 @@ class MetadronCorridor(QCAlgorithm):
 
         self.rm_ewma = None
         self.regime_model = RegimeModel()
+        self.last_views = {}
+        self._init_universe()
         self.current_leverage = 0.0
         self.peak_nav = self.portfolio.total_portfolio_value
         self.set_warm_up(self.rm_lookback + 5, Resolution.DAILY)
@@ -95,6 +109,121 @@ class MetadronCorridor(QCAlgorithm):
                          self.rebalance)
 
     # ------------------------------------------------------------------
+    # ------------------------------------------------------------------ universe (step 3)
+    def _init_universe(self):
+        self.members = {}                     # etf → set(ticker)
+        self.eps_hist, self.px_buf = EpsHistory(), PriceBuffer()
+        self.scores, self.td, self.health = {}, None, {}
+        self.selected, self.last_score_time = [], None
+        self.subsector_overrides = {}
+        self.universe_settings.resolution = Resolution.DAILY
+        if self.universe_mode == "sp1500":
+            for etf in SP1500_ETFS:
+                try:
+                    self.add_universe(self.universe.etf(etf, self.universe_settings,
+                                                        lambda c, e=etf: self._etf_members(e, c)))
+                except Exception as exc:
+                    self.debug(f"universe: ETF constituents {etf} unavailable ({exc}) — fallback filter")
+                    self.universe_mode = "fundamental"
+        self.add_universe(self._fundamental_selection)
+
+    def _etf_members(self, etf, constituents):
+        self.members[etf] = {c.symbol.value for c in constituents}      # tickers (same-day feeds)
+        return []                              # membership only; subscriptions come from the shortlist
+
+    def _fundamental_selection(self, fundamental):
+        members = set().union(*self.members.values()) if self.members else set()
+        extra = {str(t) for t in getattr(self, "rot_symbols", {})}
+        days = (self.time - self.last_score_time).days if self.last_score_time is not None else 999
+        rescore = days >= self.refresh_days
+        rows, missing_n, expected = {}, 0, 0
+        for f in fundamental:
+            sym = f.symbol
+            t = sym.value
+            in_universe = t in members if self.universe_mode == "sp1500" else bool(getattr(f, "has_fundamental_data", False))
+            if not in_universe and t not in extra:
+                continue
+            self.px_buf.update(t, getattr(f, "price", None))
+            if not rescore:
+                continue
+            d, missing = extract(f)
+            if self.universe_mode != "sp1500" and t not in extra and not passes_fallback(d):
+                continue
+            expected += 1
+            if missing:
+                missing_n += 1
+                continue
+            self.eps_hist.update(t, d.get("eps_ttm"))
+            rows[t] = (sym, d)
+        if not rescore:
+            return self.selected
+        if self.subsector_overrides == {}:
+            raw = self._store_read("metadron/subsector_map.json")
+            try:
+                self.subsector_overrides = json.loads(raw) if raw else {"_": "_"}
+            except Exception:
+                self.subsector_overrides = {"_": "_"}
+        macro = self.macro_inputs()
+        vix = None
+        if getattr(self, "vix", None) is not None:
+            v = self._closes(self.vix, 3)
+            vix = v[-1] if v else None
+        self.td = top_down([d for _, d in rows.values()], treasury_10y=macro.get("treasury_10y", 0.042), vix=vix)
+        scores = {}
+        for t, (sym, d) in rows.items():
+            code = d.get("sector_code")
+            try:
+                stype = SECTOR_TYPE.get(int(code), "") if code is not None else ""
+            except (TypeError, ValueError):
+                stype = ""
+            sc = analyze(t, d, self.td, equity_vol=self.px_buf.vol(t), eps_history=self.eps_hist.annual(t),
+                         sector_type=stype)
+            sc.subsector = subsector_for(t, code, d.get("group_code"), d.get("industry_code"), self.subsector_overrides)
+            if t in extra or (passes_liquidity(d) or self.universe_mode != "sp1500"):
+                scores[t] = sc
+        self.scores = scores
+        held = [str(k.value) for k, h in self.portfolio.items() if h.invested] if hasattr(self.portfolio, "items") else []
+        sl = shortlist({t: s for t, s in scores.items() if t not in extra}, self.last_views, self.shortlist_n, held)
+        sym_of = {t: sym for t, (sym, _) in rows.items()}
+        self.selected = [sym_of[t] for t in sl.names if t in sym_of]
+        self.last_score_time = self.time
+        self.health = {"members": len(members) if self.universe_mode == "sp1500" else expected,
+                       "expected": EXPECTED_MEMBERS if self.universe_mode == "sp1500" else expected,
+                       "scored": len(scores), "missing_fields": missing_n,
+                       "gate_pass": sum(1 for s in scores.values() if s.gate_pass),
+                       "shortlist": len(sl.names), "vetoed": len(sl.vetoed)}
+        self._publish_universe(sl)
+        return self.selected
+
+    def _publish_universe(self, sl):
+        h, td = self.health, self.td
+        for k in ("members", "scored", "missing_fields", "gate_pass", "shortlist"):
+            self.plot("Data health", k, h.get(k, 0))
+        self.plot("Valuation", "earnings yield %", td.earnings_yield * 100)
+        self.plot("Valuation", "ERP %", td.erp * 100)
+        self.plot("Valuation", "market P/E", min(td.market_pe, 60))
+        self.plot("Valuation", "max investment P/E", td.max_pe)
+        if h.get("members", 0) < 0.9 * h.get("expected", 1) or h.get("missing_fields", 0) > 0.2 * max(h.get("members", 1), 1):
+            self.debug(f"DATA-HEALTH alert {h}")
+        top = sorted(sl.rank.items(), key=lambda x: -x[1])[:100]
+        report = {"time": str(self.time), "mode": self.universe_mode, "health": h, "top_down": td.__dict__,
+                  "shortlist": sl.by_sleeve, "vetoed": sl.vetoed[:50],
+                  "scores": {t: self.scores[t].to_dict() for t, _ in top},
+                  "watch": {t: self.scores[t].to_dict() for t in self.scores if t in getattr(self, "rot_symbols", {})}}
+        try:
+            self.object_store.save("metadron/universe_scores.json", json.dumps(report, default=str))
+        except Exception:
+            pass
+        self.debug(f"UNIVERSE {h} | EY {td.earnings_yield:.2%} ERP {td.erp:+.2%} {td.regime} | "
+                   + " ".join(f"{k}:{','.join(v[:5])}" for k, v in sl.by_sleeve.items()))
+
+    def subsector_fundamentals(self) -> dict:
+        """{subsector: −1..1} = 2 × (mean gate score − 0.5) over scored names → sector_rotation input."""
+        agg = {}
+        for s in self.scores.values():
+            agg.setdefault(s.subsector, []).append(s.gate_score)
+        return {k: max(-1.0, min(1.0, 2 * (sum(v) / len(v) - 0.5))) for k, v in agg.items() if len(v) >= 3}
+
     def macro_inputs(self) -> dict:
         """Numeric readings written by the macro agent (FRED, GMTF, Kronos) — {} if absent/stale."""
         raw = self._store_read("metadron/macro_inputs.json")
@@ -159,8 +288,11 @@ class MetadronCorridor(QCAlgorithm):
         regime = reg.regime
 
         macro = self.macro_inputs()
+        ey = macro.get("earnings_yield")
+        if ey is None and self.td is not None and self.td.n_names >= 100:
+            ey = self.td.earnings_yield            # universe aggregate (step 3)
         fwd = forward_rm(self.rm_ewma, regime_probs=reg.probs, gmtf_score=macro.get("gmtf_score"),
-                         earnings_yield=macro.get("earnings_yield"), inflation=macro.get("inflation_yoy"),
+                         earnings_yield=ey, inflation=macro.get("inflation_yoy"),
                          kronos=macro.get("kronos_spx_annual"))
         rm = fwd.rm
         burst = regime != "CRASH" and momentum_confirms(long)
@@ -261,7 +393,9 @@ class MetadronCorridor(QCAlgorithm):
         bias = market_bias(factors, zone)
         sb = stock_bond_regime(spy_closes, prices.get("TLT", []))
         themes = {THEME_SUBSECTOR[t.theme]: t.state for t in plan.themes if t.theme in THEME_SUBSECTOR}
-        views = evaluate(factors, scenarios=scenarios, findings=findings, theme_states=themes, bias=bias["bias"])
+        views = evaluate(factors, scenarios=scenarios, findings=findings, theme_states=themes, bias=bias["bias"],
+                         fundamentals=self.subsector_fundamentals())
+        self.last_views = {v.subsector: {"edge": v.edge, "weight": v.weight} for v in views}
 
         mix = {CYCLICAL: 0.0, SECULAR: 0.0, DEFENSIVE: 0.0}
         for v in views:
@@ -296,7 +430,8 @@ class MetadronCorridor(QCAlgorithm):
         defense = theme_index(prices, DEFENSIVES["DEFENSE"])
         esc = escalation_score(oil=prices.get("USO"), gold=prices.get("GLD"),
                                defense_idx=defense or None, spy=spy_closes, vix=vix)
-        plan = build_plan(zone, prices, spy_closes, holdings, escalation=esc)
+        plan = build_plan(zone, prices, spy_closes, holdings, escalation=esc,
+                          cap_structure=cap_structure_map(self.scores) if self.scores else None)
         self.run_sector_view(zone, prices, spy_closes, esc, vix, plan)
 
         code = {"NORMAL": 0, "STRESS": 1, "CRASH": 2}

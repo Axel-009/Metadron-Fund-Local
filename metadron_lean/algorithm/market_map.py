@@ -96,6 +96,8 @@ SUBSECTORS = {
     "HEALTHCARE_PHARMA": dict(sector="Health Care", nature=SECULAR, chain=None, proxy="XLV",
                               examples=["LLY", "JNJ", "MRK", "ABBV"],
                               sens=_s(GROWTH=-0.2, SENTIMENT=-0.2, RATES=-0.2, GEOPOLITICS=0.1)),
+    "SOFTWARE": dict(sector="IT", nature=SECULAR, chain=None, proxy="IGV", examples=[],
+                     sens=_s(GROWTH=0.4, RATES=-0.5, AI_CAPEX=0.2, PRODUCTIVITY=0.2, SENTIMENT=0.4)),
     "MEDIA_TELECOM": dict(sector="Communication Services", nature=SECULAR, chain=None, proxy="XLC", examples=[],
                           sens=_s(GROWTH=0.3, RATES=-0.3, AI_CAPEX=0.2)),
     # ---------------- defensives ----------------

@@ -10,7 +10,7 @@ disagrees with this file, THIS file wins; e.g. its corridor section was linear a
 ## Layout
 
 ```
-algorithm/              QuantConnect LEAN algorithm (main, corridor, risk_budget, regime, forward_rm, rotation, market_map, macro_regime, sector_rotation)
+algorithm/              QuantConnect LEAN algorithm (main, corridor, risk_budget, regime, forward_rm, fundamentals, universe, rotation, market_map, macro_regime, sector_rotation)
 agents/                 market_reasoning.md (trader framework + scenario schema), macro_agent.py (FRED → macro_inputs.json, Claude → scenarios.json)
 engine/                 Intelligence engine (extracted from the legacy monorepo, package paths unchanged)
   data/ signals/ ml/    universe, macro (GMTF, HMM), cube, security analysis, distress, events, CVR, patterns, ML
@@ -27,7 +27,7 @@ vendor/                 Kronos, LEAN, OpenJarvis — full source copies, pinned 
 jarvis/                 Jarvis setup guide + dashboard page
 governance/ config/     credit classification, repo/heartbeat config
 docs/                   architecture DNA, corridor charts
-tests/                  249 tests (legacy engine suite + new algorithm tests)
+tests/                  260 tests (legacy engine suite + new algorithm tests)
 scripts/update_vendor.sh  re-sync vendored repos to upstream
 ```
 
@@ -132,7 +132,7 @@ are logged until the options engine is ported (build step 6). Min trade 0.5% NAV
 
 The theme-crash playbook above is ONE instance of a general framework that agents must understand:
 
-1. **Market map** (`market_map.py`): 25 sub-sectors tagged CYCLICAL / SECULAR / DEFENSIVE, their role in
+1. **Market map** (`market_map.py`): 26 sub-sectors tagged CYCLICAL / SECULAR / DEFENSIVE, their role in
    value chains (AI: platforms → chip design → semi equipment → regional foundries → memory → networking →
    data centers → power/grid; debt-funded neoclouds and capex-heavy pivots; at-risk low-end SaaS and
    labor-intensive services), ETF proxies, owner example tickers, and sensitivities (priors, re-estimated
@@ -183,6 +183,41 @@ liquidity WALCL−TGA−RRP, HY OAS change, INDPRO growth surprise, GMTF tension
 Secrets: `FRED_API_KEY`, `ANTHROPIC_API_KEY`, `QC_USER_ID`, `QC_API_TOKEN`, `QC_ORG_ID`; each missing piece is
 skipped, and files always land in `agents/out/` for manual upload. Owner/agents may add `earnings_yield`,
 `escalation`, `kronos_spx_annual` to the readings file.
+
+### Universe + fundamentals → selection (build step 3; code: `algorithm/universe.py`, `fundamentals.py`)
+
+**Universe** — point-in-time S&P 1500 = constituents of IVV + IJH + IJR (QuantConnect ETF-constituent
+universes, daily), scored on QuantConnect's Morningstar fundamentals every `fundamental_refresh_days` (5).
+Fallback `universe_mode=fundamental`: price ≥ $5, cap ≥ $1B, dollar volume ≥ $5M. Rotation/theme tickers are
+always scored (solvency for LEAPS) even when outside the index. Sub-sector per name: owner examples →
+ObjectStore `metadron/subsector_map.json` override → Morningstar industry / group code → sector code
+(26 sub-sectors; SOFTWARE added).
+
+**Top-down** (Graham Part I) from the universe aggregate: earnings yield Σ earnings / Σ cap, ERP = EY − 10y
+(10y from the macro agent, default 4.2%), max investment P/E by rate (25/20/16/14/10/8x), speculative %,
+valuation regime. The aggregate EY is the forward-Rm valuation anchor when the macro agent sends none.
+
+**Bottom-up** (per name): normalized EPS (annual samples of trailing EPS, up to 10y), Graham number, P/E×P/B,
+NCAV, ROIC (Morningstar) − WACC, ROE + DuPont, owner earnings, accruals (FCF/NI), 5-method intrinsic value
+(median) → margin of safety, 8-test investment grade, composite 0–100 (MoS 25, earnings quality 20, balance
+sheet 15, ROIC 15, coverage 10, valuation 10, top-down 5), quality tier A ≥ 80 … G < 30.
+
+**Capital structure** (architecture point 9, free-data part): Altman Z, Merton 1y PD (equity vol from the
+universe price feed), interest coverage, debt/EBITDA, debt/equity, current ratio, FCF vs capex. Credit tier
+A–F = Egan-Jones D/E + current ratio, downgraded for Z < 1.8 (2), PD > 10% (2) / > 2% (1), coverage < 1.5 (2)
+/ < 3 (1), debt/EBITDA > 5 (1). Sleeve IG (A/B) · HY (C/D) · DISTRESSED (E/F). Feeds `rotation.is_solvent`.
+
+**Fundamentals gate** (must pass; 40% weight in the step-5 decision matrix): IG/HY pass at composite ≥ 50;
+DISTRESSED pass only as recovery plays (NCAV discount ≥ 0 or MoS ≥ 33%, PD ≤ 25%, no cash burn); blocked:
+negative equity with cash burn, coverage < 1.5 with PD > 10%.
+
+**Shortlist** (macro ↔ micro): gate passers ranked by gate score + 0.25 × sub-sector edge, split IG 40 : HY 10 :
+DISTRESSED 10 of `shortlist_size` (60), held names always kept; a sub-sector with zero weight and negative
+edge is vetoed (macro can veto, micro cannot override). Sub-sector mean gate scores flow back into the sector
+view as its `fundamentals` input. Outputs: charts *Data health* (members vs 1500, scored, missing fields,
+gate passes, shortlist; alert below 90% coverage or > 20% missing) and *Valuation*; ObjectStore
+`metadron/universe_scores.json` (top 100 with full analysis + reasons, theme watch list). Shortlisted names
+are subscribed for step 5; nothing is traded from the shortlist yet.
 
 ### Smart Beta v1 — corridor derivation (superseded by v2, kept for reference)
 

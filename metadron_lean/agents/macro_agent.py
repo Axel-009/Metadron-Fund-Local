@@ -17,6 +17,7 @@ Readings (all decimals; names match algorithm/macro_regime.py and forward_rm.py)
     inflation_yoy          CPIAUCSL y/y
     unemployment           UNRATE (3-month average)          unemployment_12m_low  min of last 12
     real_wage_yoy          AHETPI y/y − CPI y/y              productivity_yoy      OPHNFB y/y
+    treasury_10y           DGS10 latest (Graham max-P/E and ERP in fundamentals.top_down)
     rates_change_3m        DGS10 change over ~63 business days
     liquidity_change_3m    net liquidity (WALCL − WTREGEN − RRPONTSYD) 3-month % change
     hy_oas_change_1m       BAMLH0A0HYM2 change over ~21 business days
@@ -111,6 +112,8 @@ def compute_readings(fetch: Callable[[str], Series]) -> Dict[str, float]:
     if (p := _yoy(prod, 4)) is not None:
         r["productivity_yoy"] = p
     dgs10 = fetch("DGS10")
+    if dgs10:
+        r["treasury_10y"] = dgs10[-1][1] / 100
     if (c := _change(dgs10, 63)) is not None:
         r["rates_change_3m"] = c / 100
     hy = fetch("BAMLH0A0HYM2")
