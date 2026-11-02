@@ -55,8 +55,23 @@ STRESS_REGIMES = ("STRESS", "CRASH")
 NO_DOUBLE_SIZING_RM = 0.12      # Rm above the corridor ceiling (ROTATION zone)
 
 
+# Beta burst: when momentum confirms the trend, the regime VaR ceiling is lifted by the legacy
+# burst/cap ratios (TRENDING 0.70/0.65, RANGE 0.55/0.45, STRESS 0.20/0.15); never in CRASH and
+# never above the 4.5x hard cap. Burst raises the CEILING only — Kelly still sets the target.
+BURST_MULT = {"TRENDING": 0.70 / 0.65, "RANGE": 0.55 / 0.45, "STRESS": 0.20 / 0.15, "CRASH": 1.0}
+
+
+def momentum_confirms(closes: list) -> bool:
+    """Trend confirmation: price > 50-day MA > 200-day MA and the 63-day return is positive."""
+    if len(closes) < 200:
+        return False
+    ma50 = sum(closes[-50:]) / 50
+    ma200 = sum(closes[-200:]) / 200
+    return closes[-1] > ma50 > ma200 and closes[-1] > closes[-64]
+
+
 def beta_cap(regime: str, sigma_market: float, regime_beta_cap: Optional[float] = None,
-             rm: Optional[float] = None) -> float:
+             rm: Optional[float] = None, burst: bool = False) -> float:
     """Binding cap for corridor leverage: min(4.5x, regime VaR ceiling, optional regime cap).
 
     No double sizing (owner rule): when the market itself is strong (Rm > 12%, ROTATION zone)
@@ -69,6 +84,9 @@ def beta_cap(regime: str, sigma_market: float, regime_beta_cap: Optional[float] 
         cap = MAX_GROSS_LEVERAGE
     else:
         cap = regime_leverage_ceiling(regime, sigma_market)
+        if burst:
+            cap *= BURST_MULT.get(str(regime).upper(), 1.0)
+    cap = min(cap, MAX_GROSS_LEVERAGE)
     if regime_beta_cap is not None:
         cap = min(cap, regime_beta_cap)
     return max(cap, 0.0)

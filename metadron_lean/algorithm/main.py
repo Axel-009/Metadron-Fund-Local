@@ -6,7 +6,9 @@ from corridor import (
     target_leverage, should_rebalance, annualised_drift, realised_vol,
     R_LOW, R_HIGH, RISK_FREE, MAX_GROSS_LEVERAGE,
 )
-from risk_budget import beta_cap, hard_stops, daily_var, check_alpha_trade, AlphaPosition
+from risk_budget import beta_cap, hard_stops, daily_var, check_alpha_trade, AlphaPosition, momentum_confirms
+from regime import RegimeModel, REGIMES
+from forward_rm import estimate as forward_rm
 from rotation import (
     THEMES, DEFENSIVES, ESCALATION_SLEEVE, THEME_SUBSECTOR, build_plan, escalation_score, theme_index,
     realised_vol as name_vol,
@@ -18,14 +20,14 @@ from market_map import CYCLICAL, SECULAR, DEFENSIVE
 
 
 class MetadronCorridor(QCAlgorithm):
-    """Build step 2a — smart-beta corridor v2 on the S&P 500.
+    """Build step 2b — smart-beta corridor v2 on the S&P 500.
 
     Daily, 30 minutes after the open:
-        Rm      = annualised S&P 500 return estimate (EWMA-smoothed trailing drift;
-                  replaced by the HMM/GMTF/Kronos forward estimate in step 2b)
+        regime  = Gaussian HMM on SPY return / vol / VIX / HY−IG credit (regime.py; rules fallback)
+        Rm      = forward estimate (forward_rm.py): valuation anchor + shrunk EWMA trend
+                  + Σ P(regime)·drift + GMTF tension + Kronos (when the macro agent supplies them)
         σm      = 63-day realised volatility
-        regime  = placeholder from σm (TRENDING/RANGE/STRESS/CRASH) until the HMM (step 2b)
-        cap     = min(4.5x, regime VaR ceiling)
+        cap     = min(4.5x, regime VaR ceiling × beta burst when momentum confirms)
         L       = k · s(Rm) · (Rm − 4%)/σm²   → 0 below 7%, ramp 7–12%, full Kelly above 12%
         hard stops: drawdown −4% trim (halve), −8% flat
     Market beta is delivered with Micro E-mini S&P 500 futures (default) or SPY (≤ 2x Reg-T).
@@ -84,6 +86,7 @@ class MetadronCorridor(QCAlgorithm):
         self.last_plan_sig = None
 
         self.rm_ewma = None
+        self.regime_model = RegimeModel()
         self.current_leverage = 0.0
         self.peak_nav = self.portfolio.total_portfolio_value
         self.set_warm_up(self.rm_lookback + 5, Resolution.DAILY)
@@ -92,15 +95,16 @@ class MetadronCorridor(QCAlgorithm):
                          self.rebalance)
 
     # ------------------------------------------------------------------
-    @staticmethod
-    def placeholder_regime(sigma: float) -> str:
-        if sigma < 0.15:
-            return "TRENDING"
-        if sigma < 0.22:
-            return "RANGE"
-        if sigma < 0.35:
-            return "STRESS"
-        return "CRASH"
+    def macro_inputs(self) -> dict:
+        """Numeric readings written by the macro agent (FRED, GMTF, Kronos) — {} if absent/stale."""
+        raw = self._store_read("metadron/macro_inputs.json")
+        if not raw:
+            return {}
+        try:
+            return {k: float(v) for k, v in json.loads(raw).items() if isinstance(v, (int, float))}
+        except Exception as exc:
+            self.debug(f"macro_inputs.json unreadable: {exc}")
+            return {}
 
     def _set_beta_leverage(self, leverage: float, tag: str):
         nav = self.portfolio.total_portfolio_value
@@ -145,10 +149,24 @@ class MetadronCorridor(QCAlgorithm):
         self.rm_ewma = drift if self.rm_ewma is None else (
             self.rm_smoothing * drift + (1 - self.rm_smoothing) * self.rm_ewma)
         sigma = realised_vol(closes[-64:])
-        regime = self.placeholder_regime(sigma)
-        cap = beta_cap(regime, sigma, rm=self.rm_ewma)     # no double sizing above Rm 12%
 
-        state = target_leverage(self.rm_ewma, sigma, k=self.k, cap=cap)
+        long = self._closes(self.spy, 800) or closes
+        vix_hist = self._closes(self.vix, 800) if self.vix is not None else []
+        hyg_sym, lqd_sym = self.rot_symbols.get("HYG"), self.rot_symbols.get("LQD")
+        hyg = self._closes(hyg_sym, 800) if hyg_sym else []
+        lqd = self._closes(lqd_sym, 800) if lqd_sym else []
+        reg = self.regime_model.classify(long, vix_hist or None, hyg or None, lqd or None)
+        regime = reg.regime
+
+        macro = self.macro_inputs()
+        fwd = forward_rm(self.rm_ewma, regime_probs=reg.probs, gmtf_score=macro.get("gmtf_score"),
+                         earnings_yield=macro.get("earnings_yield"), inflation=macro.get("inflation_yoy"),
+                         kronos=macro.get("kronos_spx_annual"))
+        rm = fwd.rm
+        burst = regime != "CRASH" and momentum_confirms(long)
+        cap = beta_cap(regime, sigma, rm=rm, burst=burst)   # no double sizing above Rm 12%
+
+        state = target_leverage(rm, sigma, k=self.k, cap=cap)
         target = state.leverage
 
         nav = self.portfolio.total_portfolio_value
@@ -163,7 +181,8 @@ class MetadronCorridor(QCAlgorithm):
 
         if should_rebalance(self.current_leverage, target):
             self._set_beta_leverage(
-                target, tag=f"{state.zone} Rm={state.rm:.2%} σ={sigma:.1%} {regime} stop={stop.action}")
+                target, tag=f"{state.zone} Rm={state.rm:.2%} σ={sigma:.1%} {regime}"
+                            f"{' burst' if burst else ''} stop={stop.action}")
             self.current_leverage = target
 
         held = (self.portfolio[self.future.mapped].holdings_value
@@ -171,8 +190,18 @@ class MetadronCorridor(QCAlgorithm):
                 else self.portfolio[self.spy].holdings_value)
         actual = held / max(nav, 1.0)
 
-        self.plot("Rm vs corridor", "Rm (smoothed)", state.rm * 100)
-        self.plot("Rm vs corridor", "Rm (raw)", drift * 100)
+        self.plot("Rm vs corridor", "Rm (forward)", state.rm * 100)
+        self.plot("Rm vs corridor", "trailing EWMA", self.rm_ewma * 100)
+        self.plot("Rm vs corridor", "valuation anchor", fwd.components["anchor"] * 100)
+        for name in REGIMES:
+            self.plot("Regime", f"P({name})", reg.probs.get(name, 0.0))
+        self.plot("Regime", "burst", 1.0 if burst else 0.0)
+        if "gmtf_score" in macro:
+            self.plot("Regime", "GMTF tension pct", macro["gmtf_score"])
+        if regime != getattr(self, "last_regime", None):
+            self.last_regime = regime
+            self.debug(f"REGIME {regime} ({reg.method}, p={reg.confidence:.2f}) Rm={rm:.2%} "
+                       f"components={ {k: round(v, 4) for k, v in fwd.components.items()} }")
         self.plot("Rm vs corridor", "7% floor", R_LOW * 100)
         self.plot("Rm vs corridor", "12% ceiling", R_HIGH * 100)
         self.plot("Rm vs corridor", "risk-free 4%", RISK_FREE * 100)
@@ -208,13 +237,7 @@ class MetadronCorridor(QCAlgorithm):
 
     def run_sector_view(self, zone, prices, spy_closes, esc, vix, plan):
         """Trader framework: macro question tree + scenarios → sub-sector edge / downside / tilts."""
-        readings = {}
-        raw = self._store_read("metadron/macro_inputs.json")       # written by the macro agent (FRED)
-        if raw:
-            try:
-                readings.update({k: float(v) for k, v in json.loads(raw).items() if isinstance(v, (int, float))})
-            except Exception as exc:
-                self.debug(f"macro_inputs.json unreadable: {exc}")
+        readings = self.macro_inputs()                               # written by the macro agent (FRED)
         readings.setdefault("escalation", esc)
         if vix is not None:
             readings.setdefault("vix", vix)

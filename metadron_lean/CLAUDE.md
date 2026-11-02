@@ -10,8 +10,8 @@ disagrees with this file, THIS file wins; e.g. its corridor section was linear a
 ## Layout
 
 ```
-algorithm/              QuantConnect LEAN algorithm (main, corridor, risk_budget, rotation, market_map, macro_regime, sector_rotation)
-agents/                 agent knowledge: market_reasoning.md (trader framework + scenario JSON schema)
+algorithm/              QuantConnect LEAN algorithm (main, corridor, risk_budget, regime, forward_rm, rotation, market_map, macro_regime, sector_rotation)
+agents/                 market_reasoning.md (trader framework + scenario schema), macro_agent.py (FRED → macro_inputs.json, Claude → scenarios.json)
 engine/                 Intelligence engine (extracted from the legacy monorepo, package paths unchanged)
   data/ signals/ ml/    universe, macro (GMTF, HMM), cube, security analysis, distress, events, CVR, patterns, ML
   allocation/           AllocationEngine + universe scan — THE allocation reference
@@ -27,7 +27,7 @@ vendor/                 Kronos, LEAN, OpenJarvis — full source copies, pinned 
 jarvis/                 Jarvis setup guide + dashboard page
 governance/ config/     credit classification, repo/heartbeat config
 docs/                   architecture DNA, corridor charts
-tests/                  238 tests (legacy engine suite + new algorithm tests)
+tests/                  249 tests (legacy engine suite + new algorithm tests)
 scripts/update_vendor.sh  re-sync vendored repos to upstream
 ```
 
@@ -152,6 +152,37 @@ The theme-crash playbook above is ONE instance of a general framework that agent
    BULLISH 40/45/15, NEUTRAL 30/40/30, BEARISH 15/30/55; within each, weight ∝ max(edge − 0.5·max(−downside,0), 0).
 4. Output each day: plots (*Market view*, *Equity mix*) and ObjectStore `metadron/sector_views.json`
    (factors, findings, overweight / avoid with drivers, edge and downside) for agents, Jarvis and Obsidian.
+
+### Regime, forward Rm, beta burst, macro agent (build step 2b; code: `algorithm/regime.py`, `forward_rm.py`, `risk_budget.py`, `agents/macro_agent.py`)
+
+**Regime (MARKET level)** — 4-state Gaussian HMM (hmmlearn, refit every 21 days on ≤ 750 days) on SPY 20-day
+return, 20-day realised vol, VIX and HY−IG 21-day relative return; today's regime = posterior of the last day.
+States are labelled ABSOLUTELY from their own means (never by rank, so a calm market cannot produce a CRASH
+state): CRASH vol ≥ 40% or r20 ≤ −15% · STRESS vol ≥ 25% or r20 ≤ −7% · TRENDING r20 ≥ +0.4% and vol < 18% ·
+else RANGE. No hmmlearn / short history / fit error → transparent rules on 63-day return and VIX.
+
+**Forward Rm** (replaces the trailing drift, which swings −45% … +63%):
+
+```
+anchor  = earnings yield + inflation (macro agent), else 10% long run
+trend   = anchor + 0.5 · (EWMA trailing return − anchor)
+Rm      = (1 − wK) · [0.5·anchor + 0.5·trend + Σ P(regime)·drift + tension] + wK · Kronos
+drift   TRENDING +3% · RANGE 0 · STRESS −4% · CRASH −10%      tension = −8% · (GMTF percentile − 0.5)
+wK      = 0.25 when a Kronos index forecast is supplied, else 0        Rm clipped to [−30%, +40%]
+```
+A 40-pt swing in trailing return moves Rm by 10 pts. Every component is logged on regime changes and plotted.
+
+**Beta burst** — when momentum confirms (price > 50-day MA > 200-day MA and 63-day return > 0) and the regime is
+not CRASH, the regime VaR ceiling is multiplied by the legacy burst/cap ratio (TRENDING 0.70/0.65, RANGE
+0.55/0.45, STRESS 0.20/0.15), never above 4.5x. It lifts the ceiling only; Kelly still sets the target.
+
+**Macro agent** (`agents/macro_agent.py`, daily before the open, off the trading node) writes ObjectStore
+`metadron/macro_inputs.json` (FRED: CPI, unemployment + 12m low, real wages, productivity, 10y change, net
+liquidity WALCL−TGA−RRP, HY OAS change, INDPRO growth surprise, GMTF tension percentile) and
+`metadron/scenarios.json` (Claude with `market_reasoning.md` as the system prompt; validated before saving).
+Secrets: `FRED_API_KEY`, `ANTHROPIC_API_KEY`, `QC_USER_ID`, `QC_API_TOKEN`, `QC_ORG_ID`; each missing piece is
+skipped, and files always land in `agents/out/` for manual upload. Owner/agents may add `earnings_yield`,
+`escalation`, `kronos_spx_annual` to the readings file.
 
 ### Smart Beta v1 — corridor derivation (superseded by v2, kept for reference)
 

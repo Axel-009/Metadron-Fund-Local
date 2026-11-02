@@ -15,3 +15,4 @@ vendor/OpenJarvis/desktop/src-tauri/binaries/
 vendor/Lean/Data/
 node_modules/
 .DS_Store
+agents/out/
