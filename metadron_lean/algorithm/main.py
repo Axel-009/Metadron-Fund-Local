@@ -393,8 +393,7 @@ class MetadronCorridor(QCAlgorithm):
         self._log_plan(plan, esc)
 
         # decision matrix on the shortlist
-        margin_used = abs(self.current_leverage) * dm.MES_MARGIN_RATE
-        self.caps = dm.sleeve_caps(margin_used)                 # repo hard rule: margin > 8% → IG 35%
+        self.caps = dm.sleeve_caps()
         self.decisions = self._decide(closes, reg.regime, ev, kron)
         targets = {t: d.target for t, d in self.decisions.items() if d.approved}
         if self.rotation_trading:                               # crashed-theme names are cut; the freed weight
@@ -642,14 +641,14 @@ class MetadronCorridor(QCAlgorithm):
             p["sleeve"] = self._sleeve_of(p["ticker"])
         return plans
 
-    def _option_notional(self, sleeve=None):
-        """Open long-option delta-notional as a fraction of NAV (hedges excluded), total or per sleeve."""
+    def _option_premium(self, sleeve=None):
+        """Market value of open long options as a fraction of NAV — total (incl. hedges) or per credit sleeve."""
         tot = 0.0
         for sym, m in self.option_book.items():
-            if m["kind"] in ("HEDGE", "SPREAD_SHORT") or self.portfolio[sym].quantity == 0:
+            if m["kind"] == "SPREAD_SHORT" or self.portfolio[sym].quantity == 0:
                 continue
-            if sleeve is None or m.get("sleeve") == sleeve:
-                tot += m.get("notional", 0.0)
+            if sleeve is None or (m.get("sleeve") == sleeve and m["kind"] != "HEDGE"):
+                tot += max(self.portfolio[sym].holdings_value, 0.0)
         return tot / self._nav()
 
     def options_select(self):
@@ -708,12 +707,11 @@ class MetadronCorridor(QCAlgorithm):
                 prob, pnl = max(prob, op.P_PROFIT_LONG), max(pnl, 1e-6)   # hedges / vol trades exempt from P(profit)
             budget = p["budget"] if p["budget"] is not None else op.kelly_option_fraction(prob, pnl, q.mid)
             n = op.contracts(budget, nav, q.mid, prob, pnl)
-            notional_1 = abs(pick.delta) * S * op.MULTIPLIER
-            if p["kind"] != "HEDGE":                       # delta-notional caps: per credit sleeve + 25% total
+            room = dm.OPTIONS_TOTAL - self._option_premium()       # premium ≤ 10% of NAV (hedges included)
+            if p["kind"] != "HEDGE":                                # per credit sleeve: IG 4 · HY 4 · distressed 2
                 sleeve = p.get("sleeve", "IG")
-                room = min(dm.OPTION_NOTIONAL.get(sleeve, dm.OPTION_NOTIONAL["IG"]) - self._option_notional(sleeve),
-                           dm.OPTIONS_TOTAL - self._option_notional())
-                n = min(n, int(max(room, 0.0) * nav // max(notional_1, 1e-9)))
+                room = min(room, dm.OPTION_PREMIUM.get(sleeve, dm.OPTION_PREMIUM["IG"]) - self._option_premium(sleeve))
+            n = min(n, int(max(room, 0.0) * nav // max(q.mid * op.MULTIPLIER, 1e-9)))
             if n <= 0:
                 continue
             half = (q.ask - q.bid) / 2
@@ -721,7 +719,7 @@ class MetadronCorridor(QCAlgorithm):
             self.limit_order(q.symbol, n, limit, tag=f"{p['kind']} {p['ticker']} Δ{pick.delta:.2f} IV {pick.iv:.0%} "
                                                       f"P(profit) {prob:.0%}: {p['reason']}")
             self.option_book[q.symbol] = dict(kind=p["kind"], ticker=p["ticker"], entry_dte=q.dte, cost=q.mid * n * 100,
-                                              call=p["call"], sleeve=p.get("sleeve", "IG"), notional=notional_1 * n)
+                                              call=p["call"], sleeve=p.get("sleeve", "IG"))
             if p.get("short_delta"):
                 short = op.select([x for x in quotes if x.dte == q.dte and x.strike > q.strike], S, True,
                                   p["short_delta"], q.dte, q.dte)
@@ -818,7 +816,8 @@ class MetadronCorridor(QCAlgorithm):
         self.plot("Risk", "realised vol %", sigma * 100)
         self.plot("Risk", "beta VaR95 1d %", daily_var(actual, sigma) * 100)
         self.plot("Risk", "drawdown %", (1 - nav / self.peak_nav) * 100)
-        self.plot("Risk", "options delta-notional % NAV", self._option_notional() * 100)
+        self.plot("Risk", "options premium % NAV", self._option_premium() * 100)
+        self.plot("Risk", "MES margin % NAV", dm.futures_margin(self.current_leverage) * 100)
         for sec, w in sorted(self.sector_budget.items(), key=lambda x: -x[1])[:5]:
             self.plot("Sector budgets", sec, w)
         n_app = sum(1 for d in self.decisions.values() if d.approved)

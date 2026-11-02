@@ -91,10 +91,17 @@ def _d(t, sleeve, sector, target):
 
 def test_allocation_matches_repo_buckets():
     assert dm.SLEEVES == {"IG": 0.40, "HY": 0.10, "DISTRESSED": 0.10, "EVENT": 0.10, "CASHFLOW": 0.15,
-                          "FI_MACRO": 0.05, "MARGIN": 0.08, "MONEY_MARKET": 0.02}
+                          "FI_MACRO": 0.05, "OPTIONS": 0.10}                     # no money market, no margin bucket
     assert sum(dm.SLEEVES.values()) == pytest.approx(1.0)
-    assert sum(dm.OPTION_NOTIONAL[k] for k in ("IG", "HY", "DISTRESSED")) == pytest.approx(dm.OPTIONS_TOTAL)
-    assert dm.sleeve_caps(0.05)["IG"] == 0.40 and dm.sleeve_caps(0.12)["IG"] == pytest.approx(0.35)
+    assert sum(dm.OPTION_PREMIUM[k] for k in ("IG", "HY", "DISTRESSED")) == pytest.approx(dm.OPTIONS_TOTAL) == 0.10
+    assert dm.sleeve_caps()["IG"] == 0.40                                  # no IG cut for futures margin
+    assert dm.futures_margin(4.5) == pytest.approx(4.5 * dm.MES_MARGIN_RATE)
+    import sys, os
+    sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
+    from engine.allocation.allocation_engine import AllocationRules
+    r = AllocationRules()
+    assert (r.options_notional_pct, r.options_ig_pct, r.options_hy_pct, r.options_distressed_pct) == (0.10, 0.04, 0.04, 0.02)
+    assert r.money_market_pct == 0.0 and r.ig_reduction_on_margin_breach == 0.0
 
 
 def test_sleeves_fill_by_gics_sector_budget_with_spill():

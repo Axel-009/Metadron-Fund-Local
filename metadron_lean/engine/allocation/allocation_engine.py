@@ -107,6 +107,9 @@ class AllocationRules:
         Futures: Beta corridor positions (EMini or equiv)
 
     Hard rule: If margin required > 8%, reduce IG by 5% (IG → 35%).
+
+    OWNER UPDATE (Nov 2026, used by algorithm/decision.py): option premium 10% of NAV (IG 4 · HY 4 · distressed 2),
+    money market removed, no IG cut for margin — futures initial margin is sized to the smart-beta corridor.
     """
     max_drawdown_kill_switch: float = 0.10
     # ── Equity sleeves (90% total) ────────────────────────────────
@@ -117,16 +120,16 @@ class AllocationRules:
     fi_macro_pct: float = 0.05              # 5%  — fixed income + macro signals
     event_driven_cvr_pct: float = 0.10      # 10% — event-driven + CVR
     # ── Levered overlay (funded by margin) ────────────────────────
-    options_notional_pct: float = 0.25      # 25% notional exposure (always maintained)
-    options_ig_pct: float = 0.10            #   10% IG options
-    options_hy_pct: float = 0.10            #   10% HY options
-    options_distressed_pct: float = 0.05    #    5% distressed options
+    options_notional_pct: float = 0.10      # 10% of NAV in option PREMIUM (owner, Nov 2026; was 25% notional)
+    options_ig_pct: float = 0.04            #    4% IG options premium
+    options_hy_pct: float = 0.04            #    4% HY options premium
+    options_distressed_pct: float = 0.02    #    2% distressed options premium
     futures_beta_pct: float = 0.15          # Beta corridor futures (notional, regime-dependent)
     # ── Margin + dry powder ───────────────────────────────────────
     margin_pct: float = 0.08               # 8% — IM for options + futures
     margin_breach_threshold: float = 0.08  # If margin > 8%, reduce IG by 5%
-    ig_reduction_on_margin_breach: float = 0.05  # IG drops 40% → 35%
-    money_market_pct: float = 0.02          # 2% — HARD FLOOR dry powder
+    ig_reduction_on_margin_breach: float = 0.0   # owner: no IG cut — futures margin sized to the corridor
+    money_market_pct: float = 0.0           # owner: money-market floor removed (was 2%)
     # ── Behavioral rules ──────────────────────────────────────────
     drip_rule: bool = True                  # Reinvest TLTW distributions
     alpha_primary_goal: bool = True

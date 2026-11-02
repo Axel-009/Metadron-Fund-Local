@@ -14,9 +14,8 @@
                             risk_budget.check_alpha_trade scales into the 2.5% stock-specific VaR budget and the
                             0.5% per-name VaR cap (scaled, not rejected).
     allocation              engine/allocation/allocation_engine.py (THE reference): IG 40 · HY 10 · distressed 10 ·
-                            event/CVR 10 single names; TLTW/cash-flow ETFs 15 · FI/macro 5; margin 8; money market 2
-                            (hard floor); options overlay 25% delta-notional (IG 10 · HY 10 · distressed 5).
-                            If futures + options margin > 8% NAV, IG drops to 35%.
+                            event/CVR 10 single names; TLTW/cash-flow ETFs 15 · FI/macro 5; option premium 10% of NAV
+                            (IG 4 · HY 4 · distressed 2). No money market; futures margin sized to the corridor.
 Market beta of the sleeves is netted by the MES overlay (main.py): futures = corridor L − Σ wᵢβᵢ.
 """
 
@@ -37,15 +36,15 @@ MAX_POSITION = 0.20
 KELLY_FRACTION = 1.0            # owner: full Kelly
 MIN_IDIO_VOL = 0.10
 
-# Allocation buckets (fractions of NAV) — engine/allocation/allocation_engine.py AllocationRules
-SLEEVES = {"IG": 0.40, "HY": 0.10, "DISTRESSED": 0.10, "EVENT": 0.10,          # single names (+ their options)
-           "CASHFLOW": 0.15, "FI_MACRO": 0.05,                                  # ETFs (TLTW / income, commodities; bonds)
-           "MARGIN": 0.08, "MONEY_MARKET": 0.02}                               # never deployed in positions
+# Allocation buckets (fractions of NAV, owner-approved; mirrored in engine/allocation AllocationRules)
+SLEEVES = {"IG": 0.40, "HY": 0.10, "DISTRESSED": 0.10, "EVENT": 0.10,          # single names 70%
+           "CASHFLOW": 0.15, "FI_MACRO": 0.05,                                  # ETFs 20%
+           "OPTIONS": 0.10}                                                     # option PREMIUM 10% of NAV
 EQUITY_SLEEVES = ("IG", "HY", "DISTRESSED", "EVENT")
-OPTION_NOTIONAL = {"IG": 0.10, "HY": 0.10, "DISTRESSED": 0.05, "EVENT": 0.10}  # delta-notional caps (EVENT → IG cap)
-OPTIONS_TOTAL = 0.25
-MARGIN_LIMIT = 0.08
-IG_CUT_ON_MARGIN = 0.05
+OPTION_PREMIUM = {"IG": 0.04, "HY": 0.04, "DISTRESSED": 0.02, "EVENT": 0.04}  # per credit sleeve (EVENT shares IG's)
+OPTIONS_TOTAL = SLEEVES["OPTIONS"]
+# No money-market floor and no fixed margin bucket: MES initial margin is sized to the corridor and financed by the
+# account's margin (reported, not capped here — the corridor's 4.5x and the regime VaR ceilings bound it).
 SECTOR_MAX = 0.30               # = sectors.MAX_SECTOR: no GICS sector above 30% of a sleeve
 MES_MARGIN_RATE = 0.07           # initial margin ≈ 7% of MES notional (check with IBKR; parameter)
 NATURE_REGIME_FIT = {        # how well each nature fits the regime (0..1)
@@ -161,12 +160,14 @@ def decide(ticker: str, sleeve: str, fund_pass: bool, fund_score: float, px: Lis
     return d
 
 
-def sleeve_caps(margin_used: float = 0.0) -> Dict[str, float]:
-    """Bucket caps with the repo's hard rule: margin above 8% NAV → IG 40% → 35%."""
-    caps = dict(SLEEVES)
-    if margin_used > MARGIN_LIMIT:
-        caps["IG"] = SLEEVES["IG"] - IG_CUT_ON_MARGIN
-    return caps
+def sleeve_caps() -> Dict[str, float]:
+    """Bucket caps (no IG cut for futures margin — the margin is sized to the corridor, owner decision)."""
+    return dict(SLEEVES)
+
+
+def futures_margin(leverage: float) -> float:
+    """Approximate MES initial margin as a fraction of NAV (reporting / data health)."""
+    return abs(leverage) * MES_MARGIN_RATE
 
 
 def fit_sleeves(decisions: List[Decision], caps: Optional[Dict[str, float]] = None,

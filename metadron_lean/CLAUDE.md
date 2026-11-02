@@ -262,8 +262,8 @@ to zero), scaled so book CVaR95 ≤ 1.5 × regime VaR ceiling, halved by the bre
 
 Black-Scholes pricing / greeks / implied vol; contract = closest |Δ| to target inside the DTE window with spread
 ≤ 10% of mid. Gate under the real-world drift: P(profit at expiry) ≥ 25% and expected P&L > 0 (hedges and straddles
-exempt). Size = Kelly on premium, capped by delta-notional per credit sleeve (IG 10 · HY 10 · distressed 5, 25%
-total; hedges excluded); **1-contract exception**: if one contract costs more
+exempt). Size = Kelly on premium, capped at 10% of NAV in total premium (hedges included) and per credit sleeve
+IG 4 · HY 4 · distressed 2; **1-contract exception**: if one contract costs more
 than the Kelly budget it buys exactly 1 contract when it passes the gate and costs ≤ 2% NAV. Uses: escalation oil
 calls, LEAPS / LEAPS call spreads on solvent crashed names, straddles, alpha calls on the 5 strongest names only
 when implied ≤ realised vol, event tail hedges (≥ 3% positions with an event ≤ 5 days: ~30Δ put, ≤ 0.3% NAV).
@@ -419,16 +419,17 @@ Code: `engine/allocation/allocation_engine.py` (`AllocationRules`) — THE refer
 
 | Bucket | % NAV | Instruments |
 |--------|-------|-------------|
-| IG equities | 40 (35 when margin > 8%) | single names, credit tier A/B, split across GICS sector budgets |
+| IG equities | 40 | single names, credit tier A/B, split across GICS sector budgets |
 | HY equities | 10 | single names, C/D |
 | Distressed equity | 10 | single names, E/F recovery plays |
 | Event-driven / CVR | 10 | single names with catalysts |
 | TLTW / cash-flow ETFs | 15 | income ETFs (+ GLD/DBC when bonds stop hedging) |
 | FI / macro | 5 | TLT / IEF / SHY |
-| Margin | 8 | initial margin for options + MES futures |
-| Money market | 2 | hard floor, never deployed |
-| Options overlay | 25 delta-notional | IG 10 · HY 10 · distressed 5, on the single names |
-| Futures | corridor | MES overlay = corridor L − sleeve beta (owner-approved v2 corridor supersedes the code's 15% futures note) |
+| Options premium | 10 | long options on the single names (+ hedges); per credit sleeve IG 4 · HY 4 · distressed 2 |
+| Futures | margin, not a bucket | MES overlay = corridor L − sleeve beta; initial margin (≈ 7% of notional) sized to the corridor, financed by account margin |
+
+Owner update (Nov 2026): money market removed; options = 10% of NAV in premium (was 25% notional funded by the
+8% margin bucket); no IG cut for futures margin. Mirrored in `AllocationRules`.
 
 Older summary table (pre-code, superseded where it differs):
 

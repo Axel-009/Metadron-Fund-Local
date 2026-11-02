@@ -5,7 +5,7 @@ Flex Web Service (no gateway to keep running: create one Activity Flex Query wit
 Client Portal → Reporting → Flex Queries, then set IBKR_FLEX_TOKEN and IBKR_FLEX_QUERY_ID).
 
     reconciliation   quantity differences per symbol (stocks / ETFs; options and futures by local symbol)
-    risk checks      breaker on, hard stop active, overlay vs corridor L, options premium vs 25% sleeve cap,
+    risk checks      breaker on, hard stop active, overlay vs corridor L, options premium vs the 10% NAV budget,
                      stale state (> 1 business day), data-health alerts
     output           vault/Risk/YYYY-MM-DD.md and a non-zero exit code when anything needs the owner
                      (GitHub Actions then e-mails the owner — the alert channel needs no extra service)
@@ -94,8 +94,8 @@ def risk_findings(state: dict, today: dt.date) -> List[str]:
     if st.get("stop") in ("TRIM", "CLOSE"):
         out.append(f"portfolio hard stop: {st.get('stop')}")
     opts = sum(p.get("weight", 0) for p in (state.get("positions") or {}).values() if p.get("option"))
-    if opts > 0.25:
-        out.append(f"options premium {opts:.1%} NAV above the 25% sleeve")
+    if opts > 0.10:
+        out.append(f"options premium {opts:.1%} NAV above the 10% budget")
     return out
 
 
