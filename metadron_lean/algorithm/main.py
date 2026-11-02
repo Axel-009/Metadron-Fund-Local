@@ -8,7 +8,7 @@ from datetime import timedelta
 
 from corridor import target_leverage, should_rebalance, annualised_drift, realised_vol, R_LOW, R_HIGH, RISK_FREE, MAX_GROSS_LEVERAGE
 from risk_budget import (beta_cap, hard_stops, daily_var, check_alpha_trade, AlphaPosition, momentum_confirms,
-                         alpha_var, REGIME_VAR_CEILING)
+                         alpha_var, REGIME_VAR_CEILING, MAX_FUTURES_LEVERAGE)
 from regime import RegimeModel, REGIMES
 from forward_rm import estimate as forward_rm
 from fundamentals import top_down, analyze, cap_structure_map
@@ -430,7 +430,7 @@ class MetadronCorridor(QCAlgorithm):
             self.targets = {t: w * 0.5 for t, w in targets.items()}
         if self.breaker_on:
             beta_lev *= 0.5
-        self.beta_target = max(-MAX_GROSS_LEVERAGE, min(MAX_GROSS_LEVERAGE, beta_lev))
+        self.beta_target = max(-MAX_FUTURES_LEVERAGE, min(MAX_FUTURES_LEVERAGE, beta_lev))   # owner cap: 2.0x NAV
         self.state.update(sleeve_beta=sleeve_beta, beta_overlay=self.beta_target, cvar_scale=scale, stop=stop.action,
                           escalation=esc, bias=bias)
         self.option_plans = self._option_plans(plan, ev, kron) if self.trade_options and stop.action != "CLOSE" else []
@@ -809,8 +809,9 @@ class MetadronCorridor(QCAlgorithm):
         self.plot("Corridor", "participation s(Rm)", state.participation)
         self.plot("Corridor", "gamma ds/dRm per 1%", state.gamma * 0.01)
         self.plot("Leverage", "corridor L", state.leverage)
-        self.plot("Leverage", "cap", cap)
+        self.plot("Leverage", "corridor cap", cap)
         self.plot("Leverage", "MES overlay", self.beta_target)
+        self.plot("Leverage", "futures cap", MAX_FUTURES_LEVERAGE)
         self.plot("Leverage", "sleeve beta", self.state.get("sleeve_beta", 0.0))
         self.plot("Leverage", "actual overlay", actual)
         self.plot("Risk", "realised vol %", sigma * 100)

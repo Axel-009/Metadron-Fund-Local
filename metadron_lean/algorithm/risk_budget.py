@@ -34,6 +34,7 @@ REGIME_VAR_CEILING = {          # 1-day 95% VaR on market-beta risk, fraction of
 ALPHA_VAR_BUDGET = 0.025        # stock-specific 1-day 95% VaR, fraction of NAV
 PER_NAME_VAR_CAP = 0.005        # one name's idiosyncratic 1-day VaR
 MAX_GROSS_LEVERAGE = 4.5
+MAX_FUTURES_LEVERAGE = 2.0      # owner: MES overlay notional ≤ 2.0x NAV, long or short (≈ 14% NAV initial margin)
 CVAR_MULT = 1.5
 DD_TRIM = 0.04
 DD_CLOSE = 0.08

@@ -100,7 +100,7 @@ blocks most small/mid caps — superseded. Under vol-adjusted Kelly, beta VaR = 
 | 1 Sizing | corridor k-Kelly leverage above |
 | 2 Regime VaR ceiling on market-beta risk (1-day 95%) | TRENDING 7.0% · RANGE 4.5% · STRESS 2.25% · CRASH 1.0% → leverage ceiling = VaR / (1.645·σm/√252). TRENDING 7.0% = the VaR of 4.5x at σ 15%, so the owner's max is reachable |
 | 3 Stock-specific (alpha) VaR budget, 1-day 95% | **2.5% of NAV** (parameter) on idiosyncratic risk after removing market beta; per-name ≤ 0.5% NAV (≈ 9.7% weight at 50% vol); sizing ∝ 1/vol; same-sector names correlated 0.3; long options count at premium (defined risk); trades scaled down to fit, not rejected |
-| 4 Hard stops | gross ≤ 4.5x; CVaR95 ≤ 1.5 × regime ceiling; drawdown −4% trim (halve), −8% close all but hedges |
+| 4 Hard stops | gross ≤ 4.5x; MES futures notional ≤ 2.0x NAV long or short (owner); CVaR95 ≤ 1.5 × regime ceiling; drawdown −4% trim (halve), −8% close all but hedges |
 | No double sizing | When Rm > 12% (ROTATION) and the regime reads STRESS/CRASH, the regime VaR ceiling is NOT applied on top of Kelly — Kelly's 1/σ² already sizes for volatility; only the 4.5x cap remains. A crash *inside* a strong market is handled by theme rotation, not by cutting market beta twice. |
 
 Diversified small/mid-cap books fit easily: 40 names × 2.5% at 45% vol → 0.74%; 20 × 5% → 1.04%;
@@ -254,8 +254,8 @@ then the allocation buckets (below), each single-name sleeve split across the GI
 room spills to favoured sectors up to 30% of the sleeve), then scaled into the 2.5% stock-specific VaR budget.
 Names with a catalyst (event ≤ 21 days or an 8-K material agreement) go to the EVENT bucket. ETF buckets:
 TLTW / cash-flow 15% (income ETFs TLTW, JEPI, JEPQ, DIVO; GLD/DBC take ½ when stocks and bonds move together, ⅓ in
-GOLD/CASH) and FI / macro 5% (TLT/IEF when bonds hedge, else SHY). **MES overlay = corridor L − Σ wᵢβᵢ** (so below Rm 7% the sleeves are beta-hedged
-to zero), scaled so book CVaR95 ≤ 1.5 × regime VaR ceiling, halved by the breaker, then portfolio hard stops
+GOLD/CASH) and FI / macro 5% (TLT/IEF when bonds hedge, else SHY). **MES overlay = corridor L − Σ wᵢβᵢ**, capped at ±2.0× NAV (owner; so below Rm 7% the sleeves are
+beta-hedged to zero, and above it total market beta ≈ sleeves' ≈ 0.7 + ≤ 2.0 futures), scaled so book CVaR95 ≤ 1.5 × regime VaR ceiling, halved by the breaker, then portfolio hard stops
 (−4% halve, −8% flat; re-armed after 5 days flat).
 
 ### Options, protection, tail hedges (code: `algorithm/options.py`, `protection.py`)
@@ -426,9 +426,9 @@ Code: `engine/allocation/allocation_engine.py` (`AllocationRules`) — THE refer
 | TLTW / cash-flow ETFs | 15 | income ETFs (+ GLD/DBC when bonds stop hedging) |
 | FI / macro | 5 | TLT / IEF / SHY |
 | Options premium | 10 | long options on the single names (+ hedges); per credit sleeve IG 4 · HY 4 · distressed 2 |
-| Futures | margin, not a bucket | MES overlay = corridor L − sleeve beta; initial margin (≈ 7% of notional) sized to the corridor, financed by account margin |
+| Futures | margin, not a bucket | MES overlay = corridor L − sleeve beta, **capped at ±2.0× NAV notional** (owner); initial margin ≈ 7% of notional (≤ ≈ 14% NAV), financed by account margin |
 
-Owner update (Nov 2026): money market removed; options = 10% of NAV in premium (was 25% notional funded by the
+Owner update (Nov 2026): futures overlay capped at 2.0× NAV; money market removed; options = 10% of NAV in premium (was 25% notional funded by the
 8% margin bucket); no IG cut for futures margin. Mirrored in `AllocationRules`.
 
 Older summary table (pre-code, superseded where it differs):
