@@ -25,8 +25,8 @@ Response, all sized inside the 2.5% stock-specific VaR budget (risk_budget.check
                         (capital-structure check passes) — call SPREADS when implied vol is rich;
                       - short-dated straddles where realised vol > implied vol or an event is near.
 
-Tickers in THEMES are configuration examples supplied by the owner, not recommendations;
-DEFENSIVES["DEFENSE"] is only the escalation-signal basket (defense vs SPY), never traded here; agents may propose changes, the owner approves (CLAUDE.md design rule 3).
+Themes are reasoning profiles (profiles.py) whose members are detected from fundamentals — the names in the
+paradigm above are illustrations only; the defense basket is the escalation signal (profiled defense names); agents may propose changes, the owner approves (CLAUDE.md design rule 3).
 Pure Python + math.
 """
 
@@ -37,17 +37,12 @@ from dataclasses import dataclass, field
 from typing import Dict, Iterable, List, Optional
 
 # --- configuration (owner-editable) -----------------------------------------
-THEMES: Dict[str, List[str]] = {
-    "AI_CREDIT_HUBS": ["CRWV", "NBIS"],         # AI infra financed with heavy debt / private credit
-    "AI_OVERSPEND": ["IREN", "HIVE"],           # capex over-spenders
-}
-THEME_SUBSECTOR = {            # theme → market_map sub-sector (feeds sector_rotation theme states)
-    "AI_CREDIT_HUBS": "AI_NEOCLOUD_CREDIT",
-    "AI_OVERSPEND": "AI_HOSTING_PIVOT",
-}
-DEFENSIVES: Dict[str, List[str]] = {          # escalation SIGNAL basket only (not traded by rotation)
-    "DEFENSE": ["LMT", "NOC", "RTX", "GD"],
-}
+# Themes are reasoning profiles, not ticker lists: members are found from fundamentals each week
+# (profiles.THEMES / profiles.theme_members) and passed in as {theme: [tickers]}.
+from profiles import THEMES as THEME_PROFILES, THEME_SUBSECTOR   # noqa: E402,F401
+THEMES: Dict[str, List[str]] = {}
+DEFENSE_SIGNAL_FALLBACK = "ITA"   # escalation signal only (defense vs SPY) when no defense names are profiled
+CREDIT_STRESS_DD = 0.10           # under credit stress a theme ≥ 10% off its high is already STRESS
 ESCALATION_SLEEVE = {
     "oil_option_underlyings": ["USO", "XLE"],   # fallback call underlyings when no Energy single name qualifies
     "sector": "Energy",                          # escalation calls go to the best Energy single names
@@ -127,7 +122,7 @@ class ThemeState:
 
 
 def theme_state(theme: str, tickers: List[str], prices: Dict[str, List[float]],
-                spy: List[float]) -> ThemeState:
+                spy: List[float], credit_stress: bool = False) -> ThemeState:
     idx = theme_index(prices, tickers)
     if len(idx) < 22 or len(spy) < 22:
         return ThemeState(theme, "NORMAL", 0.0, 0.0, list(tickers))
@@ -135,8 +130,8 @@ def theme_state(theme: str, tickers: List[str], prices: Dict[str, List[float]],
     rel = _ret(idx, 21) - _ret(spy, 21)
     if dd >= CRASH_DRAWDOWN and rel <= CRASH_REL_SPY:
         st = "CRASH"
-    elif dd >= STRESS_DRAWDOWN or rel <= STRESS_REL_SPY:
-        st = "STRESS"
+    elif dd >= STRESS_DRAWDOWN or rel <= STRESS_REL_SPY or (credit_stress and dd >= CREDIT_STRESS_DD):
+        st = "STRESS"                 # widening corporate spreads expose credit-funded themes earlier
     else:
         st = "NORMAL"
     return ThemeState(theme, st, dd, rel, list(tickers))
@@ -206,7 +201,8 @@ def build_plan(market_zone: str,
                implied_vol: Optional[Dict[str, float]] = None,
                days_to_event: Optional[Dict[str, int]] = None,
                themes: Optional[Dict[str, List[str]]] = None,
-               sector_scores: Optional[Dict[str, float]] = None) -> RotationPlan:
+               sector_scores: Optional[Dict[str, float]] = None,
+               credit_stress: bool = False) -> RotationPlan:
     """Rotation plan for the equity / options sleeves. Market beta is NOT changed here.
 
     holdings: {ticker: current equity weight (fraction of NAV)}.
@@ -217,7 +213,7 @@ def build_plan(market_zone: str,
     cap_structure = cap_structure or {}
     implied_vol = implied_vol or {}
     days_to_event = days_to_event or {}
-    states = [theme_state(name, tks, prices, spy) for name, tks in themes.items()]
+    states = [theme_state(name, tks, prices, spy, credit_stress) for name, tks in themes.items()]
     actions: List[RotationAction] = []
     freed = 0.0
 

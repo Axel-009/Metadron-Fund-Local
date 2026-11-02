@@ -14,7 +14,8 @@ from forward_rm import estimate as forward_rm
 from fundamentals import top_down, analyze, cap_structure_map
 from universe import (SP1500_ETFS, EXPECTED_MEMBERS, SECTOR_TYPE, extract, subsector_for, passes_liquidity,
                       passes_fallback, shortlist, EpsHistory, PriceBuffer, SHORTLIST_N)
-from rotation import (THEMES, DEFENSIVES, ESCALATION_SLEEVE, THEME_SUBSECTOR, build_plan, escalation_score,
+from profiles import THEMES as THEME_PROFILES, theme_members, watch_candidate
+from rotation import (DEFENSE_SIGNAL_FALLBACK, ESCALATION_SLEEVE, THEME_SUBSECTOR, build_plan, escalation_score,
                       theme_index, theme_state, realised_vol as name_vol)
 from macro_regime import factor_states, diagnose, market_bias, stock_bond_regime
 from sector_rotation import evaluate, scenarios_from_json, summary
@@ -81,8 +82,8 @@ class MetadronCorridor(QCAlgorithm):
         else:
             self.future = None
 
-        tickers = sorted({t for v in THEMES.values() for t in v} | set(DEFENSIVES["DEFENSE"])
-                         | set(ESCALATION_SLEEVE["oil_option_underlyings"]) | ALL_ETFS | {"HYG", "LQD"})
+        tickers = sorted(set(ESCALATION_SLEEVE["oil_option_underlyings"]) | ALL_ETFS
+                         | {"HYG", "LQD", DEFENSE_SIGNAL_FALLBACK})
         self.rot_symbols = {}
         for t in tickers:
             try:
@@ -98,6 +99,7 @@ class MetadronCorridor(QCAlgorithm):
 
         self.rm_ewma, self.regime_model = None, RegimeModel()
         self.last_views, self.last_plan_sig, self.sector_score, self.sector_budget = {}, None, {}, {}
+        self.theme_members, self.defense_names, self.watch, self.last_credit_stress = {}, [], set(), False
         self.sym_of = {}
         self._init_universe()
         self.wf, self.quality, self.scorecard = al.WalkForward(), al.QualityEnsemble(), al.Scorecard()
@@ -148,7 +150,8 @@ class MetadronCorridor(QCAlgorithm):
 
     def _fundamental_selection(self, fundamental):
         members = set().union(*self.members.values()) if self.members else set()
-        extra = {str(t) for t in getattr(self, "rot_symbols", {})}
+        theme_subs = {sub for spec in THEME_PROFILES.values() for sub in spec["subsectors"]}
+        watch_new = set()
         days = (self.time - self.last_score_time).days if self.last_score_time is not None else 999
         rescore = days >= self.refresh_days
         rows, missing_n, expected = {}, 0, 0
@@ -156,13 +159,27 @@ class MetadronCorridor(QCAlgorithm):
             sym = f.symbol
             t = sym.value
             in_universe = t in members if self.universe_mode == "sp1500" else bool(getattr(f, "has_fundamental_data", False))
-            if not in_universe and t not in extra:
-                continue
+            off_index = False
+            if not in_universe:                       # off-index theme watch: profile-matched names only
+                if not rescore:
+                    if t in self.watch:
+                        self.px_buf.update(t, getattr(f, "price", None))
+                    continue
+                ac = getattr(f, "asset_classification", None)
+                if not watch_candidate(getattr(ac, "morningstar_sector_code", None), getattr(f, "market_cap", 0),
+                                       getattr(f, "dollar_volume", 0)):
+                    continue
+                d, missing = extract(f)
+                if missing or subsector_for(t, d, self.subsector_overrides) not in theme_subs:
+                    continue
+                watch_new.add(t)
+                off_index = True
             self.px_buf.update(t, getattr(f, "price", None))
             if not rescore:
                 continue
-            d, missing = extract(f)
-            if self.universe_mode != "sp1500" and t not in extra and not passes_fallback(d):
+            if not off_index:
+                d, missing = extract(f)
+            if self.universe_mode != "sp1500" and not off_index and not passes_fallback(d):
                 continue
             expected += 1
             if missing:
@@ -193,10 +210,16 @@ class MetadronCorridor(QCAlgorithm):
                 stype = ""
             sc = analyze(t, d, self.td, equity_vol=self.px_buf.vol(t), eps_history=self.eps_hist.annual(t),
                          sector_type=stype)
-            sc.subsector = subsector_for(t, code, d.get("group_code"), d.get("industry_code"), self.subsector_overrides)
-            if t in extra or (passes_liquidity(d) or self.universe_mode != "sp1500"):
+            sc.subsector = subsector_for(t, d, self.subsector_overrides)
+            if t in watch_new or (passes_liquidity(d) or self.universe_mode != "sp1500"):
                 scores[t] = sc
         self.scores = scores
+        self.watch = watch_new
+        caps = {t: d.get("market_cap", 0.0) for t, (_, d) in rows.items()}
+        self.theme_members = theme_members({t: sc.subsector for t, sc in scores.items()}, caps)
+        self.defense_names = sorted((t for t, sc in scores.items() if sc.subsector == "DEFENSE"),
+                                    key=lambda t: -caps.get(t, 0.0))[:8]
+        extra = watch_new
         held = [kv.key.value for kv in self.portfolio if kv.value.invested and kv.value.type == SecurityType.EQUITY]
         sl = shortlist({t: s for t, s in scores.items() if t not in extra}, self.last_views, self.shortlist_n, held,
                        self.sector_budget or None)
@@ -226,7 +249,9 @@ class MetadronCorridor(QCAlgorithm):
         report = {"time": str(self.time), "mode": self.universe_mode, "health": h, "top_down": td.__dict__,
                   "shortlist": sl.by_sleeve, "vetoed": sl.vetoed[:50],
                   "scores": {t: self.scores[t].to_dict() for t, _ in top},
-                  "watch": {t: self.scores[t].to_dict() for t in self.scores if t in getattr(self, "rot_symbols", {})}}
+                  "themes": {th: {"reasoning": THEME_PROFILES[th]["reasoning"], "members": names}
+                             for th, names in self.theme_members.items()},
+                  "watch": {t: self.scores[t].to_dict() for names in self.theme_members.values() for t in names}}
         try:
             self.object_store.save("metadron/universe_scores.json", json.dumps(report, default=str))
         except Exception:
@@ -376,20 +401,26 @@ class MetadronCorridor(QCAlgorithm):
 
         # theme states → sector view → GICS sector scores → rotation plan
         prices = {t: c for t, s in self.rot_symbols.items() if len(c := self._closes(s)) > 21}
+        theme_names = {t for v in self.theme_members.values() for t in v} | set(self.defense_names)
+        for t in theme_names:                               # profiled theme members (S&P 1500 + off-index watch)
+            if t not in prices and self.sym_of.get(t) is not None and len(c := self._closes(self.sym_of[t])) > 21:
+                prices[t] = c
         vix = vix_hist[-1] if vix_hist else None
         esc = escalation_score(oil=prices.get("USO"), gold=prices.get("GLD"),
-                               defense_idx=theme_index(prices, DEFENSIVES["DEFENSE"]) or None, spy=closes, vix=vix,
+                               defense_idx=theme_index(prices, self.defense_names) or theme_index(prices, [DEFENSE_SIGNAL_FALLBACK]) or None,
+                               spy=closes, vix=vix,
                                agent_flag=ev["escalation_flag"])
-        states = [theme_state(n, tks, prices, closes) for n, tks in THEMES.items()]
+        states = [theme_state(n, tks, prices, closes, self.last_credit_stress) for n, tks in self.theme_members.items()]
         bias = self.run_sector_view(state.zone, prices, closes, esc, vix, states, macro)
         crashing = [THEME_SUBSECTOR[s.theme] for s in states if s.state != "NORMAL" and s.theme in THEME_SUBSECTOR]
         self.sector_score = sector_scores({k: v["edge"] for k, v in self.last_views.items()}, reg.regime, bias, esc, crashing)
         self.sector_budget = sector_budgets(self.sector_score)
         nav = self._nav()
-        holdings = {t: self._weight(s) for t, s in self.rot_symbols.items()}
+        holdings = {t: self._weight(self.sym_of[t]) for t in theme_names if self.sym_of.get(t) is not None}
         plan = build_plan(state.zone, prices, closes, holdings, escalation=esc,
                           cap_structure=cap_structure_map(self.scores) if self.scores else None,
-                          days_to_event=ev["days"], sector_scores=self.sector_score)
+                          days_to_event=ev["days"], sector_scores=self.sector_score, themes=self.theme_members,
+                          credit_stress=self.last_credit_stress)
         self._log_plan(plan, esc)
 
         # decision matrix on the shortlist
@@ -404,7 +435,7 @@ class MetadronCorridor(QCAlgorithm):
         targets = self._fit_alpha_budget(targets, prices)
         for t, s in list(self.sym_of.items()) + list(self.rot_symbols.items()):      # exit what is no longer wanted
             if t not in targets and self.portfolio[s].invested and self.portfolio[s].quantity > 0 \
-                    and s.security_type == SecurityType.EQUITY and t not in DEFENSIVES["DEFENSE"]:
+                    and s.security_type == SecurityType.EQUITY:
                 targets[t] = 0.0
         self.targets = targets
 
@@ -874,6 +905,7 @@ class MetadronCorridor(QCAlgorithm):
             except Exception as exc:
                 self.debug(f"scenarios.json unreadable: {exc}")
         factors, findings = factor_states(readings), diagnose(readings)
+        self.last_credit_stress = any("CREDIT_STRESS" in f.tags for f in findings)   # spreads widening → themes exposed
         bias = market_bias(factors, zone)
         sb = stock_bond_regime(spy_closes, prices.get("TLT", []))
         themes = {THEME_SUBSECTOR[t.theme]: t.state for t in theme_states if t.theme in THEME_SUBSECTOR}

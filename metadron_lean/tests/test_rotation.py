@@ -29,6 +29,15 @@ def crash_path(start=100.0, n=260, crash_days=40, crash_total=-0.55, noise=0.04)
     return out
 
 
+# Theme members as the profiles would detect them (illustrative names; membership comes from fundamentals live)
+TH = {"AI_CREDIT_HUBS": ["CRWV", "NBIS"], "AI_OVERSPEND": ["IREN", "HIVE"]}
+
+
+def plan_(*a, **k):
+    k.setdefault("themes", TH)
+    return rot.build_plan(*a, **k)
+
+
 @pytest.fixture
 def paradigm():
     spy = path(100, 0.0006)                                   # ~16%/yr — ROTATION zone
@@ -68,7 +77,7 @@ def test_plan_cuts_and_rotates_into_gics_sectors(paradigm):
     assert esc >= rot.ESCALATION_THRESHOLD
     scores = sec.sector_scores({"HEALTHCARE_PHARMA": 0.4, "DEFENSE": 0.5, "AI_NEOCLOUD_CREDIT": -0.6},
                                regime="RANGE", escalation=esc, crashing_subsectors=["AI_NEOCLOUD_CREDIT"])
-    plan = rot.build_plan("ROTATION", prices, spy, holdings, escalation=esc, sector_scores=scores)
+    plan = plan_("ROTATION", prices, spy, holdings, escalation=esc, sector_scores=scores)
     cuts = {a.ticker: a.target_weight for a in plan.actions if a.kind == "CUT"}
     assert cuts == {"CRWV": 0.0, "NBIS": 0.0, "IREN": 0.0}
     dest = {a.ticker: a.target_weight for a in plan.actions if a.kind == "ROTATE"}
@@ -93,7 +102,7 @@ def test_sector_budgets_follow_bullish_bearish_reasoning():
         assert all(v == 0 or v >= sec.MIN_SECTOR - 1e-9 for v in b.values())
     none = sec.sector_budgets({s: -1.0 for s in sec.SECTORS})
     assert {s for s, v in none.items() if v} == set(sec.DEFENSIVE_FALLBACK)
-    plan = rot.build_plan("ROTATION", {"CRWV": crash_path(), "NBIS": crash_path()}, path(100, 0.0006),
+    plan = plan_("ROTATION", {"CRWV": crash_path(), "NBIS": crash_path()}, path(100, 0.0006),
                           {"CRWV": 0.10}, escalation=0.0)        # no scores → defensive fallback sectors
     assert {a.ticker for a in plan.actions if a.kind == "ROTATE"} == set(sec.DEFENSIVE_FALLBACK)
 
@@ -102,18 +111,18 @@ def test_leaps_only_on_solvent_crashed_names(paradigm):
     spy, prices = paradigm
     cap = {"CRWV": {"merton_pd": 0.02, "interest_coverage": 3.5},      # solvent
            "NBIS": {"merton_pd": 0.12, "interest_coverage": 1.1}}      # not solvent
-    plan = rot.build_plan("ROTATION", prices, spy, {}, cap_structure=cap,
+    plan = plan_("ROTATION", prices, spy, {}, cap_structure=cap,
                           implied_vol={"CRWV": 0.70})
     leaps = {a.ticker: a.kind for a in plan.actions if a.kind.startswith("LEAPS")}
     assert "CRWV" in leaps and "NBIS" not in leaps and "IREN" not in leaps   # unknown → no LEAPS
-    rich = rot.build_plan("ROTATION", prices, spy, {}, cap_structure=cap,
+    rich = plan_("ROTATION", prices, spy, {}, cap_structure=cap,
                           implied_vol={"CRWV": 3.0})
     assert any(a.kind == "LEAPS_SPREAD" and a.ticker == "CRWV" for a in rich.actions)
 
 
 def test_straddles_when_vol_cheap_or_event_near(paradigm):
     spy, prices = paradigm
-    plan = rot.build_plan("ROTATION", prices, spy, {},
+    plan = plan_("ROTATION", prices, spy, {},
                           implied_vol={"HIVE": 0.10, "CRWV": 5.0}, days_to_event={"NBIS": 5})
     s = {a.ticker for a in plan.actions if a.kind == "STRADDLE"}
     assert "HIVE" in s and "NBIS" in s and "CRWV" not in s
@@ -123,7 +132,7 @@ def test_straddles_when_vol_cheap_or_event_near(paradigm):
 def test_no_actions_when_no_theme_stress():
     spy = path(100, 0.0006)
     prices = {t: path(100, 0.0007) for t in ("CRWV", "NBIS", "IREN", "HIVE", "LMT", "LLY")}
-    plan = rot.build_plan("ROTATION", prices, spy, {"CRWV": 0.05})
+    plan = plan_("ROTATION", prices, spy, {"CRWV": 0.05})
     assert not plan.active and plan.actions == []
 
 
@@ -136,12 +145,12 @@ def test_plan_is_idempotent(paradigm):
     """Re-running the plan on the post-trade book must not compound (owner bug report)."""
     spy, prices = paradigm
     holdings = {"CRWV": 0.06, "NBIS": 0.04}
-    plan1 = rot.build_plan("ROTATION", prices, spy, holdings, escalation=1.0)
+    plan1 = plan_("ROTATION", prices, spy, holdings, escalation=1.0)
     after = dict(holdings)
     for a in plan1.actions:
         if a.kind == "CUT":
             after[a.ticker] = a.target_weight
-    plan2 = rot.build_plan("ROTATION", prices, spy, after, escalation=1.0)
+    plan2 = plan_("ROTATION", prices, spy, after, escalation=1.0)
     assert not [a for a in plan2.actions if a.kind == "CUT"]          # nothing left to cut
     r1 = {a.ticker: a.target_weight for a in plan1.actions if a.kind == "ROTATE"}
     r2 = {a.ticker: a.target_weight for a in plan2.actions if a.kind == "ROTATE"}
@@ -152,7 +161,17 @@ def test_stress_caps_instead_of_halving():
     spy = path(100, 0.0006)
     stressed = path(100, 0.002, 240) + path(100 * 1.002 ** 240 * 0.99, -0.01, 20)   # ~18% drop
     prices = {"CRWV": stressed, "NBIS": stressed}
-    plan = rot.build_plan("ROTATION", prices, spy, {"CRWV": 0.08, "NBIS": 0.01})
+    plan = plan_("ROTATION", prices, spy, {"CRWV": 0.08, "NBIS": 0.01})
     cuts = {a.ticker: a.target_weight for a in plan.actions if a.kind == "CUT"}
     assert plan.themes[0].state == "STRESS"
     assert cuts == {"CRWV": rot.STRESS_NAME_CAP}           # NBIS already under the cap
+
+
+def test_credit_stress_exposes_themes_earlier():
+    spy = path(100, 0.0006)
+    mild = crash_path(crash_total=-0.12)                       # 12% slide: NORMAL on price alone
+    prices = {"CRWV": mild, "NBIS": mild}
+    assert rot.theme_state("AI_CREDIT_HUBS", ["CRWV", "NBIS"], prices, spy).state in ("NORMAL", "STRESS")
+    st = rot.theme_state("AI_CREDIT_HUBS", ["CRWV", "NBIS"], prices, spy, credit_stress=True)
+    assert st.state == "STRESS"
+    assert rot.THEMES == {}                                    # no hard-coded ticker watchlist

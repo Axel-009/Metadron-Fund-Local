@@ -111,16 +111,36 @@ def test_adapter_reads_morningstar_paths():
     assert "eps_ttm" in missing2 and "market_cap" in missing2
 
 
-def test_subsector_mapping_priority():
-    assert un.subsector_for("CRWV", 311) == "AI_NEOCLOUD_CREDIT"            # owner example wins
-    assert un.subsector_for("ZZZ", 311, 31130, 31130010) == "SEMI_EQUIPMENT"
-    assert un.subsector_for("ZZZ", 311, 31130, 31130020) == "AI_CHIP_DESIGN"
-    assert un.subsector_for("ZZZ", 309, None, 30910050) == "REFINERS"
-    assert un.subsector_for("ZZZ", 205) == "STAPLES"
-    assert un.subsector_for("ZZZ", 205, overrides={"ZZZ": "DEFENSE"}) == "DEFENSE"
-    assert un.subsector_for("ZZZ", None) == "INDUSTRIALS"
+def _p(sector, **kw):
+    d = dict(sector_code=sector, revenue=1e9, capex=0.05e9, ebit=0.2e9, depreciation=0.05e9, total_debt=0.2e9,
+             interest_expense=0.01e9, total_assets=3e9, total_liabilities=1e9, fcf=0.1e9, market_cap=5e9)
+    d.update(kw)
+    return d
+
+
+def test_subsectors_come_from_fundamental_profiles_not_tickers():
+    import profiles as pf
+    # debt-funded AI infrastructure: capex 60% of revenue, debt/EBITDA 8x  → whatever the ticker
+    neo = _p(311, capex=0.6e9, total_debt=2.0e9, ebit=0.15e9, depreciation=0.1e9, interest_expense=0.12e9)
+    assert un.subsector_for("ANYNAME", neo) == "AI_NEOCLOUD_CREDIT"
+    assert un.subsector_for("CRWV", _p(311)) != "AI_NEOCLOUD_CREDIT"   # a ticker alone means nothing
+    burn = _p(103, capex=0.9e9, total_debt=0.05e9, interest_expense=0.001e9, fcf=-0.4e9)   # miner pivoting to AI hosting
+    assert un.subsector_for("X", burn) == "AI_HOSTING_PIVOT"
+    assert un.subsector_for("X", _p(311, group_code=31110, market_cap=3e9, ebit=0.05e9)) == "LOW_END_SAAS"
+    assert un.subsector_for("X", _p(311, group_code=31110, market_cap=50e9, ebit=0.3e9)) == "SOFTWARE"
+    assert un.subsector_for("X", _p(310, capex=0.01e9, ebit=0.05e9)) == "LABOR_INTENSIVE_SERVICES"
+    assert un.subsector_for("X", _p(309, industry_code=30910020)) == "COMMODITY_PRODUCERS"
+    assert un.subsector_for("X", _p(308)) == "MEDIA_TELECOM"
+    assert un.subsector_for("X", _p(308, market_cap=900e9)) == "AI_PLATFORMS"
+    assert un.subsector_for("X", _p(311, group_code=31130, industry_code=31130010)) == "SEMI_EQUIPMENT"
+    assert un.subsector_for("X", _p(205)) == "STAPLES"
+    assert un.subsector_for("X", _p(205), overrides={"X": "DEFENSE"}) == "DEFENSE"
+    members = pf.theme_members({"A": "AI_NEOCLOUD_CREDIT", "B": "AI_NEOCLOUD_CREDIT", "C": "STAPLES",
+                                "D": "AI_HOSTING_PIVOT"}, {"A": 1e9, "B": 5e9, "D": 2e9})
+    assert members == {"AI_CREDIT_HUBS": ["B", "A"], "AI_OVERSPEND": ["D"]}
+    assert pf.watch_candidate(311, 3e9, 5e7) and not pf.watch_candidate(205, 3e9, 5e7)
     from market_map import SUBSECTORS
-    for table in (un.SECTOR_TO_SUBSECTOR, un.GROUP_TO_SUBSECTOR, un.INDUSTRY_TO_SUBSECTOR):
+    for table in (pf.SECTOR_DEFAULT, pf.GROUP_CODES, pf.INDUSTRY_CODES):
         assert set(table.values()) <= set(SUBSECTORS)
 
 

@@ -98,5 +98,7 @@ reviewer later scores those calls (hit rate, P&L of changes) — that is how age
 ## Rules
 
 - Propose, never execute. Hard caps and the risk budget are owner-only.
-- Tickers in the market map are examples supplied by the owner, not recommendations.
+- Themes and sub-sectors are reasoning profiles detected from fundamentals (`algorithm/profiles.py`): capex
+  intensity, leverage, interest cover, cash burn, margins, size. Names you cite are illustrations of a pattern,
+  never a watchlist — propose profile changes (thresholds, new themes with their reasoning), not tickers.
 - Every claim gets a mechanism, a probability and a downside.

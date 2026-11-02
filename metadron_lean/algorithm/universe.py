@@ -6,8 +6,8 @@
     adapter      QC `Fundamental` (Morningstar) → plain dict for fundamentals.analyze. Every field is read
                  through guarded attribute paths with alternatives; a missing field is counted in data
                  health, never raised.
-    sub-sector   owner examples in market_map → override file (ObjectStore metadron/subsector_map.json)
-                 → Morningstar industry / industry-group code → Morningstar sector code.
+    sub-sector   fundamentals profile (profiles.py: capex intensity, leverage, cash burn, margins, size,
+                 Morningstar codes); an override file (ObjectStore metadron/subsector_map.json) can pin a name.
     shortlist    names that pass the Fundamentals gate, ranked by gate score + macro tilt
                  (sub-sector edge), slots per sleeve split across the 11 GICS sectors by the sector budgets
                  (sectors.py), split by sleeve in the allocation ratios
@@ -22,7 +22,6 @@ from collections import deque
 from dataclasses import dataclass, field
 from typing import Dict, Iterable, List, Optional, Tuple
 
-from market_map import SUBSECTORS
 
 SP1500_ETFS = ("IVV", "IJH", "IJR")
 EXPECTED_MEMBERS = 1500
@@ -35,54 +34,16 @@ MACRO_TILT = 0.25            # rank = gate_score + 0.25 × clip(sub-sector edge,
 VOL_WINDOW = 63
 MACRO_VETO_EDGE = -0.15     # veto only clearly negative sub-sectors with zero weight
 
-# Morningstar sector codes → default sub-sector (market_map)
-SECTOR_TO_SUBSECTOR = {
-    101: "MATERIALS", 102: "CONSUMER_DISCRETIONARY", 103: "FINANCIALS", 104: "REAL_ESTATE",
-    205: "STAPLES", 206: "HEALTHCARE_PHARMA", 207: "UTILITIES", 308: "MEDIA_TELECOM",
-    309: "ENERGY_INTEGRATED", 310: "INDUSTRIALS", 311: "SOFTWARE",
-}
 SECTOR_NAME = {101: "Materials", 102: "Consumer Discretionary", 103: "Financials", 104: "Real Estate",
                205: "Consumer Staples", 206: "Health Care", 207: "Utilities", 308: "Communication Services",
                309: "Energy", 310: "Industrials", 311: "Information Technology"}
 SECTOR_TYPE = {207: "UTILITY", 103: "FINANCIAL", 104: "REAL_ESTATE", 309: "NATURAL_RESOURCE", 101: "NATURAL_RESOURCE"}
-# Morningstar industry-group (5-digit) and industry (8-digit) codes — best effort, verify on QuantConnect
-GROUP_TO_SUBSECTOR = {
-    31110: "SOFTWARE", 31120: "NETWORKING", 31130: "AI_CHIP_DESIGN",
-    31010: "DEFENSE",
-}
-INDUSTRY_TO_SUBSECTOR = {
-    31130010: "SEMI_EQUIPMENT",
-    30910050: "REFINERS",
-    30910010: "COMMODITY_PRODUCERS", 30910020: "COMMODITY_PRODUCERS", 30910060: "COMMODITY_PRODUCERS",
-}
 
 
-def _examples_map() -> Dict[str, str]:
-    out = {}
-    for sub, v in SUBSECTORS.items():
-        for t in v.get("examples") or []:
-            out.setdefault(t, sub)
-    return out
-
-
-EXAMPLES = _examples_map()
-
-
-def subsector_for(ticker: str, sector_code=None, group_code=None, industry_code=None,
-                  overrides: Optional[Dict[str, str]] = None) -> str:
-    if overrides and ticker in overrides and overrides[ticker] in SUBSECTORS:
-        return overrides[ticker]
-    if ticker in EXAMPLES:
-        return EXAMPLES[ticker]
-    for code, table in ((industry_code, INDUSTRY_TO_SUBSECTOR), (group_code, GROUP_TO_SUBSECTOR),
-                        (sector_code, SECTOR_TO_SUBSECTOR)):
-        try:
-            key = int(code) if code is not None else None
-        except (TypeError, ValueError):
-            key = None
-        if key in table:
-            return table[key]
-    return "INDUSTRIALS"
+def subsector_for(ticker: str, d: dict, overrides: Optional[Dict[str, str]] = None) -> str:
+    """Sub-sector from the name's fundamentals profile (profiles.classify) — never from a ticker list."""
+    from profiles import classify
+    return classify(d, ticker, overrides)
 
 
 # ------------------------------------------------------------------------------- QC Fundamental adapter

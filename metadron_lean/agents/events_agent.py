@@ -3,7 +3,7 @@
 Daily before the open. Propose-only: the algorithm reads the file; nothing here trades.
 
     tickers        held / target names (metadron/state.json) + shortlist (metadron/universe_scores.json)
-                   + theme names; or --tickers
+                   + theme members found by the profiles (universe_scores 'watch'); or --tickers
     SEC EDGAR      free JSON (needs SEC_USER_AGENT = "Name email" per SEC policy):
                    8-K items in the last 30 days → flags and fundamentals-gate penalties
                        1.03 bankruptcy 1.0 · 4.02 non-reliance on financials 0.4 · 2.04 debt acceleration 0.3 ·
@@ -172,8 +172,6 @@ if __name__ == "__main__":
     ap.add_argument("--no-llm", action="store_true")
     ap.add_argument("--no-upload", action="store_true")
     a = ap.parse_args()
-    from rotation import THEMES
-    tks = [t for t in a.tickers.split(",") if t] or tickers_from_store()
-    tks = sorted(set(tks) | {t for v in THEMES.values() for t in v})
+    tks = sorted(set([t for t in a.tickers.split(",") if t] or tickers_from_store()))   # incl. profiled theme members
     res = run(tks, a.out, not a.no_llm, not a.no_upload)
     print(json.dumps({k: v for k, v in res.items() if k != "tickers"}, indent=1), f"{len(res['tickers'])} names")

@@ -11,7 +11,7 @@ disagrees with this file, THIS file wins; e.g. its corridor section was linear a
 
 ```
 algorithm/              QuantConnect LEAN algorithm: main (heartbeat + wiring), corridor, risk_budget, regime, forward_rm,
-                        fundamentals, universe, decision, alpha, options, protection, schedule, sectors, rotation,
+                        fundamentals, universe, profiles, decision, alpha, options, protection, schedule, sectors, rotation,
                         market_map, macro_regime, sector_rotation
 agents/                 market_reasoning.md, roster.yaml, llm.py, qc_api.py, macro_agent, events_agent, kronos_agent,
                         risk_officer, vault_sync, qc_deploy (all run by GitHub Actions; propose-only)
@@ -33,7 +33,7 @@ vendor/                 Kronos, LEAN, OpenJarvis — full source copies, pinned 
 jarvis/                 Jarvis setup guide + dashboard page
 governance/ config/     credit classification, repo/heartbeat config
 docs/                   architecture DNA, corridor charts
-tests/                  279 tests (legacy engine suite + new algorithm tests)
+tests/                  280 tests (legacy engine suite + new algorithm tests)
 scripts/update_vendor.sh  re-sync vendored repos to upstream
 ```
 
@@ -137,8 +137,15 @@ Paradigm (Oct–Nov): SPY > 12% at max leverage while AI names with heavy debt /
    call spreads instead when IV/RV > 1.3. Short-dated straddles (7–30 DTE, 0.3% NAV, max 3) where realised
    vol ≥ 1.1 × implied or an event is within 14 days.
 
-Theme tickers are owner-supplied configuration (THEMES in rotation.py), not recommendations; the defense basket
-is only the escalation signal. `rotation_trading=true` (default) trades the equity legs; option legs go through
+**Themes are reasoning profiles, never ticker lists** (owner rule; code `algorithm/profiles.py`). The names in the
+paradigm are illustrations. Members are detected from fundamentals at every rescore, in the S&P 1500 and in a
+liquid off-index watch screen (AI-chain sectors, cap ≥ $2B, $20M/day):
+- AI_CREDIT_HUBS = AI-chain sector + capex ≥ 30% of revenue + credit-funded (debt/EBITDA ≥ 4, cover < 3 or D/E ≥ 1.5)
+- AI_OVERSPEND = AI-chain sector + capex ≥ 40% of revenue + free-cash-flow burn
+Largest 10 per theme form the equal-weight theme index. When corporate spreads widen (question tree CREDIT_STRESS,
+HY OAS +35 bp/1m) a theme only 10% off its high is already STRESS — credit-funded themes break first.
+Off-index watch names are monitored (theme states, LEAPS solvency, events) but never enter the shortlist.
+The escalation defense signal uses profiled aerospace & defense names (ITA only as fallback). `rotation_trading=true` (default) trades the equity legs; option legs go through
 the options engine. Targets are idempotent (equities and options); min trade 0.5% NAV (no churn).
 
 ### Trader framework → sub-sector rotation (owner-approved; code: `algorithm/market_map.py`, `macro_regime.py`, `sector_rotation.py`; agent guide: `agents/market_reasoning.md`)
@@ -148,7 +155,7 @@ The theme-crash playbook above is ONE instance of a general framework that agent
 1. **Market map** (`market_map.py`): 26 sub-sectors tagged CYCLICAL / SECULAR / DEFENSIVE, their role in
    value chains (AI: platforms → chip design → semi equipment → regional foundries → memory → networking →
    data centers → power/grid; debt-funded neoclouds and capex-heavy pivots; at-risk low-end SaaS and
-   labor-intensive services), ETF proxies, owner example tickers, and sensitivities (priors, re-estimated
+   labor-intensive services), ETF proxies, illustrative names (documentation only), and sensitivities (priors, re-estimated
    weekly) to 12 factors: GROWTH, INFLATION, LABOR, WAGES, PRODUCTIVITY, RATES, LIQUIDITY, CREDIT,
    GEOPOLITICS, SENTIMENT, AI_CAPEX, COMMODITIES.
 2. **Macro question tree** (`macro_regime.diagnose`): inflation within mandate? → economy hot (data vs
@@ -201,10 +208,12 @@ skipped, and files always land in `agents/out/` for manual upload. Owner/agents 
 
 **Universe** — point-in-time S&P 1500 = constituents of IVV + IJH + IJR (QuantConnect ETF-constituent
 universes, daily), scored on QuantConnect's Morningstar fundamentals every `fundamental_refresh_days` (5).
-Fallback `universe_mode=fundamental`: price ≥ $5, cap ≥ $1B, dollar volume ≥ $5M. Rotation/theme tickers are
-always scored (solvency for LEAPS) even when outside the index. Sub-sector per name: owner examples →
-ObjectStore `metadron/subsector_map.json` override → Morningstar industry / group code → sector code
-(26 sub-sectors; SOFTWARE added).
+Fallback `universe_mode=fundamental`: price ≥ $5, cap ≥ $1B, dollar volume ≥ $5M. Theme members found by the
+off-index watch screen are scored too (solvency for LEAPS). Sub-sector per name = fundamentals profile
+(`profiles.classify`: capex intensity, leverage, cover, cash burn, margins, size, Morningstar codes): neocloud credit,
+hosting pivot, platforms (≥ $200B, FCF+), low-end SaaS (software < $10B, margin < 10%), labor-intensive services
+(capex < 3%, margin < 8%), commodity producers / refiners / semis / defense by industry code, else sector default;
+ObjectStore `metadron/subsector_map.json` may pin a name (26 sub-sectors).
 
 **Top-down** (Graham Part I) from the universe aggregate: earnings yield Σ earnings / Σ cap, ERP = EY − 10y
 (10y from the macro agent, default 4.2%), max investment P/E by rate (25/20/16/14/10/8x), speculative %,
